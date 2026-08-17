@@ -130,7 +130,7 @@
 - Fresh-checkout validation passed through a Python-managed temporary clone (no shell trap or patch harness): `uv sync --frozen` completed; the installed `rush --help` returned successfully; `pytest tests/ -q` reported **46 passed, 4 skipped** because external engines are intentionally not bundled.
 
 ### Phase 7: Release Maintenance
-- **Status:** in_progress
+- **Status:** complete
 - **Started:** 2026-08-17
 - Pushed `07d24d8 docs: record Phase 6 verification` to `origin/main`.
 - Upgraded the locked test runner from `pytest==8.3.4` to `pytest==9.0.3`, removing the prior `PYSEC-2026-1845` finding.
@@ -138,6 +138,7 @@
 - Added `.github/workflows/ci.yml`: locked install; Ruff lint and format checks; pytest; pip-audit; whitespace check; and wheel/sdist build.
 - Local CI-equivalent evidence: `uv lock`, `uv sync --all-extras --frozen`, Ruff clean, **50/50** tests, `pip-audit` reports no known vulnerabilities, `git diff --check` clean, and `uv build` emits both distribution artifacts.
 - Remote CI run `32081247968` failed before project setup because `astral-sh/setup-uv` has release `v10.0.1` but no floating `v10` tag. Resolution: pin the verified releases exactly (`checkout@v7.0.1`, `setup-python@v7.0.0`, and `setup-uv@v10.0.1`) and rerun CI.
+- Remote CI run `32081298431` passed all install, lint, format, test, audit, whitespace, and build steps in 22 seconds. It emitted no Node-20 deprecation annotation.
 
 ## Test Results
 
@@ -148,6 +149,7 @@
 | Five-tool MCP smoke | official `mcp` client | canonical JSON from each tool; logs on stderr | 4 `ok`, 1 genuine security `fail`; stderr verified | pass |
 | Fresh checkout | temporary local clone + `uv sync --frozen` | install, CLI, and MCP test suite work | `rush --help`; 46 passed, 4 engine skips | pass |
 | Release-maintenance CI gate | `uv sync --all-extras --frozen`; lint, tests, audit, build | reproducible quality and packaging checks | 50 passed; no known vulnerabilities; wheel + sdist built | pass |
+| Remote CI | GitHub Actions run `32081298431` | workflow completes without platform warnings | all quality and build steps passed in 22s | pass |
 
 ## Error Log
 
@@ -159,8 +161,8 @@
 
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 6 (Polish & Verification), complete |
-| Where am I going? | Release maintenance: dependency remediation, CI, packaging, releases |
+| Where am I? | Phase 7 (Release Maintenance), complete |
+| Where am I going? | Package publication when requested, then v0.2 scope selection |
 | What's the goal? | Ship rush: Python CLI + stdio MCP server exposing review/lint/format/test/security tools |
 | What have I learned? | stdio child engines must detach stdin; pip-audit 2.10 uses a dependencies envelope; MCP `env` replaces the inherited environment |
-| What have I done? | Phases 1–6 complete: implementation, MCP integration, documentation, clean quality gates, and fresh-checkout validation |
+| What have I done? | Phases 1–7 complete: implementation, MCP integration, verification, security remediation, and a passing GitHub Actions pipeline |

@@ -10,13 +10,12 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Phase 7 release maintenance is in progress. Local CI-equivalent checks and the
-dependency remediation are complete; push the workflow and verify its first
-GitHub Actions run before beginning package publication or v0.2 scope.
+All planned v0.1.0-alpha phases are complete. The next work is package
+publication when requested, then v0.2 scope selection and implementation.
 
 ## Current Phase
 
-Phase 7 — Release Maintenance (in_progress)
+Phase 7 — Release Maintenance (complete)
 
 ## Phases
 
@@ -94,8 +93,9 @@ Phase 7 — Release Maintenance (in_progress)
 - [x] Declare pinned `ruff` and `pip-audit` development dependencies
 - [x] Add GitHub Actions CI for locked install, lint, format, tests, audit, whitespace, and package build
 - [x] Run the full local CI-equivalent pipeline: **50/50** tests, no known vulnerabilities, wheel and sdist built
-- [ ] Push the CI workflow and verify the first remote GitHub Actions run
-- **Status:** in_progress
+- [x] Push the CI workflow and verify the remote GitHub Actions run
+- **Status:** complete
+- **Evidence:** GitHub Actions run `32081298431` passed all quality, audit, and build steps in 22 seconds with the Node-24 action releases.
 
 ## Key Questions
 
