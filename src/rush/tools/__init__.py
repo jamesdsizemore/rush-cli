@@ -7,21 +7,21 @@ Architecture §3.5. ALL_TOOLS is iterated by both:
 
 from __future__ import annotations
 
-from .base import ToolFn, ToolResult, ToolStatus, Finding, ToolName, Severity, LlmStatus
+from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import (
     engine_on_path,
+    error_result,
+    exit_code_for,
+    normalize_findings,
+    now_ms,
     run_subprocess,
     skipped_result,
-    error_result,
-    normalize_findings,
-    exit_code_for,
-    now_ms,
 )
-from .review import ReviewTool
-from .lint import LintTool
 from .format import FormatTool
-from .test import TestTool
+from .lint import LintTool
+from .review import ReviewTool
 from .security import SecurityTool
+from .test import TestTool
 
 ALL_TOOLS: list[ToolFn] = [
     ReviewTool(),
@@ -32,31 +32,31 @@ ALL_TOOLS: list[ToolFn] = [
 ]
 
 __all__ = [
-    # core types
-    "ToolStatus",
-    "ToolName",
-    "Severity",
-    "LlmStatus",
-    "Finding",
-    "ToolResult",
-    "ToolFn",
-    # common helpers
-    "engine_on_path",
-    "resolve_binary",
-    "run_subprocess",
-    "run_engine",
-    "skipped_result",
-    "error_result",
-    "normalize_findings",
-    "exit_code_for",
-    "now_ms",
-    "elapsed_ms",
     # registry
     "ALL_TOOLS",
+    "Finding",
+    "FormatTool",
+    "LintTool",
+    "LlmStatus",
     # concrete tool classes (for testing)
     "ReviewTool",
-    "LintTool",
-    "FormatTool",
-    "TestTool",
     "SecurityTool",
+    "Severity",
+    "TestTool",
+    "ToolFn",
+    "ToolName",
+    "ToolResult",
+    # core types
+    "ToolStatus",
+    "elapsed_ms",
+    # common helpers
+    "engine_on_path",
+    "error_result",
+    "exit_code_for",
+    "normalize_findings",
+    "now_ms",
+    "resolve_binary",
+    "run_engine",
+    "run_subprocess",
+    "skipped_result",
 ]

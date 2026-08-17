@@ -21,7 +21,6 @@ from .common import (
     elapsed_ms,
     engine_on_path,
     now_ms,
-    normalize_findings,
     run_engine,
 )
 
@@ -39,7 +38,9 @@ class LintTool(ToolFn):
     def __call__(self, path: Path, engine_args: list[str] | None = None) -> ToolResult:
         return self.run(path, engine_args=engine_args)
 
-    def run(self, path: Path, *, engine_args: list[str] | None = None, config=None) -> ToolResult:
+    def run(
+        self, path: Path, *, engine_args: list[str] | None = None, config=None
+    ) -> ToolResult:
         from ..engines import ENGINES
 
         start = now_ms()
@@ -60,8 +61,16 @@ class LintTool(ToolFn):
             )
 
         # Dispatch: group by engine, run each engine once with its file list.
-        ruff_files = [t for t in targets if t.suffix.lstrip(".") in ENGINES["ruff"].file_extensions]
-        eslint_files = [t for t in targets if t.suffix.lstrip(".") in ENGINES["eslint"].file_extensions]
+        ruff_files = [
+            t
+            for t in targets
+            if t.suffix.lstrip(".") in ENGINES["ruff"].file_extensions
+        ]
+        eslint_files = [
+            t
+            for t in targets
+            if t.suffix.lstrip(".") in ENGINES["eslint"].file_extensions
+        ]
 
         findings_all: list = []
         last_status = "ok"
@@ -118,9 +127,11 @@ class LintTool(ToolFn):
 
         n_findings = len(findings_all)
         if last_status == "ok" and n_findings > 0:
-            last_status = "warn" if any(
-                f.get("severity") != "error" for f in findings_all
-            ) else "fail"
+            last_status = (
+                "warn"
+                if any(f.get("severity") != "error" for f in findings_all)
+                else "fail"
+            )
             if all(f.get("severity") == "error" for f in findings_all):
                 last_status = "fail"
 
@@ -159,12 +170,25 @@ def _collect_files(path: Path, *engines) -> list[Path]:
         for ext in exts:
             out.extend(path.rglob(f"*.{ext}"))
         # Filter out common noise
-        skip_dirs = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "build", ".next"}
+        skip_dirs = {
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            ".git",
+            "dist",
+            "build",
+            ".next",
+        }
         return [
-            p for p in out
+            p
+            for p in out
             if not any(part in skip_dirs for part in p.parts)
             # also skip hidden dirs
-            and not any(part.startswith(".") and part not in (".",) for part in p.relative_to(path).parts)
+            and not any(
+                part.startswith(".") and part not in (".",)
+                for part in p.relative_to(path).parts
+            )
         ]
 
     return []

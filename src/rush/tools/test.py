@@ -46,7 +46,9 @@ class TestTool(ToolFn):
                 raw=None,
             )
 
-        if (project_root / "pyproject.toml").exists() or (project_root / "setup.py").exists():
+        if (project_root / "pyproject.toml").exists() or (
+            project_root / "setup.py"
+        ).exists():
             # Python project
             r = run_engine(ENGINES["pytest"], project_root, [], tool_name="test")
             return r
@@ -83,12 +85,10 @@ def _find_project_root(path: Path) -> Path | None:
     stale package.json in the user's home dir.
     """
     start = path if path.is_dir() else path.parent
-    levels = 0
     MAX_LEVELS = 5
-    for d in [start, *start.parents]:
+    for levels, d in enumerate([start, *start.parents]):
         if levels > MAX_LEVELS:
             return None
-        levels += 1
         if (d / "pyproject.toml").exists():
             return d
         if (d / "setup.py").exists():

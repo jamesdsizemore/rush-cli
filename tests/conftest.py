@@ -26,7 +26,7 @@ def tmp_repo(tmp_path: Path) -> Path:
     (repo / "pyproject.toml").write_text('[project]\nname = "fixture"\n')
     (repo / "sample.py").write_text(
         "def clean(x: int) -> int:\n"
-        "    \"\"\"double x.\"\"\"\n"
+        '    """double x."""\n'
         "    return x * 2\n"
         "\n"
         "def dirty(x):  # no docstring, TODO, no annotation\n"

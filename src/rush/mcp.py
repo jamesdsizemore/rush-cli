@@ -8,6 +8,7 @@ avoids collisions with other MCP servers in multi-server agent sessions).
 
 from __future__ import annotations
 
+from .logging import get_logger
 from .tools import ALL_TOOLS
 
 SERVER_NAME = "rush"
@@ -51,4 +52,5 @@ def _register_tools(server) -> None:
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""
     server = build_server()
+    get_logger("mcp").debug("starting rush stdio MCP server")
     await server.run_stdio_async()

@@ -18,11 +18,9 @@ Output structure (simplified):
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from typing import Optional
 
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -35,7 +33,7 @@ class VitestEngine(Engine):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         argv = [
@@ -46,14 +44,7 @@ class VitestEngine(Engine):
             str(path),
             *args,
         ]
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            timeout=300,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_subprocess(argv, cwd=cwd, timeout=300)
 
         parsed = None
         findings_raw: list[dict] = []
@@ -76,8 +67,8 @@ class VitestEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.common import elapsed_ms
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms
 
         # Count outcomes
         n_pass = n_fail = n_skip = 0
@@ -98,13 +89,21 @@ class VitestEngine(Engine):
         findings = []
         for t in raw.get("findings", []):
             if t.get("status") == "failed":
-                findings.append({
-                    "path": str(path),  # vitest names don't map cleanly to file paths
-                    "line": 0,
-                    "rule": "test-failed",
-                    "severity": "error",
-                    "message": (t.get("failureMessages", [""])[0] if t.get("failureMessages") else t.get("name", ""))[:200],
-                })
+                findings.append(
+                    {
+                        "path": str(
+                            path
+                        ),  # vitest names don't map cleanly to file paths
+                        "line": 0,
+                        "rule": "test-failed",
+                        "severity": "error",
+                        "message": (
+                            t.get("failureMessages", [""])[0]
+                            if t.get("failureMessages")
+                            else t.get("name", "")
+                        )[:200],
+                    }
+                )
 
         exit_code = raw.get("exit_code", 0)
         if exit_code >= 2:

@@ -7,13 +7,13 @@ by name. Adding a new engine = add it here AND to ENGINES.
 from __future__ import annotations
 
 from .base import Engine
-from .ruff import RuffEngine
 from .eslint import EslintEngine
-from .prettier import PrettierEngine
-from .vitest import VitestEngine
-from .pytest import PytestEngine
-from .pip_audit import PipAuditEngine
 from .npm_audit import NpmAuditEngine
+from .pip_audit import PipAuditEngine
+from .prettier import PrettierEngine
+from .pytest import PytestEngine
+from .ruff import RuffEngine
+from .vitest import VitestEngine
 
 ENGINES: dict[str, Engine] = {
     "ruff": RuffEngine(),

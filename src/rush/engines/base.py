@@ -5,20 +5,20 @@ Architecture §4.1. Every engine (ruff, eslint, etc.) implements ``Engine``.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 
 from ..tools.base import Finding, ToolResult
+from ..tools.common import resolve_binary
 
 
 class EngineResult(TypedDict, total=False):
     exit_code: int
     stdout: str
     stderr: str
-    parsed: Optional[Any]   # engine-native JSON if available, else None
+    parsed: Any | None  # engine-native JSON if available, else None
     findings: list[Finding]  # normalized from parsed
     summary: str
     duration_ms: int
@@ -40,30 +40,36 @@ class Engine(ABC):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult: ...
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Capture the engine's version string. Return None if unavailable.
 
         Architecture §13 (Q1): cache after first call (subclasses override
         with functools.lru_cache if they want eager caching).
         """
-        if shutil.which(self.binary) is None:
+        binary_path = resolve_binary(self.binary)
+        if binary_path is None:
             return None
         try:
             r = subprocess.run(
-                [self.binary, "--version"],
+                [binary_path, "--version"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
             out = (r.stdout or r.stderr).strip()
             # First token that looks like a version, e.g. "ruff 0.6.9" or "v0.6.9"
             for token in out.split():
-                if token and (token[0].isdigit() or token.startswith("v")):
-                    if any(c.isdigit() for c in token):
-                        return token.lstrip("v")
+                if (
+                    token
+                    and (token[0].isdigit() or token.startswith("v"))
+                    and any(c.isdigit() for c in token)
+                ):
+                    return token.lstrip("v")
             return out.splitlines()[0] if out else None
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return None

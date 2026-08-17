@@ -53,8 +53,16 @@ class FormatTool(ToolFn):
                 raw=None,
             )
 
-        ruff_files = [t for t in targets if t.suffix.lstrip(".") in ENGINES["ruff"].file_extensions]
-        prettier_files = [t for t in targets if t.suffix.lstrip(".") in ENGINES["prettier"].file_extensions]
+        ruff_files = [
+            t
+            for t in targets
+            if t.suffix.lstrip(".") in ENGINES["ruff"].file_extensions
+        ]
+        prettier_files = [
+            t
+            for t in targets
+            if t.suffix.lstrip(".") in ENGINES["prettier"].file_extensions
+        ]
 
         findings_all: list = []
         engines_used: list[str] = []
@@ -92,7 +100,9 @@ class FormatTool(ToolFn):
             summary = f"format [{'+'.join(engines_used)}]: all formatted"
         else:
             status = "warn"
-            summary = f"format [{'+'.join(engines_used)}]: {n} file(s) need reformatting"
+            summary = (
+                f"format [{'+'.join(engines_used)}]: {n} file(s) need reformatting"
+            )
 
         return ToolResult(
             tool="format",
@@ -111,17 +121,18 @@ class FormatTool(ToolFn):
         out = []
         for line in (result.get("stdout") or "").splitlines():
             line = line.strip()
-            if line and not line.startswith(("Found", "reformat")):
+            if line and not line.startswith(("Found", "reformat")) and ":" in line:
                 # Lines look like: "file.py:62:80:"
-                if ":" in line:
-                    file_part = line.split(":")[0]
-                    out.append({
+                file_part = line.split(":")[0]
+                out.append(
+                    {
                         "path": file_part,
                         "line": 0,
                         "rule": "formatting",
                         "severity": "warn",
                         "message": "ruff format would reformat this file",
-                    })
+                    }
+                )
         # ruff also exits non-zero when files need reformat; check status
         if result.get("status") == "warn" and not out:
             # Try stderr for the file list
@@ -129,20 +140,27 @@ class FormatTool(ToolFn):
                 line = line.strip()
                 if line.endswith("would be reformatted"):
                     # line like: "Would reformat: file.py"
-                    fname = line.replace("Would reformat:", "").replace("would be reformatted", "").strip()
+                    fname = (
+                        line.replace("Would reformat:", "")
+                        .replace("would be reformatted", "")
+                        .strip()
+                    )
                     if fname:
-                        out.append({
-                            "path": fname,
-                            "line": 0,
-                            "rule": "formatting",
-                            "severity": "warn",
-                            "message": "ruff format would reformat this file",
-                        })
+                        out.append(
+                            {
+                                "path": fname,
+                                "line": 0,
+                                "rule": "formatting",
+                                "severity": "warn",
+                                "message": "ruff format would reformat this file",
+                            }
+                        )
         return out
 
 
 def _collect_files(path: Path) -> list[Path]:
     from ..engines import ENGINES
+
     exts: set[str] = set()
     for e in ENGINES.values():
         exts.update(e.file_extensions)
@@ -154,11 +172,17 @@ def _collect_files(path: Path) -> list[Path]:
         out: list[Path] = []
         for ext in exts:
             out.extend(path.rglob(f"*.{ext}"))
-        skip_dirs = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "build", ".next"}
-        return [
-            p for p in out
-            if not any(part in skip_dirs for part in p.parts)
-        ]
+        skip_dirs = {
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            ".git",
+            "dist",
+            "build",
+            ".next",
+        }
+        return [p for p in out if not any(part in skip_dirs for part in p.parts)]
     return []
 
 

@@ -11,12 +11,15 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
-from .base import Finding, ToolResult, ToolStatus
+from .base import Finding, ToolResult
+
+if TYPE_CHECKING:
+    from ..engines.base import Engine
 
 
-def _venv_scripts_dir() -> Optional[Path]:
+def _venv_scripts_dir() -> Path | None:
     """If we're running inside a uv-managed venv, return its Scripts/bin dir.
 
     shutil.which() with no explicit `path=` reads $PATH, which on Windows
@@ -49,7 +52,7 @@ def engine_on_path(binary: str) -> bool:
     return False
 
 
-def resolve_binary(binary: str) -> Optional[str]:
+def resolve_binary(binary: str) -> str | None:
     """Return the absolute path to `binary` if findable, else None.
 
     Search priority:
@@ -78,13 +81,16 @@ def run_subprocess(
 ) -> subprocess.CompletedProcess:
     """Run a subprocess and return the CompletedProcess.
 
-    Captures stdout+stderr as text. Raises subprocess.TimeoutExpired
-    on timeout; callers should wrap.
+    Captures stdout+stderr as text and detaches the child from our stdin.
+    In particular, an MCP server's stdin is its JSON-RPC transport: quality
+    engines must never inherit or consume that pipe. Raises
+    subprocess.TimeoutExpired on timeout; callers should wrap.
     """
     return subprocess.run(
         argv,
         cwd=str(cwd) if cwd is not None else None,
         timeout=timeout,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         env=env,
@@ -93,7 +99,7 @@ def run_subprocess(
 
 
 def run_engine(
-    engine: "Engine",
+    engine: Engine,
     path: Path,
     args: list[str] | None = None,
     *,
@@ -113,7 +119,6 @@ def run_engine(
 
     stdout is never written here. Engine subprocess captures its own stdout.
     """
-    from ..engines.base import Engine
 
     tool_name = tool_name or engine.name
     extra_args = list(args or [])
@@ -130,18 +135,23 @@ def run_engine(
         result = engine.run(path, extra_args, cwd=cwd)
     except subprocess.TimeoutExpired:
         return error_result(
-            tool_name, engine.name, f"timed out after {timeout}s",
+            tool_name,
+            engine.name,
+            f"timed out after {timeout}s",
             duration_ms=elapsed_ms(start),
         )
     except FileNotFoundError:
         # race: engine was on PATH at check, disappeared between then and run
         return skipped_result(
-            tool_name, engine.name,
+            tool_name,
+            engine.name,
             f"{engine.binary} disappeared from PATH mid-run",
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - C10 requires structured engine errors
         return error_result(
-            tool_name, engine.name, f"engine crashed: {e!r}",
+            tool_name,
+            engine.name,
+            f"engine crashed: {e!r}",
             duration_ms=elapsed_ms(start),
         )
 
@@ -167,7 +177,7 @@ def _install_hint(engine_name: str) -> str:
     }.get(engine_name, "see engine docs")
 
 
-def skipped_result(tool_name: str, engine: Optional[str], reason: str) -> ToolResult:
+def skipped_result(tool_name: str, engine: str | None, reason: str) -> ToolResult:
     """Build a ToolResult for a skipped tool (engine not on PATH, etc.)."""
     return ToolResult(
         tool=tool_name,
@@ -183,7 +193,7 @@ def skipped_result(tool_name: str, engine: Optional[str], reason: str) -> ToolRe
 
 def error_result(
     tool_name: str,
-    engine: Optional[str],
+    engine: str | None,
     message: str,
     *,
     duration_ms: int = 0,

@@ -93,11 +93,47 @@
 | stderr NDJSON logging | `log.warning("hi")` | one JSON line on stderr, none on stdout | one line on stderr, zero on stdout | ✓ |
 | Secret redaction | `log.error("api_key=sk-12345")` | REDACTED marker, no key value | REDACTED, no `sk-12345` in output | ✓ |
 
+### Phase 4: Tool Implementations
+- **Status:** complete
+- **Completed:** 2026-08-16
+- Implemented real Ruff, ESLint, Prettier, pytest, Vitest, pip-audit, and npm-audit adapters; wired all five CLI/MCP-shared tools; added review heuristics and LLM-key guards.
+- Fixed venv binary precedence, project-root discovery, pip-audit exit semantics, pytest summary parsing, ESLint missing-config handling, and nested engine finding coordinates.
+- Evidence: `.venv/Scripts/python.exe -m pytest tests/ -q` passed **48/48** on Python 3.12.13. End-to-end CLI smoke tests exercised review, lint, format, test, and security against real engines.
+- Commit: `c5a8487 feat(v0.1.0-alpha): tool implementations — real engines, real results`.
+
+### Phase 5: MCP Server
+- **Status:** complete
+- **Started:** 2026-08-16
+- Initial evidence: `build_server()` exists and registers `rush_review`, `rush_lint`, `rush_format`, `rush_test`, and `rush_security`; Phase 5 will verify the full stdio JSON-RPC handshake and tool-call result shape.
+- Error (attempt 1): Windows MCP subprocess creation rejects `io.StringIO` as `errlog` because it has no `fileno()`. Resolution: capture server stderr through a real temporary file handle.
+- Error (attempt 2): multi-tool MCP smoke parsed `rush_review` successfully, then assumed every following response was JSON and raised `JSONDecodeError` on `rush_lint`. Next action: inspect the raw MCP response and distinguish a server-side tool error from an invalid test assumption.
+- Root cause (attempt 2): FastMCP validated non-review results against `ToolResult.review_kind: Literal["heuristic", "llm"]`; those tools correctly omit the review-only field, which FastMCP materialized as `None` and rejected. Resolution: make the review-only field nullable in the canonical schema and cover a real MCP lint call in the integration test.
+- Error (attempt 3): all-five MCP smoke with `rush_test` aimed at Rush's own root exceeded 240 seconds. The likely self-recursive path is the server launching pytest, which runs the MCP integration test and starts another server. Resolution: validate `rush_test` over MCP against an isolated temporary Python project; keep the full-repo CLI test as the non-recursive end-to-end evidence.
+- Error (attempt 4): isolated-project MCP smoke confirms the timeout is not recursion: review/lint/format return, then `rush_test` blocks. Next action: inspect pytest adapter argv and the child process environment inherited from `StdioServerParameters`.
+- Root cause (attempt 4): `StdioServerParameters.env` replaces (rather than merges) the process environment. The smoke set only `RUSH_LOG_LEVEL`, removing Windows runtime variables required by pytest/plugin imports. Resolution: preserve `os.environ` and override only `RUSH_LOG_LEVEL`; verify all five calls again.
+- Error (attempt 5): preserving the environment removes the Windows runtime failure, but the live MCP call to `rush_test` still times out after review/lint/format succeed. Next action: compare direct `TestTool.run()` behavior with FastMCP dispatch before changing product code.
+- Root cause (attempt 5): direct `TestTool.run()` completes, isolating the block to `pytest.exe` when it is spawned from the FastMCP stdio child. Resolution: invoke pytest with the active server interpreter (`sys.executable -m pytest`) instead of the Windows console-script wrapper.
+- Error (attempt 6): `python -m pytest` still blocks only under live MCP. Root-cause hypothesis: pytest inherits the server's open JSON-RPC stdin pipe, whereas direct execution does not. Resolution under test: detach pytest stdin with `subprocess.DEVNULL`.
+- Root cause (attempt 6): detaching pytest stdin resolves `rush_test` over MCP. The all-tool smoke now reaches `rush_security` and blocks in pip-audit, which also inherits the JSON-RPC stdin pipe. Next action: apply the same isolation centrally to all engine subprocesses.
+- Error (attempt 7): the central stdin fix reaches security and exposes a pip-audit parser gap: pip-audit 2.10 returns a `dependencies` envelope, but Rush accepts only a legacy list and falsely reports clean. A combined fix patch matched ambiguously and made no changes; next action is a narrow parser + regression-test patch.
+- Root cause (attempt 7): parsed pip-audit 2.10 envelopes now produce the real `PYSEC-2026-1845` finding, with a display compatibility detail fixed too: current rows use `name`, whereas legacy rows use `package`.
+- Delivered `tests/test_mcp.py` and `docs/MCP.md`; corrected the shared ToolResult MCP schema, stdin isolation for every engine subprocess, venv-local engine version lookup, and pip-audit 2.10 parsing.
+- Evidence: full project-venv suite passes **50/50** on Python 3.12.13. One official MCP stdio session initialized successfully, listed all five schemas, invoked all five tools, and received canonical JSON each time. Rush's debug startup NDJSON record was captured only from stderr.
+- Note: `rush_security` correctly reports `fail` for `PYSEC-2026-1845` in development `pytest==8.3.4` (upgrade target `9.0.3`); that is a genuine scan result, not a Phase 5 test failure.
+
+### Phase 6: Polish & Verification
+- **Status:** in_progress
+- **Started:** 2026-08-17
+- Initial gate: all 50 tests pass, but `ruff check src tests` reports 91 violations (76 safe auto-fixes). Phase 6 begins by clearing that debt before release documentation and fresh-checkout validation.
+- Error (fresh-checkout attempt 1): Git could not open a patch stored in the temporary parent directory after cloning. No Rush command ran and the source tree was untouched. Resolution: generate and apply the diff inside the clone with an explicit file-existence check.
+
 ## Test Results
 
 | Test | Input | Expected | Actual | Status |
 |------|-------|----------|--------|--------|
-|      |       |          |        |        |
+| Full suite | `.venv/Scripts/python.exe -m pytest tests/ -q` | Tests pass | 50 passed | pass |
+| MCP integration | `tests/test_mcp.py` | stdio handshake, clean schemas, structured calls | initialize/list/review/lint passed | pass |
+| Five-tool MCP smoke | official `mcp` client | canonical JSON from each tool; logs on stderr | 4 `ok`, 1 genuine security `fail`; stderr verified | pass |
 
 ## Error Log
 
@@ -109,8 +145,8 @@
 
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 1 (Requirements & Discovery), in_progress |
-| Where am I going? | Phases 2–6: architecture, skeleton, tool impls, MCP server, polish |
+| Where am I? | Phase 5 (MCP Server), complete |
+| Where am I going? | Phase 6: polish, fresh-checkout verification, release docs |
 | What's the goal? | Ship rush: Python CLI + stdio MCP server exposing review/lint/format/test/security tools |
-| What have I learned? | See `findings.md` (transport=stdio, SDK=mcp 1.28.1, Python-only v0.1, output schema) |
-| What have I done? | Repo created, git initialized, planning trio written, transport confirmed |
+| What have I learned? | stdio child engines must detach stdin; pip-audit 2.10 uses a dependencies envelope; MCP `env` replaces the inherited environment |
+| What have I done? | Phases 1–5 complete: planning, architecture, real tools, and tested stdio MCP integration |

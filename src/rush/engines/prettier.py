@@ -21,11 +21,9 @@ Exit codes:
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
-from typing import Optional
 
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -33,15 +31,25 @@ class PrettierEngine(Engine):
     name = "prettier"
     binary = "prettier"
     file_extensions = (
-        "js", "jsx", "ts", "tsx", "mjs", "cjs",
-        "json", "md", "yaml", "yml", "css", "html",
+        "js",
+        "jsx",
+        "ts",
+        "tsx",
+        "mjs",
+        "cjs",
+        "json",
+        "md",
+        "yaml",
+        "yml",
+        "css",
+        "html",
     )
 
     def run(
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         argv = [
@@ -51,25 +59,23 @@ class PrettierEngine(Engine):
             str(path),
             *args,
         ]
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            timeout=120,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_subprocess(argv, cwd=cwd, timeout=120)
 
         # prettier --check writes filenames (one per line) to stdout for files
         # that would be reformatted.
         would_reformat = [
-            ln.strip() for ln in proc.stdout.splitlines()
+            ln.strip()
+            for ln in proc.stdout.splitlines()
             if ln.strip() and not ln.startswith("[warn]")
         ]
 
         findings_raw = [
-            {"path": p, "rule": "formatting", "severity": "warn",
-             "message": "file would be reformatted by prettier"}
+            {
+                "path": p,
+                "rule": "formatting",
+                "severity": "warn",
+                "message": "file would be reformatted by prettier",
+            }
             for p in would_reformat
         ]
 
@@ -81,14 +87,15 @@ class PrettierEngine(Engine):
             findings=findings_raw,
             summary=(
                 f"prettier: {len(would_reformat)} file(s) would be reformatted"
-                if would_reformat else "prettier: all formatted"
+                if would_reformat
+                else "prettier: all formatted"
             ),
             duration_ms=0,
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.common import elapsed_ms, normalize_findings
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms, normalize_findings
 
         findings = normalize_findings(raw.get("findings", []))
         exit_code = raw.get("exit_code", 0)
@@ -97,7 +104,9 @@ class PrettierEngine(Engine):
             summary = f"prettier error (exit {exit_code})"
         elif findings:
             status = "warn"
-            summary = raw.get("summary", f"prettier: {len(findings)} file(s) would be reformatted")
+            summary = raw.get(
+                "summary", f"prettier: {len(findings)} file(s) would be reformatted"
+            )
         else:
             status = "ok"
             summary = raw.get("summary", "prettier: all formatted")

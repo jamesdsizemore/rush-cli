@@ -46,11 +46,17 @@ class SecurityTool(ToolFn):
                 raw=None,
             )
 
-        if (project_root / "pyproject.toml").exists() or (project_root / "setup.py").exists():
-            return run_engine(ENGINES["pip-audit"], project_root, [], tool_name="security")
+        if (project_root / "pyproject.toml").exists() or (
+            project_root / "setup.py"
+        ).exists():
+            return run_engine(
+                ENGINES["pip-audit"], project_root, [], tool_name="security"
+            )
 
         if (project_root / "package.json").exists():
-            return run_engine(ENGINES["npm-audit"], project_root, [], tool_name="security")
+            return run_engine(
+                ENGINES["npm-audit"], project_root, [], tool_name="security"
+            )
 
         return ToolResult(
             tool="security",
@@ -75,12 +81,10 @@ def _find_project_root(path: Path) -> Path | None:
     stale package.json in the user's home dir.
     """
     start = path if path.is_dir() else path.parent
-    levels = 0
     MAX_LEVELS = 5
-    for d in [start, *start.parents]:
+    for levels, d in enumerate([start, *start.parents]):
         if levels > MAX_LEVELS:
             return None
-        levels += 1
         if (d / "pyproject.toml").exists():
             return d
         if (d / "setup.py").exists():

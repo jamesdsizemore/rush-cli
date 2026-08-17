@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from rush.tools import ALL_TOOLS
 from rush.tools.base import (
-    Finding,
     Severity,
-    ToolFn,
     ToolName,
     ToolResult,
     ToolStatus,
@@ -15,14 +14,11 @@ from rush.tools.common import (
     engine_on_path,
     error_result,
     exit_code_for,
-    now_ms,
     normalize_findings,
+    now_ms,
     resolve_binary,
-    run_engine,
-    run_subprocess,
     skipped_result,
 )
-from rush.tools import ALL_TOOLS
 
 
 def test_tool_status_literal():
@@ -50,11 +46,38 @@ def test_each_tool_has_mcp_description():
 
 
 def test_exit_code_map():
-    assert exit_code_for(ToolResult(status="ok", tool="x", summary="", findings=[], duration_ms=0)) == 0
-    assert exit_code_for(ToolResult(status="skipped", tool="x", summary="", findings=[], duration_ms=0)) == 0
-    assert exit_code_for(ToolResult(status="warn", tool="x", summary="", findings=[], duration_ms=0)) == 1
-    assert exit_code_for(ToolResult(status="fail", tool="x", summary="", findings=[], duration_ms=0)) == 1
-    assert exit_code_for(ToolResult(status="error", tool="x", summary="", findings=[], duration_ms=0)) == 2
+    assert (
+        exit_code_for(
+            ToolResult(status="ok", tool="x", summary="", findings=[], duration_ms=0)
+        )
+        == 0
+    )
+    assert (
+        exit_code_for(
+            ToolResult(
+                status="skipped", tool="x", summary="", findings=[], duration_ms=0
+            )
+        )
+        == 0
+    )
+    assert (
+        exit_code_for(
+            ToolResult(status="warn", tool="x", summary="", findings=[], duration_ms=0)
+        )
+        == 1
+    )
+    assert (
+        exit_code_for(
+            ToolResult(status="fail", tool="x", summary="", findings=[], duration_ms=0)
+        )
+        == 1
+    )
+    assert (
+        exit_code_for(
+            ToolResult(status="error", tool="x", summary="", findings=[], duration_ms=0)
+        )
+        == 2
+    )
 
 
 def test_skipped_result_shape():
@@ -78,7 +101,13 @@ def test_normalize_findings_filters_invalid():
     a separate code path tested in engines."""
     raw = [
         {"filename": "a.py", "message": "ok", "line": 1, "column": 1, "rule": "E501"},
-        {"filename": "b.py", "message": "", "line": 1, "column": 1, "rule": "E502"},  # no message → skip
+        {
+            "filename": "b.py",
+            "message": "",
+            "line": 1,
+            "column": 1,
+            "rule": "E502",
+        },  # no message → skip
         {"path": "c.py", "message": "no location"},
     ]
     out = normalize_findings(raw)
@@ -92,7 +121,12 @@ def test_normalize_findings_filters_invalid():
 def test_normalize_findings_accepts_nested_location():
     """ruff's JSON output uses location.row instead of flat line."""
     raw = [
-        {"filename": "a.py", "message": "ok", "location": {"row": 42, "column": 8}, "code": "E501"},
+        {
+            "filename": "a.py",
+            "message": "ok",
+            "location": {"row": 42, "column": 8},
+            "code": "E501",
+        },
     ]
     out = normalize_findings(raw)
     assert out[0]["line"] == 42
@@ -114,23 +148,30 @@ def test_now_ms_and_elapsed_ms():
 
 
 def test_engine_on_path_uses_venv_scripts():
+    import os
+
     """ruff is installed in the project venv — should be findable even when
     PATH doesn't include .venv/Scripts/."""
     from rush.tools.common import _venv_scripts_dir
+
     # If ruff is in the project venv, engine_on_path should find it.
-    if (Path := __import__("pathlib").Path) and (
-        _venv_scripts_dir() / ("ruff.exe" if __import__("os").name == "nt" else "ruff")
-    ).exists():
+    scripts = _venv_scripts_dir()
+    if (
+        scripts is not None
+        and (scripts / ("ruff.exe" if os.name == "nt" else "ruff")).exists()
+    ):
         assert engine_on_path("ruff")
 
 
 def test_resolve_binary_returns_path_when_found():
-    from rush.tools.common import _venv_scripts_dir
     import os
+
+    from rush.tools.common import _venv_scripts_dir
+
     if (_venv_scripts_dir() / ("ruff.exe" if os.name == "nt" else "ruff")).exists():
         path = resolve_binary("ruff")
         assert path is not None
-        assert path.endswith("ruff") or path.endswith("ruff.exe")
+        assert path.endswith(("ruff", "ruff.exe"))
 
 
 def test_resolve_binary_returns_none_for_missing():

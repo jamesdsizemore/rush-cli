@@ -19,13 +19,11 @@ Override order (last wins):
 
 from __future__ import annotations
 
-import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
-    pass  # tomllib is stdlib; nothing to import
+# tomllib is stdlib; nothing to import
 
 
 class RushConfigError(Exception):
@@ -36,7 +34,9 @@ class RushConfigError(Exception):
 class ProjectConfig:
     src: list[str] = field(default_factory=lambda: ["src"])
     test: list[str] = field(default_factory=lambda: ["tests"])
-    exclude: list[str] = field(default_factory=lambda: ["**/.venv/**", "**/node_modules/**"])
+    exclude: list[str] = field(
+        default_factory=lambda: ["**/.venv/**", "**/node_modules/**"]
+    )
 
 
 @dataclass

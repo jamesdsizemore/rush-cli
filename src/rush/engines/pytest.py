@@ -26,11 +26,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
+import sys
 from pathlib import Path
-from typing import Optional
 
-from ..tools.common import resolve_binary
+from ..tools.common import run_subprocess
 from .base import Engine, EngineResult
 
 _SUMMARY_RE = re.compile(
@@ -50,20 +49,14 @@ class PytestEngine(Engine):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
-        binary_path = resolve_binary(self.binary) or self.binary
-
         # Try --json-report first; fall back to plain output if plugin missing.
-        argv = [binary_path, str(path), "--tb=line", "-q", *args]
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            timeout=300,  # tests can be slow
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        # Prefer the active interpreter over pytest.exe. On Windows, a console
+        # script launched from an MCP stdio child can inherit a broken entrypoint
+        # environment, while ``python -m pytest`` is bound to Rush's venv.
+        argv = [sys.executable, "-m", "pytest", str(path), "--tb=line", "-q", *args]
+        proc = run_subprocess(argv, cwd=cwd, timeout=300)
 
         parsed = None
         findings_raw: list[dict] = []
@@ -89,17 +82,15 @@ class PytestEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.common import elapsed_ms
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms
 
         exit_code = raw.get("exit_code", 0)
         summary = raw.get("summary", "")
         if not summary:
             summary = f"pytest exit {exit_code}"
 
-        if exit_code == 0:
-            status = "ok"
-        elif exit_code == 5:  # pytest: no tests collected
+        if exit_code == 0 or exit_code == 5:
             status = "ok"
         elif exit_code == 2:  # pytest: interrupted / collection error
             status = "error"
@@ -120,13 +111,15 @@ class PytestEngine(Engine):
             )
         if not findings and status == "fail":
             # No json-report — leave a single summary finding so agent sees it
-            findings.append({
-                "path": str(path),
-                "line": 0,
-                "rule": "pytest",
-                "severity": "error",
-                "message": summary,
-            })
+            findings.append(
+                {
+                    "path": str(path),
+                    "line": 0,
+                    "rule": "pytest",
+                    "severity": "error",
+                    "message": summary,
+                }
+            )
 
         return ToolResult(
             tool=tool_name,
@@ -140,7 +133,7 @@ class PytestEngine(Engine):
         )
 
     @staticmethod
-    def _parse_summary(text: str) -> Optional[str]:
+    def _parse_summary(text: str) -> str | None:
         """Extract pytest's summary line.
 
         Handles three formats:
@@ -153,9 +146,10 @@ class PytestEngine(Engine):
             if not cleaned or cleaned.startswith("."):
                 continue
             # Plain format (pytest 8+ with -q): "X passed, Y failed in N s"
-            if "passed" in line or "failed" in line or "error" in line:
-                if " in " in line:
-                    return cleaned
+            if (
+                "passed" in line or "failed" in line or "error" in line
+            ) and " in " in line:
+                return cleaned
             # No-tests case
             if "no tests ran" in line.lower():
                 return cleaned
@@ -172,12 +166,18 @@ class PytestEngine(Engine):
                 path = nodeid.split("::")[0]
                 longrepr = ""
                 if t.get("call"):
-                    longrepr = str(t["call"].get("longrepr", "")).strip().splitlines()[0]
-                out.append({
-                    "path": path,
-                    "line": t.get("call", {}).get("lineno", 0) if isinstance(t.get("call"), dict) else 0,
-                    "rule": "test-" + t.get("outcome", "fail"),
-                    "severity": "error",
-                    "message": longrepr or nodeid,
-                })
+                    longrepr = (
+                        str(t["call"].get("longrepr", "")).strip().splitlines()[0]
+                    )
+                out.append(
+                    {
+                        "path": path,
+                        "line": t.get("call", {}).get("lineno", 0)
+                        if isinstance(t.get("call"), dict)
+                        else 0,
+                        "rule": "test-" + t.get("outcome", "fail"),
+                        "severity": "error",
+                        "message": longrepr or nodeid,
+                    }
+                )
         return out

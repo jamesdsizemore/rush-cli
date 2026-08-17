@@ -20,11 +20,10 @@ JSON output schema (pip-audit >=2):
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -37,7 +36,7 @@ class PipAuditEngine(Engine):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
 
@@ -51,22 +50,14 @@ class PipAuditEngine(Engine):
             "--strict",  # treat non-zero exit from underlying pip as failure
             *args,
         ]
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            timeout=180,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_subprocess(argv, cwd=cwd, timeout=180)
 
         parsed = None
         findings_raw: list[dict] = []
         if proc.stdout.strip():
             try:
                 parsed = json.loads(proc.stdout)
-                if isinstance(parsed, list):
-                    findings_raw = parsed
+                findings_raw = _parse_dependencies(parsed)
             except json.JSONDecodeError:
                 parsed = None
 
@@ -81,23 +72,27 @@ class PipAuditEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.common import elapsed_ms, normalize_findings
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms, normalize_findings
 
         all_vulns: list[dict] = []
         for pkg in raw.get("findings", []):
-            pkg_name = pkg.get("package", "?")
+            pkg_name = pkg.get("package") or pkg.get("name", "?")
             pkg_version = pkg.get("version", "?")
             for v in pkg.get("vulns", []):
                 fix = v.get("fix_versions", [])
-                fix_str = f" (fix: upgrade to {', '.join(fix)})" if fix else " (no fix yet)"
-                all_vulns.append({
-                    "path": str(path),
-                    "line": 0,
-                    "rule": v.get("id", ""),
-                    "severity": "error",  # all vulns are error severity for v0.1
-                    "message": f"{pkg_name}=={pkg_version}: {v.get('description', 'vulnerability')[:200]}{fix_str}",
-                })
+                fix_str = (
+                    f" (fix: upgrade to {', '.join(fix)})" if fix else " (no fix yet)"
+                )
+                all_vulns.append(
+                    {
+                        "path": str(path),
+                        "line": 0,
+                        "rule": v.get("id", ""),
+                        "severity": "error",  # all vulns are error severity for v0.1
+                        "message": f"{pkg_name}=={pkg_version}: {v.get('description', 'vulnerability')[:200]}{fix_str}",
+                    }
+                )
 
         findings = normalize_findings(all_vulns)
 
@@ -133,3 +128,14 @@ class PipAuditEngine(Engine):
             findings=findings,
             raw=raw.get("parsed"),
         )
+
+
+def _parse_dependencies(payload: Any) -> list[dict]:
+    """Extract dependency rows from pip-audit's supported JSON envelopes."""
+    if isinstance(payload, list):  # pip-audit < 2.10
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):  # pip-audit >= 2.10
+        dependencies = payload.get("dependencies", [])
+        if isinstance(dependencies, list):
+            return [item for item in dependencies if isinstance(item, dict)]
+    return []

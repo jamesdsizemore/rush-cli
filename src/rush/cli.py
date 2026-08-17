@@ -19,7 +19,9 @@ from .theme import render_result
 from .tools import ALL_TOOLS
 
 
-def _run_tool(tool_name: str, path: Path, *, as_json: bool, extra_kwargs: dict | None = None) -> None:
+def _run_tool(
+    tool_name: str, path: Path, *, as_json: bool, extra_kwargs: dict | None = None
+) -> None:
     """Shared helper: find the tool, call it, render or JSON-print, exit."""
     tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
     if tool is None:
@@ -39,6 +41,7 @@ def _run_tool(tool_name: str, path: Path, *, as_json: bool, extra_kwargs: dict |
     else:
         render_result(result)
     from .tools.common import exit_code_for
+
     sys.exit(exit_code_for(result))
 
 
@@ -66,11 +69,21 @@ def cli(log_level: str) -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--llm", "use_llm", is_flag=True, help="Call configured LLM (ANTHROPIC_API_KEY or OPENAI_API_KEY).")
+@click.option(
+    "--llm",
+    "use_llm",
+    is_flag=True,
+    help="Call configured LLM (ANTHROPIC_API_KEY or OPENAI_API_KEY).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def review(path, use_llm: bool, as_json: bool) -> None:
     """Review code for size, TODO density, docstrings, naming, complexity."""
-    _run_tool("review", path, as_json=as_json, extra_kwargs={"use_llm": use_llm} if use_llm else None)
+    _run_tool(
+        "review",
+        path,
+        as_json=as_json,
+        extra_kwargs={"use_llm": use_llm} if use_llm else None,
+    )
 
 
 @cli.command()
@@ -83,11 +96,18 @@ def lint(path, as_json: bool) -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--check", "check_only", is_flag=True, help="Only check; don't modify files.")
+@click.option(
+    "--check", "check_only", is_flag=True, help="Only check; don't modify files."
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def format(path, check_only: bool, as_json: bool) -> None:
     """Format Python (ruff format) and JS/TS (prettier) files."""
-    _run_tool("format", path, as_json=as_json, extra_kwargs={"check": check_only} if check_only else None)
+    _run_tool(
+        "format",
+        path,
+        as_json=as_json,
+        extra_kwargs={"check": check_only} if check_only else None,
+    )
 
 
 @cli.command()

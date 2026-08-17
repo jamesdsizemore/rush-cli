@@ -24,11 +24,9 @@ Output schema (npm >=7):
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from typing import Optional
 
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -41,7 +39,7 @@ class NpmAuditEngine(Engine):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
 
@@ -55,14 +53,7 @@ class NpmAuditEngine(Engine):
             "--json",
             *args,
         ]
-        proc = subprocess.run(
-            argv,
-            cwd=str(run_dir),
-            timeout=180,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_subprocess(argv, cwd=run_dir, timeout=180)
 
         # npm sometimes writes non-JSON noise to stdout around the JSON
         # payload. Try to parse the first { ... } block.
@@ -90,8 +81,8 @@ class NpmAuditEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.common import elapsed_ms, normalize_findings
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms, normalize_findings
 
         # Each "finding" is a dict {pkg_data, name, severity, via, ...}
         all_vulns: list[dict] = []
@@ -115,13 +106,15 @@ class NpmAuditEngine(Engine):
                     pass
             via_summary = "; ".join(t for t in titles if t)[:200] or "no details"
 
-            all_vulns.append({
-                "path": str(path),
-                "line": 0,
-                "rule": (titles[0] if titles else "npm-audit") or "npm-audit",
-                "severity": _npm_severity(severity_str),
-                "message": f"{pkg_name}: {via_summary}{fix_str}",
-            })
+            all_vulns.append(
+                {
+                    "path": str(path),
+                    "line": 0,
+                    "rule": (titles[0] if titles else "npm-audit") or "npm-audit",
+                    "severity": _npm_severity(severity_str),
+                    "message": f"{pkg_name}: {via_summary}{fix_str}",
+                }
+            )
 
         findings = normalize_findings(all_vulns)
 

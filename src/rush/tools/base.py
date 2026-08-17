@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Literal, Optional, TypedDict
+from typing import Any, Literal, TypedDict
 
 # --- String literal unions --------------------------------------------------
 
@@ -33,7 +33,7 @@ class Finding(TypedDict, total=False):
     rule: str
     severity: Severity
     message: str
-    fix: Optional[dict]
+    fix: dict | None
 
 
 class ToolResult(TypedDict, total=False):
@@ -44,16 +44,16 @@ class ToolResult(TypedDict, total=False):
     """
 
     tool: ToolName
-    engine: Optional[str]
-    engine_version: Optional[str]
+    engine: str | None
+    engine_version: str | None
     status: ToolStatus
     duration_ms: int
     summary: str
     findings: list[Finding]
-    raw: Optional[Any]
+    raw: Any | None
     # review-only:
-    review_kind: LlmStatus
-    review_provider: Optional[str]
+    review_kind: LlmStatus | None
+    review_provider: str | None
 
 
 # --- Base class -------------------------------------------------------------

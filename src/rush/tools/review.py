@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 from .base import Finding, ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, now_ms, engine_on_path
+from .common import elapsed_ms, now_ms
 
 TODO_PATTERN = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
 MAX_FILE_BYTES = 1_000_000  # 1 MB cap — heuristics don't run on huge files
@@ -78,13 +78,15 @@ class ReviewTool(ToolFn):
             if llm_summary:
                 review_kind = "llm"
                 review_provider = llm_summary.get("provider")
-                findings.append({
-                    "path": "",
-                    "line": 0,
-                    "rule": "llm-summary",
-                    "severity": "info",
-                    "message": llm_summary.get("summary", ""),
-                })
+                findings.append(
+                    {
+                        "path": "",
+                        "line": 0,
+                        "rule": "llm-summary",
+                        "severity": "info",
+                        "message": llm_summary.get("summary", ""),
+                    }
+                )
 
         n = len(findings)
         # Determine status — any heuristic finding → warn (heuristics are advisory).
@@ -97,19 +99,25 @@ class ReviewTool(ToolFn):
             status = "ok"
 
         if n:
-            summary = f"review: {n} heuristic finding(s)" + (" (+LLM)" if review_kind == "llm" else "")
+            summary = f"review: {n} heuristic finding(s)" + (
+                " (+LLM)" if review_kind == "llm" else ""
+            )
         else:
             summary = "review: clean" + (" (+LLM)" if review_kind == "llm" else "")
 
         return ToolResult(
             tool="review",
-            engine="heuristic-v1" + (f"+llm/{review_provider}" if review_provider else ""),
+            engine="heuristic-v1"
+            + (f"+llm/{review_provider}" if review_provider else ""),
             engine_version=None,
             status=status,
             duration_ms=elapsed_ms(start),
             summary=summary,
             findings=findings,
-            raw={"heuristic_count": len(findings) - sum(1 for f in findings if f.get("rule") == "llm-summary")},
+            raw={
+                "heuristic_count": len(findings)
+                - sum(1 for f in findings if f.get("rule") == "llm-summary")
+            },
             review_kind=review_kind,  # type: ignore[typeddict-item]
             review_provider=review_provider,
         )
@@ -124,9 +132,19 @@ def _collect_reviewable_files(path: Path) -> list[Path]:
         return [path] if path.suffix == ".py" else []
 
     if path.is_dir():
-        skip_dirs = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "build", ".next"}
+        skip_dirs = {
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            ".git",
+            "dist",
+            "build",
+            ".next",
+        }
         return [
-            p for p in path.rglob("*.py")
+            p
+            for p in path.rglob("*.py")
             if not any(part in skip_dirs for part in p.parts)
         ]
     return []
@@ -151,13 +169,15 @@ def _file_size_heuristic(path: Path, max_lines: int) -> list[Finding]:
     n = src.count("\n") + 1
     if n <= max_lines:
         return []
-    return [Finding(
-        path=str(path),
-        line=max_lines + 1,
-        rule="file-size",
-        severity="warn",
-        message=f"file has {n} lines (threshold {max_lines}) — consider splitting",
-    )]
+    return [
+        Finding(
+            path=str(path),
+            line=max_lines + 1,
+            rule="file-size",
+            severity="warn",
+            message=f"file has {n} lines (threshold {max_lines}) — consider splitting",
+        )
+    ]
 
 
 def _todo_density_heuristic(path: Path) -> list[Finding]:
@@ -177,21 +197,25 @@ def _todo_density_heuristic(path: Path) -> list[Finding]:
         return []
     # One finding per file with the count and density, plus per-line findings
     # capped at 5 to avoid spamming.
-    out = [Finding(
-        path=str(path),
-        line=matches[0],
-        rule="todo-density",
-        severity="warn",
-        message=f"{len(matches)} TODO/FIXME/XXX markers in {n_lines} lines ({density:.1%}) — resolve or track",
-    )]
-    for ln in matches[1:5]:
-        out.append(Finding(
+    out = [
+        Finding(
             path=str(path),
-            line=ln,
+            line=matches[0],
             rule="todo-density",
-            severity="info",
-            message=f"TODO/FIXME marker at line {ln}",
-        ))
+            severity="warn",
+            message=f"{len(matches)} TODO/FIXME/XXX markers in {n_lines} lines ({density:.1%}) — resolve or track",
+        )
+    ]
+    for ln in matches[1:5]:
+        out.append(
+            Finding(
+                path=str(path),
+                line=ln,
+                rule="todo-density",
+                severity="info",
+                message=f"TODO/FIXME marker at line {ln}",
+            )
+        )
     return out
 
 
@@ -220,7 +244,11 @@ def _missing_docstrings_heuristic(path: Path) -> list[Finding]:
             if node.name.startswith("_"):
                 continue
             # Flag it
-            kind = "function" if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "class"
+            kind = (
+                "function"
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else "class"
+            )
             # First line of the def
             line = getattr(node, "lineno", 0)
             # Check the line above for a comment or docstring-like content
@@ -228,13 +256,15 @@ def _missing_docstrings_heuristic(path: Path) -> list[Finding]:
             if prev.startswith("#"):
                 # Has a comment above — skip to reduce noise
                 continue
-            out.append(Finding(
-                path=str(path),
-                line=line,
-                rule="missing-docstring",
-                severity="info",
-                message=f"{kind} '{node.name}' has no docstring",
-            ))
+            out.append(
+                Finding(
+                    path=str(path),
+                    line=line,
+                    rule="missing-docstring",
+                    severity="info",
+                    message=f"{kind} '{node.name}' has no docstring",
+                )
+            )
     return out
 
 
@@ -261,13 +291,15 @@ def _naming_heuristic(path: Path) -> list[Finding]:
                         continue
                     # Flag if it looks like a constant name but isn't
                     if name.isupper() and "_" in name and len(name) > 2:
-                        out.append(Finding(
-                            path=str(path),
-                            line=getattr(node, "lineno", 0),
-                            rule="naming",
-                            severity="info",
-                            message=f"identifier '{name}' is SCREAMING_CASE but assigned a non-literal — is it really a constant?",
-                        ))
+                        out.append(
+                            Finding(
+                                path=str(path),
+                                line=getattr(node, "lineno", 0),
+                                rule="naming",
+                                severity="info",
+                                message=f"identifier '{name}' is SCREAMING_CASE but assigned a non-literal — is it really a constant?",
+                            )
+                        )
     return out
 
 

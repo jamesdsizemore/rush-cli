@@ -20,21 +20,23 @@ YELLOW = "#FFE600"
 PINK = "#EC4899"
 GREY = "#6B7280"
 
-RUSH_THEME = Theme({
-    "status.ok": Style(color=CYAN),
-    "status.warn": Style(color=YELLOW),
-    "status.fail": Style(color=PINK, bold=True),
-    "status.error": Style(color=PINK, bold=True),
-    "status.skipped": Style(color=GREY),
-    "severity.info": Style(color=CYAN),
-    "severity.warn": Style(color=YELLOW),
-    "severity.error": Style(color=PINK),
-    "tool.review": Style(color=GREEN),
-    "tool.lint": Style(color=CYAN),
-    "tool.format": Style(color=GREEN),
-    "tool.test": Style(color=CYAN),
-    "tool.security": Style(color=YELLOW),
-})
+RUSH_THEME = Theme(
+    {
+        "status.ok": Style(color=CYAN),
+        "status.warn": Style(color=YELLOW),
+        "status.fail": Style(color=PINK, bold=True),
+        "status.error": Style(color=PINK, bold=True),
+        "status.skipped": Style(color=GREY),
+        "severity.info": Style(color=CYAN),
+        "severity.warn": Style(color=YELLOW),
+        "severity.error": Style(color=PINK),
+        "tool.review": Style(color=GREEN),
+        "tool.lint": Style(color=CYAN),
+        "tool.format": Style(color=GREEN),
+        "tool.test": Style(color=CYAN),
+        "tool.security": Style(color=YELLOW),
+    }
+)
 
 _shared_console: Console | None = None
 

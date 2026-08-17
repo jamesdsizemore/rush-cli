@@ -19,11 +19,9 @@ JSON output schema:
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from typing import Optional
 
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -36,7 +34,7 @@ class RuffEngine(Engine):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
         """Run `ruff check --output-format=json <path> <args>`.
 
@@ -55,14 +53,7 @@ class RuffEngine(Engine):
         binary_path = resolve_binary(self.binary) or self.binary
         argv[0] = binary_path
 
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            timeout=120,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_subprocess(argv, cwd=cwd, timeout=120)
 
         # ruff exits 0 (clean), 1 (findings), or 2 (config error). All are valid.
         # We parse JSON iff exit code in {0, 1}; otherwise return raw stdout/stderr.
@@ -89,8 +80,8 @@ class RuffEngine(Engine):
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
         """Convert ruff JSON to canonical ToolResult."""
-        from ..tools.common import elapsed_ms, normalize_findings
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms, normalize_findings
 
         findings = normalize_findings(
             [
@@ -114,7 +105,11 @@ class RuffEngine(Engine):
             status = "error"
             summary = f"ruff config error: {raw.get('stderr', '').strip().splitlines()[0] if raw.get('stderr') else 'unknown'}"
         elif findings:
-            status = "fail" if any(f.get("severity") == "error" for f in findings) else "warn"
+            status = (
+                "fail"
+                if any(f.get("severity") == "error" for f in findings)
+                else "warn"
+            )
             summary = raw.get("summary") or f"ruff found {len(findings)} issue(s)"
         else:
             status = "ok"
@@ -136,9 +131,9 @@ class RuffEngine(Engine):
             return f"ruff exit {exit_code}"
         return f"{n_findings} ruff issue(s)" if n_findings else "ruff clean"
 
-    _cached_version: Optional[str] = None
+    _cached_version: str | None = None
 
-    def _version_str(self) -> Optional[str]:
+    def _version_str(self) -> str | None:
         # Cache per-instance; first call shells out, subsequent return cached.
         if RuffEngine._cached_version is not None:
             return RuffEngine._cached_version

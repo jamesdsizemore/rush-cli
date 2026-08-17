@@ -21,7 +21,7 @@ skeleton exists (verified in Phase 3); Phase 5 will:
 
 ## Current Phase
 
-Phase 4 — Tool Implementations (complete) → Phase 5 next
+Phase 5 — MCP Server (in_progress)
 
 ## Phases
 
@@ -72,25 +72,29 @@ Phase 4 — Tool Implementations (complete) → Phase 5 next
 - [x] Per-engine tests (`test_engines.py`: 9 tests)
 - [x] Base/helper tests (`test_base.py`: 15 tests)
 - **Status:** complete
-- **48/48 tests pass on Python 3.12.13**
+- **50/50 tests pass on Python 3.12.13**
 - **End-to-end verified against real engines** — `rush lint/format/review/test/security` all run real tools and return real ToolResults
 
 ### Phase 5: MCP Server
-- [ ] `rush mcp serve` boots `mcp.server.fastmcp.FastMCP("rush")` over stdio
-- [ ] Register the same five tools as MCP tools with JSON-schema inputs and structured outputs
-- [ ] Add `RUSH_LOG_LEVEL=debug` env switch that writes NDJSON to stderr (never stdout — stdout is the MCP transport)
-- [ ] Smoke test: register with Claude Code / Cursor, invoke each tool from an agent
-- **Status:** pending
+- [x] `rush mcp serve` boots `mcp.server.fastmcp.FastMCP("rush")` over stdio
+- [x] Register the same five tools as MCP tools with JSON-schema inputs and structured outputs
+- [x] Add `RUSH_LOG_LEVEL=debug` startup logging as NDJSON on stderr (never stdout — stdout is the MCP transport)
+- [x] Add `tests/test_mcp.py`: real stdio initialize → tools/list → `rush_review` + `rush_lint` calls, schema assertions, and stderr-log assertion
+- [x] Smoke test: official MCP client invokes all five tools in one stdio session; every response is canonical JSON
+- [x] Add `docs/MCP.md` with agent configuration snippets and the protocol/result contract
+- **Status:** complete
+- **Evidence:** 50/50 project-venv tests pass; review/lint/format/test return `ok` over MCP and security correctly returns `fail` for PYSEC-2026-1845.
 
 ### Phase 6: Polish & Verification
+- [ ] Eliminate Ruff lint and format debt from `src/` and `tests/`
 - [ ] README, AGENTS.md (mirrors headcleaner style), CHANGELOG, install scripts
 - [ ] `pytest` green, `ruff check` + `ruff format` clean on rush's own source
 - [ ] End-to-end test: from a fresh checkout, `uv sync && rush --help && rush mcp serve` boots and registers tools
-- **Status:** pending
+- **Status:** in_progress
 
 ## Key Questions
 
-1. **Single source of truth for tools.** Will CLI subcommands and MCP tools share one Python function each (preferred), or two parallel implementations? — Leaning shared.
+1. **Single source of truth for tools.** CLI subcommands and MCP tools share the same canonical Python tool implementations.
 2. **Engine coverage for v0.1.** Python-only vs Python + JS/TS? — **Confirmed: both, v0.1.**
 3. **Review quality v0.1.** Rule-based heuristics only, or wire an LLM call behind a feature flag? — **Confirmed: heuristics default + `--llm` opt-in that reads `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from env.**
 4. **Config discovery.** Single `rush.toml` in cwd? Or also walk up to git root? — Walk up to git root + cwd.

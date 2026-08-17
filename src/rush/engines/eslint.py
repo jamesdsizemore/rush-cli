@@ -25,11 +25,9 @@ JSON output schema (eslint >=8):
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
-from typing import Optional
 
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -42,7 +40,7 @@ class EslintEngine(Engine):
         self,
         path: Path,
         args: list[str],
-        cwd: Optional[Path] = None,
+        cwd: Path | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         argv = [
@@ -52,21 +50,18 @@ class EslintEngine(Engine):
             "--no-error-on-unmatched-pattern",  # don't error when path has no matching files
             *args,
         ]
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd) if cwd else None,
-            timeout=120,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = run_subprocess(argv, cwd=cwd, timeout=120)
 
         findings_raw: list[dict] = []
         parsed = None
         stderr_text = proc.stderr or ""
         # eslint 9+ errors with "couldn't find an eslint.config" when no
         # config is present. Treat as a config issue (skip, not crash).
-        if "couldn't find an eslint.config" in stderr_text or "eslint.config" in stderr_text and "couldn't" in stderr_text:
+        if (
+            "couldn't find an eslint.config" in stderr_text
+            or "eslint.config" in stderr_text
+            and "couldn't" in stderr_text
+        ):
             return EngineResult(
                 exit_code=proc.returncode,
                 stdout=proc.stdout,
@@ -97,8 +92,8 @@ class EslintEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.common import elapsed_ms, normalize_findings
         from ..tools.base import ToolResult
+        from ..tools.common import elapsed_ms, normalize_findings
 
         # No-config case: return skipped (don't crash, don't count as error)
         if "no eslint.config" in (raw.get("summary") or ""):
@@ -118,15 +113,17 @@ class EslintEngine(Engine):
         for file_result in raw.get("findings", []):
             file_path = file_result.get("filePath", "")
             for m in file_result.get("messages", []):
-                all_msgs.append({
-                    "path": file_path,
-                    "line": m.get("line", 0),
-                    "column": m.get("column", 0),
-                    "rule": m.get("ruleId") or "",
-                    "severity": _eslint_severity(m.get("severity", 1)),
-                    "message": m.get("message", ""),
-                    "fix": m.get("fix"),
-                })
+                all_msgs.append(
+                    {
+                        "path": file_path,
+                        "line": m.get("line", 0),
+                        "column": m.get("column", 0),
+                        "rule": m.get("ruleId") or "",
+                        "severity": _eslint_severity(m.get("severity", 1)),
+                        "message": m.get("message", ""),
+                        "fix": m.get("fix"),
+                    }
+                )
 
         findings = normalize_findings(all_msgs)
 
@@ -135,7 +132,11 @@ class EslintEngine(Engine):
             status = "error"
             summary = f"eslint config error (exit {exit_code})"
         elif findings:
-            status = "fail" if any(f.get("severity") == "error" for f in findings) else "warn"
+            status = (
+                "fail"
+                if any(f.get("severity") == "error" for f in findings)
+                else "warn"
+            )
             summary = f"eslint: {len(findings)} issue(s)"
         else:
             status = "ok"

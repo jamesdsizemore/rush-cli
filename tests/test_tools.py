@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
 
-from rush.config import RushConfig, ReviewConfig
+from rush.config import ReviewConfig, RushConfig
 from rush.tools import (
     FormatTool,
     LintTool,
     ReviewTool,
     SecurityTool,
     TestTool,
-    engine_on_path,
 )
 from rush.tools.common import resolve_binary
 
@@ -42,11 +40,7 @@ def py_repo(tmp_path: Path) -> Path:
         "\n"
         "BIG_BAD_NAME = some_function_call()\n"
     )
-    (repo / "clean.py").write_text(
-        "def clean():\n"
-        "    '''docstring'''\n"
-        "    return 1\n"
-    )
+    (repo / "clean.py").write_text("def clean():\n    '''docstring'''\n    return 1\n")
     return repo
 
 
@@ -74,18 +68,16 @@ def test_review_heuristics_on_dirty_repo(py_repo: Path):
     assert result["review_kind"] == "heuristic"
     rules_seen = {f.get("rule") for f in result["findings"]}
     # At least one of: todo-density, missing-docstring, naming
-    assert rules_seen & {"todo-density", "missing-docstring", "naming"}, f"no heuristics fired: {rules_seen}"
+    assert rules_seen & {"todo-density", "missing-docstring", "naming"}, (
+        f"no heuristics fired: {rules_seen}"
+    )
 
 
 def test_review_heuristics_on_clean_repo(tmp_path: Path):
     repo = tmp_path / "clean"
     repo.mkdir()
     (repo / "pyproject.toml").write_text('[project]\nname = "x"\n')
-    (repo / "good.py").write_text(
-        "def good():\n"
-        "    '''docstring'''\n"
-        "    return 1\n"
-    )
+    (repo / "good.py").write_text("def good():\n    '''docstring'''\n    return 1\n")
     tool = ReviewTool()
     result = tool.run(repo)
     assert result["status"] == "ok"
@@ -119,6 +111,7 @@ def test_review_skip_on_non_python(tmp_path: Path):
 def test_review_llm_requires_env_key(tmp_path: Path):
     """--llm without env keys falls back to heuristic (no error)."""
     import os
+
     for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         os.environ.pop(k, None)
     repo = tmp_path / "r"
@@ -218,7 +211,9 @@ def test_test_skipped_when_no_project_markers(tmp_path: Path):
 # --- SecurityTool -----------------------------------------------------------
 
 
-@pytest.mark.skipif(resolve_binary("pip-audit") is None, reason="pip-audit not installed")
+@pytest.mark.skipif(
+    resolve_binary("pip-audit") is None, reason="pip-audit not installed"
+)
 def test_security_runs_pip_audit_on_python_repo(py_repo: Path):
     tool = SecurityTool()
     result = tool.run(py_repo)

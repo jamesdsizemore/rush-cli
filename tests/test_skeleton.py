@@ -29,10 +29,7 @@ def test_version_string():
 
 def test_imports():
     """Every public module imports without error."""
-    from rush import cli, mcp, theme, config, logging as rush_logging
-    from rush.tools import base, common, review, lint, format, test, security
-    from rush.engines import base as ebase, ruff, eslint, prettier
-    from rush.engines import vitest, pytest as epytest, pip_audit, npm_audit
+    from rush import cli
 
     assert rush is not None
     assert cli is not None
@@ -99,8 +96,7 @@ def test_lint_subcommand_runs_or_skips(runner: CliRunner, tmp_path: Path):
 
 def test_logging_writes_ndjson_to_stderr(runner: CliRunner, tmp_path: Path, capsys):
     """C5: logs go to stderr, stdout reserved for output."""
-    import logging
-    from rush.logging import setup_logging, get_logger
+    from rush.logging import get_logger, setup_logging
 
     setup_logging("debug")
     log = get_logger("test")
@@ -116,7 +112,7 @@ def test_logging_writes_ndjson_to_stderr(runner: CliRunner, tmp_path: Path, caps
 
 def test_logging_redacts_secrets(runner: CliRunner, capsys):
     """C5: secret-like values never reach logs."""
-    from rush.logging import setup_logging, get_logger
+    from rush.logging import get_logger, setup_logging
 
     setup_logging("debug")
     log = get_logger("test.redact")

@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 REDACT_KEYS = {"api_key", "token", "secret", "password", "authorization"}
 
@@ -21,7 +21,7 @@ class NdjsonHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             payload = {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
                 "msg": self._redact(record.getMessage()),
@@ -30,9 +30,9 @@ class NdjsonHandler(logging.Handler):
                 payload["exc"] = self.format(record.exc_info)
             sys.stderr.write(json.dumps(payload, default=str) + "\n")
             sys.stderr.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001 - logging must never interrupt the caller
             # Logging must never raise. Swallow any formatter/IO failure.
-            pass
+            return
 
     @staticmethod
     def _redact(msg: str) -> str:
