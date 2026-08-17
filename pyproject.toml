@@ -23,20 +23,18 @@ dependencies = [
     "mcp==1.28.1",        # Official Python MCP SDK; stdio FastMCP server
     "click==8.4.2",       # CLI framework; matches headcleaner-cli
     "rich==13.9.4",       # Terminal pretty-printing; cyan/green/yellow palette
-    "pytest==8.3.4",      # Test runner (we ship tests; users can `uv run pytest`)
+    "pytest==9.0.3",      # Test runner (we ship tests; users can `uv run pytest`)
 ]
 
 [project.optional-dependencies]
-dev = [
-    # Future dev-only deps land here (release tooling, type stubs, etc.)
-]
+dev = ["pip-audit==2.10.1", "ruff==0.16.3"]
 
 [project.scripts]
 rush = "rush.cli:cli"
 
 [project.urls]
-# Populated when we publish
-Homepage = "https://github.com/james/rush-cli"
+Homepage = "https://github.com/jamesdsizemore/rush-cli"
+Repository = "https://github.com/jamesdsizemore/rush-cli"
 
 [build-system]
 requires = ["hatchling"]

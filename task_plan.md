@@ -10,13 +10,13 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-All planned v0.1.0-alpha phases are complete. The next work is release
-maintenance: address genuine dependency findings, publish package artifacts
-when requested, and add CI/release automation.
+Phase 7 release maintenance is in progress. Local CI-equivalent checks and the
+dependency remediation are complete; push the workflow and verify its first
+GitHub Actions run before beginning package publication or v0.2 scope.
 
 ## Current Phase
 
-Phase 6 — Polish & Verification (complete)
+Phase 7 — Release Maintenance (in_progress)
 
 ## Phases
 
@@ -87,6 +87,15 @@ Phase 6 — Polish & Verification (complete)
 - [x] End-to-end fresh checkout: `uv sync --frozen`, `rush --help`, and the real stdio MCP integration suite
 - **Status:** complete
 - **Evidence:** project venv: Ruff clean, format clean, **50/50** tests passed. Python-managed temporary clone: `uv sync --frozen` completed, `rush --help` succeeded, and **46 passed / 4 skipped** (expected missing external engines).
+
+### Phase 7: Release Maintenance
+- [x] Push the Phase 6 verification record to `origin/main`
+- [x] Upgrade `pytest` from 8.3.4 to 9.0.3 and refresh `uv.lock`
+- [x] Declare pinned `ruff` and `pip-audit` development dependencies
+- [x] Add GitHub Actions CI for locked install, lint, format, tests, audit, whitespace, and package build
+- [x] Run the full local CI-equivalent pipeline: **50/50** tests, no known vulnerabilities, wheel and sdist built
+- [ ] Push the CI workflow and verify the first remote GitHub Actions run
+- **Status:** in_progress
 
 ## Key Questions
 

@@ -129,6 +129,15 @@
 - Completed the safe Ruff pass and manual structural fixes. Final project-venv gate: `ruff check` clean, `ruff format --check` clean, `pytest tests/ -q` **50 passed**, and `git diff --check` clean.
 - Fresh-checkout validation passed through a Python-managed temporary clone (no shell trap or patch harness): `uv sync --frozen` completed; the installed `rush --help` returned successfully; `pytest tests/ -q` reported **46 passed, 4 skipped** because external engines are intentionally not bundled.
 
+### Phase 7: Release Maintenance
+- **Status:** in_progress
+- **Started:** 2026-08-17
+- Pushed `07d24d8 docs: record Phase 6 verification` to `origin/main`.
+- Upgraded the locked test runner from `pytest==8.3.4` to `pytest==9.0.3`, removing the prior `PYSEC-2026-1845` finding.
+- Declared `ruff==0.16.3` and `pip-audit==2.10.1` in the `dev` extra so CI uses reproducible tooling rather than undeclared local executables.
+- Added `.github/workflows/ci.yml`: locked install; Ruff lint and format checks; pytest; pip-audit; whitespace check; and wheel/sdist build.
+- Local CI-equivalent evidence: `uv lock`, `uv sync --all-extras --frozen`, Ruff clean, **50/50** tests, `pip-audit` reports no known vulnerabilities, `git diff --check` clean, and `uv build` emits both distribution artifacts.
+
 ## Test Results
 
 | Test | Input | Expected | Actual | Status |
@@ -137,6 +146,7 @@
 | MCP integration | `tests/test_mcp.py` | stdio handshake, clean schemas, structured calls | initialize/list/review/lint passed | pass |
 | Five-tool MCP smoke | official `mcp` client | canonical JSON from each tool; logs on stderr | 4 `ok`, 1 genuine security `fail`; stderr verified | pass |
 | Fresh checkout | temporary local clone + `uv sync --frozen` | install, CLI, and MCP test suite work | `rush --help`; 46 passed, 4 engine skips | pass |
+| Release-maintenance CI gate | `uv sync --all-extras --frozen`; lint, tests, audit, build | reproducible quality and packaging checks | 50 passed; no known vulnerabilities; wheel + sdist built | pass |
 
 ## Error Log
 
