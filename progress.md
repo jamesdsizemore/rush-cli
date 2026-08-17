@@ -122,10 +122,12 @@
 - Note: `rush_security` correctly reports `fail` for `PYSEC-2026-1845` in development `pytest==8.3.4` (upgrade target `9.0.3`); that is a genuine scan result, not a Phase 5 test failure.
 
 ### Phase 6: Polish & Verification
-- **Status:** in_progress
+- **Status:** complete
 - **Started:** 2026-08-17
 - Initial gate: all 50 tests pass, but `ruff check src tests` reports 91 violations (76 safe auto-fixes). Phase 6 begins by clearing that debt before release documentation and fresh-checkout validation.
 - Error (fresh-checkout attempt 1): Git could not open a patch stored in the temporary parent directory after cloning. No Rush command ran and the source tree was untouched. Resolution: generate and apply the diff inside the clone with an explicit file-existence check.
+- Completed the safe Ruff pass and manual structural fixes. Final project-venv gate: `ruff check` clean, `ruff format --check` clean, `pytest tests/ -q` **50 passed**, and `git diff --check` clean.
+- Fresh-checkout validation passed through a Python-managed temporary clone (no shell trap or patch harness): `uv sync --frozen` completed; the installed `rush --help` returned successfully; `pytest tests/ -q` reported **46 passed, 4 skipped** because external engines are intentionally not bundled.
 
 ## Test Results
 
@@ -134,6 +136,7 @@
 | Full suite | `.venv/Scripts/python.exe -m pytest tests/ -q` | Tests pass | 50 passed | pass |
 | MCP integration | `tests/test_mcp.py` | stdio handshake, clean schemas, structured calls | initialize/list/review/lint passed | pass |
 | Five-tool MCP smoke | official `mcp` client | canonical JSON from each tool; logs on stderr | 4 `ok`, 1 genuine security `fail`; stderr verified | pass |
+| Fresh checkout | temporary local clone + `uv sync --frozen` | install, CLI, and MCP test suite work | `rush --help`; 46 passed, 4 engine skips | pass |
 
 ## Error Log
 
@@ -145,8 +148,8 @@
 
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 5 (MCP Server), complete |
-| Where am I going? | Phase 6: polish, fresh-checkout verification, release docs |
+| Where am I? | Phase 6 (Polish & Verification), complete |
+| Where am I going? | Release maintenance: dependency remediation, CI, packaging, releases |
 | What's the goal? | Ship rush: Python CLI + stdio MCP server exposing review/lint/format/test/security tools |
 | What have I learned? | stdio child engines must detach stdin; pip-audit 2.10 uses a dependencies envelope; MCP `env` replaces the inherited environment |
-| What have I done? | Phases 1–5 complete: planning, architecture, real tools, and tested stdio MCP integration |
+| What have I done? | Phases 1–6 complete: implementation, MCP integration, documentation, clean quality gates, and fresh-checkout validation |

@@ -10,18 +10,13 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Phase 5 — MCP Server. All 5 tools now have real implementations that run
-engines (ruff/eslint/pytest/prettier/pip-audit/npm audit). The MCP server
-skeleton exists (verified in Phase 3); Phase 5 will:
-- Verify end-to-end: agent invokes rush_* tools, gets real ToolResults
-- Add `mcp_serve` integration test that boots the server, sends a
-  JSON-RPC `tools/call`, asserts the response shape
-- Smoke-test against a real agent (Claude Code / Cursor / Windsurf)
-- Wire up the docs (README, AGENTS.md, CHANGELOG, INSTALL, CONTRIBUTING)
+All planned v0.1.0-alpha phases are complete. The next work is release
+maintenance: address genuine dependency findings, publish package artifacts
+when requested, and add CI/release automation.
 
 ## Current Phase
 
-Phase 5 — MCP Server (in_progress)
+Phase 6 — Polish & Verification (complete)
 
 ## Phases
 
@@ -86,11 +81,12 @@ Phase 5 — MCP Server (in_progress)
 - **Evidence:** 50/50 project-venv tests pass; review/lint/format/test return `ok` over MCP and security correctly returns `fail` for PYSEC-2026-1845.
 
 ### Phase 6: Polish & Verification
-- [ ] Eliminate Ruff lint and format debt from `src/` and `tests/`
-- [ ] README, AGENTS.md (mirrors headcleaner style), CHANGELOG, install scripts
-- [ ] `pytest` green, `ruff check` + `ruff format` clean on rush's own source
-- [ ] End-to-end test: from a fresh checkout, `uv sync && rush --help && rush mcp serve` boots and registers tools
-- **Status:** in_progress
+- [x] Eliminate Ruff lint and format debt from `src/` and `tests/`
+- [x] README, AGENTS.md, CHANGELOG, LICENSE, and cross-platform install scripts
+- [x] `pytest` green, `ruff check` + `ruff format` clean on Rush's own source
+- [x] End-to-end fresh checkout: `uv sync --frozen`, `rush --help`, and the real stdio MCP integration suite
+- **Status:** complete
+- **Evidence:** project venv: Ruff clean, format clean, **50/50** tests passed. Python-managed temporary clone: `uv sync --frozen` completed, `rush --help` succeeded, and **46 passed / 4 skipped** (expected missing external engines).
 
 ## Key Questions
 
