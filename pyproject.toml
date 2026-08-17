@@ -1,0 +1,60 @@
+[project]
+name = "rush-cli"
+version = "0.1.0"
+description = "Agentic code-quality CLI + stdio MCP server for coding agents. Sibling to headcleaner."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "James" }]
+keywords = ["cli", "mcp", "model-context-protocol", "lint", "format", "test", "security", "code-review"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    # Architecture §13: stdlib tomllib + hand-rolled (no pydantic) — keep deps minimal
+    "mcp==1.28.1",        # Official Python MCP SDK; stdio FastMCP server
+    "click==8.4.2",       # CLI framework; matches headcleaner-cli
+    "rich==13.9.4",       # Terminal pretty-printing; cyan/green/yellow palette
+    "pytest==8.3.4",      # Test runner (we ship tests; users can `uv run pytest`)
+]
+
+[project.optional-dependencies]
+dev = [
+    # Future dev-only deps land here (release tooling, type stubs, etc.)
+]
+
+[project.scripts]
+rush = "rush.cli:cli"
+
+[project.urls]
+# Populated when we publish
+Homepage = "https://github.com/james/rush-cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rush"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "needs_ruff: test requires `ruff` on PATH",
+    "needs_eslint: test requires `eslint` on PATH",
+    "needs_prettier: test requires `prettier` on PATH",
+    "needs_vitest: test requires `vitest` on PATH",
+    "needs_pytest: test requires `pytest` on PATH",
+    "needs_pip_audit: test requires `pip-audit` on PATH",
+    "needs_npm: test requires `npm` on PATH",
+    "needs_npm_audit: test requires `npm audit` to work",
+]

@@ -1,0 +1,23 @@
+# venv
+.venv/
+venv/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy / ruff caches
+.mypy_cache/
+.ruff_cache/
+
+# uv
+.uv/
