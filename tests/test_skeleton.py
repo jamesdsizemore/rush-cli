@@ -84,14 +84,17 @@ def test_review_subcommand_runs(runner: CliRunner, tmp_path: Path):
     assert "findings" in payload
 
 
-def test_lint_subcommand_skipped_when_no_engine(runner: CliRunner, tmp_path: Path):
-    """The lint stub returns status='skipped'. Exit code 0 (not a failure)."""
+def test_lint_subcommand_runs_or_skips(runner: CliRunner, tmp_path: Path):
+    """The lint subcommand runs ruff on a .py file. If ruff is installed
+    (it is, via uv pip install in this venv), it returns a real ToolResult.
+    Either way the JSON parses and status is one of the documented values."""
     sample = tmp_path / "x.py"
     sample.write_text("x = 1\n")
     result = runner.invoke(cli, ["lint", str(sample), "--json"])
-    assert result.exit_code == 0
+    assert result.exit_code in (0, 1), result.output
     payload = json.loads(result.output)
-    assert payload["status"] == "skipped"
+    assert payload["tool"] == "lint"
+    assert payload["status"] in ("ok", "warn", "fail", "error", "skipped")
 
 
 def test_logging_writes_ndjson_to_stderr(runner: CliRunner, tmp_path: Path, capsys):

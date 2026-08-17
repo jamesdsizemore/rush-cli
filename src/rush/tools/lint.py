@@ -1,7 +1,15 @@
 """Lint tool — engine dispatch per file extension.
 
-Architecture §4.3. Phase 3 stub. Phase 4 will wire ruff (Python) and eslint
-(JS/TS) through tools/common.py:run_engine.
+Architecture §4.3 + §10. Wires ruff (Python) and eslint (JS/TS) through
+``tools/common.py:run_engine``.
+
+Routing rule (per architecture §4.3):
+  - For each file matching `path`, look up engine by extension.
+  - If path is a directory, walk it and dispatch per-file.
+  - If no file matches any supported extension, return ``skipped``.
+
+Each tool invocation runs each engine exactly once and aggregates the
+findings. Sequential execution per architecture §13 Q2 (determinism > speed).
 """
 
 from __future__ import annotations
@@ -9,7 +17,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from .base import ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, now_ms
+from .common import (
+    elapsed_ms,
+    engine_on_path,
+    now_ms,
+    normalize_findings,
+    run_engine,
+)
 
 
 class LintTool(ToolFn):
@@ -26,15 +40,137 @@ class LintTool(ToolFn):
         return self.run(path, engine_args=engine_args)
 
     def run(self, path: Path, *, engine_args: list[str] | None = None, config=None) -> ToolResult:
-        # Phase 3 stub. Phase 4 will dispatch per file extension.
+        from ..engines import ENGINES
+
         start = now_ms()
+        # Walk path: if it's a directory, find all supported files. If it's
+        # a file, dispatch on its extension directly.
+        targets = _collect_files(path, ENGINES["ruff"], ENGINES["eslint"])
+
+        if not targets:
+            return ToolResult(
+                tool="lint",
+                engine=None,
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary=f"lint: no Python/JS/TS files found under {path}",
+                findings=[],
+                raw=None,
+            )
+
+        # Dispatch: group by engine, run each engine once with its file list.
+        ruff_files = [t for t in targets if t.suffix.lstrip(".") in ENGINES["ruff"].file_extensions]
+        eslint_files = [t for t in targets if t.suffix.lstrip(".") in ENGINES["eslint"].file_extensions]
+
+        findings_all: list = []
+        last_status = "ok"
+        engines_used: list[str] = []
+        summaries: list[str] = []
+
+        if ruff_files:
+            ruff_args = [str(p) for p in ruff_files] + (engine_args or [])
+            r = run_engine(ENGINES["ruff"], path, ruff_args, tool_name="lint")
+            findings_all.extend(r.get("findings", []))
+            engines_used.append("ruff")
+            summaries.append(r.get("summary", ""))
+            last_status = _combine_status(last_status, r.get("status", "ok"))
+
+        if eslint_files:
+            eslint_args = [str(p) for p in eslint_files] + (engine_args or [])
+            r = run_engine(ENGINES["eslint"], path, eslint_args, tool_name="lint")
+            findings_all.extend(r.get("findings", []))
+            engines_used.append("eslint")
+            summaries.append(r.get("summary", ""))
+            last_status = _combine_status(last_status, r.get("status", "ok"))
+
+        # If neither engine is installed, return a single skipped result.
+        if not engines_used:
+            engines_missing = []
+            if ruff_files and not engine_on_path("ruff"):
+                engines_missing.append("ruff")
+            if eslint_files and not engine_on_path("eslint"):
+                engines_missing.append("eslint")
+            return ToolResult(
+                tool="lint",
+                engine=None,
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary=f"lint: engines not installed ({', '.join(engines_missing)})",
+                findings=[],
+                raw=None,
+            )
+
+        # If we found files but no engines could be used (because none of the
+        # files matched an installed engine), still return skipped.
+        if not engines_used and (ruff_files or eslint_files):
+            return ToolResult(
+                tool="lint",
+                engine=None,
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary="lint: no engines could run on these files",
+                findings=[],
+                raw=None,
+            )
+
+        n_findings = len(findings_all)
+        if last_status == "ok" and n_findings > 0:
+            last_status = "warn" if any(
+                f.get("severity") != "error" for f in findings_all
+            ) else "fail"
+            if all(f.get("severity") == "error" for f in findings_all):
+                last_status = "fail"
+
+        engine_str = "+".join(engines_used)
+        if n_findings:
+            summary = f"lint [{engine_str}]: {n_findings} issue(s)"
+        else:
+            summary = f"lint [{engine_str}]: clean"
+
         return ToolResult(
             tool="lint",
-            engine=None,
+            engine=engine_str,
             engine_version=None,
-            status="skipped",
+            status=last_status,
             duration_ms=elapsed_ms(start),
-            summary=f"lint: stub (Phase 4 will dispatch ruff/eslint for {path})",
-            findings=[],
+            summary=summary,
+            findings=findings_all,
             raw=None,
         )
+
+
+def _collect_files(path: Path, *engines) -> list[Path]:
+    """Walk `path` (file or dir) and return supported source files."""
+    from ..engines import ENGINES
+
+    # Build the union of supported extensions
+    exts: set[str] = set()
+    for e in ENGINES.values():
+        exts.update(e.file_extensions)
+
+    if path.is_file():
+        return [path] if path.suffix.lstrip(".") in exts else []
+
+    if path.is_dir():
+        out: list[Path] = []
+        for ext in exts:
+            out.extend(path.rglob(f"*.{ext}"))
+        # Filter out common noise
+        skip_dirs = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "build", ".next"}
+        return [
+            p for p in out
+            if not any(part in skip_dirs for part in p.parts)
+            # also skip hidden dirs
+            and not any(part.startswith(".") and part not in (".",) for part in p.relative_to(path).parts)
+        ]
+
+    return []
+
+
+def _combine_status(a: str, b: str) -> str:
+    """Combine two statuses; worst one wins (error > fail > warn > ok > skipped)."""
+    rank = {"error": 4, "fail": 3, "warn": 2, "ok": 1, "skipped": 0}
+    return a if rank.get(a, 0) >= rank.get(b, 0) else b

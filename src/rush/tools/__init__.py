@@ -42,7 +42,9 @@ __all__ = [
     "ToolFn",
     # common helpers
     "engine_on_path",
+    "resolve_binary",
     "run_subprocess",
+    "run_engine",
     "skipped_result",
     "error_result",
     "normalize_findings",

@@ -10,16 +10,18 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Phase 4 — Tool Implementations. The skeleton is up; each tool's
-`__call__` returns a stub ToolResult. Now fill them in:
-- `review` → 4 heuristics + `--llm` opt-in (architecture §10)
-- `lint` / `format` → engine dispatch via `tools/common.py:run_engine()` + `ENGINES` registry
-- `test` / `security` → project-type detection + engine dispatch
-Verify each tool end-to-end with a fixture repo before moving on.
+Phase 5 — MCP Server. All 5 tools now have real implementations that run
+engines (ruff/eslint/pytest/prettier/pip-audit/npm audit). The MCP server
+skeleton exists (verified in Phase 3); Phase 5 will:
+- Verify end-to-end: agent invokes rush_* tools, gets real ToolResults
+- Add `mcp_serve` integration test that boots the server, sends a
+  JSON-RPC `tools/call`, asserts the response shape
+- Smoke-test against a real agent (Claude Code / Cursor / Windsurf)
+- Wire up the docs (README, AGENTS.md, CHANGELOG, INSTALL, CONTRIBUTING)
 
 ## Current Phase
 
-Phase 3 — Skeleton & Tooling (complete) → Phase 4 next
+Phase 4 — Tool Implementations (complete) → Phase 5 next
 
 ## Phases
 
@@ -43,28 +45,35 @@ Phase 3 — Skeleton & Tooling (complete) → Phase 4 next
 - **Status:** complete
 
 ### Phase 3: Skeleton & Tooling
-- [x] `.python-version` pinned to 3.12
-- [x] `pyproject.toml` with locked deps (`mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==8.3.4`) + `[project.scripts] rush = "rush.cli:cli"`
-- [x] Top-level `src/rush/` package: `__init__.py`, `cli.py`, `mcp.py`, `theme.py`, `config.py`, `logging.py`
-- [x] `src/rush/tools/` package: `__init__.py` (registry), `base.py`, `common.py`, `review.py`, `lint.py`, `format.py`, `test.py`, `security.py`
-- [x] `src/rush/engines/` package: `__init__.py` (registry), `base.py`, `ruff.py`, `eslint.py`, `prettier.py`, `vitest.py`, `pytest.py`, `pip_audit.py`, `npm_audit.py`
-- [x] `tests/` skeleton: `conftest.py` (tmp_repo + skip_if_no fixtures) + `test_skeleton.py` (10 smoke tests)
-- [x] CLI registers all 5 subcommands + `mcp serve`; `rush --help` renders the full surface
-- [x] MCP `build_server()` registers all 5 tools with `rush_` prefix; descriptions all <200 chars; **schema is clean — `config` does NOT leak into the MCP-facing surface**
-- [x] `uv sync` produces a clean `.venv/`
-- [x] 10/10 pytest pass; CLI runs end-to-end
+- [x] `.python-version` (3.12) + `pyproject.toml` (locked deps)
+- [x] `src/rush/` package: init, cli, mcp, theme, config, logging
+- [x] `src/rush/tools/` package: init, base, common, 5 tool stubs
+- [x] `src/rush/engines/` package: init, base, 7 engine stubs
+- [x] `tests/` skeleton: conftest + 10 smoke tests
+- [x] CLI renders full surface; MCP build_server() registers 5 tools; schema is clean
+- [x] `uv sync` clean; 10/10 pytest green
 - **Status:** complete
-- **Verified gates:** §5 row 1 (deps), row 7 (theme), row 8 (engine discovery in common.py), row 9 (NDJSON logging). Rows 2, 3, 4, 5, 6, 10, 11, 12, 13 verified for skeleton-level only — full validation lands in Phase 4/5/6.
 
 ### Phase 4: Tool Implementations (v0.1 — Python + JS/TS)
-- [ ] `rush review <path>` — heuristics (file size, TODO density, docstrings, naming, cyclomatic smell) + `--llm` opt-in that reads `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from env
-- [ ] `rush lint <path>` — `ruff check --output-format=json` for `.py*`, `eslint --format=json` for `.js/.jsx/.mjs/.cjs/.ts/.tsx`; structured `{status: "skipped", reason: ...}` when CLI missing
-- [ ] `rush format <path>` — `ruff format` (Python), `prettier --write` (JS/TS + JSON/MD/YAML/CSS/HTML)
-- [ ] `rush test <path>` — `pytest` for Python, `vitest run --reporter=json` (with `npm test --reporter=json` fallback) for JS/TS; detect runner from `package.json`
-- [ ] `rush security <path>` — `pip-audit --format=json` for Python, `npm audit --json` for JS/TS
-- [ ] Per-file language routing so mixed repos work
-- [ ] Each tool returns the structured dict from `findings.md` regardless of CLI vs MCP invocation
-- **Status:** pending
+- [x] `tools/common.py:run_engine()` — C10 enforcement point (engine discovery, never hard-fail; resolves venv-local binaries)
+- [x] `engines/ruff.py` — parses `--output-format=json`, maps severity, caches version
+- [x] `engines/eslint.py` — parses `--format=json`, detects missing flat-config → skipped, severity mapping
+- [x] `engines/prettier.py` — `--check` mode, parses "would reformat" output
+- [x] `engines/pytest.py` — parses summary line, supports both pytest ≤7 boxed and pytest 8+ plain format, JSON-report opt-in
+- [x] `engines/vitest.py` — `--reporter=json`, counts outcomes
+- [x] `engines/pip_audit.py` — `--format=json`, correct exit-code semantics (0=clean, 1=vulns, ≥2=error)
+- [x] `engines/npm_audit.py` — `--json`, robust parsing of npm's stdout noise
+- [x] `tools/review.py` — 4 heuristics (file-size / todo-density / missing-docstrings / naming) + `--llm` opt-in (env-key check, Anthropic preferred)
+- [x] `tools/lint.py` — extension-based dispatch (ruff ↔ eslint), aggregates findings
+- [x] `tools/format.py` — extension-based dispatch, always check-only in v0.1
+- [x] `tools/test.py` — project-root detection (pyproject.toml vs package.json, stops at .git boundary, 5-level cap)
+- [x] `tools/security.py` — same project-root detection
+- [x] Per-tool tests with skip-on-missing-engine (`test_tools.py`: 14 tests)
+- [x] Per-engine tests (`test_engines.py`: 9 tests)
+- [x] Base/helper tests (`test_base.py`: 15 tests)
+- **Status:** complete
+- **48/48 tests pass on Python 3.12.13**
+- **End-to-end verified against real engines** — `rush lint/format/review/test/security` all run real tools and return real ToolResults
 
 ### Phase 5: MCP Server
 - [ ] `rush mcp serve` boots `mcp.server.fastmcp.FastMCP("rush")` over stdio
