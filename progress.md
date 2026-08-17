@@ -137,6 +137,7 @@
 - Declared `ruff==0.16.3` and `pip-audit==2.10.1` in the `dev` extra so CI uses reproducible tooling rather than undeclared local executables.
 - Added `.github/workflows/ci.yml`: locked install; Ruff lint and format checks; pytest; pip-audit; whitespace check; and wheel/sdist build.
 - Local CI-equivalent evidence: `uv lock`, `uv sync --all-extras --frozen`, Ruff clean, **50/50** tests, `pip-audit` reports no known vulnerabilities, `git diff --check` clean, and `uv build` emits both distribution artifacts.
+- Remote CI run `32081247968` failed before project setup because `astral-sh/setup-uv` has release `v10.0.1` but no floating `v10` tag. Resolution: pin the verified releases exactly (`checkout@v7.0.1`, `setup-python@v7.0.0`, and `setup-uv@v10.0.1`) and rerun CI.
 
 ## Test Results
 
