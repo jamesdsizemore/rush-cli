@@ -10,12 +10,12 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Task 9 is in progress. Complete developer-workflow tool documentation, then
-run the full verification and scoped commit before beginning Task 10.
+Task 10 is complete. Begin Task 11 with a fresh Git inspection, then add the
+explicitly opt-in Graft context provider, tests, documentation, and scoped commit.
 
 ## Current Phase
 
-Phase 11 — Workflow, Language & Context Expansion (Task 9 in progress)
+Phase 11 — Workflow, Language & Context Expansion (Task 10 complete)
 
 ## Phases
 
@@ -178,6 +178,14 @@ Phase 11 — Workflow, Language & Context Expansion (Task 9 in progress)
 | Static-analysis delegation failed before edits (API connection error after retries) | 1 | No delegated changes accepted; resumed Task 5 locally from the first complete capability |
 | Task 9 multi-document patch had stale CHANGELOG heading context | 1 | Read current headings and split documentation updates into exact targeted patches |
 | Task 9 full quality gate reported five import-order violations | 1 | Applied project-prescribed Ruff safe auto-fix before re-running all gates |
+| Task 10 routing-map patch had an ambiguous insertion anchor | 1 | Re-read the exact current routing boundaries and apply a narrower patch |
+| Task 10 fixture routing treated `Path.glob()` generators as truthy | 1 | Test glob results with nested `any()` so only real marker files match |
+| Task 10 composite TestTool patch contained an unchanged hunk | 1 | Split the routing update into smaller exact patches after re-reading the file |
+| Task 10 fixture-isolation patch contained an unchanged import hunk | 1 | Re-read formatted test and patch only the affected test body |
+| Task 10 fixture test invoked host Go/Cargo engines | 1 | Stub only `run_engine` to keep fixture tests independent of foreign runtimes |
+| Task 10 type-engine map patch had an ambiguous dictionary boundary | 1 | Re-read current engine module and apply a narrower post-map insertion |
+| Task 10 bundled documentation patch used a stale findings heading | 1 | Re-read current document endings and split documentation changes into exact patches |
+| Task 10 full quality gate reported one test import-order violation | 1 | Apply Ruff safe auto-fix and re-run the full required gate |
 
 ## Notes
 

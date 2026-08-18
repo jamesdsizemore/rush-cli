@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
+from .routing import aggregate_results, detect_project_languages
 
 
 class TestTool(ToolFn):
@@ -30,6 +31,7 @@ class TestTool(ToolFn):
 
     def run(self, path: Path, *, config=None) -> ToolResult:
         from ..engines import ENGINES
+        from ..engines.language import LANGUAGE_TEST_ENGINES
 
         start = now_ms()
         project_root = _find_project_root(path)
@@ -45,6 +47,16 @@ class TestTool(ToolFn):
                 findings=[],
                 raw=None,
             )
+
+        language_results = [
+            run_engine(
+                LANGUAGE_TEST_ENGINES[language], project_root, [], tool_name="test"
+            )
+            for language in detect_project_languages(project_root)
+            if language in LANGUAGE_TEST_ENGINES
+        ]
+        if language_results:
+            return aggregate_results("test", language_results)
 
         if (project_root / "pyproject.toml").exists() or (
             project_root / "setup.py"
@@ -93,7 +105,24 @@ def _find_project_root(path: Path) -> Path | None:
             return d
         if (d / "setup.py").exists():
             return d
-        if (d / "package.json").exists():
+        if any(
+            (d / marker).exists()
+            for marker in (
+                "package.json",
+                "go.mod",
+                "Cargo.toml",
+                "Gemfile",
+                "pom.xml",
+                "build.gradle",
+                "build.gradle.kts",
+                "Package.swift",
+                "composer.json",
+                "mix.exs",
+                "pubspec.yaml",
+                "build.sbt",
+                "flake.nix",
+            )
+        ) or any(any(d.glob(pattern)) for pattern in ("*.sln", "*.csproj")):
             return d
         if (d / ".git").exists():
             return None  # crossed git boundary without finding a marker

@@ -189,6 +189,13 @@
   inspection, dry-run release planning, and optional commitlint discovery.
 - Focused evidence: `17 passed` with the project Python 3.12 environment.
 
+### 2026-08-17 — Task 10 in progress
+
+- Added deterministic multi-ecosystem project detection plus check-only lint,
+  type, and test adapter maps. Fixture tests mock only subprocess execution.
+- Full evidence: **108 passed, 7 expected external-engine skips** with the
+  project Python 3.12 environment; Ruff, diff, and Graft graph checks passed.
+
 ## 5-Question Reboot Check
 
 | Question | Answer |

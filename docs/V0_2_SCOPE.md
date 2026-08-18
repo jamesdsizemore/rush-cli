@@ -73,3 +73,11 @@ Slow, networked, destructive, or environment-sensitive engines must be opt-in
 through config and rejected by default with a structured `skipped` result.
 Rush never reads credentials, never embeds keys, and never transmits repository
 content unless a user explicitly enables an external engine.
+
+## Language routing
+
+Rush detects Python, JavaScript, Go, Rust, Ruby, JVM, Swift, PHP, .NET,
+Elixir, Dart, Scala, and Nix project markers in stable order. A mixed project
+is aggregated deterministically; it never selects an arbitrary first
+ecosystem. Language CLI binaries are discovered at runtime and use check-only
+commands. Missing binaries return `skipped`; Rush does not install them.

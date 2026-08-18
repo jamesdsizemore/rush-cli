@@ -41,6 +41,7 @@ rush test ./tests
 rush commit-msg . --message "feat: add parser"  # validation only
 rush ci .                                      # local workflow inspection
 rush release .                                 # dry-run; never publishes by default
+rush lint .                                    # routes discovered language CLIs best-effort
 rush mcp serve            # stdio MCP server (for coding agents)
 ```
 

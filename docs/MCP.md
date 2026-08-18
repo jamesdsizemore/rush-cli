@@ -90,6 +90,13 @@ tools. `commit-msg` validates supplied text only; `ci` inspects local workflow
 configuration; and `release` returns a dry-run plan. No workflow result exposes
 credential values, rewrites history, creates tags, or publishes artifacts.
 
+### Language routing
+
+`lint`, `typecheck`, and `test` discover local project markers and may invoke
+multiple installed language engines. The aggregate is deterministic. Rush does
+not install or download foreign engines, and an unavailable executable returns
+`skipped` without affecting the stdio MCP transport.
+
 - Engines never inherit the server's stdin, preventing child tools from
   consuming or blocking the JSON-RPC transport.
 - Engine stdout and stderr are captured and returned only as structured

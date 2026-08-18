@@ -32,6 +32,13 @@ From `requirements.md` §2, the ones that shape this architecture:
 and credential-free, and release planning is dry-run-only. Hook installation
 and publication are never package-install side effects.
 
+### Language routing extensions (v0.2)
+
+Project markers select all applicable external language CLI adapters in stable
+order for `lint`, `typecheck`, and `test`. Results use the shared deterministic
+aggregator. Every foreign binary remains optional; missing engines are a
+structured `skipped` result, not a transport or package error.
+
 ---
 
 ## 2. Package layout (final)

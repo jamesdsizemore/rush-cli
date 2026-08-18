@@ -12,6 +12,34 @@ _SKIP_DIRS = frozenset(
     {".git", ".next", ".venv", "__pycache__", "build", "dist", "node_modules", "venv"}
 )
 
+_LANGUAGE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("python", ("pyproject.toml", "setup.py")),
+    ("javascript", ("package.json",)),
+    ("go", ("go.mod",)),
+    ("rust", ("Cargo.toml",)),
+    ("ruby", ("Gemfile",)),
+    ("jvm", ("pom.xml", "build.gradle", "build.gradle.kts")),
+    ("swift", ("Package.swift",)),
+    ("php", ("composer.json",)),
+    ("dotnet", ("*.sln", "*.csproj")),
+    ("elixir", ("mix.exs",)),
+    ("dart", ("pubspec.yaml",)),
+    ("scala", ("build.sbt",)),
+    ("nix", ("flake.nix",)),
+)
+
+
+def detect_project_languages(path: Path) -> list[str]:
+    """Return every detected ecosystem in stable catalog order."""
+    root = path if path.is_dir() else path.parent
+    if not root.is_dir():
+        return []
+    return [
+        language
+        for language, markers in _LANGUAGE_MARKERS
+        if any(any(root.glob(marker)) for marker in markers)
+    ]
+
 
 def combine_status(left: str, right: str) -> str:
     """Return the worst Rush status while preserving known status semantics."""
@@ -114,4 +142,9 @@ def _finding_sort_key(finding: Finding) -> tuple[str, int, int, str, str]:
     )
 
 
-__all__ = ["aggregate_results", "collect_files", "combine_status"]
+__all__ = [
+    "aggregate_results",
+    "collect_files",
+    "combine_status",
+    "detect_project_languages",
+]

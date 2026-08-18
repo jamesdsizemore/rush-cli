@@ -118,8 +118,8 @@ def _parse(raw: dict, source: Path) -> RushConfig:
     )
 
     tools: dict[str, ToolConfig] = {}
-    for tool_name in ("lint", "format", "test", "security"):
-        tr = raw.get("tools", {}).get(tool_name, {}) or {}
+    for tool_name, tr in (raw.get("tools", {}) or {}).items():
+        tr = tr or {}
         tools[tool_name] = ToolConfig(
             engine_args=list(tr.get("engine_args", [])),
             check=bool(tr.get("check", False)),

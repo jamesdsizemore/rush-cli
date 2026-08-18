@@ -23,7 +23,12 @@ from .common import (
     now_ms,
     run_engine,
 )
-from .routing import collect_files, combine_status
+from .routing import (
+    aggregate_results,
+    collect_files,
+    combine_status,
+    detect_project_languages,
+)
 
 
 class LintTool(ToolFn):
@@ -43,8 +48,23 @@ class LintTool(ToolFn):
         self, path: Path, *, engine_args: list[str] | None = None, config=None
     ) -> ToolResult:
         from ..engines import ENGINES
+        from ..engines.language import LANGUAGE_LINT_ENGINES
 
         start = now_ms()
+        language_results = [
+            run_engine(
+                LANGUAGE_LINT_ENGINES[language],
+                path,
+                engine_args or [],
+                tool_name="lint",
+            )
+            for language in detect_project_languages(path)
+            if language in LANGUAGE_LINT_ENGINES
+        ]
+        if language_results:
+            result = aggregate_results("lint", language_results)
+            result["duration_ms"] = elapsed_ms(start)
+            return result
         # Walk path: if it's a directory, find all supported files. If it's
         # a file, dispatch on its extension directly.
         targets = collect_files(
