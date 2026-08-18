@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from .actionlint import ActionlintEngine
 from .base import Engine
+from .cdxgen import CdxgenEngine
 from .checkov import CheckovEngine
 from .djlint import DjlintEngine
 from .eslint import EslintEngine
+from .gitleaks import GitleaksEngine
 from .hadolint import HadolintEngine
 from .jscpd import JscpdEngine
 from .knip import KnipEngine
@@ -53,6 +55,8 @@ ENGINES: dict[str, Engine] = {
     "hadolint": HadolintEngine(),
     "tflint": TflintEngine(),
     "checkov": CheckovEngine(),
+    "gitleaks": GitleaksEngine(),
+    "cdxgen": CdxgenEngine(),
 }
 
 __all__ = ["ENGINES", "Engine"]

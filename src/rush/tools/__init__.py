@@ -26,6 +26,8 @@ from .iac import IacTool
 from .lint import LintTool
 from .markdown import MarkdownTool
 from .review import ReviewTool
+from .sbom import SbomTool
+from .secrets import SecretsTool
 from .security import SecurityTool
 from .slop import SlopTool
 from .sql import SqlTool
@@ -51,6 +53,8 @@ ALL_TOOLS: list[ToolFn] = [
     TemplatesTool(),
     ContainerfileTool(),
     IacTool(),
+    SecretsTool(),
+    SbomTool(),
 ]
 
 __all__ = [

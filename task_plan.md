@@ -122,7 +122,7 @@ Phase 8 — v0.2 Catalog & Routing Foundation (in progress)
 - **Status:** in_progress — Task 5 static analysis and Task 6 content/infrastructure tools complete; Task 7 supply-chain tools remain
 
 ### Phase 10: Supply Chain & Test Quality Tools
-- [ ] Add `secrets` and `sbom` with secret-redaction and artifact safety contracts
+- [x] Add `secrets` and `sbom` with secret-redaction and artifact safety contracts
 - [ ] Add coverage and advanced test-quality tools with explicit slow/browser/network guards
 - [ ] Add JSON/JUnit/LCOV/Cobertura parser fixture coverage
 - **Deliverables:** supply-chain/test-quality modules, `tests/test_supply_chain_tools.py`, `tests/test_test_quality_tools.py`

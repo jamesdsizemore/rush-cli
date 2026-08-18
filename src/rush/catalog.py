@@ -172,6 +172,20 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Check Terraform at <path>; missing tflint returns status='skipped'.",
         ("tflint", "checkov"),
     ),
+    "secrets": ToolSpec(
+        "secrets",
+        "security",
+        "Scan for secrets without exposing values.",
+        "Scan for secrets at <path>; missing gitleaks returns status='skipped'.",
+        ("gitleaks",),
+    ),
+    "sbom": ToolSpec(
+        "sbom",
+        "security",
+        "Generate a safe SBOM artifact.",
+        "Generate an SBOM at <path>; missing cdxgen returns status='skipped'.",
+        ("cdxgen",),
+    ),
 }
 
 
@@ -321,6 +335,12 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
         ("tf",),
         (".terraform",),
         "security",
+    ),
+    "gitleaks": EngineSpec(
+        "gitleaks", "gitleaks", "install gitleaks", (), (), "security"
+    ),
+    "cdxgen": EngineSpec(
+        "cdxgen", "cdxgen", "npm install -g @cyclonedx/cdxgen", (), (), "security"
     ),
 }
 
