@@ -10,11 +10,11 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Tasks 9 through 12 are complete. No merge has been performed.
+Tasks 9 through 13 are complete. No merge has been performed.
 
 ## Current Phase
 
-Phase 11 — Workflow, Language & Context Expansion (Tasks 9–12 complete)
+Phase 11 — Workflow, Language & Context Expansion (Tasks 9–13 complete)
 
 ## Phases
 
@@ -135,8 +135,8 @@ Phase 11 — Workflow, Language & Context Expansion (Tasks 9–12 complete)
 - **Status:** pending
 
 ### Phase 12: Configuration, Documentation & Release Validation
-- [ ] Add generic per-tool `rush.toml` configuration and optional Python-engine extras
-- [ ] Document all tool, engine, installation, and safety semantics
+- [x] Add generic per-tool `rush.toml` configuration and optional Python-engine extras
+- [x] Document all tool, engine, installation, and safety semantics
 - [ ] Update CI with fixture-based core and representative real-engine coverage
 - [ ] Run fresh-clone, package, CLI/MCP parity, local, and remote CI gates
 - **Deliverables:** `docs/ENGINES.md`, `docs/CONFIGURATION.md`, `docs/TOOL_CATALOG.md`, `examples/rush.toml`, green CI evidence
@@ -188,6 +188,7 @@ Phase 11 — Workflow, Language & Context Expansion (Tasks 9–12 complete)
 | Task 10 language-engine contract research delegation failed after connection retries | 1 | No delegated findings accepted; implementation evidence remains local fixtures and project verification |
 | Task 12 semantic-drift registry parity initially omitted `ENGINE_SPECS` metadata | 1 | Add canonical engine specification and re-run catalog/engine contracts |
 | Task 12 final gate reported two Ruff-correctable import/style violations | 1 | Apply prescribed Ruff safe fix; full gate then passed |
+| Task 13 bundled documentation cross-link patch used duplicate README/changelog anchors | 1 | Re-read exact headings and apply smaller targeted documentation patches |
 
 ## Notes
 

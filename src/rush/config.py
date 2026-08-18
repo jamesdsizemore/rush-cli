@@ -111,6 +111,8 @@ def load_config(start: Path | None = None) -> RushConfig:
 
 
 def _parse(raw: dict, source: Path) -> RushConfig:
+    from .catalog import TOOL_SPECS
+
     project_raw = raw.get("project", {}) or {}
     project = ProjectConfig(
         src=list(project_raw.get("src", ["src"])),
@@ -120,6 +122,8 @@ def _parse(raw: dict, source: Path) -> RushConfig:
 
     tools: dict[str, ToolConfig] = {}
     for tool_name, tr in (raw.get("tools", {}) or {}).items():
+        if tool_name not in TOOL_SPECS:
+            raise RushConfigError(f"unknown tool in {source}: {tool_name}")
         tr = tr or {}
         tools[tool_name] = ToolConfig(
             engine_args=list(tr.get("engine_args", [])),

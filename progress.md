@@ -196,6 +196,13 @@
 - Full evidence: **108 passed, 7 expected external-engine skips** with the
   project Python 3.12 environment; Ruff, diff, and Graft graph checks passed.
 
+### 2026-08-18 — Task 13 complete
+
+- Added catalog-validated generic tool configuration, reference guides, and
+  a checked `examples/rush.toml`.
+- Evidence: configuration/catalog contracts passed and the project Python 3.12
+  suite passed **112 tests with 7 expected external-engine skips**.
+
 ## 5-Question Reboot Check
 
 | Question | Answer |

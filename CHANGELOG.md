@@ -6,6 +6,8 @@ All notable changes to Rush are documented here.
 
 ### Added
 
+- Catalog-validated per-tool `rush.toml` configuration, example configuration,
+  and dedicated configuration, engine, and tool-catalog references.
 - Experimental `semantic-drift` detection with explicit browser/slow-run
   execution guards and structured skipped defaults.
 - Best-effort deterministic language routing for Go, Rust, Ruby, JVM, Swift,

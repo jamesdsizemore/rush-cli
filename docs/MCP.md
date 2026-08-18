@@ -111,6 +111,9 @@ explicitly allow both browser and slow execution, and remains skipped until a
 local target is configured. The stdio MCP server never starts browsers or
 contacts a network by default.
 
+`rush.toml` tool sections are validated against the catalog; see
+[CONFIGURATION.md](CONFIGURATION.md) for the generic per-tool model.
+
 - Engines never inherit the server's stdin, preventing child tools from
   consuming or blocking the JSON-RPC transport.
 - Engine stdout and stderr are captured and returned only as structured

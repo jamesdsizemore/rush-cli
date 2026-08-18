@@ -51,6 +51,12 @@ The semantic-drift adapter is catalog-marked experimental and defaults to a
 canonical `skipped` result. Browser and slow-run permissions are both explicit;
 no browser, .NET command, fixture change, or network operation is implicit.
 
+### Catalog-validated configuration
+
+`tomllib` parses configuration without a new dependency, while `[tools.<name>]`
+names are validated against `TOOL_SPECS`. The catalog is therefore the shared
+CLI, MCP, engine-metadata, and configuration contract.
+
 ---
 
 ## 2. Package layout (final)

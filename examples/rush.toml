@@ -1,0 +1,16 @@
+[review]
+max_file_lines = 400
+use_graft = false
+
+[tools.typecheck]
+engine_args = ["--strict"]
+check = true
+
+[tools.coverage]
+engine_args = ["--branch"]
+
+[tools.e2e]
+check = true
+
+[tools.release]
+check = true

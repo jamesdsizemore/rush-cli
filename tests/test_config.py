@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from rush.config import _parse
+import pytest
+
+from rush.config import RushConfigError, _parse
 
 
-def test_preserves_language_specific_tool_configuration(tmp_path) -> None:
+def test_preserves_catalogued_tool_configuration(tmp_path) -> None:
     config = _parse(
-        {"tools": {"go-test": {"engine_args": ["-race"], "check": True}}},
+        {"tools": {"typecheck": {"engine_args": ["--strict"], "check": True}}},
         tmp_path / "rush.toml",
     )
 
-    assert config.tools["go-test"].engine_args == ["-race"]
-    assert config.tools["go-test"].check is True
+    assert config.tools["typecheck"].engine_args == ["--strict"]
+    assert config.tools["typecheck"].check is True
+
+
+def test_rejects_unknown_tool_configuration(tmp_path) -> None:
+    with pytest.raises(RushConfigError, match="unknown tool"):
+        _parse({"tools": {"typo-tool": {}}}, tmp_path / "rush.toml")

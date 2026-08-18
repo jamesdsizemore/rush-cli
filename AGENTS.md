@@ -34,4 +34,10 @@ transport.
 - Workflow tools must never rewrite Git history, install hooks, create tags,
   publish releases, or upload packages without explicit user-controlled flags.
 - Keep `research/` local and untracked.
+
+## v0.2 configuration
+
+Every `[tools.<name>]` table in `rush.toml` must match a canonical `TOOL_SPECS`
+entry. Update the catalog, configuration guide, and example together when
+adding a tool.
 - Do not commit, publish, or alter release versions unless explicitly asked.

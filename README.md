@@ -53,6 +53,9 @@ rush mcp serve            # stdio MCP server (for coding agents)
 - [`docs/V0_2_SCOPE.md`](docs/V0_2_SCOPE.md) — v0.2 scope, safety, and engine policy
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how it's built
 - [`docs/MCP.md`](docs/MCP.md) — agent configuration and MCP protocol contract
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — catalog-validated `rush.toml`
+- [`docs/ENGINES.md`](docs/ENGINES.md) — optional engine discovery and install hints
+- [`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md) — canonical tool/engine metadata
 - [`docs/PRE_COMMIT.md`](docs/PRE_COMMIT.md) — opt-in hook integration and workflow safety
 - [`AGENTS.md`](AGENTS.md) — contributor and transport constraints
 - [`CHANGELOG.md`](CHANGELOG.md) — alpha release notes
