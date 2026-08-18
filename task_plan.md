@@ -116,10 +116,10 @@ Phase 8 — v0.2 Catalog & Routing Foundation (in progress)
   - [x] `dead` — vulture/knip routing and unavailable-engine coverage
   - [x] `complexity` — radon/jscpd routing and unavailable-engine coverage
   - [x] `slop` — sloppylint adapter plus deterministic Rush JS/TS heuristic fallback
-- [ ] Add `markdown`, `actions`, `yaml`, `sql`, `templates`, `containerfile`, and `iac` tools/adapters
+- [x] Add `markdown`, `actions`, `yaml`, `sql`, `templates`, `containerfile`, and `iac` tools/adapters
 - [x] Add Task 5 parser fixtures, normalization, and opt-in real-engine contract tests
 - **Deliverables:** static/content tool and engine modules, `tests/test_static_tools.py`, `tests/test_content_infra_tools.py`
-- **Status:** in_progress — Task 5 static analysis complete; Task 6 content/infrastructure tools remain
+- **Status:** in_progress — Task 5 static analysis and Task 6 content/infrastructure tools complete; Task 7 supply-chain tools remain
 
 ### Phase 10: Supply Chain & Test Quality Tools
 - [ ] Add `secrets` and `sbom` with secret-redaction and artifact safety contracts

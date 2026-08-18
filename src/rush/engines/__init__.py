@@ -6,8 +6,12 @@ by name. Adding a new engine = add it here AND to ENGINES.
 
 from __future__ import annotations
 
+from .actionlint import ActionlintEngine
 from .base import Engine
+from .checkov import CheckovEngine
+from .djlint import DjlintEngine
 from .eslint import EslintEngine
+from .hadolint import HadolintEngine
 from .jscpd import JscpdEngine
 from .knip import KnipEngine
 from .markdownlint import MarkdownlintEngine
@@ -19,6 +23,9 @@ from .pytest import PytestEngine
 from .radon import RadonEngine
 from .ruff import RuffEngine
 from .sloppylint import SloppylintEngine
+from .spectral import SpectralEngine
+from .sqlfluff import SqlfluffEngine
+from .tflint import TflintEngine
 from .tsc import TscEngine
 from .vitest import VitestEngine
 from .vulture import VultureEngine
@@ -39,6 +46,13 @@ ENGINES: dict[str, Engine] = {
     "jscpd": JscpdEngine(),
     "sloppylint": SloppylintEngine(),
     "markdownlint-cli2": MarkdownlintEngine(),
+    "actionlint": ActionlintEngine(),
+    "spectral": SpectralEngine(),
+    "sqlfluff": SqlfluffEngine(),
+    "djlint": DjlintEngine(),
+    "hadolint": HadolintEngine(),
+    "tflint": TflintEngine(),
+    "checkov": CheckovEngine(),
 }
 
 __all__ = ["ENGINES", "Engine"]

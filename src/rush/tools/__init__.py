@@ -7,6 +7,7 @@ Architecture §3.5. ALL_TOOLS is iterated by both:
 
 from __future__ import annotations
 
+from .actions import ActionsTool
 from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import (
     engine_on_path,
@@ -18,15 +19,20 @@ from .common import (
     skipped_result,
 )
 from .complexity import ComplexityTool
+from .containerfile import ContainerfileTool
 from .dead import DeadTool
 from .format import FormatTool
+from .iac import IacTool
 from .lint import LintTool
 from .markdown import MarkdownTool
 from .review import ReviewTool
 from .security import SecurityTool
 from .slop import SlopTool
+from .sql import SqlTool
+from .templates import TemplatesTool
 from .test import TestTool
 from .typecheck import TypecheckTool
+from .yaml import YamlTool
 
 ALL_TOOLS: list[ToolFn] = [
     ReviewTool(),
@@ -39,6 +45,12 @@ ALL_TOOLS: list[ToolFn] = [
     ComplexityTool(),
     SlopTool(),
     MarkdownTool(),
+    ActionsTool(),
+    YamlTool(),
+    SqlTool(),
+    TemplatesTool(),
+    ContainerfileTool(),
+    IacTool(),
 ]
 
 __all__ = [

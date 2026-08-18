@@ -130,6 +130,48 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Check Markdown at <path> without rewriting; missing markdownlint-cli2 returns status='skipped'.",
         engine_names=("markdownlint-cli2",),
     ),
+    "actions": ToolSpec(
+        "actions",
+        "quality",
+        "Check GitHub Actions workflows.",
+        "Check Actions workflows at <path>; missing actionlint returns status='skipped'.",
+        ("actionlint",),
+    ),
+    "yaml": ToolSpec(
+        "yaml",
+        "quality",
+        "Check YAML and OpenAPI files.",
+        "Check YAML at <path>; missing spectral returns status='skipped'.",
+        ("spectral",),
+    ),
+    "sql": ToolSpec(
+        "sql",
+        "quality",
+        "Check SQL files.",
+        "Check SQL at <path>; missing sqlfluff returns status='skipped'.",
+        ("sqlfluff",),
+    ),
+    "templates": ToolSpec(
+        "templates",
+        "quality",
+        "Check HTML and template files.",
+        "Check templates at <path>; missing djlint returns status='skipped'.",
+        ("djlint",),
+    ),
+    "containerfile": ToolSpec(
+        "containerfile",
+        "quality",
+        "Check Dockerfile and Containerfile sources.",
+        "Check container files at <path>; missing hadolint returns status='skipped'.",
+        ("hadolint",),
+    ),
+    "iac": ToolSpec(
+        "iac",
+        "quality",
+        "Check Terraform infrastructure as code.",
+        "Check Terraform at <path>; missing tflint returns status='skipped'.",
+        ("tflint", "checkov"),
+    ),
 }
 
 
@@ -238,6 +280,47 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
         ("md", "mdx"),
         (),
         "lint",
+    ),
+    "actionlint": EngineSpec(
+        "actionlint",
+        "actionlint",
+        "install actionlint",
+        ("yml", "yaml"),
+        (".github/workflows",),
+        "lint",
+    ),
+    "spectral": EngineSpec(
+        "spectral",
+        "spectral",
+        "npm install -D @stoplight/spectral-cli",
+        ("yml", "yaml"),
+        (),
+        "lint",
+    ),
+    "sqlfluff": EngineSpec(
+        "sqlfluff", "sqlfluff", "pip install sqlfluff", ("sql",), (), "lint"
+    ),
+    "djlint": EngineSpec(
+        "djlint", "djlint", "pip install djlint", ("html", "jinja", "j2"), (), "lint"
+    ),
+    "hadolint": EngineSpec(
+        "hadolint",
+        "hadolint",
+        "install hadolint",
+        ("dockerfile", "containerfile"),
+        (),
+        "lint",
+    ),
+    "tflint": EngineSpec(
+        "tflint", "tflint", "install tflint", ("tf",), (".terraform",), "lint"
+    ),
+    "checkov": EngineSpec(
+        "checkov",
+        "checkov",
+        "pip install checkov",
+        ("tf",),
+        (".terraform",),
+        "security",
     ),
 }
 
