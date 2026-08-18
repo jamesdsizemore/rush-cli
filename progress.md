@@ -203,6 +203,13 @@
 - Evidence: configuration/catalog contracts passed and the project Python 3.12
   suite passed **112 tests with 7 expected external-engine skips**.
 
+### 2026-08-18 — Task 14 complete
+
+- Added a bounded Python-only representative-engine CI job; it does not
+  provision all optional language runtimes.
+- Local evidence: adapter suite **14 passed**, `pip-audit` reported no known
+  vulnerabilities, and `uv build` produced wheel and source artifacts.
+
 ## 5-Question Reboot Check
 
 | Question | Answer |
