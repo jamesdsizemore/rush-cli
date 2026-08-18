@@ -97,6 +97,13 @@ multiple installed language engines. The aggregate is deterministic. Rush does
 not install or download foreign engines, and an unavailable executable returns
 `skipped` without affecting the stdio MCP transport.
 
+### Optional Graft review context
+
+`review` is deterministic and heuristic-only by default. CLI users may pass
+`--use-graft`, or set `[review] use_graft = true`, to request local Graft
+context. Graft is never contacted over a network and unavailable local context
+is reported as augmentation metadata rather than failing the base review.
+
 - Engines never inherit the server's stdin, preventing child tools from
   consuming or blocking the JSON-RPC transport.
 - Engine stdout and stderr are captured and returned only as structured

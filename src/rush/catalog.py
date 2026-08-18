@@ -45,7 +45,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Review code for deterministic heuristic quality signals.",
         mcp_description=(
             "Review <path> with deterministic heuristics. Returns {status, findings[], "
-            "summary}; optional LLM use is explicit."
+            "summary}; optional LLM and local Graft context use are explicit."
         ),
         engine_names=(),
     ),

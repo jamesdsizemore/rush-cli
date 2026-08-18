@@ -36,6 +36,7 @@ respective checks.
 ```bash
 rush --help
 rush review ./src
+rush review ./src --use-graft               # optional local context only
 rush lint ./src --json
 rush test ./tests
 rush commit-msg . --message "feat: add parser"  # validation only

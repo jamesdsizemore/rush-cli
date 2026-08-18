@@ -49,6 +49,7 @@ class ToolConfig:
 class ReviewConfig:
     max_file_lines: int = 400
     fail_on: list[str] = field(default_factory=list)
+    use_graft: bool = False
 
 
 @dataclass
@@ -129,6 +130,7 @@ def _parse(raw: dict, source: Path) -> RushConfig:
     review = ReviewConfig(
         max_file_lines=int(review_raw.get("max_file_lines", 400)),
         fail_on=list(review_raw.get("fail_on", [])),
+        use_graft=bool(review_raw.get("use_graft", False)),
     )
 
     return RushConfig(

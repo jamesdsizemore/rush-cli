@@ -88,14 +88,15 @@ def cli(log_level: str) -> None:
     is_flag=True,
     help="Call configured LLM (ANTHROPIC_API_KEY or OPENAI_API_KEY).",
 )
+@click.option("--use-graft", is_flag=True, help="Add optional local Graft context.")
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def review(path, use_llm: bool, as_json: bool) -> None:
+def review(path, use_llm: bool, use_graft: bool, as_json: bool) -> None:
     """Review code for size, TODO density, docstrings, naming, complexity."""
     _run_tool(
         "review",
         path,
         as_json=as_json,
-        extra_kwargs={"use_llm": use_llm} if use_llm else None,
+        extra_kwargs={"use_llm": use_llm, "use_graft": use_graft},
     )
 
 

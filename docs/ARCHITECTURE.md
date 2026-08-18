@@ -39,6 +39,12 @@ order for `lint`, `typecheck`, and `test`. Results use the shared deterministic
 aggregator. Every foreign binary remains optional; missing engines are a
 structured `skipped` result, not a transport or package error.
 
+### Optional Graft review context
+
+`GraftContextProvider` is an injected local-only augmentation for `review`.
+It is disabled unless requested by `--use-graft` or configuration; no network,
+API key, Graft source import, or second MCP server is required.
+
 ---
 
 ## 2. Package layout (final)

@@ -39,13 +39,24 @@ class ReviewTool(ToolFn):
             "Default: heuristic. Pass use_llm=true to call configured model."
         )
 
-    def __call__(self, path: Path, use_llm: bool = False) -> ToolResult:
-        return self.run(path, use_llm=use_llm)
+    def __call__(
+        self, path: Path, use_llm: bool = False, use_graft: bool = False
+    ) -> ToolResult:
+        return self.run(path, use_llm=use_llm, use_graft=use_graft)
 
-    def run(self, path: Path, *, use_llm: bool = False, config=None) -> ToolResult:
+    def run(
+        self,
+        path: Path,
+        *,
+        use_llm: bool = False,
+        use_graft: bool = False,
+        graft_provider=None,
+        config=None,
+    ) -> ToolResult:
         max_lines = 400
         if config is not None and hasattr(config, "review"):
             max_lines = getattr(config.review, "max_file_lines", 400)
+            use_graft = use_graft or getattr(config.review, "use_graft", False)
 
         start = now_ms()
         targets = _collect_reviewable_files(path)
@@ -69,6 +80,19 @@ class ReviewTool(ToolFn):
             findings.extend(_todo_density_heuristic(f))
             findings.extend(_missing_docstrings_heuristic(f))
             findings.extend(_naming_heuristic(f))
+
+        graft_state = "not-requested"
+        if use_graft:
+            if graft_provider is None:
+                from ..integrations import LocalGraftContext
+
+                graft_provider = LocalGraftContext()
+            project_root = path if path.is_dir() else path.parent
+            if graft_provider.available(project_root):
+                findings.extend(graft_provider.context_for(path))
+                graft_state = "used"
+            else:
+                graft_state = "skipped-unavailable"
 
         # LLM augmentation (opt-in)
         review_kind = "heuristic"
@@ -118,6 +142,7 @@ class ReviewTool(ToolFn):
                 "heuristic_count": len(findings)
                 - sum(1 for f in findings if f.get("rule") == "llm-summary")
             },
+            metadata={"graft": graft_state},
             review_kind=review_kind,  # type: ignore[typeddict-item]
             review_provider=review_provider,
         )

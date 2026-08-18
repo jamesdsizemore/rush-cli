@@ -10,12 +10,12 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Task 10 is complete. Begin Task 11 with a fresh Git inspection, then add the
-explicitly opt-in Graft context provider, tests, documentation, and scoped commit.
+Task 11 is complete. Begin Task 12 with a fresh Git inspection and its RED
+experimental semantic-drift safety contracts.
 
 ## Current Phase
 
-Phase 11 — Workflow, Language & Context Expansion (Task 10 complete)
+Phase 11 — Workflow, Language & Context Expansion (Task 11 complete)
 
 ## Phases
 
@@ -130,7 +130,7 @@ Phase 11 — Workflow, Language & Context Expansion (Task 10 complete)
 ### Phase 11: Workflow, Language & Context Expansion
 - [ ] Add `commit-msg`, dry-run `ci`, and dry-run `release` tools
 - [ ] Add language/project routing for Go, Rust, Ruby, JVM, Swift, PHP, C#, Elixir, Dart, Scala, and Nix
-- [ ] Add optional, local Graft-backed review context
+- [x] Add optional, local Graft-backed review context
 - [ ] Add experimental semantic-drift adapter with opt-in execution guards
 - **Deliverables:** workflow/language/context modules, `tests/test_workflow_tools.py`, `tests/test_language_routing.py`, `tests/test_graft_integration.py`, `tests/test_semantic_drift.py`
 - **Status:** pending
@@ -186,6 +186,7 @@ Phase 11 — Workflow, Language & Context Expansion (Task 10 complete)
 | Task 10 type-engine map patch had an ambiguous dictionary boundary | 1 | Re-read current engine module and apply a narrower post-map insertion |
 | Task 10 bundled documentation patch used a stale findings heading | 1 | Re-read current document endings and split documentation changes into exact patches |
 | Task 10 full quality gate reported one test import-order violation | 1 | Apply Ruff safe auto-fix and re-run the full required gate |
+| Task 10 language-engine contract research delegation failed after connection retries | 1 | No delegated findings accepted; implementation evidence remains local fixtures and project verification |
 
 ## Notes
 
