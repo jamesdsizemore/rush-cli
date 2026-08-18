@@ -18,14 +18,10 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from rush.tools import ALL_TOOLS
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_TOOLS = {
-    "rush_review",
-    "rush_lint",
-    "rush_format",
-    "rush_test",
-    "rush_security",
-}
+EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS}
 
 
 def _run(coro):

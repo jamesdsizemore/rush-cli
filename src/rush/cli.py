@@ -17,6 +17,7 @@ from .config import RushConfigError, load_config
 from .logging import setup_logging
 from .theme import render_result
 from .tools import ALL_TOOLS
+from .tools.base import ToolFn
 
 
 def _run_tool(
@@ -43,6 +44,18 @@ def _run_tool(
     from .tools.common import exit_code_for
 
     sys.exit(exit_code_for(result))
+
+
+def build_catalog_path_command(tool: ToolFn) -> click.Command:
+    """Build the standard ``PATH --json`` CLI surface for a catalog tool."""
+
+    @click.command(name=tool.name, help=tool.mcp_description)
+    @click.argument("path", type=click.Path(exists=True, path_type=Path))
+    @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+    def command(path: Path, as_json: bool) -> None:
+        _run_tool(tool.name, path, as_json=as_json)
+
+    return command
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -88,14 +101,6 @@ def review(path, use_llm: bool, as_json: bool) -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def lint(path, as_json: bool) -> None:
-    """Lint Python (ruff) and JS/TS (eslint) files."""
-    _run_tool("lint", path, as_json=as_json)
-
-
-@cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "--check", "check_only", is_flag=True, help="Only check; don't modify files."
 )
@@ -108,22 +113,6 @@ def format(path, check_only: bool, as_json: bool) -> None:
         as_json=as_json,
         extra_kwargs={"check": check_only} if check_only else None,
     )
-
-
-@cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def test(path, as_json: bool) -> None:
-    """Run tests (pytest for Python, vitest/npm for JS/TS)."""
-    _run_tool("test", path, as_json=as_json)
-
-
-@cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def security(path, as_json: bool) -> None:
-    """Scan dependencies for known vulnerabilities (pip-audit / npm audit)."""
-    _run_tool("security", path, as_json=as_json)
 
 
 # --- MCP server subcommand -------------------------------------------------
@@ -142,6 +131,11 @@ def serve() -> None:
     from .mcp import run_stdio
 
     asyncio.run(run_stdio())
+
+
+for _catalog_tool in ALL_TOOLS:
+    if _catalog_tool.name not in {"review", "format"}:
+        cli.add_command(build_catalog_path_command(_catalog_tool))
 
 
 if __name__ == "__main__":

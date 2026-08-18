@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
+from .routing import collect_files, combine_status
 
 
 class FormatTool(ToolFn):
@@ -39,7 +40,14 @@ class FormatTool(ToolFn):
         from ..engines import ENGINES
 
         start = now_ms()
-        targets = _collect_files(path)
+        targets = collect_files(
+            path,
+            {
+                extension
+                for engine in ENGINES.values()
+                for extension in engine.file_extensions
+            },
+        )
 
         if not targets:
             return ToolResult(
@@ -73,14 +81,14 @@ class FormatTool(ToolFn):
             r = run_engine(ENGINES["ruff"], path, argv, tool_name="format")
             findings_all.extend(self._parse_ruff_format(r))
             engines_used.append("ruff")
-            last_status = _combine_status(last_status, r.get("status", "ok"))
+            last_status = combine_status(last_status, r.get("status", "ok"))
 
         if prettier_files:
             argv = ["--check", *[str(p) for p in prettier_files]]
             r = run_engine(ENGINES["prettier"], path, argv, tool_name="format")
             findings_all.extend(r.get("findings", []))
             engines_used.append("prettier")
-            last_status = _combine_status(last_status, r.get("status", "ok"))
+            last_status = combine_status(last_status, r.get("status", "ok"))
 
         if not engines_used:
             return ToolResult(
@@ -156,36 +164,3 @@ class FormatTool(ToolFn):
                             }
                         )
         return out
-
-
-def _collect_files(path: Path) -> list[Path]:
-    from ..engines import ENGINES
-
-    exts: set[str] = set()
-    for e in ENGINES.values():
-        exts.update(e.file_extensions)
-
-    if path.is_file():
-        return [path] if path.suffix.lstrip(".") in exts else []
-
-    if path.is_dir():
-        out: list[Path] = []
-        for ext in exts:
-            out.extend(path.rglob(f"*.{ext}"))
-        skip_dirs = {
-            ".venv",
-            "venv",
-            "node_modules",
-            "__pycache__",
-            ".git",
-            "dist",
-            "build",
-            ".next",
-        }
-        return [p for p in out if not any(part in skip_dirs for part in p.parts)]
-    return []
-
-
-def _combine_status(a: str, b: str) -> str:
-    rank = {"error": 4, "fail": 3, "warn": 2, "ok": 1, "skipped": 0}
-    return a if rank.get(a, 0) >= rank.get(b, 0) else b

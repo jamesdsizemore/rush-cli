@@ -711,3 +711,30 @@ Architecture pre-conditions checked before Phase 3 starts:
 - No languages beyond Python + JS/TS
 
 If Phase 3 implementation finds any of these creeping in, stop and surface it.
+
+---
+
+## 15. v0.2 architecture overlay
+
+v0.2 supersedes the fixed-five-tool assumptions above without changing the
+stdio-only MCP or canonical-result constraints. `catalog.py` is the declarative
+source for every ToolSpec and EngineSpec; `ALL_TOOLS` must have exactly one
+matching ToolSpec. Path-only tools are registered by the Click factory and by
+the existing MCP registry loop, while commands with safety-specific flags keep
+dedicated typed handlers.
+
+`tools/routing.py` owns deterministic source collection, status precedence,
+and multi-engine aggregation. Tool modules select compatible engines and call
+only `tools/common.py:run_engine()`. Engine adapters own argv formation and
+native-report parsing; they never print and they never call a subprocess outside
+the common gateway.
+
+The optional ToolResult fields `metrics`, `artifacts`, and `metadata` carry
+v0.2-specific data without changing the v0.1 minimum. Missing executables,
+disabled slow operations, and unsupported project types remain structured
+`skipped` results. Browser, fuzzing, network, publishing, and baseline-writing
+operations require explicit opt-in and are rejected by default.
+
+The full capability matrix and support levels live in `requirements.md` §9 and
+`docs/V0_2_SCOPE.md`; deferred cloud/credentialed capabilities do not enter the
+default runtime dependency set.

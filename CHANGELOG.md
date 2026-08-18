@@ -2,6 +2,20 @@
 
 All notable changes to Rush are documented here.
 
+## Unreleased — 0.2.0
+
+### Added
+
+- Catalog metadata, canonical result extensions, deterministic multi-engine
+  aggregation, and catalog-driven CLI/MCP transport foundations.
+- v0.2 scope, engine-discovery policy, safety guards, and capability
+  traceability documentation.
+
+### Changed
+
+- Shared lint/format source discovery and status precedence now use the routing
+  module rather than duplicated per-tool helpers.
+
 ## 0.1.0-alpha — 2026-08-17
 
 ### Added

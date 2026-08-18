@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from rush.catalog import ENGINE_SPECS
 from rush.engines import ENGINES
 from rush.engines.eslint import _eslint_severity
 from rush.engines.npm_audit import _npm_severity
@@ -19,16 +20,8 @@ from rush.engines.pytest import PytestEngine
 from rush.engines.ruff import RuffEngine, _ruff_severity
 
 
-def test_engines_registry_has_seven():
-    assert set(ENGINES.keys()) == {
-        "ruff",
-        "eslint",
-        "prettier",
-        "vitest",
-        "pytest",
-        "pip-audit",
-        "npm-audit",
-    }
+def test_engines_registry_matches_catalog():
+    assert set(ENGINES) == set(ENGINE_SPECS)
 
 
 @pytest.mark.skipif(

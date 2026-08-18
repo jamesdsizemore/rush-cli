@@ -1,0 +1,2 @@
+src/example.py:4: error: Incompatible types in assignment  [assignment]
+Found 1 error in 1 file (checked 1 source file)

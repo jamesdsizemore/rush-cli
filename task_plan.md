@@ -10,12 +10,13 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-All planned v0.1.0-alpha phases are complete. The next work is package
-publication when requested, then v0.2 scope selection and implementation.
+Phase 8 is in progress. Create the failing catalog/result-schema tests, then
+implement the metadata registry and shared routing foundation that every v0.2
+tool will use.
 
 ## Current Phase
 
-Phase 7 — Release Maintenance (complete)
+Phase 8 — v0.2 Catalog & Routing Foundation (in progress)
 
 ## Phases
 
@@ -97,6 +98,52 @@ Phase 7 — Release Maintenance (complete)
 - **Status:** complete
 - **Evidence:** GitHub Actions run `32081298431` passed all quality, audit, and build steps in 22 seconds with the Node-24 action releases.
 
+### Phase 8: v0.2 Catalog & Routing Foundation
+- [x] Read the approved v0.2 plan at `.hermes/plans/2026-08-17_164317-rush-v0-2-expansion.md`
+- [x] Build and query a local Graft wiring graph under `.hermes/graft/`
+- [x] Record `rtk`, context, codegraph, and Graft availability/results
+- [x] Create `docs/V0_2_SCOPE.md` and update v0.2 architecture/dependency policy
+- [x] Add failing catalog/result-schema tests
+- [x] Create `src/rush/catalog.py` and extensible ToolResult fields
+- [x] Extract deterministic routing/aggregation into `src/rush/tools/routing.py`
+- [x] Convert CLI/MCP help and registration to catalog-driven behavior
+- **Deliverables:** `docs/V0_2_SCOPE.md`, `src/rush/catalog.py`, `src/rush/tools/routing.py`, `tests/test_catalog.py`, `tests/test_cli_registry.py`
+- **Status:** complete — v0.2 foundation verified locally; capability batches follow
+
+### Phase 9: Static, Content & Infrastructure Tools
+- [x] Add `typecheck`, `dead`, `complexity`, and `slop` tools/adapters
+  - [x] `typecheck` — mypy/tsc routing and unavailable-engine coverage
+  - [x] `dead` — vulture/knip routing and unavailable-engine coverage
+  - [x] `complexity` — radon/jscpd routing and unavailable-engine coverage
+  - [x] `slop` — sloppylint adapter plus deterministic Rush JS/TS heuristic fallback
+- [ ] Add `markdown`, `actions`, `yaml`, `sql`, `templates`, `containerfile`, and `iac` tools/adapters
+- [x] Add Task 5 parser fixtures, normalization, and opt-in real-engine contract tests
+- **Deliverables:** static/content tool and engine modules, `tests/test_static_tools.py`, `tests/test_content_infra_tools.py`
+- **Status:** in_progress — Task 5 static analysis complete; Task 6 content/infrastructure tools remain
+
+### Phase 10: Supply Chain & Test Quality Tools
+- [ ] Add `secrets` and `sbom` with secret-redaction and artifact safety contracts
+- [ ] Add coverage and advanced test-quality tools with explicit slow/browser/network guards
+- [ ] Add JSON/JUnit/LCOV/Cobertura parser fixture coverage
+- **Deliverables:** supply-chain/test-quality modules, `tests/test_supply_chain_tools.py`, `tests/test_test_quality_tools.py`
+- **Status:** pending
+
+### Phase 11: Workflow, Language & Context Expansion
+- [ ] Add `commit-msg`, dry-run `ci`, and dry-run `release` tools
+- [ ] Add language/project routing for Go, Rust, Ruby, JVM, Swift, PHP, C#, Elixir, Dart, Scala, and Nix
+- [ ] Add optional, local Graft-backed review context
+- [ ] Add experimental semantic-drift adapter with opt-in execution guards
+- **Deliverables:** workflow/language/context modules, `tests/test_workflow_tools.py`, `tests/test_language_routing.py`, `tests/test_graft_integration.py`, `tests/test_semantic_drift.py`
+- **Status:** pending
+
+### Phase 12: Configuration, Documentation & Release Validation
+- [ ] Add generic per-tool `rush.toml` configuration and optional Python-engine extras
+- [ ] Document all tool, engine, installation, and safety semantics
+- [ ] Update CI with fixture-based core and representative real-engine coverage
+- [ ] Run fresh-clone, package, CLI/MCP parity, local, and remote CI gates
+- **Deliverables:** `docs/ENGINES.md`, `docs/CONFIGURATION.md`, `docs/TOOL_CATALOG.md`, `examples/rush.toml`, green CI evidence
+- **Status:** pending
+
 ## Key Questions
 
 1. **Single source of truth for tools.** CLI subcommands and MCP tools share the same canonical Python tool implementations.
@@ -124,6 +171,12 @@ Phase 7 — Release Maintenance (complete)
 | Error | Attempt | Resolution |
 |-------|---------|------------|
 | pydantic_core import broken in Hermes system venv | 1 | Irrelevant — rush uses its own uv-managed `.venv`; will pin `mcp` resolution fresh |
+| `context` command unavailable; codegraph has no project index | 1 | Used the installed `rtk` CLI and Graft's local key-free wiring graph; do not invent a context tool or index without user approval |
+| `graft callers ALL_TOOLS` cannot trace module-level constants | 1 | Used `graft grep` and `graft ask` to locate registry consumers and refactor seams |
+| New absent `ToolResult` fields failed FastMCP output validation | 1 | Keep v0.1 `ToolName` literal until tool expansion and annotate optional v0.2 fields as nullable (`T | None`) so FastMCP accepts omitted values |
+| Combined lint/format migration patch matched duplicate status lines ambiguously | 1 | Re-read current files, added the shared collector first, then applied context-specific tool migrations |
+| Ruff found an unused import in new routing code | 1 | Ran the project-prescribed Ruff auto-fix and formatter; all quality gates are green |
+| Static-analysis delegation failed before edits (API connection error after retries) | 1 | No delegated changes accepted; resumed Task 5 locally from the first complete capability |
 
 ## Notes
 

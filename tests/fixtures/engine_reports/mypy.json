@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/example.py",
+    "line": 4,
+    "column": 1,
+    "code": "assignment",
+    "message": "Incompatible types in assignment"
+  }
+]

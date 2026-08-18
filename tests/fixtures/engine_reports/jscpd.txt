@@ -1,0 +1,2 @@
+Found 1 duplicates.
+src/example.ts:10-15 - duplicate block

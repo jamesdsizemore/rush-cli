@@ -37,8 +37,10 @@ def test_imports():
 
 def test_all_tools_has_five():
     """ALL_TOOLS is the single registry. C3 — single source of truth."""
+    from rush.catalog import TOOL_SPECS
+
     names = sorted(t.name for t in ALL_TOOLS)
-    assert names == ["format", "lint", "review", "security", "test"]
+    assert names == sorted(TOOL_SPECS)
 
 
 def test_every_tool_has_short_mcp_description():

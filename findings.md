@@ -292,6 +292,18 @@ Discovery: walk up from cwd to git root, pick first `rush.toml`. CLI flags overr
 | Issue | Resolution |
 |-------|------------|
 | `pydantic_core` import error in Hermes system venv | Not our problem — rush uses its own uv-managed `.venv`; will pin `mcp` resolution fresh on `uv sync` |
+| Requested `context` CLI is absent and codegraph has no index | `rtk` is installed and used for compact repository status. Use Graft's local key-free wiring graph for project context; do not create a codegraph index unless the user asks. |
+
+## v0.2 Implementation Session — 2026-08-17
+
+- `rtk` is available at `C:\Users\james\.local\bin\rtk`; it was used for compact Git status.
+- No `context`, `ctx`, `code-context`, or `context7` executable is available on PATH.
+- The codegraph MCP service cannot inspect this repository because there is no `.codegraph/` index; indexing is explicitly the user's decision.
+- `graft` is installed. A key-free, non-deep structural graph was built in `.hermes/graft/`:
+  - 29 Python files, 201 nodes, 506 edges, and 29 cards.
+  - Graft automatically added `.hermes/graft/` to `.gitignore` as a local cache.
+  - `graft check` reports the wiring graph is fresh.
+- Graft located the v0.2 core refactor seam: `src/rush/tools/common.py` for subprocess/result utilities; `src/rush/tools/lint.py` and `src/rush/tools/format.py` for duplicated file/routing aggregation; `src/rush/tools/__init__.py`, `src/rush/cli.py`, and `src/rush/mcp.py` for fixed tool registration; and `src/rush/engines/__init__.py` for the fixed engine registry.
 
 ## Resources
 

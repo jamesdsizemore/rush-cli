@@ -23,6 +23,7 @@ from .common import (
     now_ms,
     run_engine,
 )
+from .routing import collect_files, combine_status
 
 
 class LintTool(ToolFn):
@@ -46,7 +47,14 @@ class LintTool(ToolFn):
         start = now_ms()
         # Walk path: if it's a directory, find all supported files. If it's
         # a file, dispatch on its extension directly.
-        targets = _collect_files(path, ENGINES["ruff"], ENGINES["eslint"])
+        targets = collect_files(
+            path,
+            {
+                extension
+                for engine in ENGINES.values()
+                for extension in engine.file_extensions
+            },
+        )
 
         if not targets:
             return ToolResult(
@@ -83,7 +91,7 @@ class LintTool(ToolFn):
             findings_all.extend(r.get("findings", []))
             engines_used.append("ruff")
             summaries.append(r.get("summary", ""))
-            last_status = _combine_status(last_status, r.get("status", "ok"))
+            last_status = combine_status(last_status, r.get("status", "ok"))
 
         if eslint_files:
             eslint_args = [str(p) for p in eslint_files] + (engine_args or [])
@@ -91,7 +99,7 @@ class LintTool(ToolFn):
             findings_all.extend(r.get("findings", []))
             engines_used.append("eslint")
             summaries.append(r.get("summary", ""))
-            last_status = _combine_status(last_status, r.get("status", "ok"))
+            last_status = combine_status(last_status, r.get("status", "ok"))
 
         # If neither engine is installed, return a single skipped result.
         if not engines_used:
@@ -151,50 +159,3 @@ class LintTool(ToolFn):
             findings=findings_all,
             raw=None,
         )
-
-
-def _collect_files(path: Path, *engines) -> list[Path]:
-    """Walk `path` (file or dir) and return supported source files."""
-    from ..engines import ENGINES
-
-    # Build the union of supported extensions
-    exts: set[str] = set()
-    for e in ENGINES.values():
-        exts.update(e.file_extensions)
-
-    if path.is_file():
-        return [path] if path.suffix.lstrip(".") in exts else []
-
-    if path.is_dir():
-        out: list[Path] = []
-        for ext in exts:
-            out.extend(path.rglob(f"*.{ext}"))
-        # Filter out common noise
-        skip_dirs = {
-            ".venv",
-            "venv",
-            "node_modules",
-            "__pycache__",
-            ".git",
-            "dist",
-            "build",
-            ".next",
-        }
-        return [
-            p
-            for p in out
-            if not any(part in skip_dirs for part in p.parts)
-            # also skip hidden dirs
-            and not any(
-                part.startswith(".") and part not in (".",)
-                for part in p.relative_to(path).parts
-            )
-        ]
-
-    return []
-
-
-def _combine_status(a: str, b: str) -> str:
-    """Combine two statuses; worst one wins (error > fail > warn > ok > skipped)."""
-    rank = {"error": 4, "fail": 3, "warn": 2, "ok": 1, "skipped": 0}
-    return a if rank.get(a, 0) >= rank.get(b, 0) else b

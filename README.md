@@ -7,6 +7,11 @@
 through the CLI and the same canonical implementations through its local stdio
 MCP server.
 
+**v0.2 is in progress.** Its catalog-driven transport, deterministic routing,
+and compatibility contract are documented in [`docs/V0_2_SCOPE.md`](docs/V0_2_SCOPE.md).
+Engines remain discovered from the local environment; new capability names are
+not advertised as supported until their adapters and tests ship.
+
 ## Install
 
 ```bash
@@ -39,6 +44,7 @@ rush mcp serve            # stdio MCP server (for coding agents)
 ## Documentation
 
 - [`requirements.md`](requirements.md) — what ships in v0.1
+- [`docs/V0_2_SCOPE.md`](docs/V0_2_SCOPE.md) — v0.2 scope, safety, and engine policy
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how it's built
 - [`docs/MCP.md`](docs/MCP.md) — agent configuration and MCP protocol contract
 - [`AGENTS.md`](AGENTS.md) — contributor and transport constraints

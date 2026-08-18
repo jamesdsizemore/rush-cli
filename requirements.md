@@ -353,3 +353,59 @@ Phase 1 is complete when:
 - `task_plan.md` reflects the current scope ✓
 - `progress.md` logs Phase 1 as complete
 - Phase 1 checkboxes in `task_plan.md` are all ticked
+
+---
+
+## 9. v0.2 expansion contract
+
+v0.2 retains every hard constraint in §2 and extends the catalog-driven tool
+surface. Engine executables remain externally discovered; Python-native
+installations may be documented as optional extras but no Rush command silently
+installs an engine. See [`docs/V0_2_SCOPE.md`](docs/V0_2_SCOPE.md) for output,
+safety, and status contracts.
+
+| Capability | Primary engine(s) | Fallback / routing marker | Support |
+|---|---|---|---|
+| `typecheck` | mypy, tsc | `pyproject.toml`, `package.json` | stable |
+| `dead` | vulture, knip | Python/JS source markers | best-effort |
+| `complexity` | radon, jscpd | Python/JS source markers | best-effort |
+| `slop` | sloppylint, deterministic heuristics | Python/JS source markers | experimental |
+| `markdown` | markdownlint-cli2 | `.md`, `.mdx` | stable |
+| `actions` | actionlint | `.github/workflows/*.yml` | stable |
+| `yaml` | spectral | `.yaml`, `.yml`, OpenAPI markers | best-effort |
+| `sql` | sqlfluff | `.sql`, dbt markers | stable |
+| `templates` | djlint | `.html`, `.jinja`, Django markers | best-effort |
+| `containerfile` | hadolint | `Dockerfile*`, `Containerfile*` | stable |
+| `iac` | tflint, checkov | `.tf`, Terraform markers | stable |
+| `secrets` | gitleaks | repository root; values always redacted | stable |
+| `sbom` | cdxgen | explicit safe output path | best-effort |
+| `coverage` | coverage.py, c8/nyc | project test configuration | stable |
+| `mutation` | mutmut, Stryker | explicit `allow_slow` | experimental |
+| `e2e` | Playwright | explicit `allow_browser` | best-effort |
+| `pbt` | Hypothesis, fast-check | existing tests only | best-effort |
+| `visual` / `snapshot` | project snapshot runner | explicit baseline acceptance | best-effort |
+| `flaky` | JUnit/history parser | existing reports only | experimental |
+| `fuzz` | configured fuzz target | explicit `allow_fuzz` | experimental |
+| `load` | k6, Locust | explicit `allow_network` | experimental |
+| `contract` | Pact configuration | existing suites only | best-effort |
+| `commit-msg` | commitlint | commit message or Git metadata | stable |
+| `ci` | actionlint plus workflow checks | CI configuration | best-effort |
+| `release` | Git metadata checks | dry-run by default | experimental |
+| language routing | native ecosystem CLIs | Go/Rust/Java/.NET/Ruby/PHP/C/C++/Dart/Swift/Kotlin/Lua/Elixir markers | best-effort |
+| `context` | Graft graph queries | local Graft graph only | experimental |
+| `semantic-drift` | documented external detector | explicit opt-in | experimental |
+
+Cloud AI review, hosted OSV enrichment, license policy enforcement, and all
+non-stdio MCP transports remain deferred. Slow, browser, fuzzing, networked,
+or publishing operations must return `skipped` until explicitly enabled.
+
+### v0.2 traceability
+
+| Requirement | Test evidence |
+|---|---|
+| catalog identity and optional result fields | `tests/test_catalog.py`, `tests/test_base.py` |
+| deterministic routing and aggregation | `tests/test_routing.py`, `tests/test_tools.py` |
+| CLI/MCP parity | `tests/test_cli_registry.py`, `tests/test_mcp.py` |
+| engine parser and missing-binary behavior | per-family adapter tests and fixtures |
+| opt-in safety controls | test-quality and workflow tool tests |
+| stdio-only transport / stderr logging | `tests/test_mcp.py`, `tests/test_logging.py` |

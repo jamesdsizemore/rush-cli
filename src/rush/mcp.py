@@ -8,19 +8,25 @@ avoids collisions with other MCP servers in multi-server agent sessions).
 
 from __future__ import annotations
 
+from .catalog import TOOL_SPECS
 from .logging import get_logger
 from .tools import ALL_TOOLS
 
 SERVER_NAME = "rush"
-SERVER_INSTRUCTIONS = (
-    "rush — code-quality tools for coding agents. "
-    "Five tools: rush_review, rush_lint, rush_format, rush_test, rush_security. "
-    "Each takes a path (file or directory) and returns a structured JSON "
-    "with status (ok|warn|fail|error|skipped), findings, and summary. "
-    "If status='skipped', the underlying engine (ruff/eslint/etc.) is not "
-    "installed; install it or pick a different path. "
-    "Pairs well with `npx @nanonets/graft` for context-graph queries."
-)
+
+
+def build_server_instructions() -> str:
+    """Describe the live catalog without duplicating a fixed tool list."""
+    tool_names = ", ".join(f"rush_{name}" for name in TOOL_SPECS)
+    return (
+        "rush — code-quality tools for coding agents. "
+        f"Available tools: {tool_names}. "
+        "Each takes a path (file or directory) and returns a structured JSON "
+        "with status (ok|warn|fail|error|skipped), findings, and summary. "
+        "If status='skipped', the underlying engine is not installed; install it "
+        "or pick a different path. Pairs well with `npx @nanonets/graft` for "
+        "context-graph queries."
+    )
 
 
 def build_server():
@@ -30,7 +36,7 @@ def build_server():
     """
     from mcp.server.fastmcp import FastMCP
 
-    server = FastMCP(SERVER_NAME, instructions=SERVER_INSTRUCTIONS)
+    server = FastMCP(SERVER_NAME, instructions=build_server_instructions())
     _register_tools(server)
     return server
 

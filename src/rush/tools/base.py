@@ -15,7 +15,7 @@ from typing import Any, Literal, TypedDict
 # --- String literal unions --------------------------------------------------
 
 ToolStatus = Literal["ok", "warn", "fail", "error", "skipped"]
-ToolName = Literal["review", "lint", "format", "test", "security"]
+ToolName = str
 Severity = Literal["info", "warn", "error"]
 LlmStatus = Literal["heuristic", "llm"]  # never "reviewed" — requirement C7
 
@@ -54,6 +54,10 @@ class ToolResult(TypedDict, total=False):
     # review-only:
     review_kind: LlmStatus | None
     review_provider: str | None
+    # v0.2 optional extensions. Existing consumers can ignore these fields.
+    metrics: dict[str, int | float | str] | None
+    artifacts: list[str] | None
+    metadata: dict[str, Any] | None
 
 
 # --- Base class -------------------------------------------------------------

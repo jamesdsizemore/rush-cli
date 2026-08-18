@@ -21,3 +21,6 @@ htmlcov/
 
 # uv
 .uv/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+.hermes/graft/

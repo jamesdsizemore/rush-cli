@@ -1,0 +1,5 @@
+{
+  "src/example.py": [
+    {"name": "too_complex", "lineno": 5, "complexity": 12}
+  ]
+}

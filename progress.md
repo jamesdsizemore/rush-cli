@@ -151,6 +151,29 @@
 | Release-maintenance CI gate | `uv sync --all-extras --frozen`; lint, tests, audit, build | reproducible quality and packaging checks | 50 passed; no known vulnerabilities; wheel + sdist built | pass |
 | Remote CI | GitHub Actions run `32081298431` | workflow completes without platform warnings | all quality and build steps passed in 22s | pass |
 
+### Phase 8: v0.2 Catalog & Routing Foundation
+- **Status:** in_progress
+- **Started:** 2026-08-17
+- Restored the persistent project plan, progress, and findings before beginning v0.2 implementation.
+- Read the approved implementation plan at `.hermes/plans/2026-08-17_164317-rush-v0-2-expansion.md`.
+- Tool context: `rtk` is installed and used; no `context` executable is available; the codegraph service cannot query this unindexed repository.
+- Built and queried Graft's local key-free wiring graph under `.hermes/graft/`. It found the intended refactor hotspots and reports fresh state. The first `graft callers ALL_TOOLS` query failed because module constants are not graph symbols; the corrected `graft grep` and `graft ask` queries located all registry consumers.
+- TDD catalog slice: `tests/test_catalog.py` first failed because `rush.catalog` did not exist. Added `src/rush/catalog.py` with v0.1 metadata plus the v0.2 result extensions (`metrics`, `artifacts`, `metadata`).
+- Regression correction: initially widening `ToolName` to `str` broke the existing literal contract and non-null optional extensions caused FastMCP to reject omitted fields. Restored the current literal pending tool registration and made v0.2 fields nullable.
+- Evidence: focused catalog + real stdio MCP tests passed (**4 passed**); full project-v​​env suite passed **53/53**.
+- TDD routing slice: `tests/test_routing.py` first failed for the absent routing module, then verified deterministic status ranking, stable finding ordering, metric/artifact merging, and generated-directory filtering. `src/rush/tools/lint.py` and `src/rush/tools/format.py` now share `routing.py` instead of duplicating file collection/status ranking.
+- A combined migration patch was rejected because duplicate update lines were ambiguous; re-read the files and applied a context-specific replacement. Ruff then found one unused import; the prescribed `ruff --fix` and formatter resolved it.
+- Evidence: routing/tool/MCP focused tests passed (**18 passed**); full project-v​​env suite passed **56/56**; Ruff, format check, and `git diff --check` passed.
+- Next: write the failing catalog-driven CLI/MCP instruction test before removing static transport assumptions.
+
+### 2026-08-17 — v0.2 foundation complete
+
+- Added `docs/V0_2_SCOPE.md`, v0.2 requirements/architecture overlays, and an Unreleased changelog entry. The dependency policy preserves external engine discovery; no engine is silently installed.
+- Replaced the five-name `ToolName` literal with `str`, added catalog-backed generic Click commands for ordinary path tools, and generated MCP server instructions from `TOOL_SPECS`. `review` and `format` retain their dedicated option surfaces.
+- Evidence: focused base/CLI/MCP tests passed (**20 passed**); full project-v​​env suite passed **60/60**.
+- Next: verify the static-analysis family against fixtures, skipped-engine behavior, real registry discovery, and the complete quality gate.
+- Static-analysis delegation did not alter the repository: its API connection failed after retries. The capability work has been resumed locally; no delegation output is treated as implementation evidence.
+
 ## Error Log
 
 | Timestamp | Error | Attempt | Resolution |

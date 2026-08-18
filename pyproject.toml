@@ -55,4 +55,11 @@ markers = [
     "needs_pip_audit: test requires `pip-audit` on PATH",
     "needs_npm: test requires `npm` on PATH",
     "needs_npm_audit: test requires `npm audit` to work",
+    "needs_mypy: test requires `mypy` on PATH",
+    "needs_tsc: test requires `tsc` on PATH",
+    "needs_vulture: test requires `vulture` on PATH",
+    "needs_knip: test requires `knip` on PATH",
+    "needs_radon: test requires `radon` on PATH",
+    "needs_jscpd: test requires `jscpd` on PATH",
+    "needs_sloppylint: test requires `sloppylint` on PATH",
 ]

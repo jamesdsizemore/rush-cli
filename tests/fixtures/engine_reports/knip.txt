@@ -1,0 +1,2 @@
+Unused exports (1)
+  unusedHelper  src/example.ts:3

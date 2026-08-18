@@ -25,8 +25,8 @@ def test_tool_status_literal():
     assert ToolStatus.__args__ == ("ok", "warn", "fail", "error", "skipped")
 
 
-def test_tool_name_literal():
-    assert ToolName.__args__ == ("review", "lint", "format", "test", "security")
+def test_tool_name_is_extensible_string_identifier():
+    assert ToolName is str
 
 
 def test_severity_literal():
