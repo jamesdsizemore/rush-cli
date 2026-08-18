@@ -142,6 +142,10 @@ Phase 12 — Configuration, Documentation & Release Validation (Tasks 9–15 com
 - **Deliverables:** `docs/ENGINES.md`, `docs/CONFIGURATION.md`, `docs/TOOL_CATALOG.md`, `examples/rush.toml`, green CI evidence
 - **Status:** complete
 
+Remote CI evidence: GitHub Actions run `32184793416` passed both the full
+quality/package job and bounded representative Python-engine smoke job for
+candidate `e9bb242`. No tag or release was created.
+
 ## Key Questions
 
 1. **Single source of truth for tools.** CLI subcommands and MCP tools share the same canonical Python tool implementations.
