@@ -39,6 +39,14 @@ class EngineSpec:
 
 
 TOOL_SPECS: dict[str, ToolSpec] = {
+    "semantic-drift": ToolSpec(
+        name="semantic-drift",
+        category="test",
+        description="Experimental browser-locator semantic drift detection.",
+        mcp_description="Experimental semantic drift analysis; requires explicit browser and slow-run permission.",
+        engine_names=("semantic-drift",),
+        experimental=True,
+    ),
     "review": ToolSpec(
         name="review",
         category="quality",
@@ -435,6 +443,14 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
     ),
     "commitlint": EngineSpec(
         "commitlint", "commitlint", "npm install -D @commitlint/cli", (), (), "workflow"
+    ),
+    "semantic-drift": EngineSpec(
+        "semantic-drift",
+        "semantic-drift",
+        "configure a local .NET or Playwright semantic-drift target",
+        (),
+        (),
+        "test",
     ),
 }
 

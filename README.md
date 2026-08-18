@@ -37,6 +37,7 @@ respective checks.
 rush --help
 rush review ./src
 rush review ./src --use-graft               # optional local context only
+rush semantic-drift .                       # experimental; safely skipped by default
 rush lint ./src --json
 rush test ./tests
 rush commit-msg . --message "feat: add parser"  # validation only

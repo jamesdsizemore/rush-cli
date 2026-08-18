@@ -6,6 +6,8 @@ All notable changes to Rush are documented here.
 
 ### Added
 
+- Experimental `semantic-drift` detection with explicit browser/slow-run
+  execution guards and structured skipped defaults.
 - Best-effort deterministic language routing for Go, Rust, Ruby, JVM, Swift,
   PHP, .NET, Elixir, Dart, Scala, and Nix markers across lint/type/test flows.
 - Non-mutating developer-workflow tools: `commit-msg`, local `ci` workflow

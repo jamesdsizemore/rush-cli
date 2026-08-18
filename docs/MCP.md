@@ -104,6 +104,13 @@ not install or download foreign engines, and an unavailable executable returns
 context. Graft is never contacted over a network and unavailable local context
 is reported as augmentation metadata rather than failing the base review.
 
+### Experimental semantic drift
+
+`semantic-drift` is registered as experimental. It is skipped unless callers
+explicitly allow both browser and slow execution, and remains skipped until a
+local target is configured. The stdio MCP server never starts browsers or
+contacts a network by default.
+
 - Engines never inherit the server's stdin, preventing child tools from
   consuming or blocking the JSON-RPC transport.
 - Engine stdout and stderr are captured and returned only as structured

@@ -45,6 +45,12 @@ structured `skipped` result, not a transport or package error.
 It is disabled unless requested by `--use-graft` or configuration; no network,
 API key, Graft source import, or second MCP server is required.
 
+### Experimental semantic drift
+
+The semantic-drift adapter is catalog-marked experimental and defaults to a
+canonical `skipped` result. Browser and slow-run permissions are both explicit;
+no browser, .NET command, fixture change, or network operation is implicit.
+
 ---
 
 ## 2. Package layout (final)

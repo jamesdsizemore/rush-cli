@@ -40,6 +40,7 @@ from .review import ReviewTool
 from .sbom import SbomTool
 from .secrets import SecretsTool
 from .security import SecurityTool
+from .semantic_drift import SemanticDriftTool
 from .slop import SlopTool
 from .snapshot import SnapshotTool
 from .sql import SqlTool
@@ -81,6 +82,7 @@ ALL_TOOLS: list[ToolFn] = [
     CommitMsgTool(),
     CiTool(),
     ReleaseTool(),
+    SemanticDriftTool(),
 ]
 
 __all__ = [
@@ -96,6 +98,7 @@ __all__ = [
     # concrete tool classes (for testing)
     "ReviewTool",
     "SecurityTool",
+    "SemanticDriftTool",
     "Severity",
     "SlopTool",
     "TestTool",

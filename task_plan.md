@@ -10,12 +10,11 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Task 11 is complete. Begin Task 12 with a fresh Git inspection and its RED
-experimental semantic-drift safety contracts.
+Tasks 9 through 12 are complete. No merge has been performed.
 
 ## Current Phase
 
-Phase 11 — Workflow, Language & Context Expansion (Task 11 complete)
+Phase 11 — Workflow, Language & Context Expansion (Tasks 9–12 complete)
 
 ## Phases
 
@@ -131,7 +130,7 @@ Phase 11 — Workflow, Language & Context Expansion (Task 11 complete)
 - [ ] Add `commit-msg`, dry-run `ci`, and dry-run `release` tools
 - [ ] Add language/project routing for Go, Rust, Ruby, JVM, Swift, PHP, C#, Elixir, Dart, Scala, and Nix
 - [x] Add optional, local Graft-backed review context
-- [ ] Add experimental semantic-drift adapter with opt-in execution guards
+- [x] Add experimental semantic-drift adapter with opt-in execution guards
 - **Deliverables:** workflow/language/context modules, `tests/test_workflow_tools.py`, `tests/test_language_routing.py`, `tests/test_graft_integration.py`, `tests/test_semantic_drift.py`
 - **Status:** pending
 
@@ -187,6 +186,8 @@ Phase 11 — Workflow, Language & Context Expansion (Task 11 complete)
 | Task 10 bundled documentation patch used a stale findings heading | 1 | Re-read current document endings and split documentation changes into exact patches |
 | Task 10 full quality gate reported one test import-order violation | 1 | Apply Ruff safe auto-fix and re-run the full required gate |
 | Task 10 language-engine contract research delegation failed after connection retries | 1 | No delegated findings accepted; implementation evidence remains local fixtures and project verification |
+| Task 12 semantic-drift registry parity initially omitted `ENGINE_SPECS` metadata | 1 | Add canonical engine specification and re-run catalog/engine contracts |
+| Task 12 final gate reported two Ruff-correctable import/style violations | 1 | Apply prescribed Ruff safe fix; full gate then passed |
 
 ## Notes
 

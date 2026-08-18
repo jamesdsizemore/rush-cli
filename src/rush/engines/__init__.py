@@ -25,6 +25,7 @@ from .prettier import PrettierEngine
 from .pytest import PytestEngine
 from .radon import RadonEngine
 from .ruff import RuffEngine
+from .semantic_drift import SemanticDriftEngine
 from .sloppylint import SloppylintEngine
 from .spectral import SpectralEngine
 from .sqlfluff import SqlfluffEngine
@@ -59,6 +60,7 @@ ENGINES: dict[str, Engine] = {
     "commitlint": CommitlintEngine(),
     "gitleaks": GitleaksEngine(),
     "cdxgen": CdxgenEngine(),
+    "semantic-drift": SemanticDriftEngine(),
 }
 
 __all__ = ["ENGINES", "Engine"]
