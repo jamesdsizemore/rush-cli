@@ -210,6 +210,14 @@
 - Local evidence: adapter suite **14 passed**, `pip-audit` reported no known
   vulnerabilities, and `uv build` produced wheel and source artifacts.
 
+### 2026-08-18 — Task 15 release-candidate validation complete
+
+- Fresh remote clone completed `uv sync --all-extras --frozen` in a new venv.
+- Isolated clean-clone CLI/MCP catalog tests passed (**5 passed**) and a real
+  lint run returned a canonical `ok` result.
+- Built wheel and sdist installed independently in two fresh Python 3.12
+  environments and both imported Rush successfully. No tag or release made.
+
 ## 5-Question Reboot Check
 
 | Question | Answer |
