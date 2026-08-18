@@ -6,6 +6,9 @@ All notable changes to Rush are documented here.
 
 ### Added
 
+- Non-mutating developer-workflow tools: `commit-msg`, local `ci` workflow
+  inspection, and dry-run-only `release` planning.
+- Optional `commitlint` discovery metadata and opt-in pre-commit guidance.
 - Catalog metadata, canonical result extensions, deterministic multi-engine
   aggregation, and catalog-driven CLI/MCP transport foundations.
 - v0.2 scope, engine-discovery policy, safety guards, and capability

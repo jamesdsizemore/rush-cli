@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from .actions import ActionsTool
 from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
+from .ci import CiTool
+from .commit_msg import CommitMsgTool
 from .common import (
     engine_on_path,
     error_result,
@@ -33,6 +35,7 @@ from .load import LoadTool
 from .markdown import MarkdownTool
 from .mutation import MutationTool
 from .pbt import PbtTool
+from .release import ReleaseTool
 from .review import ReviewTool
 from .sbom import SbomTool
 from .secrets import SecretsTool
@@ -75,6 +78,9 @@ ALL_TOOLS: list[ToolFn] = [
     ContractTool(),
     FuzzTool(),
     LoadTool(),
+    CommitMsgTool(),
+    CiTool(),
+    ReleaseTool(),
 ]
 
 __all__ = [

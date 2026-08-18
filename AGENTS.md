@@ -31,5 +31,7 @@ transport.
 - Keep results in the canonical ToolResult shape: tool, engine/version, status,
   duration, summary, findings.
 - Never write secrets to logs or tool output; redact them as `[REDACTED]`.
+- Workflow tools must never rewrite Git history, install hooks, create tags,
+  publish releases, or upload packages without explicit user-controlled flags.
 - Keep `research/` local and untracked.
 - Do not commit, publish, or alter release versions unless explicitly asked.

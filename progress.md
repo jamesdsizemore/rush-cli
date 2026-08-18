@@ -179,6 +179,15 @@
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|
 | 2026-08-16 | pydantic_core import broken in Hermes system venv | 1 | Irrelevant — rush uses its own `.venv` |
+| 2026-08-17 | Task 9 multi-document patch used a stale changelog heading | 1 | Re-read exact document contexts and applied targeted patches |
+
+### 2026-08-17 — Task 9 in progress
+
+- Began with `git status`, branch/log inspection, and a fresh Graft build/check.
+- Wrote RED workflow safety tests; expected collection failure confirmed absent
+  Task 9 modules. Implemented non-mutating commit validation, local CI
+  inspection, dry-run release planning, and optional commitlint discovery.
+- Focused evidence: `17 passed` with the project Python 3.12 environment.
 
 ## 5-Question Reboot Check
 

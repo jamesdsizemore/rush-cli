@@ -38,6 +38,9 @@ rush --help
 rush review ./src
 rush lint ./src --json
 rush test ./tests
+rush commit-msg . --message "feat: add parser"  # validation only
+rush ci .                                      # local workflow inspection
+rush release .                                 # dry-run; never publishes by default
 rush mcp serve            # stdio MCP server (for coding agents)
 ```
 
@@ -47,6 +50,7 @@ rush mcp serve            # stdio MCP server (for coding agents)
 - [`docs/V0_2_SCOPE.md`](docs/V0_2_SCOPE.md) — v0.2 scope, safety, and engine policy
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how it's built
 - [`docs/MCP.md`](docs/MCP.md) — agent configuration and MCP protocol contract
+- [`docs/PRE_COMMIT.md`](docs/PRE_COMMIT.md) — opt-in hook integration and workflow safety
 - [`AGENTS.md`](AGENTS.md) — contributor and transport constraints
 - [`CHANGELOG.md`](CHANGELOG.md) — alpha release notes
 - [`findings.md`](findings.md) — research + decisions

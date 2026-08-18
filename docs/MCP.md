@@ -83,6 +83,13 @@ is a completed scan that found issues; it is not an MCP transport failure.
 
 ## Safety and process behavior
 
+### Workflow tools
+
+The MCP catalog exposes `commit-msg`, `ci`, and `release` as local safety
+tools. `commit-msg` validates supplied text only; `ci` inspects local workflow
+configuration; and `release` returns a dry-run plan. No workflow result exposes
+credential values, rewrites history, creates tags, or publishes artifacts.
+
 - Engines never inherit the server's stdin, preventing child tools from
   consuming or blocking the JSON-RPC transport.
 - Engine stdout and stderr are captured and returned only as structured

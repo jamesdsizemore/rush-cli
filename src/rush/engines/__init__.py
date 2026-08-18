@@ -10,6 +10,7 @@ from .actionlint import ActionlintEngine
 from .base import Engine
 from .cdxgen import CdxgenEngine
 from .checkov import CheckovEngine
+from .commitlint import CommitlintEngine
 from .djlint import DjlintEngine
 from .eslint import EslintEngine
 from .gitleaks import GitleaksEngine
@@ -55,6 +56,7 @@ ENGINES: dict[str, Engine] = {
     "hadolint": HadolintEngine(),
     "tflint": TflintEngine(),
     "checkov": CheckovEngine(),
+    "commitlint": CommitlintEngine(),
     "gitleaks": GitleaksEngine(),
     "cdxgen": CdxgenEngine(),
 }

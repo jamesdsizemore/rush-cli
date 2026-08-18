@@ -10,13 +10,12 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Phase 8 is in progress. Create the failing catalog/result-schema tests, then
-implement the metadata registry and shared routing foundation that every v0.2
-tool will use.
+Task 9 is in progress. Complete developer-workflow tool documentation, then
+run the full verification and scoped commit before beginning Task 10.
 
 ## Current Phase
 
-Phase 8 — v0.2 Catalog & Routing Foundation (in progress)
+Phase 11 — Workflow, Language & Context Expansion (Task 9 in progress)
 
 ## Phases
 
@@ -177,6 +176,8 @@ Phase 8 — v0.2 Catalog & Routing Foundation (in progress)
 | Combined lint/format migration patch matched duplicate status lines ambiguously | 1 | Re-read current files, added the shared collector first, then applied context-specific tool migrations |
 | Ruff found an unused import in new routing code | 1 | Ran the project-prescribed Ruff auto-fix and formatter; all quality gates are green |
 | Static-analysis delegation failed before edits (API connection error after retries) | 1 | No delegated changes accepted; resumed Task 5 locally from the first complete capability |
+| Task 9 multi-document patch had stale CHANGELOG heading context | 1 | Read current headings and split documentation updates into exact targeted patches |
+| Task 9 full quality gate reported five import-order violations | 1 | Applied project-prescribed Ruff safe auto-fix before re-running all gates |
 
 ## Notes
 

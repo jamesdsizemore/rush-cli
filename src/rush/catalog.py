@@ -256,6 +256,27 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Run contract tests without provider deployment.",
         (),
     ),
+    "commit-msg": ToolSpec(
+        "commit-msg",
+        "workflow",
+        "Validate commit messages without rewriting history.",
+        "Validate commit messages; it never rewrites Git history.",
+        ("commitlint",),
+    ),
+    "ci": ToolSpec(
+        "ci",
+        "workflow",
+        "Inspect local CI workflow configuration.",
+        "Inspect local CI configuration without exposing credentials.",
+        (),
+    ),
+    "release": ToolSpec(
+        "release",
+        "workflow",
+        "Create a dry-run release plan.",
+        "Create a dry-run release plan; publication requires confirmation.",
+        (),
+    ),
 }
 
 
@@ -411,6 +432,9 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
     ),
     "cdxgen": EngineSpec(
         "cdxgen", "cdxgen", "npm install -g @cyclonedx/cdxgen", (), (), "security"
+    ),
+    "commitlint": EngineSpec(
+        "commitlint", "commitlint", "npm install -D @commitlint/cli", (), (), "workflow"
     ),
 }
 

@@ -25,6 +25,13 @@ From `requirements.md` §2, the ones that shape this architecture:
 | C9 | No LLM by default | `review()` heuristics only; `--llm` flag triggers env-key check |
 | C10 | Engine discovery not hard-fail | All engine calls go through `common.run_engine()` which returns `status: skipped` on `FileNotFoundError` |
 
+### Workflow safety extensions (v0.2)
+
+`commit-msg`, `ci`, and `release` use the canonical tool registry and normal
+`ToolResult` shape. Commit validation is non-mutating, CI inspection is local
+and credential-free, and release planning is dry-run-only. Hook installation
+and publication are never package-install side effects.
+
 ---
 
 ## 2. Package layout (final)
