@@ -20,20 +20,30 @@ from .common import (
 )
 from .complexity import ComplexityTool
 from .containerfile import ContainerfileTool
+from .contract import ContractTool
+from .coverage import CoverageTool
 from .dead import DeadTool
+from .e2e import E2eTool
+from .flaky import FlakyTool
 from .format import FormatTool
+from .fuzz import FuzzTool
 from .iac import IacTool
 from .lint import LintTool
+from .load import LoadTool
 from .markdown import MarkdownTool
+from .mutation import MutationTool
+from .pbt import PbtTool
 from .review import ReviewTool
 from .sbom import SbomTool
 from .secrets import SecretsTool
 from .security import SecurityTool
 from .slop import SlopTool
+from .snapshot import SnapshotTool
 from .sql import SqlTool
 from .templates import TemplatesTool
 from .test import TestTool
 from .typecheck import TypecheckTool
+from .visual import VisualTool
 from .yaml import YamlTool
 
 ALL_TOOLS: list[ToolFn] = [
@@ -55,6 +65,16 @@ ALL_TOOLS: list[ToolFn] = [
     IacTool(),
     SecretsTool(),
     SbomTool(),
+    CoverageTool(),
+    E2eTool(),
+    SnapshotTool(),
+    VisualTool(),
+    PbtTool(),
+    MutationTool(),
+    FlakyTool(),
+    ContractTool(),
+    FuzzTool(),
+    LoadTool(),
 ]
 
 __all__ = [
