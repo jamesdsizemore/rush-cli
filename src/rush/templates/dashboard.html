@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rush Quality Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-bold: #f0f6fc;
+      --cyan: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 24px;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 {
+      color: var(--text-bold);
+      margin: 0;
+      font-size: 20px;
+    }
+    .badge {
+      background: var(--cyan);
+      color: #000;
+      font-weight: bold;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+    }
+    .card h3 {
+      margin-top: 0;
+      color: var(--text-bold);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    th {
+      background: #21262d;
+      color: var(--text-bold);
+    }
+    .status-ok { color: var(--green); font-weight: bold; }
+    .status-warn { color: var(--yellow); font-weight: bold; }
+    .status-fail { color: var(--red); font-weight: bold; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚡ Rush Quality Dashboard</h1>
+    <span class="badge">In-Memory Compiled</span>
+  </header>
+  <main>
+    <div class="grid">
+      <div class="card">
+        <h3>Total Findings</h3>
+        <p id="total-findings" style="font-size: 24px; font-weight: bold; margin: 0;">0</p>
+      </div>
+      <div class="card">
+        <h3>Evaluated Engines</h3>
+        <p id="total-engines" style="font-size: 24px; font-weight: bold; margin: 0;">37</p>
+      </div>
+    </div>
+    <h2>Finding Feed</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Tool</th>
+          <th>File</th>
+          <th>Line</th>
+          <th>Rule</th>
+          <th>Severity</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="findings-table">
+        <tr>
+          <td colspan="6" style="text-align: center; color: #8b949e;">No active findings reported. All checks passed.</td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

@@ -930,6 +930,88 @@ def watch_cmd(
     watcher.watch_blocking()
 
 
+# --- Interactive TUI & Web Dashboard commands ------------------------------
+
+
+@cli.command(name="ui")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@permission_options
+def ui_cmd(
+    path: Path,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+) -> None:
+    """Open the interactive terminal UI to explore tool results and findings."""
+    from .tui import launch_interactive_tui
+    from .workflows.suites import CHECK_SUITE, run_workflow_suite
+
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    res = run_workflow_suite(suite=CHECK_SUITE, path=path.resolve(), permissions=perms)
+    launch_interactive_tui([res])
+
+
+@cli.command(name="dashboard")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--port", default=0, type=int, help="Port to bind dashboard server (0 for random)."
+)
+@permission_options
+def dashboard_cmd(
+    path: Path,
+    port: int,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+) -> None:
+    """Launch an authenticated, CSRF-hardened local web dashboard on 127.0.0.1."""
+    import webbrowser
+
+    from .dashboard import launch_dashboard
+    from .workflows.suites import CHECK_SUITE, run_workflow_suite
+
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    res = run_workflow_suite(suite=CHECK_SUITE, path=path.resolve(), permissions=perms)
+    server, url = launch_dashboard([res], port=port)
+
+    click.echo(f"Dashboard running at: {url}")
+    click.echo("Press Ctrl+C to stop.")
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        click.echo("\nStopping dashboard.")
+        server.shutdown()
+
+
 for _catalog_tool in ALL_TOOLS:
     if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))
