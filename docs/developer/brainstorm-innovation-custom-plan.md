@@ -490,13 +490,111 @@ flowchart TD
 
 ---
 
-## 3. Implementation Architecture & Phasing Roadmap (Phases 31–36)
+### Domain 7: Agent Skills & Implementation Plan Intelligence
 
-To implement these 29 innovated tools methodically, we structure them across six upcoming delivery phases:
+---
+
+#### 30. `rush skill-audit` (Agent Skill Security, Specification & Token Linter)
+- **Problem**: As ecosystems adopt Agent Skills (e.g., Anthropic Agent Skills, Claude Code skills, Antigravity skills in `~/.gemini/config/skills/`), developers risk importing skills with invalid YAML frontmatter, excessive token bloat, unauthorized tool permissions, or malicious prompt injection payloads embedded in skill examples.
+- **Implementation**:
+  - **Frontmatter & Schema Validator**: Statically verifies `SKILL.md` YAML frontmatter against canonical agent skill specifications (`name`, `description`, `parameters`, `toolAction`, `toolSummary`).
+  - **Adversarial Payload & Injection Scanner**: Inspects `SKILL.md`, `resources/`, and `examples/` for hidden prompt overrides (`<system_override>`, `"ignore previous rules"`), shell injection traps, and data exfiltration URLs.
+  - **Token Loading Footprint**: Measures the token cost of loading the skill and flags verbose prose that wastes context budget.
+- **FastMCP Tool**: `rush_skill_audit(path)`
+- **Sample Finding**:
+  ```json
+  {
+    "tool": "skill-audit",
+    "status": "warn",
+    "summary": "skill-audit: 1 skill formatting issue and 1 high-token warning",
+    "findings": [
+      {
+        "file": ".rush/skills/custom_deploy/SKILL.md",
+        "line": 4,
+        "rule": "MISSING_FRONTMATTER_FIELD",
+        "severity": "warn",
+        "message": "Frontmatter missing recommended 'toolSummary' description."
+      },
+      {
+        "file": ".rush/skills/custom_deploy/SKILL.md",
+        "rule": "SKILL_TOKEN_BLOAT",
+        "severity": "info",
+        "message": "Skill prompt is 4,800 tokens. Consider moving detailed tables to references/ to save context budget."
+      }
+    ]
+  }
+  ```
+
+---
+
+#### 31. `rush plan-lint` (Implementation Plan & Spec Actionability Linter)
+- **Problem**: Vibe-coding agents frequently struggle when given vague, prose-heavy implementation plans. When plans lack explicit file rosters, TDD phases, or concrete verification commands, coding agents suffer from semantic drift, hallucinate unapproved changes, or fail silently.
+- **Implementation**:
+  - **Structural Section Linter**: Verifies the existence of mandatory plan sections: Objectives, Allowed/Target File Rosters, Forbidden Files, TDD Red-Green-Refactor tasks, and Exit Criteria.
+  - **Ambiguity & Drift Detector**: Flags hand-wavy prose (e.g., *"handle edge cases appropriately"*, *"update as necessary"*) and requires explicit function/file references.
+  - **Security Control Checklist**: Checks that plans explicitly address relevant Defensive Controls (e.g. path confinement, input sanitization, CSRF).
+- **FastMCP Tool**: `rush_plan_lint(path)`
+- **Sample Finding**:
+  ```json
+  {
+    "tool": "plan-lint",
+    "status": "fail",
+    "summary": "plan-lint: 2 structural gaps in implementation plan",
+    "findings": [
+      {
+        "file": "docs/developer/phase-31-plan.md",
+        "line": 24,
+        "rule": "MISSING_ALLOWED_FILES_ROSTER",
+        "severity": "error",
+        "message": "Section 2 does not specify an explicit 'Allowed & Target Files' roster, risking unconfined agent edits."
+      },
+      {
+        "file": "docs/developer/phase-31-plan.md",
+        "line": 68,
+        "rule": "VAGUE_SPECIFICATION",
+        "severity": "warn",
+        "message": "Prose 'ensure robust error handling' lacks concrete error types and test assertions."
+      }
+    ]
+  }
+  ```
+
+---
+
+#### 32. `rush plan-verify` (Plan Execution Scope & Progress Verifier)
+- **Problem**: During plan execution, coding agents often modify files that were not part of the plan (scope creep), miss edge-case tasks, or claim a phase is complete before tests pass.
+- **Implementation**:
+  - Compares `git status` and `git diff` against the plan's `Allowed Files` roster, blocking unauthorized file modifications.
+  - Cross-references markdown checkboxes (`- [x]` vs `- [ ]`) against actual test suite results to report real mathematical completion progress (e.g., `85% complete - 2 tasks remaining`).
+- **FastMCP Tool**: `rush_plan_verify(plan_path, workspace_path)`
+
+---
+
+#### 33. `rush plan-gen` (Deterministic TDD Phased Plan Generator)
+- **Problem**: Writing comprehensive, bulletproof implementation plans manually takes valuable developer time.
+- **Implementation**:
+  - Takes a high-level feature specification or user request and automatically generates a complete, standardized, TDD-centered implementation plan markdown file.
+  - Automatically identifies affected files, determines test file locations, structures RED/GREEN/REFACTOR tasks, pins verification commands, and incorporates relevant Rush Defensive Controls.
+- **FastMCP Tool**: `rush_plan_gen(feature_spec, target_dir)`
+
+---
+
+#### 34. `rush plan-diff` (Plan vs Code Structural Drift Detector)
+- **Problem**: Over time, what was implemented in code diverges from what was written in architectural plans and specifications, turning planning documents into misleading dead documentation.
+- **Implementation**:
+  - AST and symbol graph diffing between the specification document (planned symbols, classes, routes) and the actual codebase (`src/`).
+  - Highlights undeclared symbols added in code, or planned symbols that were never implemented.
+- **FastMCP Tool**: `rush_plan_diff(plan_path, code_path)`
+
+---
+
+## 3. Implementation Architecture & Phasing Roadmap (Phases 31–37)
+
+To implement these 34 innovated tools methodically, we structure them across seven upcoming delivery phases:
 
 ```mermaid
 gantt
-  title Rush Innovation Roadmap: Phases 31–36
+  title Rush Innovation Roadmap: Phases 31–37
   dateFormat  YYYY-MM-DD
   section Phase 31: AI Safety & Hallucination Guard
   typo-squat, prompt-guard, slop-buster, context-diet, prompt-linter :2026-09-01, 14d
@@ -506,10 +604,12 @@ gantt
   async-sanity, crash-catcher, regex-safe, magic-cleaner, state-thrash :2026-10-01, 14d
   section Phase 34: Asset & Bundle Diet
   asset-diet, bundle-watch, docker-lean, memory-leak :2026-10-15, 14d
-  section Phase 35: Architecture & Supply Chain
+  section Phase 35: Architecture, Supply Chain & Repo Hygiene
   license-audit, zombie-code, doc-parity, cors-guard, test-sanitizer, repo :2026-11-01, 14d
   section Phase 36: Health Score & Cost Forecast
   score, token-cost, agent-compact, semver-notes :2026-11-15, 14d
+  section Phase 37: Agent Skills & Plan Intelligence
+  skill-audit, plan-lint, plan-verify, plan-gen, plan-diff :2026-12-01, 14d
 ```
 
 | Phase | Focus Area | Tools Included | Deliverables |
@@ -520,6 +620,7 @@ gantt
 | **Phase 34** | Asset & Bundle Diet | `asset-diet`, `bundle-watch`, `docker-lean`, `memory-leak` | Binary asset inspector, Tree-shaking import linter |
 | **Phase 35** | Architecture & Supply Chain | `license-audit`, `zombie-code`, `doc-parity`, `cors-guard`, `test-sanitizer`, `repo` | Repository hygiene scanner, Symbol reference graph |
 | **Phase 36** | Health Score & Cost Forecast | `score`, `token-cost`, `agent-compact`, `semver-notes` | Weighted 0–100 scorecard, SVG badge, BPE token counter |
+| **Phase 37** | Agent Skills & Plan Intelligence | `skill-audit`, `plan-lint`, `plan-verify`, `plan-gen`, `plan-diff` | Skill & Plan linters, Scope enforcement engine |
 
 ---
 
