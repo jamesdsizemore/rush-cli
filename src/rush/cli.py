@@ -171,6 +171,19 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
     @click.option(
         "--since", type=str, default=None, help="Scan files changed since git ref."
     )
+    @click.option(
+        "--workspace",
+        "-w",
+        "workspace_name",
+        type=str,
+        default=None,
+        help="Scope execution to a specific monorepo workspace package.",
+    )
+    @click.option(
+        "--all-workspaces",
+        is_flag=True,
+        help="Execute tool across all discovered monorepo workspaces.",
+    )
     @permission_options
     @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
     def command(
@@ -182,6 +195,8 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         staged: bool,
         changed: bool,
         since: str | None,
+        workspace_name: str | None,
+        all_workspaces: bool,
         allow_network: bool,
         allow_download: bool,
         allow_cache_write: bool,
@@ -201,24 +216,41 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
             allow_browser=allow_browser,
         )
         target_path = path
+
+        if workspace_name:
+            from .discovery.workspace import discover_workspaces
+
+            ws_pkgs = discover_workspaces(path if path.is_dir() else path.parent)
+            matched = next((w for w in ws_pkgs if w.name == workspace_name), None)
+            if not matched:
+                click.echo(f"Workspace package '{workspace_name}' not found.", err=True)
+                sys.exit(1)
+            target_path = matched.path
+
         if staged:
             from .discovery.git import get_staged_files
 
-            staged_files = get_staged_files(path if path.is_dir() else path.parent)
+            staged_files = get_staged_files(
+                target_path if target_path.is_dir() else target_path.parent
+            )
             if not staged_files:
                 click.echo("No staged files found to scan.")
                 sys.exit(0)
         elif changed:
             from .discovery.git import get_changed_files
 
-            changed_files = get_changed_files(path if path.is_dir() else path.parent)
+            changed_files = get_changed_files(
+                target_path if target_path.is_dir() else target_path.parent
+            )
             if not changed_files:
                 click.echo("No changed files found to scan.")
                 sys.exit(0)
         elif since:
             from .discovery.git import get_files_since
 
-            since_files = get_files_since(path if path.is_dir() else path.parent, since)
+            since_files = get_files_since(
+                target_path if target_path.is_dir() else target_path.parent, since
+            )
             if not since_files:
                 click.echo(f"No files changed since {since}.")
                 sys.exit(0)
