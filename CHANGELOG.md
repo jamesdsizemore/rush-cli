@@ -26,6 +26,9 @@ All notable changes to Rush are documented here.
   aggregation, and catalog-driven CLI/MCP transport foundations.
 - v0.2 scope, engine-discovery policy, safety guards, and capability
   traceability documentation.
+- Contained Phase 04 test-quality report importers for coverage (coverage.py
+  JSON, LCOV, Cobertura XML), mutation, property, flaky JUnit, Pact contract,
+  snapshot, fuzz, and load evidence, with truthful importer-only documentation.
 
 ### Changed
 

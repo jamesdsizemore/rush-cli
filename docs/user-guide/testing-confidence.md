@@ -8,13 +8,23 @@ rush test .
 
 Rush can route Python projects to pytest and JS/TS projects to Vitest. A passing test run shows the executed suite passed; it does not prove untested behavior is correct.
 
-Additional commands exist for `coverage`, `pbt`, `snapshot`, `visual`, `flaky`, and `contract`. Their current implementations import contained local evidence or return guarded placeholders rather than becoming surprise test runners:
+Rush also imports test-quality evidence that your project has already produced.
+Pass the report file itself as `PATH`; these commands do not discover a report
+inside a directory or launch a runner:
 
-- `coverage` imports a local coverage.py JSON report; it does not run tests.
-- `pbt` imports a local property-test report.
-- `flaky` examines a local JUnit report for duplicate-case evidence.
-- `contract` imports a local Pact report and does not contact a live service.
-- `snapshot` imports a local comparison report and never accepts a baseline.
-- `visual` remains a guarded placeholder; no baseline is accepted by default.
+| Command | Accepted local evidence | What Rush does not do |
+|---|---|---|
+| `coverage REPORT` | coverage.py JSON, LCOV, or Cobertura XML | run tests or coverage tools |
+| `pbt REPORT` | seeded property-test JSON | execute property tests |
+| `flaky REPORT` | JUnit XML with duplicate-case evidence | repeat tests |
+| `contract REPORT` | Pact summary JSON | contact a provider or broker |
+| `snapshot REPORT` | comparison JSON | accept, write, or update a baseline |
+| `mutation REPORT` | mutation summary JSON | run a mutation engine |
+| `fuzz REPORT` | seeded fuzz summary JSON | build or start a fuzzer |
+| `load REPORT` | load summary JSON | send traffic to a target |
 
-The generic CLI currently passes only a path, so some evidence filenames and permission options are not configurable through CLI. Read each JSON summary and treat `skipped` as no conclusion. See [Advanced checks](advanced-checks.md).
+For example, `rush coverage coverage.xml --json` imports an existing Cobertura
+report. A missing, malformed, or out-of-project report produces a structured
+`skipped` or `error` result; it is not a clean test result. `visual` remains a
+guarded placeholder, and no browser or baseline-changing behavior is available
+through these commands. Read each JSON summary and see [Advanced checks](advanced-checks.md).

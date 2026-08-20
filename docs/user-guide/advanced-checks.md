@@ -15,9 +15,15 @@ test or contact a target. Presence in `rush --help` does not mean live execution
 | `semantic-drift` | browser **and** slow consent | Experimental engine path; CLI has no consent options and therefore skips. |
 
 `coverage`, `pbt`, `flaky`, and `contract` are also contained local report
-importers. Directories without a supported report remain `skipped`. These
-defaults prevent an ordinary command from launching a browser, consuming
-significant time, sending load to a target, fuzzing a process, or changing
-baselines.
+importers. For every importer, give the report file as `PATH`; a directory
+without an explicit report remains `skipped`. Coverage accepts coverage.py JSON,
+LCOV, and Cobertura XML; flaky accepts JUnit XML; the other importers accept the
+documented JSON summaries. A malformed report is an `error`, not an empty scan.
+
+The permission names in this table describe future safety prerequisites, not
+hidden command-line switches. No live mutation, fuzz, load, browser, provider,
+or baseline-update adapter is implemented in this release. These defaults prevent
+an ordinary command from launching a browser, consuming significant time, sending
+load to a target, fuzzing a process, or changing baselines.
 
 Do not work around a guard by calling internal Python APIs from an untrusted assistant. An eventual permission surface must be explicit, scoped, tested, and documented. Follow [Permissions](../safety/permissions.md).
