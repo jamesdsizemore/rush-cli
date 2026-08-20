@@ -42,8 +42,15 @@ rush_containerfile, rush_iac, rush_secrets, rush_sbom,
 rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
 rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
 rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
-rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor
+rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
+rush_get_patch, rush_apply_fix, rush_session_context
 ```
+
+## AI Agent Remediation & Session Tools (Phase 29)
+
+- `rush_get_patch`: Returns unified diff for a finding.
+- `rush_apply_fix`: Safely applies validated unified diffs with path containment and protected file shielding (Control 7).
+- `rush_session_context`: Retrieves multi-turn evaluation history framed in `<rush_session_memory>` XML tags.
 
 ## Protocol guarantees
 

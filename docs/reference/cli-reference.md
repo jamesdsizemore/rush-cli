@@ -92,6 +92,37 @@ The following explicit permission flags are available across tools:
 - `--allow-artifact-write`: Permit overwriting or creating report/baseline artifacts.
 - `--allow-browser`: Permit launching browser engines.
 
+## Workflow suites and developer commands
+
+| Command | Purpose | Options | Modification |
+|---|---|---|---|
+| `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
+| `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
+| `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
+| `fix PATH` | Confined automated remediation for formatting and linter errors. | `--dry-run`, `--force` | Modifies code within workspace |
+| `setup PATH` | Polyglot technology stack auto-discovery and toolchain installer. | `--non-interactive` | Installs local engines via package managers |
+| `init PATH` | Generate tailored `rush.toml` for detected project stacks. | `--overwrite` | Writes `rush.toml` |
+| `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
+| `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
+| `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
+| `ui PATH` | Launch interactive terminal UI (TUI) for finding exploration. | Permissions | none |
+| `dashboard PATH` | Authenticated, CSRF-hardened local web dashboard on 127.0.0.1. | `--port`, Permissions | none |
+| `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
+| `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
+| `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
+
+## Advanced Scoping, Caching & Monorepo Options
+
+The following flags are supported across evaluation commands:
+- `--workspace`, `-w <NAME>`: Scope execution to a specific monorepo workspace package.
+- `--all-workspaces`: Execute evaluation across all discovered monorepo packages in topological order.
+- `--cache / --no-cache`: Enable or disable flag-salted SQLite result caching (`.rush/cache.db`).
+- `--cache-dir <PATH>`: Custom cache directory location.
+- `--clear-cache`: Purge cached tool results before execution.
+- `--staged`: Restrict analysis scope to git staged files.
+- `--since <REF>`: Restrict analysis scope to files modified since the specified git revision.
+- `--branch <NAME>`: Restrict analysis scope to files modified on the given git branch.
+
 ## Workflow commands
 
 | Command | Current behavior |

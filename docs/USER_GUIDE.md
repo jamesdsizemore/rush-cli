@@ -22,25 +22,36 @@ uv run rush review .
 
 ## The everyday workflow
 
-After finishing a feature:
+Run workflow suites tailored to your development phase:
 
 ```bash
-rush tdd .
-rush review . --export-html report.html
-rush lint .
-rush format . --check
-rush test .
-rush security .
-rush complexity .
+# 1. Fast inner-loop checks (lint, format --check, typecheck)
+rush check .
+
+# 2. Live watcher mode with auto-re-evaluation
+rush watch .
+
+# 3. Safe automated code remediation
+rush fix . --dry-run
+rush fix .
+
+# 4. Interactive exploration
+rush ui .           # Rich Terminal UI
+rush dashboard .    # Authenticated Web Dashboard on 127.0.0.1
+
+# 5. Deep security & supply chain audit
+rush audit .
+
+# 6. Strict pre-merge gate
+rush gate . --fail-fast
 ```
 
-- `tdd`: verifies Test-Driven Development compliance and test suite existence for modified code.
-- `review`: catches maintainability signals without modifying code. Supports `--export-html` for standalone reports and `--export-sarif` for IDE/CI integrations.
-- `lint`: runs applicable linters and AST query checkers (Ruff, ESLint, Globstar, ast-grep).
-- `format --check`: asks whether files match formatter rules without rewriting.
-- `test`: runs applicable test engines (pytest, Vitest, Newman).
-- `security`: checks dependency manifests and agent hooks (pip-audit, npm-audit, Medusa, Trivy, Bearer).
-- `complexity`: measures cyclomatic complexity, modular boundaries (Tach), and token density (Clines).
+- `check`: runs fast syntax, format, and static typing checks in milliseconds.
+- `watch`: monitors repository files in real-time and triggers check suites upon change with debouncing.
+- `fix`: applies safe automated fixes across engines (Ruff, ESLint, Prettier, Biome) with path containment.
+- `ui` & `dashboard`: provides visual finding exploration via terminal TUI or authenticated local web dashboard.
+- `audit`: runs comprehensive security scans, dependency audits, and secret detection.
+- `gate`: verifies all quality gates (lint, format, typecheck, test, security) with fail-fast options.
 
 See [Everyday workflow](user-guide/everyday-workflow.md) for the full story.
 

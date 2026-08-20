@@ -2,19 +2,45 @@
 
 ## When to use it
 
-Run this sequence after completing a feature or an AI-assisted edit and before opening a pull request:
+## Workflow Suites & Pre-PR Routines
 
+### 1. Fast Inner-Loop Checks (`rush check`)
+Run in-development checks (lint, format verification, type checking) concurrently in milliseconds:
 ```bash
-rush tdd .
-rush review . --export-html artifacts/review.html
-rush lint .
-rush format . --check
-rush complexity .
-rush slop .
-rush test .
-rush security .
+rush check .
 ```
 
+### 2. Live File Watching (`rush watch`)
+Keep Rush running in the background to automatically re-evaluate your project whenever source files change:
+```bash
+# Watch files with default 300ms debounce
+rush watch .
+
+# Watch files and trigger specific tool or suite
+rush watch . --tool lint --debounce 500
+```
+
+### 3. Automated Safe Fixes (`rush fix`)
+```bash
+# Preview automated fixes without modifying disk
+rush fix . --dry-run
+
+# Apply safe formatting and linter fixes
+rush fix .
+```
+
+### 4. Deep Security & Supply Chain Audit (`rush audit`)
+```bash
+rush audit .
+```
+
+### 5. Strict Pre-Merge Gate (`rush gate`)
+Run the full gate suite (lint, format, typecheck, test, security) before merging:
+```bash
+rush gate . --fail-fast
+```
+
+### 6. Granular Inspection & Planning
 Before deciding which checks are mandatory for this repository, inspect rather than guess:
 
 ```bash

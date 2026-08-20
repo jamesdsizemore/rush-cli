@@ -41,9 +41,10 @@ Tool and engine metadata must agree with executable registries and tests. Do not
 - [Change MCP](developer/mcp-development.md)
 - [Add a safety-gated operation](developer/tool-development.md#safety-review)
 
-Each change starts with a failing contract test, includes parser fixtures instead of requiring every runtime, updates CLI/MCP parity and docs, then runs full gates.
-
-For the completed Phases 01–19 implementation (covering all 77 unique advanced scanners, evaluators, and engines across 15 domains), read the [Phase 09–19 coding-agent handoff](developer/phase-09-19-coding-agent-handoff.md), the [Phase 07–08 coding-agent handoff](developer/phase-07-08-coding-agent-handoff.md), the [Master Innovation & Remediation Plan](developer/innovation-remediation-plan.md), the [Master Build Plan](developer/master-innovation-remediation-build-plan.md) (documenting Phases 01–19 execution ledgers), and the [Vibecoder Toolkit Plan](developer/vibecoder-toolkit-plan.md) (covering 22 specialized tools targeting AI-generated code quality and pre-flight safety).
+For the completed Phases 01–30 implementations, read:
+- [Master PM Build Plan](developer/master-pm-build-plan.md): Complete specifications for Phases 21–30, incorporating the 7 Defensive Controls and 3 Architectural Recommendations.
+- [Phase 21–30 Implementation Plans](developer/): Individual phase-by-phase implementation plans and ledgers.
+- [Phase 09–19 coding-agent handoff](developer/phase-09-19-coding-agent-handoff.md), [Phase 07–08 coding-agent handoff](developer/phase-07-08-coding-agent-handoff.md), [Master Innovation & Remediation Plan](developer/innovation-remediation-plan.md), and [Vibecoder Toolkit Plan](developer/vibecoder-toolkit-plan.md).
 
 ## Testing and delivery
 

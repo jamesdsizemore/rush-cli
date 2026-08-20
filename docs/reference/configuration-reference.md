@@ -54,10 +54,31 @@ engine_args = ["--select", "E,F,W,I"]
 check = true
 ```
 
-`NAME` must exactly match one of the 35 catalog tool names (e.g. `lint`, `format`, `test`, `security`, `tdd`, `slop`, `complexity`). Unknown names raise `RushConfigError`. `engine_args` and `check` are parsed for every tool, but the verified direct consumer is lint's engine arguments; `check` is not a universal policy switch. `rush capabilities` reports a configured state when it reads an allowed local table; configuration does not run, install, or version-probe an engine. Prefer CLI `format --check` where supported.
+`NAME` must exactly match one of the catalog tool names (e.g. `lint`, `format`, `test`, `security`, `tdd`, `slop`, `complexity`). Unknown names raise `RushConfigError`.
+
+## `[plugins.NAME]` (Phase 28)
+
+```toml
+[plugins.custom-linter]
+command = "python scripts/my_linter.py"
+description = "Custom AST rule scanner"
+file_extensions = [".py"]
+```
+
+Custom quality engine plugins defined in `rush.toml`. Requires repository trust authorization via `rush trust` (Control 6).
+
+## `[dashboard]` (Phase 27)
+
+```toml
+[dashboard]
+port = 8080
+host = "127.0.0.1"
+```
+
+Configures default binding port and parameters for the local in-memory web dashboard.
 
 ## Validation behavior
 
-Malformed TOML, unknown log levels, wrong value types, and unknown tool names fail configuration loading. Rush does not merge multiple files: nearest discovered file wins.
+Malformed TOML, unknown log levels, wrong value types, and unknown tool names fail configuration loading. Rush does not merge multiple files: nearest discovered file wins. Validate anytime with `rush config check .`.
 
 See [Configuration cookbook](configuration-cookbook.md) and [developer configuration guide](../developer/configuration-development.md).

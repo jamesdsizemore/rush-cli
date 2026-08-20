@@ -29,6 +29,10 @@ check = true
 
 ## 2. Configuration Features
 
+- **Automated Init (`rush init`)**: Automatically inspect your repository and write a tailored `rush.toml`.
+- **Schema Validation (`rush config check`)**: Statically validates `rush.toml` against canonical schemas and tool catalogs.
+- **Custom Plugins (`[plugins.<name>]`)**: Declare custom linter/analyzer script execution commands.
+- **Local Dashboard (`[dashboard]`)**: Configure port and loopback parameters for the in-memory web dashboard.
 - **Automatic Upward Discovery**: Rush walks upward from the target directory until it finds the nearest `rush.toml` file or reaches the `.git` boundary.
 - **Strict Catalog Validation**: Every `[tools.<name>]` section is validated against `TOOL_SPECS` in `src/rush/catalog.py` at parse time. Typographical errors raise actionable configuration errors immediately.
 - **Engine Arguments Pass-Through**: Pass specific flags to underlying linters (e.g. `engine_args = ["--select", "E,F,W,I"]`).

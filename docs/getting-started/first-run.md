@@ -2,41 +2,58 @@
 
 This walkthrough proves that Rush is installed, runs a safe local review, and can return machine-readable output.
 
-## 1. Confirm the command
-
-From a Rush checkout:
+## 1. Confirm the command and check environment health
 
 ```bash
-uv run rush --help
+rush --help
+rush doctor .
 ```
 
-You should see `review`, `lint`, `format`, `test`, `security`, focused checks, and `mcp`. The list is generated from the implementation, so use it as the current command inventory.
+`rush doctor` diagnoses your local environment health, verifies PATH precedence, checks virtual environments, and flags binary shadowing.
 
-## 2. Review a small target
+## 2. Auto-discover stack and initialize configuration
 
 ```bash
-uv run rush review src
+# Auto-detect project tech stack and optionally install missing tools
+rush setup .
+
+# Generate a tailored rush.toml configuration file
+rush init .
+
+# Verify configuration validity
+rush config check .
 ```
 
-`review` reads Python files and applies deterministic heuristics for large files, TODO density, missing docstrings, naming, and configured scaffold markers. It does not rewrite the files.
-
-A clean result is `ok`. Advisory findings produce `warn`. Read the file, line, rule, severity, and message; then decide whether the finding needs a code change or a documented exception.
-
-## 3. Ask for JSON
+## 3. Run the fast inner-loop check suite
 
 ```bash
-uv run rush review src --json
+rush check .
 ```
 
-The object contains `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; some tools add `metrics`, `artifacts`, or `metadata`. See [Result reference](../reference/result-reference.md).
+`rush check` runs linting, formatting checks, and static typechecking in parallel.
 
-## 4. Try an optional-engine command
+## 4. Launch the interactive TUI or local web dashboard
 
 ```bash
-uv run rush lint src --json
+# Interactive terminal finding explorer
+rush ui .
+
+# Authenticated local web dashboard on 127.0.0.1
+rush dashboard .
 ```
 
-If Ruff is available and Python files apply, Rush runs it. If the engine is absent, expect `status: "skipped"`. That is a useful explanation, not an automatic project failure.
+## 5. Review and safe automated remediation
+
+```bash
+# Review deterministic heuristics
+rush review src
+
+# Preview automated fixes without altering code
+rush fix . --dry-run
+
+# Apply safe fixes across linter engines
+rush fix .
+```
 
 ## What to do next
 

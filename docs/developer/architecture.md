@@ -27,13 +27,30 @@ flowchart TB
 - ToolResult required keys are `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; optional extensions include metrics, artifacts, metadata, and review fields.
 - A missing optional executable returns `skipped`; it must not raise or install anything.
 - Multi-engine aggregation is deterministic: worst status wins (`error > fail > warn > ok > skipped`), durations sum, findings sort by location/rule/message, and provenance is retained.
-- **Reporting Subsystems**:
-  - `src/rush/sarif.py`: Multi-SARIF 2.1.0 generator for GitHub Security Scanning integration.
-  - `src/rush/html_export.py`: Standalone, zero-dependency HTML interactive dashboard with dark mode and filterable finding tables.
-- **Pluggable LLM Provider Architecture**:
-  - `src/rush/providers/`: Provider abstraction decoupling Anthropic, OpenAI, and local LLM heuristics from CLI/MCP transport layers.
-- **Binary Resolution Cache**:
-  - `@lru_cache` in `src/rush/tools/common.py` avoiding expensive repeated `PATH` searches on Windows.
+- **Flag-Salted Result Caching (Phase 21)**:
+  - SQLite-backed result cache (`src/rush/cache.py`) with content-hashed, flag-salted cryptographic keys (`.rush/cache.db`).
+- **Unified Automated Remediation (Phase 22)**:
+  - Safe automated code fix engine (`src/rush/tools/fix.py`) with workspace path containment (`assert_safe_workspace_path`) and `--dry-run` diff preview.
+- **Sanitized Stack Onboarding (Phase 23)**:
+  - Polyglot technology stack detector (`src/rush/discovery/stack.py`) and shell-injection proof package installer (`src/rush/tools/setup_wizard.py`).
+- **Hardened Workflow Suites & Doctor (Phase 24)**:
+  - Fast inner-loop `CHECK_SUITE`, deep security `AUDIT_SUITE`, and pre-merge `GATE_SUITE` (`src/rush/workflows/suites.py`).
+  - Environment health & anti-shadowing audit (`src/rush/tools/doctor.py`).
+- **Real-Time Debounced Watcher (Phase 25)**:
+  - Multi-threaded file system watcher (`src/rush/watcher.py`) with configurable debounce windows (300ms default) and automatic directory pruning (`.git`, `node_modules`, `.venv`).
+- **Polyglot Monorepo Scoping (Phase 26)**:
+  - Deterministic workspace topology discovery (`src/rush/discovery/workspace.py`) for npm, pnpm, yarn, Cargo, and Turborepo with strict path containment.
+- **Authenticated In-Memory Web Dashboard & Rich TUI (Phase 27)**:
+  - Single-binary zero-dependency local HTTP server (`src/rush/dashboard.py`) binding exclusively to `127.0.0.1` with ephemeral `X-Rush-Auth` tokens, DNS rebinding prevention, and CSRF Origin validation.
+  - Interactive terminal finding explorer (`src/rush/tui.py`) built with Rich layouts.
+- **Trust-Gated Dynamic Plugin Runtime (Phase 28)**:
+  - Declarative script plugin execution (`src/rush/plugins/`) with local repository trust verification (`~/.rush/trusted_repositories.json`) preventing arbitrary code execution in untrusted checkouts.
+- **Closed-Loop AI Patch Remediation & Session Memory (Phase 29)**:
+  - Bounded multi-turn session memory ledger (`src/rush/session_memory.py`) framed with strict XML boundary tags (`<rush_session_memory>`).
+  - Atomic unified diff patch generator and applier (`src/rush/patch_generator.py`) with sensitive file shielding (`.git`, `.env`).
+- **Standalone Binary Packaging & CI Hardening (Phase 30)**:
+  - Standalone multi-platform compilation manifests for Homebrew, Scoop, and Winget (`packaging/`).
+  - GitHub Actions release pipeline with SHA-pinned actions (`.github/workflows/release.yml`).
 
 ## Configuration flow
 
