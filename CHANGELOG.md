@@ -10,7 +10,7 @@ All notable changes to Rush are documented here.
   first run, user workflows, tutorials, command/result/configuration/engine/MCP
   references, integrations, safety/privacy, contributor development, maintainer
   runbooks, ADRs, examples, troubleshooting, and release operations.
-- Explicit capability-maturity documentation for all 32 commands and 27 engine
+- Explicit capability-maturity documentation for all 33 commands and 27 engine
   entries, including guarded placeholders and incomplete CLI permission/input
   surfaces.
 - Catalog-validated per-tool `rush.toml` configuration, example configuration,
@@ -29,6 +29,9 @@ All notable changes to Rush are documented here.
 - Contained Phase 04 test-quality report importers for coverage (coverage.py
   JSON, LCOV, Cobertura XML), mutation, property, flaky JUnit, Pact contract,
   snapshot, fuzz, and load evidence, with truthful importer-only documentation.
+- Contained Phase 05 CodeQL SARIF 2.1.0 import: explicit local report evidence
+  only, with engine identity, malformed-report, and target-containment checks;
+  Rush never runs CodeQL, builds a database, or downloads query packs.
 
 ### Changed
 

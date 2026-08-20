@@ -18,6 +18,23 @@ rush secrets . --json
 
 Rush uses Gitleaks when installed and redacts secret-like values from normalized messages. Never paste raw scanner output containing credentials into an issue. Rotate a real exposed credential before merely removing it from Git.
 
+## CodeQL evidence you already have
+
+```bash
+rush codeql path/to/codeql.sarif --json
+```
+
+Use this command after you have produced a CodeQL SARIF 2.1.0 report locally.
+Pass the report file itself, not a project directory. Rush checks that the
+report identifies CodeQL and is contained by the report's target; it then
+normalizes the local findings. A clean report is `ok`, warnings are `warn`, and
+error-level findings are `fail`. A missing, malformed, foreign-engine, or
+out-of-target report is `error` or `skipped`, never a clean result.
+
+Rush does **not** run CodeQL for you. It does not create a database, restore or
+build your project, install a CLI or SDK, fetch query packs, or contact a remote
+service. Keep the original SARIF report with your security-review evidence.
+
 ## Software bill of materials
 
 ```bash

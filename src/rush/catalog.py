@@ -222,6 +222,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Collect coverage at <path> without rewriting source files.",
         (),
     ),
+    "codeql": ToolSpec(
+        "codeql",
+        "security",
+        "Import a contained local CodeQL SARIF report.",
+        "Import a contained CodeQL SARIF report at <path>; never runs CodeQL.",
+        (),
+    ),
     "mutation": ToolSpec(
         "mutation",
         "quality",
@@ -330,6 +337,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "secrets": "real_adapter",
     "sbom": "catalog_only",
     "coverage": "importer",
+    "codeql": "importer",
     "mutation": "importer",
     "e2e": "guarded_placeholder",
     "pbt": "importer",

@@ -58,6 +58,7 @@ rush mcp serve
 |---|---|---|
 | `secrets PATH` | Scan for secret-like material with Gitleaks. | Values are redacted from normalized findings; rotate real exposed credentials. |
 | `sbom PATH` | Generate a CycloneDX SBOM through cdxgen. | Catalog-only maturity. CLI does not expose internal output/overwrite controls; verify before adoption. |
+| `codeql PATH` | Import a CodeQL SARIF 2.1.0 report. | `PATH` is the report file; Rush validates it is CodeQL evidence, keeps it within its target, and never runs CodeQL, builds a database, or downloads query packs. |
 
 ## Test-confidence and advanced commands
 

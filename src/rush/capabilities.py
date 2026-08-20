@@ -12,6 +12,7 @@ _REPORTS: tuple[tuple[str, str], ...] = (
     ("coverage.json", "coverage"),
     ("coverage.xml", "coverage"),
     ("lcov.info", "coverage"),
+    ("codeql.sarif", "codeql"),
     ("junit.xml", "flaky"),
     ("pact.json", "contract"),
     ("mutation.json", "mutation"),

@@ -1,6 +1,6 @@
 # Tool catalog
 
-The catalog contains 32 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, feasibility-gated route, importer/guarded placeholder, catalog-only contract, or experimental browser runtime.
+The catalog contains 33 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, feasibility-gated route, importer/guarded placeholder, catalog-only contract, or experimental browser runtime.
 
 | Tool | Category | Maturity | Engines / behavior |
 |---|---|---|---|
@@ -22,6 +22,7 @@ The catalog contains 32 user-visible tools. **Maturity matters:** a listed tool 
 | `iac` | security | real adapter | TFLint then contained Checkov |
 | `secrets` | security | real adapter | Gitleaks with normalized redaction |
 | `sbom` | security | catalog only | cdxgen implementation exists; incomplete CLI controls |
+| `codeql` | security | importer | contained CodeQL SARIF 2.1.0 report; never runs CodeQL |
 | `coverage` | test | importer | coverage.py JSON, LCOV, or Cobertura report; never runs tests |
 | `pbt` | test | importer | seeded local property-test JSON report; never executes tests |
 | `flaky` | test | importer | local JUnit duplicate-case evidence; never repeats tests |

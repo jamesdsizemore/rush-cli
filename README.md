@@ -13,7 +13,7 @@ Rush exists because modern repositories are checked by many specialized programs
 - **Check a change before a pull request.** Review source, lint it, verify formatting, run tests, and inspect dependencies.
 - **Get consistent results.** Every command reports `ok`, `warn`, `fail`, `error`, or `skipped` in the same shape.
 - **Keep control.** Rush never installs optional tools, silently rewrites source, publishes a release, or rewrites Git history.
-- **Cover more than source code.** Check Markdown, YAML, SQL, Dockerfiles, Terraform, GitHub Actions, secrets, and supply-chain evidence.
+- **Cover more than source code.** Check Markdown, YAML, SQL, Dockerfiles, Terraform, GitHub Actions, secrets, supply-chain evidence, and an explicit local CodeQL SARIF report.
 - **Use the same checks from an assistant.** A compatible coding assistant can call the local Rush stdio server through MCP.
 
 ## Three-step quick start
@@ -52,6 +52,17 @@ rush security .
 ```
 
 Rush also includes focused commands for type checking, dead code, complexity, content, infrastructure, supply chain, test confidence, and local workflow inspection. Run `rush --help` for the generated current list.
+
+If CodeQL has already produced a local SARIF 2.1.0 report, import it without
+running CodeQL again:
+
+```bash
+rush codeql ./results/codeql.sarif --json
+```
+
+The report must stay inside its selected target. Rush reads and normalizes that
+evidence only; it does not create a CodeQL database, download query packs, or
+run a build.
 
 ## What Rush does not do
 

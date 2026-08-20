@@ -10,6 +10,7 @@ from __future__ import annotations
 from .actions import ActionsTool
 from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
 from .ci import CiTool
+from .codeql import CodeqlTool
 from .commit_msg import CommitMsgTool
 from .common import (
     engine_on_path,
@@ -70,6 +71,7 @@ ALL_TOOLS: list[ToolFn] = [
     SecretsTool(),
     SbomTool(),
     CoverageTool(),
+    CodeqlTool(),
     E2eTool(),
     SnapshotTool(),
     VisualTool(),

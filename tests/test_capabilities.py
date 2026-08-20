@@ -24,6 +24,21 @@ def test_capabilities_detect_markers_without_executing_or_probing_versions(
     assert result["tools"]["semantic-drift"]["state"] == "blocked"
 
 
+def test_capabilities_detects_contained_codeql_sarif_without_execution(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "codeql.sarif").write_text('{"version": "2.1.0", "runs": []}')
+
+    result = inspect_capabilities(tmp_path)
+
+    assert result["reports"] == ["codeql.sarif"]
+    assert result["tools"]["codeql"] == {
+        "maturity": "importer",
+        "state": "applicable",
+        "reason": "local report found",
+    }
+
+
 def test_capabilities_cli_emits_the_read_only_inventory(tmp_path: Path) -> None:
     result = CliRunner().invoke(cli, ["capabilities", str(tmp_path), "--json"])
 

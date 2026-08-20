@@ -28,7 +28,7 @@ Other guarded placeholder objects expose only `path` through their current `__ca
 rush_review, rush_lint, rush_format, rush_test, rush_security,
 rush_typecheck, rush_dead, rush_complexity, rush_slop,
 rush_markdown, rush_actions, rush_yaml, rush_sql, rush_templates,
-rush_containerfile, rush_iac, rush_secrets, rush_sbom,
+rush_containerfile, rush_iac, rush_secrets, rush_sbom, rush_codeql,
 rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
 rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
 rush_semantic-drift, rush_commit-msg, rush_ci, rush_release
