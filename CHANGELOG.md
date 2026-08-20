@@ -6,6 +6,13 @@ All notable changes to Rush are documented here.
 
 ### Added
 
+- A complete audience-separated documentation system covering installation,
+  first run, user workflows, tutorials, command/result/configuration/engine/MCP
+  references, integrations, safety/privacy, contributor development, maintainer
+  runbooks, ADRs, examples, troubleshooting, and release operations.
+- Explicit capability-maturity documentation for all 32 commands and 27 engine
+  entries, including guarded placeholders and incomplete CLI permission/input
+  surfaces.
 - Catalog-validated per-tool `rush.toml` configuration, example configuration,
   and dedicated configuration, engine, and tool-catalog references.
 - Experimental `semantic-drift` detection with explicit browser/slow-run
@@ -22,6 +29,9 @@ All notable changes to Rush are documented here.
 
 ### Changed
 
+- Reworked the root README into product onboarding and corrected stale result
+  field names, configuration-consumer claims, model-review claims, and advanced
+  command examples against the implementation and generated CLI help.
 - Shared lint/format source discovery and status precedence now use the routing
   module rather than duplicated per-tool helpers.
 

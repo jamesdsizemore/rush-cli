@@ -50,6 +50,8 @@ class ReviewConfig:
     max_file_lines: int = 400
     fail_on: list[str] = field(default_factory=list)
     use_graft: bool = False
+    scaffold_markers: list[str] = field(default_factory=list)
+    source_policy_exclude: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -124,6 +126,14 @@ def _parse(raw: dict, source: Path) -> RushConfig:
     for tool_name, tr in (raw.get("tools", {}) or {}).items():
         if tool_name not in TOOL_SPECS:
             raise RushConfigError(f"unknown tool in {source}: {tool_name}")
+        if TOOL_SPECS[tool_name].maturity in {
+            "guarded_placeholder",
+            "browser_runtime",
+        }:
+            raise RushConfigError(
+                f"tool {tool_name} does not accept tool configuration; "
+                "it is not a configurable local adapter"
+            )
         tr = tr or {}
         tools[tool_name] = ToolConfig(
             engine_args=list(tr.get("engine_args", [])),
@@ -135,6 +145,8 @@ def _parse(raw: dict, source: Path) -> RushConfig:
         max_file_lines=int(review_raw.get("max_file_lines", 400)),
         fail_on=list(review_raw.get("fail_on", [])),
         use_graft=bool(review_raw.get("use_graft", False)),
+        scaffold_markers=list(review_raw.get("scaffold_markers", [])),
+        source_policy_exclude=list(review_raw.get("source_policy_exclude", [])),
     )
 
     return RushConfig(

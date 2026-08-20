@@ -1,4 +1,4 @@
-"""Check Markdown files with externally discovered markdownlint-cli2."""
+"""Check Markdown files with externally discovered markdownlint-cli."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class MarkdownTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return "Check Markdown at <path> without rewriting files; missing markdownlint-cli2 returns status='skipped'."
+        return "Check Markdown at <path> without rewriting files; missing markdownlint-cli returns status='skipped'."
 
     def __call__(self, path: Path) -> ToolResult:
         return self.run(path)
@@ -36,7 +36,7 @@ class MarkdownTool(ToolFn):
                 raw=None,
             )
         result = run_engine(
-            ENGINES["markdownlint-cli2"],
+            ENGINES["markdownlint-cli"],
             path,
             [str(file) for file in files],
             tool_name=self.name,

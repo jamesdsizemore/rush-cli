@@ -57,9 +57,20 @@ class ReviewTool(ToolFn):
         if config is not None and hasattr(config, "review"):
             max_lines = getattr(config.review, "max_file_lines", 400)
             use_graft = use_graft or getattr(config.review, "use_graft", False)
+        scaffold_markers = (
+            list(getattr(config.review, "scaffold_markers", []))
+            if config is not None and hasattr(config, "review")
+            else []
+        )
+        source_policy_exclude = (
+            list(getattr(config.review, "source_policy_exclude", []))
+            if config is not None and hasattr(config, "review")
+            else []
+        )
 
         start = now_ms()
         targets = _collect_reviewable_files(path)
+        root = path if path.is_dir() else path.parent
         if not targets:
             return ToolResult(
                 tool="review",
@@ -80,6 +91,8 @@ class ReviewTool(ToolFn):
             findings.extend(_todo_density_heuristic(f))
             findings.extend(_missing_docstrings_heuristic(f))
             findings.extend(_naming_heuristic(f))
+            if not _is_source_policy_excluded(f, root, source_policy_exclude):
+                findings.extend(_scaffold_marker_heuristic(f, scaffold_markers))
 
         graft_state = "not-requested"
         if use_graft:
@@ -326,6 +339,42 @@ def _naming_heuristic(path: Path) -> list[Finding]:
                             )
                         )
     return out
+
+
+def _is_source_policy_excluded(path: Path, root: Path, patterns: list[str]) -> bool:
+    """Return whether a configured source-policy glob excludes ``path``."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    return any(relative.match(pattern) for pattern in patterns)
+
+
+def _scaffold_marker_heuristic(path: Path, markers: list[str]) -> list[Finding]:
+    """Find configured unfinished-scaffold markers without inferring authorship."""
+    if not markers:
+        return []
+    source = _read_file_safely(path)
+    if source is None:
+        return []
+
+    findings: list[Finding] = []
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        marker = next((value for value in markers if value and value in line), None)
+        if marker is not None:
+            findings.append(
+                Finding(
+                    path=str(path),
+                    line=line_number,
+                    rule="scaffold-marker",
+                    severity="warn",
+                    message=(
+                        f"configured scaffold marker {marker!r} — replace it or add "
+                        "the path to review.source_policy_exclude"
+                    ),
+                )
+            )
+    return findings
 
 
 # --- LLM opt-in -------------------------------------------------------------

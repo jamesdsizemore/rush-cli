@@ -1,27 +1,15 @@
 # Pre-commit integration
 
-Rush never installs Git hooks or adds a pre-commit dependency during package
-installation. Integration is deliberately opt-in and local to a repository.
+Rush does not install hooks. Add a repository-owned hook only after choosing fast, deterministic commands such as lint or format check. Avoid test/security/network/browser/slow commands in commit-time hooks.
 
-## Validate a message
+Example local hook command:
 
-```bash
-rush commit-msg . --message "feat: add parser"
+```yaml
+- id: rush-lint
+  name: rush lint
+  entry: rush lint .
+  language: system
+  pass_filenames: false
 ```
 
-This command validates only; it never amends commits, rewrites history, or
-installs a hook.
-
-## Optional hook setup
-
-If you choose to use `pre-commit`, install and configure it independently in
-your repository. Review the hook configuration before installing it. Rush does
-not create `.pre-commit-config.yaml` unless you explicitly request that file.
-
-## CI and release safety
-
-- `rush ci` only inspects local workflow configuration by default.
-- `rush release` is a dry-run plan by default. It does not create tags,
-  GitHub releases, or package uploads.
-- Any future publication integration must require explicit publication and
-  confirmation flags in an interactive or CI-safe boundary.
+Pin/install Rush and required engines separately. Review `skipped` policy; system hooks inherit a different `PATH` on some platforms.

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from ..tools.base import Finding, ToolResult
-from ..tools.common import resolve_binary
+from ..tools.common import resolve_binary, run_subprocess
 
 
 class EngineResult(TypedDict, total=False):
@@ -53,14 +53,12 @@ class Engine(ABC):
         if binary_path is None:
             return None
         try:
-            r = subprocess.run(
+            r = run_subprocess(
                 [binary_path, "--version"],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
                 timeout=10,
-                check=False,
             )
+            if r.returncode != 0:
+                return None
             out = (r.stdout or r.stderr).strip()
             # First token that looks like a version, e.g. "ruff 0.6.9" or "v0.6.9"
             for token in out.split():

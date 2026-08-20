@@ -13,6 +13,15 @@ from pathlib import Path
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
+from .routing import aggregate_results
+
+_OSV_LOCKFILES = (
+    "poetry.lock",
+    "requirements.txt",
+    "package-lock.json",
+    "Cargo.lock",
+    "go.sum",
+)
 
 
 class SecurityTool(ToolFn):
@@ -46,17 +55,32 @@ class SecurityTool(ToolFn):
                 raw=None,
             )
 
-        if (project_root / "pyproject.toml").exists() or (
-            project_root / "setup.py"
-        ).exists():
-            return run_engine(
-                ENGINES["pip-audit"], project_root, [], tool_name="security"
+        results: list[ToolResult] = []
+        if (project_root / "requirements.txt").is_file():
+            results.append(
+                run_engine(ENGINES["pip-audit"], project_root, [], tool_name="security")
             )
 
-        if (project_root / "package.json").exists():
-            return run_engine(
-                ENGINES["npm-audit"], project_root, [], tool_name="security"
+        if (project_root / "package-lock.json").is_file():
+            results.append(
+                run_engine(ENGINES["npm-audit"], project_root, [], tool_name="security")
             )
+
+        lockfile = next(
+            (
+                project_root / name
+                for name in _OSV_LOCKFILES
+                if (project_root / name).is_file()
+            ),
+            None,
+        )
+        if lockfile is not None:
+            results.append(
+                run_engine(ENGINES["osv-scanner"], lockfile, [], tool_name="security")
+            )
+
+        if results:
+            return aggregate_results(self.name, results)
 
         return ToolResult(
             tool="security",
@@ -71,7 +95,7 @@ class SecurityTool(ToolFn):
 
 
 def _find_project_root(path: Path) -> Path | None:
-    """Walk up from `path` looking for pyproject.toml, setup.py, or package.json.
+    """Walk up from `path` looking for dependency manifests or local lockfiles.
 
     Order matters: check project markers FIRST, then the git boundary.
     (If we checked .git first, we'd bail out at the same level where
@@ -90,6 +114,8 @@ def _find_project_root(path: Path) -> Path | None:
         if (d / "setup.py").exists():
             return d
         if (d / "package.json").exists():
+            return d
+        if any((d / name).is_file() for name in _OSV_LOCKFILES):
             return d
         if (d / ".git").exists():
             return None  # crossed git boundary without finding a marker

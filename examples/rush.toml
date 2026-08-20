@@ -1,16 +1,17 @@
+# Conservative Rush configuration. Copy to a project root as rush.toml.
+log_level = "warn"
+
+[project]
+src = ["src"]
+test = ["tests"]
+exclude = ["**/.venv/**", "**/node_modules/**"]
+
 [review]
 max_file_lines = 400
 use_graft = false
+scaffold_markers = []
+source_policy_exclude = ["tests/fixtures/**"]
 
-[tools.typecheck]
-engine_args = ["--strict"]
-check = true
-
-[tools.coverage]
-engine_args = ["--branch"]
-
-[tools.e2e]
-check = true
-
-[tools.release]
-check = true
+# lint is the verified consumer of generic engine_args.
+[tools.lint]
+engine_args = []

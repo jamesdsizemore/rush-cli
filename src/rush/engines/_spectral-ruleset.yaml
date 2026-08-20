@@ -1,0 +1,11 @@
+extends: []
+rules:
+  rush-openapi-info:
+    description: OpenAPI documents must include info metadata.
+    message: OpenAPI info is required.
+    severity: warn
+    formats: [oas3]
+    given: $
+    then:
+      field: info
+      function: truthy

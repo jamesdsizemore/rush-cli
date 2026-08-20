@@ -1,22 +1,7 @@
-# Configuration
+# Rush configuration
 
-Rush discovers `rush.toml` by walking from the requested path to the Git root.
-All `[tools.<name>]` sections must name an entry in the canonical tool catalog;
-an unknown name is rejected to catch typos.
+Use [`reference/configuration-reference.md`](reference/configuration-reference.md) for the exact fields and implementation notes, and [`reference/configuration-cookbook.md`](reference/configuration-cookbook.md) for complete examples.
 
-```toml
-[review]
-max_file_lines = 400
-use_graft = false
+Rush configuration is optional. Discovery starts at the target, walks upward, and stops at the Git root. Built-in defaults are overridden by the nearest `rush.toml`, then explicit CLI arguments.
 
-[tools.typecheck]
-engine_args = ["--strict"]
-check = true
-
-[tools.coverage]
-engine_args = ["--branch"]
-```
-
-`engine_args` and `check` are generic tool settings. Tool behavior remains safe
-by default: browser/slow/network operations require their own explicit flags.
-Rush never installs an engine while reading configuration.
+> Not every parsed field is currently consumed by every tool. The reference labels verified consumers so teams do not build policy on a no-op setting.

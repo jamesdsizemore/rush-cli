@@ -221,6 +221,97 @@
   bounded representative-engine jobs both completed successfully
   ([run 32184793416](https://github.com/jamesdsizemore/rush-cli/actions/runs/32184793416)).
 
+### 2026-08-18 — Phase 02 Checkov adapter checkpoint
+
+- Began and scoped the slice with RTK Git inspection, Graft architecture
+  retrieval, context-mode Phase 02 acceptance retrieval, and pinned official
+  Checkov `3.3.9` source/release/license reads.
+- Replaced inherited text parsing with a local Terraform-only JSON adapter:
+  `--directory DIR --framework terraform --output json --skip-download
+  --download-external-modules false`. The child environment is allowlisted and
+  does not inherit Bridgecrew/Prisma credentials or Checkov configuration.
+- `IacTool` now aggregates TFLint then Checkov through the existing canonical
+  routing helper. Both adapters are registered in the catalog fixture audit;
+  all other Phase 02 candidates remain feasibility-gated.
+- RED evidence: the new Checkov reference suite failed at four expected absent
+  seams. GREEN evidence: promotion regression passed **34 tests**. Full quality
+  and final repository gates remain pending for this active Phase 02 phase.
+- Errors/recovery are recorded in `.hermes/implementation/phase-00-02-ledger.md`;
+  no scanner was installed or executed, and local research remains untracked.
+
+### 2026-08-18 — Phase 02 kubeconform feasibility checkpoint
+
+- Began with RTK Git/scope inspection, Graft YAML routing discovery, and
+  context-mode Phase 02/Phase 07 contract retrieval; used the pinned official
+  kubeconform `0.8.0` release, license, usage, and CLI source.
+- Recorded `P02-009`: kubeconform's default `master` schema version and HTTP
+  schema resolution/cache violate Rush local-only rules without a Rush-owned
+  schema corpus. Deferred it to Phase 07; no executable was installed or run.
+- Error/recovery: this RTK build does not provide `rtk read`; bounded native
+  reads were used only after Graft/context-mode located exact documentation
+  anchors. RTK remained the Git/search/diff boundary.
+
+### 2026-08-18 — Phase 02 actionlint adapter checkpoint
+
+- Used RTK Git/scope boundaries, Graft engine/tool/registry discovery, and
+  context-mode Phase 02 acceptance retrieval with official actionlint `1.7.12`
+  source/release/license evidence.
+- RED fixture evidence exposed inherited text parsing, implicit configuration,
+  and external shellcheck/pyflakes child-integration risk. GREEN adapter uses
+  explicit empty config, disables both child integrations, and parses JSON.
+- Focused adapter gate: `3 passed`; Ruff check and format passed. Catalog,
+  fixture registry, compatibility/evidence, decision, issue, and backlog records
+  were updated; no scanner was installed or executed.
+
+### 2026-08-18 — Phase 02 markdownlint adapter checkpoint
+
+- Error discovered: the preexisting route named `markdownlint-cli2` conflicted
+  with the pinned Phase 02 `markdownlint-cli 0.49.1` baseline and only parsed
+  text output. Replaced it with contained JSON invocation and parser coverage.
+- Focused routing/catalog/CLI/MCP/truth gate: `22 passed`; Ruff check and format
+  passed. `P02-011`, compatibility, local evidence, and decision records were
+  updated; no package installation or external scanner execution occurred.
+
+### 2026-08-18 — Phase 02 Spectral adapter checkpoint
+
+- RED fake-process tests exposed the inherited text adapter's missing JSON,
+  ruleset, resolver, and remote-reference controls. GREEN uses an owned static
+  no-extends ruleset and blocks external `$ref` before process launch.
+- Focused catalog/routing/CLI/MCP/truth gate: `26 passed`; Ruff check and format
+  passed. `P02-005`, compatibility, local evidence, findings, and fixture
+  registration were updated; no package installation or executable run occurred.
+
+### 2026-08-18 — Phase 02 ansible-lint feasibility checkpoint
+
+- RTK/Graft/context-mode established that Rush has no Ansible engine/tool route;
+  official `26.8.0` evidence shows SARIF but also project cache/write semantics
+  and untrusted-content execution/configuration risk.
+- Recorded `P02-012` and kept the candidate feasibility-gated. No adapter,
+  catalog, YAML routing, installation, or executable invocation was added.
+
+### 2026-08-18 — Phase 02 codespell feasibility checkpoint
+
+- RTK/Graft/context-mode and official `2.4.3` source show no focused Rush seam,
+  automatic project TOML discovery, and no structured output proof.
+- Recorded `P02-013`; no generic content route, adapter, execution, or install
+  was added.
+
+### 2026-08-18 — Phase 02 Vale feasibility checkpoint
+
+- Recovered the upstream-repository relocation correctly through the direct
+  `v3.17.1` commit and versioned Vale config/sync sources. Two retrieval-command
+  shape errors were logged and did not affect the repository.
+- Recorded `P02-014`: global/project style discovery plus mutating/downloadable
+  `sync` behavior lacks a Rush-owned local-corpus containment contract. No
+  adapter, route, configuration, style artifact, install, or execution was added.
+
+### 2026-08-18 — Phase 02 Lychee feasibility checkpoint
+
+- RTK/Graft/context-mode confirmed no existing link-check/import seam and the
+  governing plan's explicit no-live-network restriction.
+- Recorded `P02-015`; no route, adapter, network permission, installation, or
+  executable invocation was added.
+
 ## 5-Question Reboot Check
 
 | Question | Answer |
@@ -230,3 +321,22 @@
 | What's the goal? | Ship rush: Python CLI + stdio MCP server exposing review/lint/format/test/security tools |
 | What have I learned? | stdio child engines must detach stdin; pip-audit 2.10 uses a dependencies envelope; MCP `env` replaces the inherited environment |
 | What have I done? | Phases 1–7 complete: implementation, MCP integration, verification, security remediation, and a passing GitHub Actions pipeline |
+
+### 2026-08-19 — Product documentation rewrite
+
+- Rebuilt documentation for separate user, contributor, and maintainer
+  audiences from the implementation, generated CLI surface, catalog,
+  configuration model, engine registry, MCP server, tests, CI, and package
+  metadata.
+- Added onboarding, goal-oriented user chapters, eight tutorials, exact command
+  and result references, a configuration cookbook, complete engine directory,
+  MCP/CI/automation integrations, safety/privacy/security boundaries, developer
+  recipes, maintainer runbooks, ADRs, and annotated example configurations.
+- Recorded implementation gaps instead of marketing them as capability:
+  permission-sensitive generic CLI flags, commit-message input, SBOM output
+  controls, and release publication controls are not exposed; `review --llm`
+  remains a deterministic no-call stub; some parsed settings lack consumers.
+- Final evidence: 130 Markdown files cover all 32 tools and 27 engines; 235
+  local links (including anchors) validate; 189 tests pass with 7 expected
+  optional-engine skips; Ruff lint/format, pip-audit, `git diff --check`, RTK
+  review, and Graft graph freshness all pass.

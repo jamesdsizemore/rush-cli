@@ -5,7 +5,9 @@ Architecture §4.4 — enforces requirement C10 (engine discovery, never hard-fa
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +21,17 @@ if TYPE_CHECKING:
     from ..engines.base import Engine
 
 
+MAX_SUBPROCESS_OUTPUT_CHARS = 256 * 1024
+
+
+def _bounded_redacted_output(output: str) -> str:
+    """Redact secret assignments and cap child output before adapters consume it."""
+    redacted = _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", output)
+    if len(redacted) <= MAX_SUBPROCESS_OUTPUT_CHARS:
+        return redacted
+    return redacted[:MAX_SUBPROCESS_OUTPUT_CHARS] + "[TRUNCATED]"
+
+
 def _venv_scripts_dir() -> Path | None:
     """If we're running inside a uv-managed venv, return its Scripts/bin dir.
 
@@ -28,7 +41,6 @@ def _venv_scripts_dir() -> Path | None:
     the venv's Scripts dir to the search list makes `engine_on_path()`
     find ruff/pytest/pip-audit installed via `uv pip install`.
     """
-    # sys.prefix points at the venv root when running inside a venv.
     scripts = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
     if scripts.is_dir():
         return scripts
@@ -36,12 +48,7 @@ def _venv_scripts_dir() -> Path | None:
 
 
 def engine_on_path(binary: str) -> bool:
-    """True if `binary` is findable on PATH or in the active venv's Scripts/.
-
-    Cross-platform via shutil.which. Falls back to the venv's Scripts/bin
-    directory so dev-installed engines (ruff, pip-audit) are discoverable
-    even when the venv isn't activated.
-    """
+    """True if `binary` is findable on PATH or in the active venv's Scripts/."""
     if shutil.which(binary) is not None:
         return True
     scripts = _venv_scripts_dir()
@@ -53,14 +60,11 @@ def engine_on_path(binary: str) -> bool:
 
 
 def resolve_binary(binary: str) -> str | None:
-    """Return the absolute path to `binary` if findable, else None.
+    """Return an executable from the active venv Scripts/bin, then PATH.
 
-    Search priority:
-      1. The active venv's Scripts/ directory (when running inside one)
-      2. $PATH (via shutil.which)
-
-    Preferring the venv prevents PATH pollution from a different tool's
-    binary sneaking in (e.g. Hermes system pytest when rush-cli has its own).
+    This resolver is the only engine-discovery policy. Configuration cannot
+    supply an executable path, which prevents a project file from selecting an
+    arbitrary local binary.
     """
     scripts = _venv_scripts_dir()
     if scripts is not None:
@@ -68,7 +72,6 @@ def resolve_binary(binary: str) -> str | None:
         candidate = scripts / (binary + ext)
         if candidate.is_file():
             return str(candidate)
-
     return shutil.which(binary)
 
 
@@ -77,16 +80,18 @@ def run_subprocess(
     *,
     cwd: Path | None = None,
     timeout: int = 120,
-    env: dict | None = None,
-) -> subprocess.CompletedProcess:
-    """Run a subprocess and return the CompletedProcess.
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a list-only local child process without inheriting stdin.
 
-    Captures stdout+stderr as text and detaches the child from our stdin.
-    In particular, an MCP server's stdin is its JSON-RPC transport: quality
-    engines must never inherit or consume that pipe. Raises
-    subprocess.TimeoutExpired on timeout; callers should wrap.
+    The helper deliberately has no shell mode. Engines receive a bounded argv,
+    fixed optional working directory, and DEVNULL stdin so they cannot consume
+    the stdio MCP transport. Timeout exceptions remain observable by the shared
+    `run_engine` error mapping.
     """
-    return subprocess.run(
+    if not argv or any(not isinstance(arg, str) for arg in argv):
+        raise ValueError("argv must be a non-empty list of strings")
+    result = subprocess.run(
         argv,
         cwd=str(cwd) if cwd is not None else None,
         timeout=timeout,
@@ -95,6 +100,13 @@ def run_subprocess(
         text=True,
         env=env,
         check=False,
+        shell=False,
+    )
+    return subprocess.CompletedProcess(
+        result.args,
+        result.returncode,
+        stdout=_bounded_redacted_output(result.stdout),
+        stderr=_bounded_redacted_output(result.stderr),
     )
 
 
@@ -107,19 +119,12 @@ def run_engine(
     tool_name: str | None = None,
     timeout: int = 120,
 ) -> ToolResult:
-    """Architecture §4.4 — C10 enforcement point.
+    """Run an engine and always return a canonical result.
 
-    Run `engine` on `path`. Returns a ToolResult; never raises.
-
-    Status semantics:
-        - 'skipped' — engine not on PATH (or no source files for this engine)
-        - 'error'   — engine crashed, timed out, or returned unparseable output
-        - 'ok'      — engine ran, no findings
-        - 'warn'/'fail' — engine ran with findings (status set by engine.normalize())
-
-    stdout is never written here. Engine subprocess captures its own stdout.
+    Status semantics: missing engines are `skipped`; engine/process failures
+    are `error`; valid engine findings are normalized as `warn` or `fail` by
+    the adapter. No child output is written to Rush stdout.
     """
-
     tool_name = tool_name or engine.name
     extra_args = list(args or [])
 
@@ -139,33 +144,28 @@ def run_engine(
             engine.name,
             f"timed out after {timeout}s",
             duration_ms=elapsed_ms(start),
+            terminal_reason="timeout",
         )
     except FileNotFoundError:
-        # race: engine was on PATH at check, disappeared between then and run
         return skipped_result(
             tool_name,
             engine.name,
             f"{engine.binary} disappeared from PATH mid-run",
         )
-    except Exception as e:  # noqa: BLE001 - C10 requires structured engine errors
+    except Exception as error:  # noqa: BLE001 - C10 requires structured engine errors
         return error_result(
             tool_name,
             engine.name,
-            f"engine crashed: {e!r}",
+            f"engine crashed: {error!r}",
             duration_ms=elapsed_ms(start),
         )
 
-    # Stamp duration_ms onto the raw result so engine.normalize can read it.
     result.setdefault("duration_ms", elapsed_ms(start))
-
-    # Default status mapping if engine didn't set one. Non-zero exit usually
-    # means "found something" → warn/fail, not error. The engine's own
-    # normalize() can override.
     return engine.normalize(result, path, tool_name)
 
 
 def _install_hint(engine_name: str) -> str:
-    """User-facing install hint per engine. Architecture §3.5 / C10."""
+    """Return a user-facing install hint without installing anything."""
     return {
         "ruff": "pip install ruff",
         "pytest": "pip install pytest",
@@ -178,7 +178,7 @@ def _install_hint(engine_name: str) -> str:
 
 
 def skipped_result(tool_name: str, engine: str | None, reason: str) -> ToolResult:
-    """Build a ToolResult for a skipped tool (engine not on PATH, etc.)."""
+    """Build a ToolResult for an unavailable local engine."""
     return ToolResult(
         tool=tool_name,
         engine=engine,
@@ -197,9 +197,11 @@ def error_result(
     message: str,
     *,
     duration_ms: int = 0,
+    terminal_reason: str | None = None,
+    partial: bool = False,
 ) -> ToolResult:
-    """Build a ToolResult for an engine error (distinct from 'fail')."""
-    return ToolResult(
+    """Build an engine error result with optional execution metadata."""
+    result = ToolResult(
         tool=tool_name,
         engine=engine,
         engine_version=None,
@@ -209,6 +211,35 @@ def error_result(
         findings=[],
         raw=None,
     )
+    if terminal_reason is not None:
+        result["metadata"] = {
+            "terminal_reason": terminal_reason,
+            "partial": partial,
+        }
+    return result
+
+
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(api[_-]?key|token|secret|password|authorization)\s*([=:])\s*([^\s,;]+)"
+)
+
+
+def _redact_finding_message(message: str) -> str:
+    """Keep a finding useful without returning an assigned secret-like value."""
+    return _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", message)
+
+
+def _finding_fingerprint(
+    path: str,
+    line: int,
+    column: int,
+    rule_id: str,
+    severity: str,
+    message: str,
+) -> str:
+    """Return a deterministic, redaction-safe identity for one finding."""
+    payload = "\x1f".join((path, str(line), str(column), rule_id, severity, message))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def normalize_findings(
@@ -217,64 +248,87 @@ def normalize_findings(
     default_severity: str = "warn",
     path_prefix: str = "",
 ) -> list[Finding]:
-    """Convert engine-native finding dicts to canonical Finding TypedDict shape.
+    """Normalize, redact, identify, and deterministically order engine findings.
 
-    Filters out items missing required fields (path/message). Caps list
-    length at 10,000 to bound memory on misbehaving engines.
+    Invalid records without a message are omitted. At most 10,000 records are
+    processed to bound memory use from a malformed external engine payload.
     """
-    out: list[Finding] = []
-    for f in raw_findings[:10000]:
-        path = str(f.get("path") or f.get("filename") or "")
+    findings: list[Finding] = []
+    for raw_finding in raw_findings[:10000]:
+        path = str(raw_finding.get("path") or raw_finding.get("filename") or "")
         if path_prefix and not path.startswith("/"):
             path = f"{path_prefix.rstrip('/')}/{path}"
-        message = str(f.get("message") or f.get("desc") or f.get("text") or "")
-        if not message:
-            continue
-        sev = f.get("severity") or default_severity
-        if sev not in ("info", "warn", "error"):
-            sev = default_severity
-        line = (
-            f.get("line")
-            or f.get("line_number")
-            or (f.get("location") or {}).get("row", 0)
-            or (f.get("position") or {}).get("line", 0)
-            or 0
-        )
-        col = (
-            f.get("column")
-            or f.get("col")
-            or (f.get("location") or {}).get("column", 0)
-            or (f.get("position") or {}).get("column", 0)
-            or 0
-        )
-        rule = str(
-            f.get("rule")
-            or f.get("code")
-            or f.get("rule_id")
-            or (f.get("location") or {}).get("rule", "")
+        message = str(
+            raw_finding.get("message")
+            or raw_finding.get("desc")
+            or raw_finding.get("text")
             or ""
         )
-        out.append(
-            Finding(
-                path=path,
-                line=int(line) if isinstance(line, (int, float)) else 0,
-                column=int(col) if isinstance(col, (int, float)) else 0,
-                rule=rule,
-                severity=sev,
-                message=message,
-                fix=f.get("fix"),
-            )
+        if not message:
+            continue
+        message = _redact_finding_message(message)
+        severity = raw_finding.get("severity") or default_severity
+        if severity not in ("info", "warn", "error"):
+            severity = default_severity
+        line = (
+            raw_finding.get("line")
+            or raw_finding.get("line_number")
+            or (raw_finding.get("location") or {}).get("row", 0)
+            or (raw_finding.get("position") or {}).get("line", 0)
+            or 0
         )
-    return out
+        column = (
+            raw_finding.get("column")
+            or raw_finding.get("col")
+            or (raw_finding.get("location") or {}).get("column", 0)
+            or (raw_finding.get("position") or {}).get("column", 0)
+            or 0
+        )
+        rule_id = str(
+            raw_finding.get("rule_id")
+            or raw_finding.get("rule")
+            or raw_finding.get("code")
+            or (raw_finding.get("location") or {}).get("rule", "")
+            or ""
+        )
+        normalized = Finding(
+            path=path,
+            line=int(line) if isinstance(line, (int, float)) else 0,
+            column=int(column) if isinstance(column, (int, float)) else 0,
+            rule=rule_id,
+            rule_id=rule_id,
+            severity=severity,
+            message=message,
+            fix=raw_finding.get("fix"),
+            remediation=raw_finding.get("remediation") or raw_finding.get("fix"),
+            evidence=raw_finding.get("evidence"),
+            provenance=raw_finding.get("provenance"),
+            freshness=raw_finding.get("freshness"),
+        )
+        normalized["fingerprint"] = _finding_fingerprint(
+            normalized["path"],
+            normalized["line"],
+            normalized["column"],
+            normalized["rule_id"],
+            normalized["severity"],
+            normalized["message"],
+        )
+        findings.append(normalized)
+    return sorted(
+        findings,
+        key=lambda finding: (
+            finding["path"],
+            finding["line"],
+            finding["column"],
+            finding["rule_id"],
+            finding["severity"],
+            finding["message"],
+        ),
+    )
 
 
 def exit_code_for(result: ToolResult) -> int:
-    """Map a ToolResult status to a CLI exit code.
-
-    0 = ok / skipped (not a failure)
-    1 = warn / fail (findings present)
-    2 = error (engine crashed)
-    """
+    """Map canonical statuses to CLI process exit codes."""
     status = result.get("status")
     if status in ("ok", "skipped"):
         return 0
@@ -286,15 +340,12 @@ def exit_code_for(result: ToolResult) -> int:
 
 
 def now_ms() -> int:
-    """Milliseconds since epoch as int. Use as the start timestamp;
-    subtract from a later now_ms() call to get elapsed duration_ms."""
+    """Return milliseconds since epoch for duration measurement."""
     return int(time.time() * 1000)
 
 
 def elapsed_ms(start_ms: int) -> int:
-    """Elapsed milliseconds since start_ms. Returns 0 if start_ms <= 0
-    or if the result would be negative (clock skew)."""
+    """Return non-negative elapsed milliseconds since a start timestamp."""
     if start_ms <= 0:
         return 0
-    delta = now_ms() - start_ms
-    return max(delta, 0)
+    return max(now_ms() - start_ms, 0)

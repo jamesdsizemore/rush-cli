@@ -51,6 +51,7 @@ class NpmAuditEngine(Engine):
             binary_path,
             "audit",
             "--json",
+            "--offline",
             *args,
         ]
         proc = run_subprocess(argv, cwd=run_dir, timeout=180)
@@ -120,7 +121,10 @@ class NpmAuditEngine(Engine):
 
         exit_code = raw.get("exit_code", 0)
         # npm exits 0 = clean, 1 = vulns found, >1 = error
-        if exit_code == 0:
+        if raw.get("stdout", "").strip() and raw.get("parsed") is None:
+            status = "error"
+            summary = "npm audit returned malformed JSON"
+        elif exit_code == 0:
             status = "ok"
             summary = "npm audit: no known vulnerabilities"
         elif findings:

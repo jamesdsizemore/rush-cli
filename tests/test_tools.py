@@ -97,6 +97,32 @@ def test_review_respects_max_file_lines_config(tmp_path: Path):
     assert len(file_size_findings) >= 1
 
 
+def test_review_scaffold_policy_respects_configured_markers_and_exclusions(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "generated").mkdir()
+    (repo / "pyproject.toml").write_text('[project]\nname = "fixture"\n')
+    (repo / "src" / "app.py").write_text("# TODO: replace this scaffold\n")
+    (repo / "generated" / "client.py").write_text("# TODO: replace this scaffold\n")
+    config = RushConfig(
+        review=ReviewConfig(
+            scaffold_markers=["TODO: replace this scaffold"],
+            source_policy_exclude=["generated/**"],
+        )
+    )
+
+    result = ReviewTool().run(repo, config=config)
+
+    findings = [
+        item for item in result["findings"] if item["rule"] == "scaffold-marker"
+    ]
+    assert [(Path(item["path"]).name, item["line"]) for item in findings] == [
+        ("app.py", 1)
+    ]
+
+
 def test_review_skip_on_non_python(tmp_path: Path):
     """A directory with no Python files returns ok with no findings."""
     repo = tmp_path / "nopy"
@@ -211,15 +237,12 @@ def test_test_skipped_when_no_project_markers(tmp_path: Path):
 # --- SecurityTool -----------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    resolve_binary("pip-audit") is None, reason="pip-audit not installed"
-)
-def test_security_runs_pip_audit_on_python_repo(py_repo: Path):
+def test_security_skips_python_repo_without_explicit_requirements(py_repo: Path):
     tool = SecurityTool()
     result = tool.run(py_repo)
     assert result["tool"] == "security"
-    assert result["status"] in ("ok", "fail")
-    assert "pip-audit" in (result.get("engine") or "")
+    assert result["status"] == "skipped"
+    assert "unrecognized" in result["summary"]
 
 
 def test_security_skipped_when_no_project_markers(tmp_path: Path):

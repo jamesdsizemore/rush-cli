@@ -1,0 +1,11 @@
+log_level = "warn"
+[project]
+src = ["src"]
+test = ["tests"]
+exclude = ["**/.venv/**", "**/build/**", "**/dist/**"]
+[review]
+max_file_lines = 450
+scaffold_markers = ["IMPLEMENT_ME", "TEMPORARY_STUB"]
+source_policy_exclude = ["tests/fixtures/**"]
+[tools.lint]
+engine_args = ["--select", "E,F,W,I"]

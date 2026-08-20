@@ -1,122 +1,23 @@
-# MCP server
+# Rush with coding assistants
 
-Rush exposes its five code-quality tools through a **local stdio-only** MCP
-server. It does not start an HTTP or SSE service, listen on a port, or persist
-credentials.
+A compatible coding assistant can launch Rush as a local child process and ask it to run the same checks available in the terminal. MCP is the protocol; stdio is the local pipe used to carry requests and results.
 
-## Start command
-
-```bash
-rush mcp serve
+```mermaid
+sequenceDiagram
+  participant Assistant
+  participant Rush as rush mcp serve
+  participant Engine as Optional engine
+  Assistant->>Rush: tool call on stdin
+  Rush->>Engine: contained local process, stdin detached
+  Engine-->>Rush: captured report
+  Rush-->>Assistant: ToolResult on stdout
+  Rush-->>Assistant: diagnostics on stderr only
 ```
 
-The server reserves stdout for JSON-RPC protocol frames. Operational logs use
-stderr only. Set `RUSH_LOG_LEVEL=debug` when diagnosing startup or engine
-execution; do not route stderr back into the protocol stream.
+No port opens. Rush does not become a background network daemon. Configure a client using [MCP client setup](integrations/mcp-client-setup.md), then use prompts from [Working with AI agents](user-guide/working-with-ai-agents.md).
 
-## Agent configuration
+The assistant does not gain a working model review through Rush: default review remains deterministic and `--llm` remains a no-call stub.
 
-Use the installed `rush` command when it is on the agent's `PATH`:
+## Next
 
-```json
-{
-  "mcpServers": {
-    "rush": {
-      "command": "rush",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
-
-For a repository-local Windows uv environment, point at the executable
-explicitly:
-
-```json
-{
-  "mcpServers": {
-    "rush": {
-      "command": "C:\\Users\\james\\developer\\rush-cli\\.venv\\Scripts\\rush.exe",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
-
-This shape works with MCP clients that accept `command` and `args`, including
-Claude Desktop, Cursor, VS Code MCP integrations, and coding-agent clients.
-Use the configuration file and location documented by that client.
-
-## Tools
-
-| MCP tool | Canonical Rush tool | Main engines |
-|---|---|---|
-| `rush_review` | `review` | deterministic heuristics |
-| `rush_lint` | `lint` | Ruff / ESLint |
-| `rush_format` | `format` | Ruff format / Prettier |
-| `rush_test` | `test` | pytest / Vitest |
-| `rush_security` | `security` | pip-audit / npm audit |
-
-Every tool takes a `path` argument. The public MCP schemas do not expose
-Rush's internal configuration object. Missing optional external engines return
-a structured `skipped` result instead of a protocol error.
-
-## Result contract
-
-Tool calls return JSON text containing the same canonical payload as
-`rush <tool> --json`:
-
-```json
-{
-  "tool": "lint",
-  "engine": "ruff",
-  "engine_version": "0.16.3",
-  "status": "ok",
-  "duration_ms": 42,
-  "summary": "ruff: no issues",
-  "findings": []
-}
-```
-
-`status` is one of `ok`, `warn`, `fail`, `error`, or `skipped`. A `fail` result
-is a completed scan that found issues; it is not an MCP transport failure.
-
-## Safety and process behavior
-
-### Workflow tools
-
-The MCP catalog exposes `commit-msg`, `ci`, and `release` as local safety
-tools. `commit-msg` validates supplied text only; `ci` inspects local workflow
-configuration; and `release` returns a dry-run plan. No workflow result exposes
-credential values, rewrites history, creates tags, or publishes artifacts.
-
-### Language routing
-
-`lint`, `typecheck`, and `test` discover local project markers and may invoke
-multiple installed language engines. The aggregate is deterministic. Rush does
-not install or download foreign engines, and an unavailable executable returns
-`skipped` without affecting the stdio MCP transport.
-
-### Optional Graft review context
-
-`review` is deterministic and heuristic-only by default. CLI users may pass
-`--use-graft`, or set `[review] use_graft = true`, to request local Graft
-context. Graft is never contacted over a network and unavailable local context
-is reported as augmentation metadata rather than failing the base review.
-
-### Experimental semantic drift
-
-`semantic-drift` is registered as experimental. It is skipped unless callers
-explicitly allow both browser and slow execution, and remains skipped until a
-local target is configured. The stdio MCP server never starts browsers or
-contacts a network by default.
-
-`rush.toml` tool sections are validated against the catalog; see
-[CONFIGURATION.md](CONFIGURATION.md) for the generic per-tool model.
-
-- Engines never inherit the server's stdin, preventing child tools from
-  consuming or blocking the JSON-RPC transport.
-- Engine stdout and stderr are captured and returned only as structured
-  results; Rush does not print engine output to MCP stdout.
-- Review is deterministic by default. Any future LLM mode remains opt-in and
-  must source credentials from the environment only.
+Use [client setup](integrations/mcp-client-setup.md) and the [tool reference](reference/mcp-tool-reference.md).

@@ -1,0 +1,8 @@
+log_level = "warn"
+[project]
+src = ["src"]
+test = ["test"]
+exclude = ["**/node_modules/**", "**/dist/**", "**/coverage/**"]
+[review]
+max_file_lines = 450
+use_graft = false

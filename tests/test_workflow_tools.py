@@ -28,12 +28,19 @@ def test_ci_default_is_local_workflow_configuration_check(tmp_path: Path) -> Non
 
 
 def test_release_defaults_to_dry_run_without_publishing(tmp_path: Path) -> None:
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "package.whl").write_text("fixture")
     result = ReleaseTool().run(tmp_path)
 
     assert result["tool"] == "release"
     assert result["status"] == "ok"
-    assert result["metadata"] == {"dry_run": True, "publish": False}
-    assert result["artifacts"] == []
+    assert result["metadata"] == {
+        "dry_run": True,
+        "publish": False,
+        "artifact_count": 1,
+        "artifact_source": "local-dist",
+    }
+    assert result["artifacts"] == [str(tmp_path / "dist" / "package.whl")]
 
 
 def test_release_refuses_publication_without_confirmation(tmp_path: Path) -> None:

@@ -18,6 +18,9 @@ SERVER_NAME = "rush"
 def build_server_instructions() -> str:
     """Describe the live catalog without duplicating a fixed tool list."""
     tool_names = ", ".join(f"rush_{name}" for name in TOOL_SPECS)
+    maturity = "; ".join(
+        f"rush_{name}={spec.maturity}" for name, spec in TOOL_SPECS.items()
+    )
     return (
         "rush — code-quality tools for coding agents. "
         f"Available tools: {tool_names}. "
@@ -25,7 +28,7 @@ def build_server_instructions() -> str:
         "with status (ok|warn|fail|error|skipped), findings, and summary. "
         "If status='skipped', the underlying engine is not installed; install it "
         "or pick a different path. Pairs well with `npx @nanonets/graft` for "
-        "context-graph queries."
+        f"context-graph queries. Maturity: {maturity}."
     )
 
 

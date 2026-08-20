@@ -40,14 +40,17 @@ class PipAuditEngine(Engine):
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
 
-        # pip-audit scans the env's installed packages by default. To scan a
-        # project's requirements, we'd need to point it at requirements.txt
-        # or pyproject.toml. For v0.1, scan the active venv (or the user can
-        # `pip-audit -r requirements.txt` via custom args).
+        # Never inspect the interpreter's installed environment: that would
+        # make a target-path request report unrelated local dependencies.
+        # The bounded Phase 03 route accepts only an explicit requirements
+        # file within the requested project.
+        requirements = path if path.is_file() else path / "requirements.txt"
         argv = [
             binary_path,
             "--format=json",
             "--strict",  # treat non-zero exit from underlying pip as failure
+            "--requirement",
+            str(requirements),
             *args,
         ]
         proc = run_subprocess(argv, cwd=cwd, timeout=180)
@@ -101,7 +104,10 @@ class PipAuditEngine(Engine):
         #   0 = no vulns
         #   1 = vulns found (findings is non-empty)
         #   >= 2 = actual error (config, network, etc.)
-        if exit_code == 0:
+        if raw.get("stdout", "").strip() and raw.get("parsed") is None:
+            status = "error"
+            summary = "pip-audit returned malformed JSON"
+        elif exit_code == 0:
             status = "ok"
             summary = "pip-audit: no known vulnerabilities"
         elif exit_code == 1 and findings:

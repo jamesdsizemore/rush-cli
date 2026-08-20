@@ -387,3 +387,107 @@ Discovery: walk up from cwd to git root, pick first `rush.toml`. CLI flags overr
 - pre-commit: https://github.com/pre-commit/pre-commit (15,507★)
 - prek: https://github.com/j178/prek (8,265★) — Rust reimplementation
 - talisman: https://github.com/thoughtworks/talisman (2,095★)
+
+## 2026-08-18 — Phase 02 verified IaC decision
+
+- `iac` supports exactly two local Terraform adapters: TFLint `0.64.0`
+  (MPL-2.0) and Checkov `3.3.9` (Apache-2.0), in declared TFLint-then-Checkov
+  order. Both remain optional environment-discovered executables.
+- Checkov's supported local command is `--directory DIR --framework terraform
+  --output json --skip-download --download-external-modules false`. Rush uses
+  a credential-free allowlisted child environment, does not request external
+  checks, downloads, source rewriting, soft-fail, or a config file.
+- Fake-process fixtures own argv, normalized output, malformed/partial reports,
+  missing executable, timeout, and aggregation provenance. The full compatibility
+  record and residual Phase 02 backlog live in `docs/ENGINE_COMPATIBILITY.md`
+  and `.hermes/implementation/phase-00-02-ledger.md`.
+
+## 2026-08-18 — Phase 02 kubeconform deferral
+
+- kubeconform `0.8.0` has a documented JSON mode and invalid-resource exit
+  behavior, but its documented default Kubernetes version is `master` and schema
+  resolution is HTTP/cache-backed.
+- Rush will not rely on that default or download schemas. A safe invocation
+  requires a maintained local schema corpus and explicit schema locations;
+  ownership belongs to the Phase 07 cluster-manifest/offline-evidence scope.
+- The existing `yaml` command remains feasibility-gated. No engine, catalog,
+  CLI, MCP, configuration, or fixture promotion is claimed in Phase 02.
+
+## 2026-08-18 — Phase 02 actionlint decision
+
+- `actions` supports actionlint `1.7.12` (MIT) as a local JSON adapter.
+- Rush passes a package-owned empty `-config-file`, disables `shellcheck` and
+  `pyflakes`, supplies no write/download/init command, and maps only `0` clean
+  and `1` findings; malformed, inconsistent, timeout, and command errors are
+  canonical structured errors.
+- The deterministic fake-process suite owns invocation and parser behavior;
+  CLI/MCP use the existing catalog-generated shared implementation.
+
+## 2026-08-18 — Phase 02 markdownlint decision
+
+- `markdown` supports markdownlint-cli `0.49.1` (MIT), replacing the prior
+  unpinned markdownlint-cli2 text route.
+- Rush passes owned empty JSON config and ignore files with `--json`; it omits
+  fix, custom-rule, and output-file behavior and cannot discover project config.
+- Deterministic JSON fixture ownership proves invocation, parser, malformed
+  report, and exit consistency; shared catalog registration preserves CLI/MCP.
+
+## 2026-08-18 — Phase 02 Spectral decision
+
+- `yaml` supports Spectral `6.16.3` (Apache-2.0) through owned static rules and
+  JSON output. Rush neither discovers project rules nor passes a custom resolver
+  or output file.
+- Remote `$ref` inputs are blocked before execution. The fake-process suite owns
+  argv, normalization, malformed/inconsistent output, and that containment rule.
+
+## 2026-08-18 — Phase 02 ansible-lint feasibility decision
+
+- ansible-lint `26.8.0` has SARIF JSON output, but its documented project-root
+  behavior creates a `.cache` and upstream warns untrusted content can execute
+  code via Ansible configuration and vault sources.
+- Rush has no contained Ansible config/environment or dedicated tool seam.
+  It remains feasibility-gated; `YamlTool` remains Spectral-only.
+
+## 2026-08-18 — Phase 02 codespell feasibility decision
+
+- codespell `2.4.3` defaults to dry-run, but has no stable structured report and
+  loads project `pyproject.toml` before an explicit config file.
+- The plan forbids a generic content catch-all. It remains feasibility-gated;
+  Rush does not invoke codespell or its mutating `--write-changes` option.
+
+## 2026-08-18 — Phase 02 Vale feasibility decision
+
+- Vale `3.17.1` can use structured output but requires configuration/styles;
+  upstream source discovers global defaults and `vale sync` can mutate style
+  paths and download packages.
+- Rush has no versioned local corpus or focused prose route. It remains
+  feasibility-gated; no config, style package, adapter, or scanner execution
+  was added.
+
+## 2026-08-18 — Phase 02 Lychee feasibility decision
+
+- Lychee `0.24.2` is a live link checker. Phase 02 forbids such network activity
+  without an explicit permission ADR and has no import-only report route.
+- It remains feasibility-gated; Rush does not add an inert command or execute it.
+
+## 2026-08-19 — Documentation source-of-truth audit
+
+- Generated CLI inspection confirms 32 catalog commands plus the `mcp` group.
+  Only `review` exposes `--llm`/`--use-graft`, and only `format` exposes
+  `--check`; ordinary generated path commands expose `PATH` and `--json`.
+- Catalog inspection confirms 27 engine metadata entries and mixed maturity:
+  real adapters, feasibility-gated routes, guarded placeholders, catalog-only
+  SBOM, and experimental browser runtime.
+- ToolResult uses `engine_version` and `duration_ms`; older prose using
+  `version`/`duration` was stale. `skipped` maps to exit 0, so mandatory CI
+  checks must inspect JSON status.
+- Configuration discovery is nearest-file, upward, Git-root-bounded, and
+  non-merging. Verified setting consumers are narrower than the parser:
+  review thresholds/Graft/scaffold policy and lint engine arguments are active;
+  `fail_on`, generic `check`, and project lists are not universal enforcement.
+- Advanced guarded tools state browser/slow/network/fuzz/baseline permissions
+  internally, but generic CLI commands do not expose them. `commit-msg` lacks a
+  CLI message input; SBOM lacks CLI output/overwrite controls; release lacks
+  CLI publish/confirm controls. Documentation labels these gaps explicitly.
+- `review --llm` detects provider-key presence but returns deterministic stub
+  text and performs no hosted or local model call.

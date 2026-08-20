@@ -20,6 +20,7 @@ from .knip import KnipEngine
 from .markdownlint import MarkdownlintEngine
 from .mypy import MypyEngine
 from .npm_audit import NpmAuditEngine
+from .osv import OsvScannerEngine
 from .pip_audit import PipAuditEngine
 from .prettier import PrettierEngine
 from .pytest import PytestEngine
@@ -42,6 +43,7 @@ ENGINES: dict[str, Engine] = {
     "pytest": PytestEngine(),
     "pip-audit": PipAuditEngine(),
     "npm-audit": NpmAuditEngine(),
+    "osv-scanner": OsvScannerEngine(),
     "mypy": MypyEngine(),
     "tsc": TscEngine(),
     "vulture": VultureEngine(),
@@ -49,7 +51,7 @@ ENGINES: dict[str, Engine] = {
     "radon": RadonEngine(),
     "jscpd": JscpdEngine(),
     "sloppylint": SloppylintEngine(),
-    "markdownlint-cli2": MarkdownlintEngine(),
+    "markdownlint-cli": MarkdownlintEngine(),
     "actionlint": ActionlintEngine(),
     "spectral": SpectralEngine(),
     "sqlfluff": SqlfluffEngine(),

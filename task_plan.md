@@ -10,11 +10,16 @@ also runs each tool as a one-shot command for humans.
 
 ## Next Step
 
-Tasks 9 through 15 are complete. No merge, tag, or release has been performed.
+Active implementation overlay (2026-08-18): Phases 00, 01, and 02 are
+complete. Phase 02 accepted TFLint, Checkov, Hadolint, actionlint, markdownlint,
+and Spectral under individual fixture/evidence gates; residual candidates are
+documented feasibility decisions. No merge, tag, or release has been performed.
 
 ## Current Phase
 
-Phase 12 — Configuration, Documentation & Release Validation (Tasks 9–15 complete)
+Phase 02 — complete: IaC, policy, configuration, templates, SQL, and content
+scanners (accepted adapters are documented; residual candidates remain
+feasibility-gated)
 
 ## Phases
 
@@ -145,6 +150,22 @@ Phase 12 — Configuration, Documentation & Release Validation (Tasks 9–15 com
 Remote CI evidence: GitHub Actions run `32184793416` passed both the full
 quality/package job and bounded representative Python-engine smoke job for
 candidate `e9bb242`. No tag or release was created.
+
+### Phase 13: Product Documentation System
+
+- [x] Replace README engineering notes with beginner product onboarding.
+- [x] Create audience-separated getting-started, user-guide, tutorial,
+  reference, integration, safety, developer, and maintainer navigation.
+- [x] Document all 32 commands, 27 engines, ToolResult/exit semantics,
+  configuration fields/consumers, MCP schemas, and capability maturity.
+- [x] Add platform installation, configuration recipes, CI/assistant adoption,
+  troubleshooting, privacy, security, support, release, and ADR guidance.
+- [x] Update examples, contributor guide, changelog, progress, findings, and
+  task backlog.
+- [x] Pass local-link validation, full tests, Ruff, format, dependency audit,
+  `git diff --check`, RTK review, and Graft validation.
+- **Status:** complete — 189 tests passed with 7 expected optional-engine
+  skips; all documentation and repository quality gates passed.
 
 ## Key Questions
 

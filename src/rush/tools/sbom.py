@@ -28,6 +28,15 @@ class SbomTool(ToolFn):
     ) -> ToolResult:
         start = now_ms()
         output = output_path or path / "rush-sbom.json"
+        try:
+            output.resolve().relative_to(path.resolve())
+        except ValueError:
+            return error_result(
+                self.name,
+                "cdxgen",
+                f"refusing SBOM output outside target: {output}",
+                duration_ms=elapsed_ms(start),
+            )
         if output.exists() and not overwrite:
             return error_result(
                 self.name,

@@ -1,0 +1,10 @@
+log_level = "info"
+[project]
+src = ["backend/src", "frontend/src", "packages"]
+test = ["backend/tests", "frontend/test", "packages"]
+exclude = ["**/.venv/**", "**/node_modules/**", "**/dist/**", "**/generated/**"]
+[review]
+max_file_lines = 500
+use_graft = false
+scaffold_markers = ["NOT_IMPLEMENTED"]
+source_policy_exclude = ["**/fixtures/**", "**/generated/**"]

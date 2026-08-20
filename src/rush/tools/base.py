@@ -31,9 +31,15 @@ class Finding(TypedDict, total=False):
     line: int
     column: int
     rule: str
+    rule_id: str
     severity: Severity
     message: str
     fix: dict | None
+    remediation: dict | str | None
+    evidence: dict | str | None
+    provenance: str | None
+    fingerprint: str
+    freshness: str | None
 
 
 class ToolResult(TypedDict, total=False):

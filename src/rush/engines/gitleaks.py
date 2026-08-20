@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from ..tools.base import ToolResult
-from ..tools.common import resolve_binary, run_subprocess
+from ..tools.common import error_result, resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
 
@@ -39,7 +39,29 @@ class GitleaksEngine(Engine):
         try:
             reports = json.loads(raw.get("stdout", "[]"))
         except json.JSONDecodeError:
-            reports = []
+            return error_result(
+                tool_name,
+                self.name,
+                "gitleaks returned malformed JSON",
+                duration_ms=raw.get("duration_ms", 0),
+                terminal_reason="malformed_output",
+            )
+        if not isinstance(reports, list):
+            return error_result(
+                tool_name,
+                self.name,
+                "gitleaks JSON report is not a list",
+                duration_ms=raw.get("duration_ms", 0),
+                terminal_reason="malformed_output",
+            )
+        if raw.get("exit_code", 0) not in (0, 1):
+            return error_result(
+                tool_name,
+                self.name,
+                "gitleaks exited without a findings result",
+                duration_ms=raw.get("duration_ms", 0),
+                terminal_reason="nonzero_exit",
+            )
         findings = [
             {
                 "path": str(item.get("File", "")),
