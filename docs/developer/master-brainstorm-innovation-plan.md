@@ -1,6 +1,6 @@
 # Master Innovation & Architecture Build Plan: Rush Agent-Native Platform (Phases 31–40)
 
-> **Document Version:** 1.0.0  
+> **Document Version:** 1.2.0  
 > **Status:** Approved Master Architecture & Engineering Blueprint  
 > **Target App Versioning:** Rush v0.3.0 → v1.0.0  
 > **Repository:** `jamesdsizemore/rush-cli`  
@@ -12,9 +12,9 @@
 
 ## 1. Executive Summary & Architectural Synthesis
 
-This Master Innovation Plan synthesizes all previous research, custom tool brainstorms, and agentic support specifications into a unified, 10-phase engineering roadmap (Phases 31–40).
+This Master Innovation Plan synthesizes all custom tool research, agentic coding capabilities, and Git-native intelligence into a unified, 10-phase engineering roadmap (Phases 31–40).
 
-Rush is evolving into the definitive **Agent-Native Quality Operating System**—bridging the rapid velocity of vibe-coding with the deterministic rigor, AST-level precision, and closed-loop self-healing required by enterprise software engineering.
+Rush is evolving into the definitive **Agent-Native Quality Operating System**—bridging the rapid velocity of vibe-coding with the deterministic rigor, AST-level precision, Git history archaeology, and closed-loop self-healing required by enterprise software engineering.
 
 ```mermaid
 flowchart TD
@@ -28,15 +28,15 @@ flowchart TD
 
   subgraph RushPlatform["Rush Agent-Native OS (Phases 31–40)"]
     direction TB
-    P31["Phase 31: Agentic Transport Hardening & HMAC Sandboxing"]
-    P32["Phase 32: AI Safety, Hallucination & Supply Chain Guard"]
-    P33["Phase 33: Full-Stack Polyglot Contract & Schema Sync"]
-    P34["Phase 34: Runtime Async Reliability & UI Crash Catchers"]
-    P35["Phase 35: Structural AST Patching & Pre-Flight Sandboxes"]
+    P31["Phase 31: Agentic Transport Hardening, HMAC Sandboxing & Multi-Agent Worktrees"]
+    P32["Phase 32: AI Safety, Hallucination Guard & Git Leak History"]
+    P33["Phase 33: Full-Stack Polyglot Contract & Git Temporal Coupling"]
+    P34["Phase 34: Runtime Async Reliability & AST 3-Way Merge Resolver"]
+    P35["Phase 35: Structural AST Patching, Pre-Flight Sandboxes & Git Archaeology"]
     P36["Phase 36: Asset, Bundle & Container Optimization"]
-    P37["Phase 37: Architecture Governance & Repo Hygiene Scanner"]
-    P38["Phase 38: Agent Skills Ecosystem & Dynamic Synthesis"]
-    P39["Phase 39: Plan Intelligence, Drift & Scope Enforcement"]
+    P37["Phase 37: Architecture Governance, Git Churn Radar & Repo Doctor"]
+    P38["Phase 38: Agent Skills Ecosystem, Dynamic Synthesis & Repo Scaffolder"]
+    P39["Phase 39: Plan Intelligence, PR Blast Radius & Git Revert Safety"]
     P40["Phase 40: Multi-Model Consensus, HITL & Health Scorecard"]
   end
 
@@ -45,7 +45,7 @@ flowchart TD
     CLI["Rich Terminal CLI & TUI"]
     Dashboard["Authenticated 127.0.0.1 Web Dashboard"]
     Worktrees[".rush/worktrees/ (Ephemeral Sandboxes)"]
-    CacheDB[".rush/cache.db (Flag-Salted SQLite)"]
+    CacheDB[".rush/cache.db & .rush/git_audit.db (SQLite)"]
   end
 
   AgentEcosystem <==>|Adaptive FastMCP / JSON / XML| RushPlatform
@@ -85,7 +85,7 @@ dependencies = [
     "rich==13.9.4",       # Terminal pretty-printing & TUI
     "pytest==9.0.3",      # Test runner
 
-    # AST Slicing & Polyglot Parsing (Phases 33, 35, 37, 38)
+    # AST Slicing & Polyglot Parsing (Phases 33, 34, 35, 37, 38, 39)
     "tree-sitter==0.24.0",            # High-performance incremental AST parsing (ADR-008)
     "tree-sitter-python==0.23.6",     # Official Python grammar wheel
     "tree-sitter-typescript==0.23.2", # Official TypeScript & TSX grammar wheel
@@ -103,7 +103,7 @@ dependencies = [
 
 #### ADR-008: Native Graft Semantic Slicing & Tree-Sitter AST Engine
 - **Context:** Standalone `ast-grep` operates primarily as a single-file pattern search tool and requires spawning external platform-specific binaries. Coding agents require multi-file call-graph traversal, symbol dependency extraction, and context-window token pruning.
-- **Decision:** Adopt **`graft`** powered by native embedded `tree-sitter` (`tree-sitter==0.24.0`) as Rush's unified AST engine for symbol slicing, dependency tree extraction, and structural patching.
+- **Decision:** Adopt **`graft`** powered by native embedded `tree-sitter` (`tree-sitter==0.24.0`) as Rush's unified AST engine for symbol slicing, dependency tree extraction, 3-way structural merge resolution, and AST patching.
 - **Consequences:** Enables instantaneous in-process semantic symbol slicing (`rush_graft_slice`), structural code rewrites (`rush_apply_ast_patch`), and cross-language type mapping (`rush schema-sync`) with zero external binary dependencies and up to 90% reduction in agent context token consumption.
 
 #### ADR-009: Cryptographic HMAC Context Boundary Framing for Prompt Injection Shielding
@@ -113,7 +113,7 @@ dependencies = [
 
 #### ADR-010: Ephemeral Git Worktree Sandboxing for Pre-Flight Evaluation
 - **Context:** Agents applying speculative fixes risk dirtying the developer's working tree or introducing uncommitted broken syntax.
-- **Decision:** Execute speculative remediation and test execution inside detached ephemeral git worktrees under `.rush/worktrees/`.
+- **Decision:** Execute speculative remediation, multi-agent tasks, and test execution inside detached ephemeral git worktrees under `.rush/worktrees/`.
 - **Consequences:** Completely isolates agent experiments from the active workspace until verification gates pass 100%.
 
 #### ADR-011: Offline BPE Token Accounting via `tiktoken`
@@ -125,6 +125,11 @@ dependencies = [
 - **Context:** Phase 40 multi-model consensus and DeepSeek-R1 CoT reasoning require communicating with local inference runtimes (Ollama, vLLM, LM Studio, or remote endpoints).
 - **Decision:** Standardize on `httpx==0.28.1` for non-blocking asynchronous HTTP transport with strict connection timeouts (10s) and fallback handling.
 - **Consequences:** Robust, connection-pooled model queries that never block the FastMCP stdio loop.
+
+#### ADR-013: Hardened Subprocess Git Invocations (Zero External Git Bindings)
+- **Context:** Third-party Git bindings like `GitPython` have known CVEs (shell injection) and memory leaks, while `pygit2` requires compiling native C libraries (`libgit2`).
+- **Decision:** Standardize all Git operations on direct, hardened `run_subprocess(["git", ...])` calls with `stdin=DEVNULL`, `shell=False`, strict path resolution, and parameter sanitization.
+- **Consequences:** 100% portable, secure, zero-overhead Git integration compatible with any Git 2.25+ installation on Windows, macOS, and Linux.
 
 ---
 
@@ -203,18 +208,20 @@ Standalone single-binary distributions for Homebrew, Scoop, and WinGet are gener
 
 ---
 
-### Phase 31: Agentic Transport Hardening, HMAC Sandboxing & Token-Adaptive Compactor
+### Phase 31: Agentic Transport Hardening, HMAC Sandboxing & Multi-Agent Worktree Farm
 
 #### Objective & Scope
-Equip Rush's FastMCP stdio server with model-adaptive output serializers (tailored for Claude Code, OpenAI Codex, Antigravity, and DeepSeek-R1), cryptographic HMAC context boundary framing (Control 7 extension), stateful cursor pagination, real-time turn token accounting, and lock-free WAL SQLite concurrency for multi-agent workflows.
+Equip Rush's FastMCP stdio server with model-adaptive output serializers (tailored for Claude Code, OpenAI Codex, Antigravity, and DeepSeek-R1), cryptographic HMAC context boundary framing (Control 7 extension), stateful cursor pagination, real-time turn token accounting, lock-free WAL SQLite concurrency, and a programmatic Multi-Agent Git Worktree Farm to isolate parallel agent executions.
 
 #### File Roster
 - **Allowed & Target Files:**
   - `src/rush/agent_transport.py` (New: Model-adaptive serialization, HMAC envelope framing)
-  - `src/rush/mcp.py` (Register `rush_format_agent`, `rush_paginate_findings`, `rush_turn_cost`, `rush mcp tunnel`)
+  - `src/rush/git/worktree.py` (New: Multi-agent Git worktree lifecycle manager)
+  - `src/rush/mcp.py` (Register `rush_format_agent`, `rush_paginate_findings`, `rush_turn_cost`, `rush_git_worktree_spawn`, `rush_git_worktree_cleanup`)
   - `src/rush/cache.py` (Enable SQLite WAL mode and busy timeout handlers)
   - `tests/test_agent_transport.py` (New: Unit and contract tests for adaptive formats & HMAC)
   - `tests/test_mcp_pagination.py` (New: Tests for cursor pagination and token estimation)
+  - `tests/test_git_worktree_farm.py` (New: Multi-agent worktree isolation and cleanup tests)
   - `docs/developer/phase-31-agentic-transport.md` (Ledger documentation)
 - **Forbidden Files:**
   - `src/rush/tools/*` (Tool implementations must remain isolated from transport layers)
@@ -238,18 +245,23 @@ Equip Rush's FastMCP stdio server with model-adaptive output serializers (tailor
    - Attach token count estimates and execution timing metadata to every FastMCP response.
 5. **Task 31.5: Lock-Free SQLite WAL Concurrency (`rush mcp tunnel`)**
    - Configure SQLite connection in `src/rush/cache.py` with `PRAGMA journal_mode=WAL;`, `PRAGMA busy_timeout=5000;`, and `PRAGMA synchronous=NORMAL;`.
+6. **Task 31.6: Multi-Agent Git Worktree Farm & Concurrency Manager (`rush git-worktree` / `rush_git_worktree_spawn`)**
+   - Implements `GitWorktreeFarm` in `src/rush/git/worktree.py`.
+   - Programmatically creates, assigns, monitors, and cleans up isolated Git worktrees under `.rush/worktrees/<task-id>`.
+   - Isolates dependencies (`node_modules`, `.venv`), symlinks build caches (`.rush/cache.db`), and checks out target branches or detached HEADs.
+   - Upon task completion, produces a structured JSON-RPC summary with active diffs, passing test logs, and ready-to-merge branch references.
 
 #### Verification & Exit Criteria
-- `pytest tests/test_agent_transport.py tests/test_mcp_pagination.py -q` passes 100%.
+- `pytest tests/test_agent_transport.py tests/test_mcp_pagination.py tests/test_git_worktree_farm.py -q` passes 100%.
 - HMAC validation catches 100% of adversarial prompt injection breakout attempts.
-- Doc parity passes with `python scripts/sync_docs.py --check`.
+- Multi-agent worktree farm runs 4 parallel simulated agent tasks without working directory contention.
 
 ---
 
 ### Phase 32: AI Safety, Hallucination Prevention & Supply Chain Defense
 
 #### Objective & Scope
-Implement native offline scanners protecting developers and vibe-coders from AI hallucinations: hallucinated/typo-squatted dependencies, prompt injection vulnerabilities in application templates, low-density AI code boilerplate (slop), context window token bloat, and ambiguous system prompts.
+Implement native offline scanners protecting developers and vibe-coders from AI hallucinations: hallucinated/typo-squatted dependencies, prompt injection vulnerabilities in application templates, low-density AI code boilerplate (slop), context window token bloat, ambiguous system prompts, and deep historical secret leaks in Git reflogs.
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -258,12 +270,12 @@ Implement native offline scanners protecting developers and vibe-coders from AI 
   - `src/rush/tools/slop_buster.py` (New: Tree-Sitter AST token density & tautological comment checker)
   - `src/rush/tools/context_diet.py` (New: Non-ignored token counter & scratch file trimmer)
   - `src/rush/tools/prompt_linter.py` (New: Markdown instruction quality analyzer)
+  - `src/rush/git/leak_history.py` (New: Deep Git reflog & historical commit tree secret scanner)
+  - `src/rush/tools/git_leak_history.py` (New: CLI/MCP entrypoint for `rush git-leak-history`)
   - `src/rush/data/pypi_top50k.bin` (New: Compact binary bloom filter / trie of verified packages)
   - `src/rush/data/npm_top50k.bin` (New: Compact binary bloom filter / trie of verified npm packages)
-  - `src/rush/catalog.py` & `src/rush/cli.py` & `src/rush/mcp.py` (Register new tools)
-  - `tests/test_ai_safety_tools.py` (New: Comprehensive tests for all 5 tools)
-- **Forbidden Files:**
-  - Remote network requests during scanning (must operate 100% offline).
+  - `src/rush/catalog.py`, `src/rush/cli.py`, `src/rush/mcp.py`
+  - `tests/test_ai_safety_tools.py` (New: Comprehensive tests for AI safety and historical leak tools)
 
 #### Step-by-Step Task Specifications
 1. **Task 32.1: Package Hallucination & Typo-Squatting Guard (`rush typo-squat`)**
@@ -282,17 +294,21 @@ Implement native offline scanners protecting developers and vibe-coders from AI 
 5. **Task 32.5: System Prompt & Instruction Linter (`rush prompt-linter`)**
    - Lints `CLAUDE.md`, `.cursorrules`, `AGENTS.md` against Anthropic/OpenAI prompt engineering rubrics.
    - Detects conflicting rules, excessive token length, and non-deterministic directives.
+6. **Task 32.6: Historical Git Reflog & Packfile Secret Scanner (`rush git-leak-history`)**
+   - Implements `GitLeakHistoryScanner` in `src/rush/git/leak_history.py`.
+   - Scans all historical commits, stashes, orphaned dangling trees, and reflogs for high-entropy secrets (AWS keys, OpenAI API keys, SSH private keys, GitHub PATs) and oversized binary packfile bloat (>10MB).
+   - Generates a zero-leak remediation plan with pinpointed commit SHAs and safe `git filter-repo` / BFG recipes.
 
 #### Verification & Exit Criteria
 - `pytest tests/test_ai_safety_tools.py -q` passes 100%.
-- Typo-squatting scanner accurately detects simulated hallucinated packages with zero false negatives.
+- Historical leak scanner identifies secrets in simulated deleted commits from 10 commits prior.
 
 ---
 
 ### Phase 33: Full-Stack Polyglot Contract & Cross-Language Synchronization
 
 #### Objective & Scope
-Eliminate silent full-stack runtime errors by bridging backend Python/Pydantic schemas with frontend TypeScript/Zod interfaces, mapping backend API routes against frontend client fetch calls, verifying environment variable parity across configurations, and auditing database migration safety.
+Eliminate silent full-stack runtime errors by bridging backend Python/Pydantic schemas with frontend TypeScript/Zod interfaces, mapping backend API routes against frontend client fetch calls, verifying environment variable parity across configurations, auditing database migration safety, and detecting temporal co-change coupling across architectural tiers.
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -301,8 +317,10 @@ Eliminate silent full-stack runtime errors by bridging backend Python/Pydantic s
   - `src/rush/tools/env_sync.py` (New: AST environment variable extractor vs `.env.example`)
   - `src/rush/tools/migration_guard.py` (New: Alembic/Prisma DDL safety & lock linter)
   - `src/rush/tools/n_plus_one.py` (New: AST loop tracer detecting nested ORM/SQL queries)
+  - `src/rush/git/coupling.py` (New: Git temporal co-change & cross-tier coupling miner)
+  - `src/rush/tools/git_coupling.py` (New: CLI/MCP entrypoint for `rush git-coupling`)
   - `src/rush/catalog.py`, `src/rush/cli.py`, `src/rush/mcp.py`
-  - `tests/test_fullstack_sync.py` (New: Full-stack contract and sync test suite)
+  - `tests/test_fullstack_sync.py` (New: Full-stack contract, sync, and coupling test suite)
 
 #### Step-by-Step Task Specifications
 1. **Task 33.1: Cross-Language Schema & Type Parity (`rush schema-sync`)**
@@ -323,17 +341,21 @@ Eliminate silent full-stack runtime errors by bridging backend Python/Pydantic s
 5. **Task 33.5: ORM & SQL N+1 Query Anti-Pattern Detector (`rush n-plus-one`)**
    - AST analysis on loop constructs (`For`, `While`) detecting embedded ORM attribute access (`user.posts`) or database calls (`db.query(...)`).
    - Recommends eager loading (`joinedload`, `selectinload`, `include`).
+6. **Task 33.6: Temporal Co-Change & Cross-Tier Coupling Detector (`rush git-coupling`)**
+   - Implements `GitCouplingMiner` in `src/rush/git/coupling.py`.
+   - Mines historical Git commit logs to detect file pairs that are committed together $\ge 80\%$ of the time.
+   - When an agent stages or edits File A, Rush alerts: *"Warning: File A was modified. Historically, File B is changed alongside it in 88% of commits."*
 
 #### Verification & Exit Criteria
 - `pytest tests/test_fullstack_sync.py -q` passes 100%.
-- Schema sync identifies 100% of injected Pydantic/TypeScript field discrepancies.
+- Temporal coupling miner detects simulated coupled files with calculated co-change confidence $\ge 80\%$.
 
 ---
 
-### Phase 34: Runtime Async Reliability, Event Loop & UI Crash Catchers
+### Phase 34: Runtime Async Reliability, Event Loop & Structural Conflict Resolution
 
 #### Objective & Scope
-Guarantee runtime resilience by detecting blocking synchronous I/O inside asynchronous event loops, verifying UI crash-prevention error boundaries, analyzing regular expressions for ReDoS vulnerabilities, and extracting hardcoded magic literals.
+Guarantee runtime resilience by detecting blocking synchronous I/O inside asynchronous event loops, verifying UI crash-prevention error boundaries, analyzing regular expressions for ReDoS vulnerabilities, extracting hardcoded magic literals, and auto-resolving structural 3-way AST Git merge conflicts.
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -342,8 +364,10 @@ Guarantee runtime resilience by detecting blocking synchronous I/O inside asynch
   - `src/rush/tools/regex_safe.py` (New: Deterministic NFA/DFA ReDoS vulnerability analyzer)
   - `src/rush/tools/magic_cleaner.py` (New: Magic literal & hardcoded URL extractor)
   - `src/rush/tools/state_thrash.py` (New: React re-render & hook dependency linter)
+  - `src/rush/git/resolve.py` (New: Tree-Sitter AST 3-way merge conflict auto-resolver)
+  - `src/rush/tools/git_resolve.py` (New: CLI/MCP entrypoint for `rush git-resolve`)
   - `src/rush/catalog.py`, `src/rush/cli.py`, `src/rush/mcp.py`
-  - `tests/test_runtime_reliability.py` (New: Async, ReDoS, and UI crash tests)
+  - `tests/test_runtime_reliability.py` (New: Async, ReDoS, UI crash, and merge resolver tests)
 
 #### Step-by-Step Task Specifications
 1. **Task 34.1: Event Loop Starvation & Async Sanity (`rush async-sanity`)**
@@ -361,38 +385,47 @@ Guarantee runtime resilience by detecting blocking synchronous I/O inside asynch
 5. **Task 34.5: React State Thrashing & Re-Render Linter (`rush state-thrash`)**
    - Scans JSX props for inline object instantiation `style={{ padding: 8 }}` and anonymous inline closures inside hot render loops.
    - Verifies `useMemo` / `useEffect` dependency arrays contain all referenced scope symbols.
+6. **Task 34.6: Tree-Sitter AST 3-Way Merge Conflict Auto-Resolver (`rush git-resolve`)**
+   - Implements `ASTMergeResolver` in `src/rush/git/resolve.py`.
+   - Parses common ancestor (`BASE`), current branch (`OURS`), and incoming branch (`THEIRS`).
+   - Automatically merges non-overlapping AST declarations (imports, class methods, interface properties, dictionary keys).
+   - Validates syntax and executes project formatters (`ruff`, `prettier`) before staging the resolved file.
 
 #### Verification & Exit Criteria
 - `pytest tests/test_runtime_reliability.py -q` passes 100%.
-- ReDoS detector correctly flags known vulnerable regexes without timing out or false positives.
+- AST merge resolver cleanly auto-resolves simulated non-overlapping class method additions without manual conflict markers.
 
 ---
 
-### Phase 35: Structural AST Patching, Pre-Flight Ephemeral Sandboxes & TDD Driver
+### Phase 35: Structural AST Patching, Pre-Flight Ephemeral Sandboxes & Git Archaeology
 
 #### Objective & Scope
-Replace fragile string diffs with AST-validated structural patching via Tree-Sitter, implement ephemeral git worktree sandboxes for pre-flight testing, build an agentic TDD state machine driver, and expose high-precision structural code search over FastMCP.
+Replace fragile string diffs with AST-validated structural patching via Tree-Sitter, implement speculative sandbox experiments with promote/discard gates, build an agentic TDD state machine driver, expose in-process Graft semantic symbol slicing over FastMCP, route uncommitted fixes to historical commits (`git-absorb`), automate test regression bisects, and trace symbol evolution across Git history.
 
 #### File Roster
 - **Allowed & Target Files:**
   - `src/rush/ast_patcher.py` (New: Tree-Sitter AST structural patch applier)
-  - `src/rush/sandbox.py` (New: Ephemeral git worktree pre-flight executor)
+  - `src/rush/sandbox.py` (New: Ephemeral git worktree pre-flight executor & speculative sandbox)
   - `src/rush/tdd_driver.py` (New: FastMCP TDD state machine: RED → GREEN → REFACTOR)
   - `src/rush/tools/graft_slice.py` (New: Graft semantic symbol & dependency slicing tool)
   - `src/rush/tools/context_snippet.py` (New: Enclosing scope hydrator)
-  - `src/rush/mcp.py` (Register `rush_apply_ast_patch`, `rush_sandbox_eval`, `rush_tdd_next_step`, `rush_graft_slice`, `rush_get_context_snippet`)
+  - `src/rush/git/absorb.py` (New: Diff-to-commit fixup router and auto-squasher)
+  - `src/rush/git/bisect.py` (New: Autonomous automated test & benchmark bisector)
+  - `src/rush/git/trace.py` (New: AST symbol evolution & time-travel tracker)
+  - `src/rush/mcp.py` (Register `rush_apply_ast_patch`, `rush_sandbox_eval`, `rush_tdd_next_step`, `rush_graft_slice`, `rush_get_context_snippet`, `rush_git_bisect`, `rush_git_trace_symbol`)
   - `tests/test_ast_patching.py` (New: Structural AST patching & sandbox tests)
   - `tests/test_tdd_driver.py` (New: TDD state machine contract tests)
+  - `tests/test_git_archaeology.py` (New: Tests for absorb, bisect, and symbol trace)
 
 #### Step-by-Step Task Specifications
 1. **Task 35.1: Tree-Sitter AST Structural Patch Engine (`rush_apply_ast_patch`)**
    - Implement `ASTPatcher` in `src/rush/ast_patcher.py` using `tree-sitter`.
    - Modifies AST nodes directly by structural address rather than character offsets or regex.
    - Formats modified code with project formatters (`ruff`, `prettier`) and verifies syntax validity before file write.
-2. **Task 35.2: Ephemeral Pre-Flight Worktree Sandbox (`rush_sandbox_eval`)**
+2. **Task 35.2: Zero-Risk Speculative Experiment Sandbox (`rush git-sandbox` / `rush_sandbox_eval`)**
    - Implement `WorktreeSandbox` in `src/rush/sandbox.py`.
    - Creates a temporary git worktree at `.rush/worktrees/eval_<id>`.
-   - Applies candidate patch, executes `rush check` / `rush test`, captures structured results, and destroys worktree without touching user working tree.
+   - Applies speculative patch or agent instructions, executes `rush check` / `rush test`, calculates impact metrics, and offers interactive gate: `[Promote to Branch / Cherry-Pick / Discard]`.
 3. **Task 35.3: Agentic TDD State Machine Driver (`rush_tdd_next_step`)**
    - FastMCP state machine enforcing strict TDD:
      - `STATE_RED`: Receives new test. Runs test; verifies it FAILS with expected assertion error.
@@ -403,10 +436,19 @@ Replace fragile string diffs with AST-validated structural patching via Tree-Sit
    - Traverses call graphs and type hierarchies across files, extracting a minimal, self-contained token-pruned AST slice for the agent.
 5. **Task 35.5: Smart Enclosing Scope Hydrator (`rush_get_context_snippet`)**
    - Given a file and line number, returns only the enclosing AST function or class declaration (typically 20–40 lines), saving 90% of prompt context tokens.
+6. **Task 35.6: Diff-to-Commit Fixup Router & Auto-Squasher (`rush git-absorb`)**
+   - Implements `GitAbsorbRouter` in `src/rush/git/absorb.py`.
+   - Inspects uncommitted `git diff`, uses `git blame` to determine which historical commit in the local branch introduced each modified line, and automatically generates `git commit --fixup <sha>` operations.
+7. **Task 35.7: Autonomous Automated Test & Performance Bisector (`rush git-bisect` / `rush_git_bisect`)**
+   - Implements `AutonomousBisector` in `src/rush/git/bisect.py`.
+   - Given a failing test target, automates binary search across Git history in detached sandboxes, executing the test predicate and returning the offending commit SHA, author, and AST diff.
+8. **Task 35.8: AST Symbol Evolution & Time-Travel Tracker (`rush git-trace` / `rush_git_trace_symbol`)**
+   - Implements `SymbolEvolutionTracker` in `src/rush/git/trace.py`.
+   - Uses `graft` and Tree-Sitter AST parsing to track the semantic identity of a symbol across file renames, module reorganizations, and cross-file moves throughout Git history.
 
 #### Verification & Exit Criteria
-- `pytest tests/test_ast_patching.py tests/test_tdd_driver.py -q` passes 100%.
-- Ephemeral sandbox leaves 0 uncommitted artifacts or dirty working tree state upon evaluation.
+- `pytest tests/test_ast_patching.py tests/test_tdd_driver.py tests/test_git_archaeology.py -q` passes 100%.
+- Autonomous bisect pinpoints the exact culprit commit in a simulated 20-commit history fixture in <3 seconds.
 
 ---
 
@@ -445,10 +487,10 @@ Protect vibe-coders and web applications from asset bloat, non-tree-shakeable ba
 
 ---
 
-### Phase 37: Architecture Governance, License Compliance & Holistic Repo Scanner
+### Phase 37: Architecture Governance, Git Churn Radar & Repo Doctor
 
 #### Objective & Scope
-Provide a unified repository-level hygiene and structure scanner (`rush repo`), audit viral copyleft license contamination in AI-generated code, detect cross-file dead export zombies, validate docstring-to-code parity, enforce secure CORS headers, and sanitize test mock fixtures.
+Provide a unified repository-level hygiene and structure scanner (`rush repo`), audit viral copyleft license contamination in AI-generated code, detect cross-file dead export zombies, validate docstring-to-code parity, enforce secure CORS headers, sanitize test mock fixtures, compute architectural churn hotspots, surface bus-factor knowledge loss, audit forgotten stashes (`rush git-ghost`), and diagnose repository internal integrity (`rush git-doctor`).
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -458,8 +500,12 @@ Provide a unified repository-level hygiene and structure scanner (`rush repo`), 
   - `src/rush/tools/doc_parity.py` (New: Docstring parameter & signature drift validator)
   - `src/rush/tools/cors_guard.py` (New: CORS wildcard & HTTP security header auditor)
   - `src/rush/tools/test_sanitizer.py` (New: Test mock PII & sensitive fixture data sanitizer)
+  - `src/rush/git/hotspots.py` (New: Git commit churn velocity vs AST complexity radar)
+  - `src/rush/git/bus_factor.py` (New: Recency-weighted blame entropy & ownership radar)
+  - `src/rush/git/ghost.py` (New: Dangling stash, stale branch & reflog recovery vault)
+  - `src/rush/git/doctor.py` (New: Repository integrity, lockfile & .gitattributes doctor)
   - `src/rush/catalog.py`, `src/rush/cli.py`, `src/rush/mcp.py`
-  - `tests/test_repo_governance_tools.py` (New: Comprehensive governance tests)
+  - `tests/test_repo_governance_tools.py` (New: Governance, churn radar, and git doctor tests)
 
 #### Step-by-Step Task Specifications
 1. **Task 37.1: Holistic Repository Hygiene & Structure Scanner (`rush repo`)**
@@ -471,7 +517,7 @@ Provide a unified repository-level hygiene and structure scanner (`rush repo`), 
    - Compares declared project license with dependencies and source headers against SPDX database.
    - Flags GPL/AGPL viral copyleft contamination in commercial/permissive codebases.
 3. **Task 37.3: Cross-File Dead Export & Zombie Code Linter (`rush zombie-code`)**
-   - Constructs in-memory repository symbol reference graph.
+   - Constructs in-memory repository symbol reference graph using `graft`.
    - Flags exported functions, classes, and types that have 0 callers across the workspace.
 4. **Task 37.4: Docstring-to-Code Signature Drift Validator (`rush doc-parity`)**
    - Compares AST function parameters and return types against `@param` / `:param` / `@returns` docstrings.
@@ -480,16 +526,29 @@ Provide a unified repository-level hygiene and structure scanner (`rush repo`), 
    - Disallows wildcard origins `allow_origins=["*"]` when `allow_credentials=True` is enabled.
 6. **Task 37.6: Test Mock PII & Fixture Sanitizer (`rush test-sanitizer`)**
    - Scans test fixtures for real credit card numbers, live API tokens, and non-RFC 2606 email domains.
+7. **Task 37.7: High-Churn / High-Complexity Architectural Hotspot Radar (`rush git-hotspots`)**
+   - Implements `GitHotspotRadar` in `src/rush/git/hotspots.py`.
+   - Correlates 90-day Git commit churn with AST cyclomatic complexity and test deficits to plot high-risk code hotspots.
+8. **Task 37.8: Code Ownership & Bus-Factor Radar (`rush git-bus-factor` / `rush git-ownership`)**
+   - Implements `GitOwnershipRadar` in `src/rush/git/bus_factor.py`.
+   - Mines Git blame with exponential recency decay ($e^{-\lambda t}$) to compute module ownership percentages and flag at-risk modules (Bus Factor = 1).
+9. **Task 37.9: Dangling Stashes, Stale Branches & Reflog Vault (`rush git-ghost`)**
+   - Implements `GitGhostVault` in `src/rush/git/ghost.py`.
+   - Audits forgotten stashes, identifies merged branches for safe cleanup, and recovers orphaned commits lost from `git reset --hard`.
+10. **Task 37.10: Repository Integrity, Lockfiles & Hygiene Doctor (`rush git-doctor`)**
+    - Implements `GitDoctor` in `src/rush/git/doctor.py`.
+    - Clears dead `.git/index.lock` files, normalizes `.gitattributes` CRLF/LF line endings, diagnoses detached HEAD states, and compacts packfiles.
 
 #### Verification & Exit Criteria
 - `pytest tests/test_repo_governance_tools.py -q` passes 100%.
+- Git doctor successfully detects and safely removes stale lockfiles and normalizes mixed line endings.
 
 ---
 
 ### Phase 38: Agent Skills Ecosystem, Dynamic Synthesis & Repo Scaffolder
 
 #### Objective & Scope
-Build an enterprise-grade agent skills runtime and automated non-destructive repository scaffolder: auditing `SKILL.md` frontmatter and prompt injection security, synthesizing permanent AST plugins from natural language instructions, hot-reloading skills without server restarts, translating skills across agent formats, fuzzing skill resilience, and scaffolding/auto-wiring Rush commands, rules, skills, and FastMCP configurations into blank or existing repositories without overwriting user rules.
+Build an enterprise-grade agent skills runtime and automated non-destructive repository scaffolder: auditing `SKILL.md` frontmatter and prompt injection security, synthesizing permanent AST plugins from natural language instructions, hot-reloading skills without server restarts, translating skills across agent formats, fuzzing skill resilience, and scaffolding/auto-wiring Rush commands, rules, skills, and FastMCP configurations into blank (greenfield) or existing (brownfield) repositories without overwriting user rules.
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -522,28 +581,28 @@ Build an enterprise-grade agent skills runtime and automated non-destructive rep
 6. **Task 38.6: Non-Destructive Agentic Repo Scaffolder (`rush scaffold` / `rush onboard`)**
    - Integrates Rush seamlessly into either **Blank (Greenfield)** or **Occupied (Brownfield)** repositories:
      - **Blank Repository Scaffolding (Greenfield Mode)**:
-       - **Interactive / Flag Stack Selection**: Supports `--stack=python|typescript|fullstack|rust|go|polyglot` (or interactive prompt).
-       - **Core Repository Scaffolding**: Generates `.gitignore` (with `.rush/cache.db`, `.rush/worktrees/`, `.env`), `README.md` (with `rush score` badge template), `LICENSE` (MIT baseline), and initializes Git repo (`git init`) if not already present.
-       - **Agent Directives Generation**: Creates clean `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with project guidelines and embedded `<!-- RUSH_START --> ... <!-- RUSH_END -->` blocks.
-       - **Subsystem & Skills Bootstrapping**: Generates `.rush/skills/` (with `plugin_builder.md`, `plugin_installer.md`), `.rush/plugins/` (with `example_plugin.py`), `.rush/rules/`, and a stack-tailored `rush.toml`.
-       - **MCP Auto-Wiring**: Writes ready-to-run FastMCP stdio server configurations into `.claude.json`, `.cursor/mcp.json`, and `.gemini/`.
+       - Supports `--stack=python|typescript|fullstack|rust|go|polyglot` (or interactive prompt).
+       - Generates `.gitignore` (with `.rush/cache.db`, `.rush/worktrees/`, `.env`), `README.md` (with `rush score` badge template), `LICENSE` (MIT baseline), and initializes Git repo (`git init`) if not already present.
+       - Creates clean `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with project guidelines and embedded `<!-- RUSH_START --> ... <!-- RUSH_END -->` blocks.
+       - Generates `.rush/skills/` (with `plugin_builder.md`, `plugin_installer.md`), `.rush/plugins/` (with `example_plugin.py`), `.rush/rules/`, and a stack-tailored `rush.toml`.
+       - Writes ready-to-run FastMCP stdio server configurations into `.claude.json`, `.cursor/mcp.json`, and `.gemini/`.
      - **Occupied Repository Scaffolding (Brownfield Mode)**:
-       - **Zero Overwrite Invariant**: Never modifies or deletes existing user rules, code, or configs.
-       - **Non-Destructive Config Appender**: Inserts or updates delimited boundary blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in existing `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
-       - **Safe MCP Config Merging**: Parses existing JSON in `.claude.json` / `.cursor/mcp.json` / `.gemini/` and merges the `"rush"` stdio transport entry without disturbing existing MCP servers.
-       - **Schema-Preserving `rush.toml`**: If `rush.toml` exists, validates schema without altering user settings; if absent, runs stack discovery and generates tailored config.
+       - Zero Overwrite Invariant: Never modifies or deletes existing user rules, code, or configs.
+       - Non-Destructive Config Appender: Inserts or updates delimited boundary blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in existing `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
+       - Safe MCP Config Merging: Parses existing JSON in `.claude.json` / `.cursor/mcp.json` / `.gemini/` and merges the `"rush"` stdio transport entry without disturbing existing MCP servers.
+       - Schema-Preserving `rush.toml`: If `rush.toml` exists, validates schema without altering user settings; if absent, runs stack discovery and generates tailored config.
 
 #### Verification & Exit Criteria
 - `pytest tests/test_skills_ecosystem.py tests/test_scaffolder.py -q` passes 100%.
-- Greenfield test: Scaffolding a completely empty folder creates a fully functional, passing `rush check` workspace with git, MCP, and agent rules.
-- Brownfield test: Scaffolding an existing repo with custom `CLAUDE.md` and `.claude.json` appends Rush rules without overwriting or deleting any user lines.
+- Greenfield test: Scaffolding an empty folder creates a fully functional workspace with git, MCP, and agent rules.
+- Brownfield test: Scaffolding an existing repo appends Rush rules without overwriting or deleting any user lines.
 
 ---
 
-### Phase 39: Implementation Plan Intelligence, Drift Verification & Scope Enforcement
+### Phase 39: Implementation Plan Intelligence, PR Blast Radius & Git Revert Safety
 
 #### Objective & Scope
-Transform software planning documents into enforceable quality contracts: linting implementation plans for atomic structure and defensive controls, enforcing strict zero-scope-creep file rosters during agent execution, auto-generating TDD build plans, and detecting plan-to-code drift.
+Transform software planning documents into enforceable quality contracts: linting implementation plans for atomic structure and defensive controls, enforcing strict zero-scope-creep file rosters during agent execution, auto-generating TDD build plans, detecting plan-to-code drift, synthesizing high-precision conventional commit messages, guarding PR reviewability scope, and planning safe dependency-ordered multi-commit reverts.
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -551,8 +610,13 @@ Transform software planning documents into enforceable quality contracts: lintin
   - `src/rush/tools/plan_verify.py` (New: Git diff file roster scope creep guard & progress tracker)
   - `src/rush/tools/plan_gen.py` (New: Deterministic TDD phased plan generator)
   - `src/rush/tools/plan_diff.py` (New: Plan specification vs code AST structural drift detector)
+  - `src/rush/git/smart_commit.py` (New: AST-aware conventional commit synthesizer)
+  - `src/rush/git/pr_scope.py` (New: PR blast radius, review difficulty & micro-PR split guard)
+  - `src/rush/git/revert_plan.py` (New: Dependency-aware multi-commit revert sequence planner)
+  - `src/rush/git/branch_sync.py` (New: Simulation-first rebase & alignment assistant)
   - `src/rush/catalog.py`, `src/rush/cli.py`, `src/rush/mcp.py`
   - `tests/test_plan_intelligence.py` (New: Plan linting, verification, and scope tests)
+  - `tests/test_git_choreography.py` (New: Conventional commit, PR scope, and revert planner tests)
 
 #### Step-by-Step Task Specifications
 1. **Task 39.1: Implementation Plan & Spec Linter (`rush plan-lint`)**
@@ -566,9 +630,23 @@ Transform software planning documents into enforceable quality contracts: lintin
    - Takes a high-level feature prompt and generates a standardized, TDD-centered implementation plan markdown document.
 4. **Task 39.4: Plan vs Code Structural Drift Detector (`rush plan-diff`)**
    - Compares planned classes, functions, and endpoints declared in `docs/developer/phase-*.md` with actual AST symbols in `src/`.
+5. **Task 39.5: AST-Aware Conventional Commit Synthesizer (`rush git-smart-commit`)**
+   - Implements `SmartCommitSynthesizer` in `src/rush/git/smart_commit.py`.
+   - Inspects staged AST diffs (detecting exact function additions, signature changes, schema migrations, and dependency updates) to synthesize high-fidelity Conventional Commit messages with ticket IDs.
+6. **Task 39.6: PR Blast Radius & Reviewability Guard (`rush git-pr-scope` / `rush_git_pr_scope`)**
+   - Implements `PRScopeGuard` in `src/rush/git/pr_scope.py`.
+   - Counts modified architectural tiers (API, Database, UI, Auth, Config) and calculates a review difficulty score (0–100).
+   - Recommends atomic PR split boundaries if the diff exceeds review thresholds (>400 lines or >8 files).
+7. **Task 39.7: Dependency-Aware Multi-Commit Revert Planner (`rush git-revert-plan`)**
+   - Implements `RevertPlanner` in `src/rush/git/revert_plan.py`.
+   - Analyzes the AST symbol dependency chain across all commits in a target feature span, computing the exact reverse-topological order of reverts required to cleanly roll back the feature with zero merge conflicts.
+8. **Task 39.8: Simulation-First Rebase & Alignment Assistant (`rush git-branch-sync`)**
+   - Implements `RebaseSimulator` in `src/rush/git/branch_sync.py`.
+   - Replays each commit sequentially in an ephemeral sandbox worktree, running `rush check` to pre-identify conflicts and ensure every intermediate commit remains green.
 
 #### Verification & Exit Criteria
-- `pytest tests/test_plan_intelligence.py -q` passes 100%.
+- `pytest tests/test_plan_intelligence.py tests/test_git_choreography.py -q` passes 100%.
+- Revert planner generates conflict-free revert recipe for a simulated 5-commit dependent feature branch.
 
 ---
 
@@ -626,18 +704,18 @@ gantt
   title Rush Agent-Native Platform Roadmap (Phases 31–40)
   dateFormat  YYYY-MM-DD
   section Foundation & Safety
-  Phase 31: Agentic Transport Hardening & HMAC Sandboxing :2026-09-01, 14d
-  Phase 32: AI Safety, Hallucination & Supply Chain Guard :2026-09-15, 14d
+  Phase 31: Agentic Transport Hardening, HMAC Sandboxing & Multi-Agent Worktrees :2026-09-01, 14d
+  Phase 32: AI Safety, Hallucination Guard & Git Leak History :2026-09-15, 14d
   section Full-Stack & Runtime
-  Phase 33: Full-Stack Polyglot Contract & Schema Sync :2026-10-01, 14d
-  Phase 34: Runtime Async Reliability & UI Crash Catchers :2026-10-15, 14d
+  Phase 33: Full-Stack Polyglot Contract & Git Temporal Coupling :2026-10-01, 14d
+  Phase 34: Runtime Async Reliability & AST 3-Way Merge Resolver :2026-10-15, 14d
   section AST Engine & Assets
-  Phase 35: Structural AST Patching & Pre-Flight Sandboxes :2026-11-01, 14d
+  Phase 35: Structural AST Patching, Pre-Flight Sandboxes & Git Archaeology :2026-11-01, 14d
   Phase 36: Asset, Bundle & Container Optimization :2026-11-15, 14d
   section Governance & Intelligence
-  Phase 37: Architecture Governance & Repo Hygiene Scanner :2026-12-01, 14d
-  Phase 38: Agent Skills Ecosystem & Dynamic Synthesis :2026-12-15, 14d
-  Phase 39: Plan Intelligence, Drift & Scope Enforcement :2027-01-01, 14d
+  Phase 37: Architecture Governance, Git Churn Radar & Repo Doctor :2026-12-01, 14d
+  Phase 38: Agent Skills Ecosystem, Dynamic Synthesis & Repo Scaffolder :2026-12-15, 14d
+  Phase 39: Plan Intelligence, PR Blast Radius & Git Revert Safety :2027-01-01, 14d
   Phase 40: Multi-Model Consensus, HITL & Health Scorecard :2027-01-15, 14d
 ```
 
@@ -648,11 +726,11 @@ gantt
 ### 6.1 Strict Diagnostic Logging Standard (NDJSON on Stderr)
 - In accordance with the project contract, all diagnostic, progress, and error events MUST be emitted to `sys.stderr` formatted as structured NDJSON:
   ```json
-  {"timestamp": "2026-09-01T12:00:00Z", "level": "INFO", "subsystem": "ast_patcher", "event": "patch_validated", "file": "src/api.py", "nodes_modified": 2}
+  {"timestamp": "2026-09-01T12:00:00Z", "level": "INFO", "subsystem": "git_archaeology", "event": "bisect_step_completed", "commit": "a1b2c3d", "status": "good"}
   ```
 - `stdout` remains strictly reserved for FastMCP JSON-RPC frames and CLI output streams.
 
 ### 6.2 Test-Driven Development (TDD) Gate Requirements
-- Every new tool, transport serializer, and AST parser MUST begin with a failing unit test fixture.
-- All 161+ documentation files in `/docs` must pass `scripts/sync_docs.py --check` with 0 drift on every commit.
+- Every new tool, transport serializer, Git analyzer, and AST parser MUST begin with a failing unit test fixture.
+- All 163+ documentation files in `/docs` must pass `scripts/sync_docs.py --check` with 0 drift on every commit.
 - Code changes must pass `ruff check src tests scripts` and `ruff format --check src tests scripts` cleanly.
