@@ -814,6 +814,90 @@ def gate_cmd(
     )
 
 
+# --- File Watcher CLI command ---------------------------------------------
+
+
+@cli.command(name="watch")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--suite",
+    "suite_name",
+    default="check",
+    help="Workflow suite to trigger (check, audit, gate). Default: check.",
+)
+@click.option(
+    "--tool",
+    "tool_name",
+    default=None,
+    help="Specific tool to run on change (overrides --suite).",
+)
+@click.option(
+    "--debounce",
+    "debounce_ms",
+    default=300,
+    type=int,
+    help="Debounce window in milliseconds. Default: 300ms.",
+)
+@permission_options
+def watch_cmd(
+    path: Path,
+    suite_name: str,
+    tool_name: str | None,
+    debounce_ms: int,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+) -> None:
+    """Watch repository files in real-time and trigger check suites on modifications."""
+    from .watcher import FileWatcher
+    from .workflows.suites import (
+        AUDIT_SUITE,
+        CHECK_SUITE,
+        GATE_SUITE,
+        run_workflow_suite,
+    )
+
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    suite_map = {"check": CHECK_SUITE, "audit": AUDIT_SUITE, "gate": GATE_SUITE}
+
+    def on_change_handler(changed_paths: list[Path]) -> None:
+        click.echo(
+            f"\n[WATCH] Changes detected in {len(changed_paths)} file(s). Triggering evaluation..."
+        )
+        if tool_name:
+            tools_map = {t.name: t for t in ALL_TOOLS}
+            t = tools_map.get(tool_name)
+            if t:
+                try:
+                    res = t.run(path.resolve(), permissions=perms)
+                except TypeError:
+                    res = t.run(path.resolve())
+                click.echo(res.get("summary", "Done."))
+        else:
+            suite = suite_map.get(suite_name, CHECK_SUITE)
+            res = run_workflow_suite(
+                suite=suite, path=path.resolve(), permissions=perms, fail_fast=False
+            )
+            click.echo(res.get("summary", "Done."))
+
+    watcher = FileWatcher(
+        root=path.resolve(), debounce_ms=debounce_ms, on_change=on_change_handler
+    )
+    watcher.watch_blocking()
+
+
 for _catalog_tool in ALL_TOOLS:
     if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))
