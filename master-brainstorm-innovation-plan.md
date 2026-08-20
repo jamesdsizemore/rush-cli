@@ -147,7 +147,55 @@ dependencies = [
 | Python AST & Async Sanity | Python 3.12 Standard Lib | `ast`, `re` | Built-in | PSF | Native OS |
 | Config & Manifest Parsing | Python 3.12 Standard Lib | `tomllib`, `json` | Built-in | PSF | Native OS |
 | Path Confinement | Python 3.12 Standard Lib | `pathlib` | Built-in | PSF | Native OS |
-| Asset Header Parsing | Python 3.12 Standard Lib | `struct` | Built-in | PSF | Native OS |
+| Asset Header Parsing | Python 3.12 Standard Lib | `struct`, `zlib` | Built-in | PSF | Native OS |
+| SVG AST & XML Parsing | Python 3.12 Standard Lib | `xml.etree.ElementTree` | Built-in | PSF | Native OS |
+| Subprocess Detached I/O | Python 3.12 Standard Lib | `subprocess` | Built-in | PSF | Native OS |
+| Local In-Memory Web Server | Python 3.12 Standard Lib | `http.server`, `socket` | Built-in | PSF | Native OS |
+
+---
+
+### 3.3 Embedded Static Data Artifacts (Zero-Network Invariant)
+
+To preserve Rush's strict offline operation without requiring remote API calls, the following deterministic static datasets are pre-compiled into `src/rush/data/`:
+
+| Dataset Artifact | Subsystem | Format & Size | Purpose |
+|---|---|---|---|
+| `pypi_top50k.bin` | `rush typo-squat` | Compressed Double-Array Trie (1.2 MB) | Offline verification of top 50,000 PyPI package names. |
+| `npm_top50k.bin` | `rush typo-squat` | Compressed Double-Array Trie (1.4 MB) | Offline verification of top 50,000 npm package names. |
+| `spdx_licenses.json` | `rush license-audit` | JSON (120 KB) | SPDX 3.23 license compatibility matrix (permissive, weak-copyleft, strong-copyleft). |
+| `model_pricing.json` | `rush token-cost` | JSON (24 KB) | Offline pricing ($/1k tokens) and context window limits for Claude 3.7, GPT-4o, Gemini 2.5, DeepSeek-V3/R1. |
+| `redos_patterns.json` | `rush regex-safe` | JSON (18 KB) | Catalog of known catastrophic backtracking regex patterns and NFA state templates. |
+
+---
+
+### 3.4 Discovered External Quality Engines (Zero-Bundling Discovery)
+
+In accordance with the Rush project contract, external quality engines are never bundled as hard dependencies. They are discovered dynamically from the user's PATH (with virtual environment precedence and anti-shadowing verification):
+
+```text
+[Linting & Formatting]     ruff, eslint, prettier, biome, biome-check
+[Typechecking & Dead Code] mypy, pyright, tsc, vulture, knip
+[Security & Secrets]       pip-audit, npm-audit, trivy, gitleaks, semgrep, hadolint
+[Testing & QA]             pytest, vitest, playwright, hypothesis, fast-check, locust
+[Build & Supply Chain]     syft, cosign, slsa-verifier, actionlint, checkov, sqlfluff, yamllint
+```
+
+Missing engines return canonical structured `skipped` results without breaking execution or failing test gates.
+
+---
+
+### 3.5 Cross-Platform Wheel & Binary Packaging Compatibility
+
+All pinned C/Rust extensions provide pre-compiled wheels for all supported tier-1 targets:
+
+- **Windows x86_64**: `cp312-cp312-win_amd64`
+- **macOS Apple Silicon**: `cp312-cp312-macosx_11_0_arm64`
+- **macOS Intel**: `cp312-cp312-macosx_10_9_x86_64`
+- **Linux x86_64 (glibc 2.17+)**: `cp312-cp312-manylinux_2_17_x86_64`
+- **Linux aarch64 (glibc 2.17+)**: `cp312-cp312-manylinux_2_17_aarch64`
+- **Linux (musl / Alpine)**: `cp312-cp312-musllinux_1_2_x86_64`
+
+Standalone single-binary distributions for Homebrew, Scoop, and WinGet are generated via PyInstaller using SHA-256 pinned artifacts in `.github/workflows/release.yml`.
 
 ---
 
