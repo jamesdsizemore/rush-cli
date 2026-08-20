@@ -1,6 +1,6 @@
 # Master Innovation & Architecture Build Plan: Rush Agent-Native Platform (Phases 31–40)
 
-> **Document Version:** 1.0.0  
+> **Document Version:** 1.1.0  
 > **Status:** Approved Master Architecture & Engineering Blueprint  
 > **Target App Versioning:** Rush v0.3.0 → v1.0.0  
 > **Repository:** `jamesdsizemore/rush-cli`  
@@ -90,10 +90,10 @@ dependencies = [
 ]
 ```
 
-### ADR-008: Native Tree-Sitter AST Parsing for Structural Patching and Polyglot Analysis
-- **Context:** Regex-based code search and line-based fuzzy patch application fail on complex multiline AST structures, indentation nuances, and nested code blocks.
-- **Decision:** Embed `tree-sitter` with pinned C grammars for Python, TypeScript, JavaScript, and TSX.
-- **Consequences:** Enables instantaneous, deterministic AST queries (`rush_ast_grep`), structural code rewrites (`rush_apply_ast_patch`), and cross-language type mapping (`rush schema-sync`) without spawning external Node.js/Python runtimes.
+### ADR-008: Native Graft Semantic Slicing & Tree-Sitter AST Engine
+- **Context:** Standalone `ast-grep` operates primarily as a single-file pattern search tool and requires spawning external platform-specific binaries. Coding agents require multi-file call-graph traversal, symbol dependency extraction, and context-window token pruning.
+- **Decision:** Adopt **`graft`** powered by native embedded `tree-sitter` (`tree-sitter==0.24.0`) as Rush's unified AST engine for symbol slicing, dependency tree extraction, and structural patching.
+- **Consequences:** Enables instantaneous in-process semantic symbol slicing (`rush_graft_slice`), structural code rewrites (`rush_apply_ast_patch`), and cross-language type mapping (`rush schema-sync`) with zero external binary dependencies and up to 90% reduction in agent context token consumption.
 
 ### ADR-009: Cryptographic HMAC Context Boundary Framing for Prompt Injection Shielding
 - **Context:** Indirect prompt injections in repository comments or test fixtures can hijack coding agent reasoning loops.
@@ -279,16 +279,16 @@ Guarantee runtime resilience by detecting blocking synchronous I/O inside asynch
 ### Phase 35: Structural AST Patching, Pre-Flight Ephemeral Sandboxes & TDD Driver
 
 #### Objective & Scope
-Replace fragile string diffs with AST-validated structural patching via Tree-Sitter, implement ephemeral git worktree sandboxes for pre-flight testing, build an agentic TDD state machine driver, and expose high-precision structural code search over FastMCP.
+Replace fragile string diffs with AST-validated structural patching via Tree-Sitter, implement ephemeral git worktree sandboxes for pre-flight testing, build an agentic TDD state machine driver, and expose in-process Graft semantic symbol slicing over FastMCP.
 
 #### File Roster
 - **Allowed & Target Files:**
   - `src/rush/ast_patcher.py` (New: Tree-Sitter AST structural patch applier)
   - `src/rush/sandbox.py` (New: Ephemeral git worktree pre-flight executor)
   - `src/rush/tdd_driver.py` (New: FastMCP TDD state machine: RED → GREEN → REFACTOR)
-  - `src/rush/tools/ast_grep.py` (New: Structural AST search tool)
+  - `src/rush/tools/graft_slice.py` (New: Graft semantic symbol & dependency slicing tool)
   - `src/rush/tools/context_snippet.py` (New: Enclosing scope hydrator)
-  - `src/rush/mcp.py` (Register `rush_apply_ast_patch`, `rush_sandbox_eval`, `rush_tdd_next_step`, `rush_ast_grep`, `rush_get_context_snippet`)
+  - `src/rush/mcp.py` (Register `rush_apply_ast_patch`, `rush_sandbox_eval`, `rush_tdd_next_step`, `rush_graft_slice`, `rush_get_context_snippet`)
   - `tests/test_ast_patching.py` (New: Structural AST patching & sandbox tests)
   - `tests/test_tdd_driver.py` (New: TDD state machine contract tests)
 
@@ -306,9 +306,9 @@ Replace fragile string diffs with AST-validated structural patching via Tree-Sit
      - `STATE_RED`: Receives new test. Runs test; verifies it FAILS with expected assertion error.
      - `STATE_GREEN`: Receives implementation. Runs test; verifies it PASSES.
      - `STATE_REFACTOR`: Receives clean refactor. Runs full suite; verifies all tests remain green.
-4. **Task 35.4: Structural AST Code Query Engine (`rush_ast_grep`)**
-   - Exposes structural pattern matching over MCP: `rush_ast_grep(pattern="class $NAME(BaseModel): $$$")`.
-   - Returns matched AST subtrees with exact file and line ranges.
+4. **Task 35.4: Graft Semantic Symbol & Dependency Slicing Tool (`rush_graft_slice`)**
+   - Exposes in-process `graft` symbol slicing over MCP: `rush_graft_slice(symbol_name="UserResponse", file="src/schemas.py", depth=1)`.
+   - Traverses call graphs and type hierarchies across files, extracting a minimal, self-contained token-pruned AST slice for the agent.
 5. **Task 35.5: Smart Enclosing Scope Hydrator (`rush_get_context_snippet`)**
    - Given a file and line number, returns only the enclosing AST function or class declaration (typically 20–40 lines), saving 90% of prompt context tokens.
 
@@ -379,7 +379,7 @@ Provide a unified repository-level hygiene and structure scanner (`rush repo`), 
    - Compares declared project license with dependencies and source headers against SPDX database.
    - Flags GPL/AGPL viral copyleft contamination in commercial/permissive codebases.
 3. **Task 37.3: Cross-File Dead Export & Zombie Code Linter (`rush zombie-code`)**
-   - Constructs in-memory repository symbol reference graph.
+   - Constructs in-memory repository symbol reference graph using `graft`.
    - Flags exported functions, classes, and types that have 0 callers across the workspace.
 4. **Task 37.4: Docstring-to-Code Signature Drift Validator (`rush doc-parity`)**
    - Compares AST function parameters and return types against `@param` / `:param` / `@returns` docstrings.
@@ -402,7 +402,7 @@ Build an enterprise-grade agent skills runtime: auditing `SKILL.md` frontmatter 
 #### File Roster
 - **Allowed & Target Files:**
   - `src/rush/skills/auditor.py` (New: Agent skill YAML frontmatter, token & security auditor)
-  - `src/rush/skills/synthesizer.py` (New: Natural language rule to AST plugin compiler)
+  - `src/rush/skills/synthesizer.py` (New: Natural language rule to AST plugin compiler using `graft`)
   - `src/rush/skills/watcher.py` (New: Zero-restart skill file watcher & MCP notification dispatcher)
   - `src/rush/skills/adapter.py` (New: Universal `CLAUDE.md` ↔ `SKILL.md` ↔ Cursor translator)
   - `src/rush/skills/fuzzer.py` (New: Skill boundary & malformed input fuzzer)
@@ -416,7 +416,7 @@ Build an enterprise-grade agent skills runtime: auditing `SKILL.md` frontmatter 
    - Scans markdown bodies and example files for hidden prompt injection overrides (`<system_override>`) and unauthorized shell commands.
    - Computes token weight and flags bloated prose (>3,000 tokens).
 2. **Task 38.2: Natural Language Rule to AST Plugin Synthesizer (`rush skill-synthesize`)**
-   - AI agent skill taking plain-English rules (e.g. *"Disallow direct calls to Stripe without idempotency key"*), compiling them into AST-grep / Python plugin rules, generating test fixtures, and validating with `rush plugin validate`.
+   - AI agent skill taking plain-English rules (e.g. *"Disallow direct calls to Stripe without idempotency key"*), compiling them into `graft` / Python plugin rules, generating test fixtures, and validating with `rush plugin validate`.
 3. **Task 38.3: Zero-Restart Dynamic Skill Hot-Reloading (`rush skill-reload`)**
    - File system watcher on `~/.gemini/config/skills/`, `.claude/skills/`, and `.rush/skills/`.
    - Sends `notifications/tools/list_changed` JSON-RPC notifications to connected MCP clients on changes.
