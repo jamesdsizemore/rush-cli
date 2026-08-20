@@ -455,9 +455,44 @@ flowchart TD
 
 ---
 
+#### 29. `rush repo` (Holistic Repository Hygiene, Conflict & Structure Scanner)
+- **Problem**: Vibe-coding repositories accumulate subtle structural rot: stray git merge conflict markers (`<<<<<<< HEAD`, `=======`), committed binary junk (`.DS_Store`, `Thumbs.db`, `.pyc`), mixed CRLF/LF line endings, conflicting lockfiles (`package-lock.json` next to `pnpm-lock.yaml`), unignored build directories (`dist/`, `target/`), and path length hazards on Windows (>260 chars).
+- **Implementation**:
+  - **Conflict Marker Scanner**: Fast Boyer-Moore search for standard git conflict delimiters across all text files.
+  - **Git Scaffolding & Hygiene Audit**: Verifies presence of `README.md`, `LICENSE`, `.gitignore`, `CONTRIBUTING.md`, and detects accidentally committed secret artifacts (`.env`, `id_rsa`).
+  - **Ecosystem Lockfile Disambiguation**: Detects contradictory package manager lockfiles in the same directory (e.g. `npm` vs `pnpm` vs `yarn` vs `bun`).
+  - **Line-Ending & Path-Length Guard**: Enforces consistent line terminators and flags Windows MAX_PATH violations.
+  - **Repository Composition Matrix**: Computes accurate line-of-code and file distribution by language.
+- **FastMCP Tool**: `rush_repo(path)`
+- **Sample Finding**:
+  ```json
+  {
+    "tool": "repo",
+    "status": "fail",
+    "summary": "repo: 2 repository hygiene hazards detected",
+    "findings": [
+      {
+        "file": "src/components/Header.tsx",
+        "line": 34,
+        "rule": "STRAY_MERGE_CONFLICT_MARKER",
+        "severity": "error",
+        "message": "Unresolved git conflict marker '<<<<<<< HEAD' detected in source file."
+      },
+      {
+        "file": "package-lock.json",
+        "rule": "CONFLICTING_LOCKFILE",
+        "severity": "warn",
+        "message": "Found 'package-lock.json' alongside 'pnpm-lock.yaml'. Remove unused lockfile to avoid dependency resolution drift."
+      }
+    ]
+  }
+  ```
+
+---
+
 ## 3. Implementation Architecture & Phasing Roadmap (Phases 31–36)
 
-To implement these 28 innovated tools methodically, we structure them across six upcoming delivery phases:
+To implement these 29 innovated tools methodically, we structure them across six upcoming delivery phases:
 
 ```mermaid
 gantt
@@ -472,7 +507,7 @@ gantt
   section Phase 34: Asset & Bundle Diet
   asset-diet, bundle-watch, docker-lean, memory-leak :2026-10-15, 14d
   section Phase 35: Architecture & Supply Chain
-  license-audit, zombie-code, doc-parity, cors-guard, test-sanitizer :2026-11-01, 14d
+  license-audit, zombie-code, doc-parity, cors-guard, test-sanitizer, repo :2026-11-01, 14d
   section Phase 36: Health Score & Cost Forecast
   score, token-cost, agent-compact, semver-notes :2026-11-15, 14d
 ```
@@ -483,7 +518,7 @@ gantt
 | **Phase 32** | Full-Stack & Contract Sync | `schema-sync`, `dead-routes`, `env-sync`, `migration-guard`, `n-plus-one` | Pydantic ↔ TypeScript AST bridge, Route mapper |
 | **Phase 33** | Runtime Async & Error Catchers | `async-sanity`, `crash-catcher`, `regex-safe`, `magic-cleaner`, `state-thrash` | Event-loop AST linter, ReDoS DFA state checker |
 | **Phase 34** | Asset & Bundle Diet | `asset-diet`, `bundle-watch`, `docker-lean`, `memory-leak` | Binary asset inspector, Tree-shaking import linter |
-| **Phase 35** | Architecture & Supply Chain | `license-audit`, `zombie-code`, `doc-parity`, `cors-guard`, `test-sanitizer` | License compatibility matrix, Symbol reference graph |
+| **Phase 35** | Architecture & Supply Chain | `license-audit`, `zombie-code`, `doc-parity`, `cors-guard`, `test-sanitizer`, `repo` | Repository hygiene scanner, Symbol reference graph |
 | **Phase 36** | Health Score & Cost Forecast | `score`, `token-cost`, `agent-compact`, `semver-notes` | Weighted 0–100 scorecard, SVG badge, BPE token counter |
 
 ---
