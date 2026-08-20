@@ -16,7 +16,9 @@ Most tools expose:
 
 Special callable signatures verified by implementation include:
 
-- `rush_review`: `path`, `use_llm=false`, `use_graft=false`.
+- `rush_review`: `path`, `use_llm=false`, `use_graft=false`, and optional
+  `changed_files=[]`. Supplied paths are target-contained scope only; MCP never
+  infers a Git diff.
 - `rush_format`: `path`, check-mode option as generated from its callable signature.
 - `rush_semantic-drift`: `path`, `allow_browser=false`, `allow_slow=false`.
 

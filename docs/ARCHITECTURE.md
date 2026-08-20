@@ -23,7 +23,7 @@ flowchart TB
 - `ToolFn.run(path, *, config, ...)` is the internal execution surface. `ToolFn.__call__` is MCP-facing and must expose only JSON-schema-safe parameters.
 - ToolResult required keys are `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; optional extensions include metrics, artifacts, metadata, and review fields.
 - A missing optional executable returns `skipped`; it must not raise or install anything.
-- Multi-engine aggregation is deterministic: worst status wins (`error > fail > warn > ok > skipped`), durations sum, findings sort by location/rule/message, and provenance is retained.
+- Multi-engine aggregation is deterministic: worst status wins (`error > fail > warn > ok > skipped`), durations sum, findings sort by location/rule/message, and provenance is retained. The review aggregation path is explicitly serial, retains compact child tool/engine/status evidence, labels skipped/error children as partial metadata, deduplicates on normalized fingerprints, and never turns an error or skip into a clean result. Direct review only narrows scope when its caller explicitly supplies target-contained paths; it never shells out to infer a Git diff.
 
 ## Configuration flow
 

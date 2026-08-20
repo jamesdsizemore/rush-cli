@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 
 from .base import Finding, ToolResult
+from .common import finding_fingerprint
 
 _STATUS_RANK = {"skipped": 0, "ok": 1, "warn": 2, "fail": 3, "error": 4}
 _SKIP_DIRS = frozenset(
@@ -69,7 +70,12 @@ def collect_files(path: Path, extensions: set[str]) -> list[Path]:
     return sorted(files, key=lambda candidate: candidate.as_posix())
 
 
-def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
+def aggregate_results(
+    tool: str,
+    results: Sequence[ToolResult],
+    *,
+    baseline_fingerprints: Collection[str] | None = None,
+) -> ToolResult:
     """Combine engine results into one stable, JSON-safe canonical result.
 
     Findings sort by source location, status uses the documented severity rank,
@@ -116,6 +122,15 @@ def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
         for finding in result.get("findings", []):
             normalized = Finding(**finding)
             normalized["provenance"] = normalized.get("provenance") or source
+            if tool == "review":
+                normalized["fingerprint"] = finding_fingerprint(
+                    str(normalized.get("path", "")),
+                    normalized.get("line", 0) or 0,
+                    normalized.get("column", 0) or 0,
+                    str(normalized.get("rule_id") or normalized.get("rule") or ""),
+                    str(normalized.get("severity", "")),
+                    str(normalized.get("message", "")),
+                )
             findings.append(normalized)
 
         for key, value in (result.get("metrics") or {}).items():
@@ -127,6 +142,14 @@ def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
 
     if tool == "review":
         findings = _deduplicate_review_findings(findings)
+        baseline = set(baseline_fingerprints or ())
+        for finding in findings:
+            if baseline_fingerprints is None:
+                finding["freshness"] = "unknown"
+            elif finding["fingerprint"] in baseline:
+                finding["freshness"] = "existing"
+            else:
+                finding["freshness"] = "new"
     findings.sort(key=_finding_sort_key)
     engine_label = "+".join(engines) if engines else None
     summary = f"{tool} [{engine_label or 'no engine'}]: {len(findings)} finding(s)"
@@ -145,7 +168,41 @@ def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
         output["metrics"] = metrics
     if artifacts:
         output["artifacts"] = artifacts
+    if tool == "review":
+        output["metadata"] = {
+            "aggregation": {
+                "mode": "serial",
+                "partial": any(
+                    str(result.get("status", "skipped")) in {"error", "skipped"}
+                    for result in ordered_results
+                ),
+                "children": [
+                    {
+                        "tool": str(result.get("tool", tool)),
+                        "engine": result.get("engine"),
+                        "status": str(result.get("status", "skipped")),
+                    }
+                    for result in ordered_results
+                ],
+            },
+            "baseline": "provided"
+            if baseline_fingerprints is not None
+            else "not-provided",
+        }
     return output
+
+
+def build_finding_baseline(findings: Sequence[Finding]) -> tuple[str, ...]:
+    """Build a deterministic in-memory baseline without writing a file."""
+    return tuple(
+        sorted(
+            {
+                str(finding["fingerprint"])
+                for finding in findings
+                if "fingerprint" in finding
+            }
+        )
+    )
 
 
 def _deduplicate_review_findings(findings: list[Finding]) -> list[Finding]:
@@ -187,6 +244,7 @@ def _finding_sort_key(finding: Finding) -> tuple[str, int, int, str, str]:
 
 __all__ = [
     "aggregate_results",
+    "build_finding_baseline",
     "collect_files",
     "combine_status",
     "detect_project_languages",

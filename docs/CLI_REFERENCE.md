@@ -15,11 +15,11 @@ Need workflow inspection?          -> commit-msg / ci / release
 
 ## Common syntax and options
 
-Every catalog path command takes `PATH` and `--json`. `review` also takes `--llm` and `--use-graft`; `format` also takes `--check`.
+Every catalog path command takes `PATH` and `--json`. `review` also takes `--llm`, `--use-graft`, and repeatable `--changed-file`; `format` also takes `--check`.
 
 ```bash
 rush COMMAND PATH [--json]
-rush review PATH [--llm] [--use-graft] [--json]
+rush review PATH [--llm] [--use-graft] [--changed-file RELATIVE_PATH]... [--json]
 rush format PATH [--check] [--json]
 rush mcp serve
 ```
@@ -30,7 +30,7 @@ rush mcp serve
 
 | Command | Purpose / when | Optional helpers | Results and modification |
 |---|---|---|---|
-| `review PATH` | Deterministic Python heuristics before review or after edits. | Optional local Graft with `--use-graft`; `--llm` is a no-call stub. | `ok`/`warn`; read-only. |
+| `review PATH` | Deterministic Python heuristics before review or after edits. | Optional local Graft with `--use-graft`; `--llm` is a no-call stub; repeat `--changed-file` for target-contained scope only. | `ok`/`warn`; read-only; no Git-diff inference. |
 | `lint PATH` | Source linting. | Ruff, ESLint; best-effort language adapters. | May `fail` on findings; read-only. |
 | `format PATH --check` | Verify formatter conformance. | Ruff format, Prettier. | Check-only with `--check`; omit only when you intentionally allow formatting. |
 | `test PATH` | Run applicable project tests. | pytest, Vitest. | `fail` on test failures; test code may have project-defined side effects. |
@@ -61,7 +61,7 @@ rush mcp serve
 
 ## Capabilities and planning
 
-`rush capabilities PATH --json` reads only project markers and known local report filenames. It does not execute or version-probe an engine. `rush plan PATH --profile default|nonbrowser --json` expands that inventory deterministically; browser-runtime capabilities remain absent from `nonbrowser`.
+`rush capabilities PATH --json` reads local project markers, allowed `rush.toml` tables, known local report filenames, and `PATH`; it does not execute, install, or version-probe an engine. States distinguish configured, installed, applicable, missing, and blocked. `rush plan PATH --profile default|nonbrowser --json` expands that inventory deterministically with report/engine prerequisites; browser-runtime capabilities remain absent from `nonbrowser`.
 
 ## Test-confidence and advanced commands
 
@@ -83,4 +83,4 @@ Do not invent undocumented CLI options. See [Permissions](safety/permissions.md)
 
 ## Result and exit behavior
 
-`ok`, `warn`, and `skipped` exit 0; `fail` exits 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](reference/result-reference.md).
+`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](reference/result-reference.md).

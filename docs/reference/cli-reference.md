@@ -15,22 +15,45 @@ Need workflow inspection?          -> commit-msg / ci / release
 
 ## Common syntax and options
 
-Every catalog path command takes `PATH` and `--json`. `review` also takes `--llm` and `--use-graft`; `format` also takes `--check`.
+Every catalog path command takes `PATH` and `--json`. `review` also takes `--llm`, `--use-graft`, and repeatable `--changed-file`; `format` also takes `--check`. The read-only `capabilities` and `plan` helpers are CLI-only inventory surfaces, not catalog engines or MCP tools.
 
 ```bash
 rush COMMAND PATH [--json]
-rush review PATH [--llm] [--use-graft] [--json]
+rush review PATH [--llm] [--use-graft] [--changed-file RELATIVE_PATH]... [--json]
 rush format PATH [--check] [--json]
+rush capabilities PATH [--json]
+rush plan PATH [--profile default|nonbrowser] [--json]
 rush mcp serve
 ```
 
 `PATH` must exist. Human output is the default; `--json` returns the canonical result. Most commands do not modify files. The exception is `format` without `--check`, which can invoke formatter write modes; use version control and inspect the diff.
 
+## Read-only capability inventory and planning
+
+```bash
+rush capabilities . --json
+rush plan . --profile nonbrowser --json
+```
+
+`capabilities` reads local project markers, a nearby `rush.toml`, explicit
+report filenames, and the current `PATH`; it does not start a process, inspect
+an engine version, install anything, or contact a service. A result is
+`configured` when `rush.toml` names the tool, `installed` when one of its known
+local engine binaries is on `PATH`, `applicable` when contained evidence or an
+in-process implementation is ready, `missing` when a prerequisite is absent,
+and `blocked` for browser/runtime or feasibility-gated capabilities.
+
+`plan` selects only `configured`, `installed`, and `applicable` steps from the
+chosen completed-phase profile. It preserves stable catalog order and includes
+the reason and a descriptive local report/engine prerequisite for every step.
+It never executes the plan, silently enables a permission, or includes
+browser-runtime work.
+
 ## Core code-quality commands
 
 | Command | Purpose / when | Optional helpers | Results and modification |
 |---|---|---|---|
-| `review PATH` | Deterministic Python heuristics before review or after edits. | Optional local Graft with `--use-graft`; `--llm` is a no-call stub. | `ok`/`warn`; read-only. |
+| `review PATH` | Deterministic Python heuristics before review or after edits. | Optional local Graft with `--use-graft`; `--llm` is a no-call stub; repeat `--changed-file` to review only supplied target-contained files. | `ok`/`warn`; read-only; Rush never infers a Git diff. Findings have deterministic fingerprints, local source-location evidence, and `unknown` freshness without an explicit internal baseline. |
 | `lint PATH` | Source linting. | Ruff, ESLint; best-effort language adapters. | May `fail` on findings; read-only. |
 | `format PATH --check` | Verify formatter conformance. | Ruff format, Prettier. | Check-only with `--check`; omit only when you intentionally allow formatting. |
 | `test PATH` | Run applicable project tests. | pytest, Vitest. | `fail` on test failures; test code may have project-defined side effects. |
@@ -80,4 +103,4 @@ Do not invent undocumented CLI options. See [Permissions](../safety/permissions.
 
 ## Result and exit behavior
 
-`ok`, `warn`, and `skipped` exit 0; `fail` exits 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](result-reference.md).
+`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](result-reference.md).

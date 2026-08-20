@@ -12,7 +12,7 @@ Every CLI and MCP operation returns the same canonical ToolResult shape.
   "summary": "lint [ruff+eslint]: 2 finding(s)",
   "findings": [
     {
-      "id": "stable-derived-id",
+      "fingerprint": "stable-derived-sha256",
       "path": "src/app.py",
       "line": 8,
       "column": 1,
@@ -22,7 +22,8 @@ Every CLI and MCP operation returns the same canonical ToolResult shape.
       "severity": "warn",
       "message": "imported but unused",
       "fix": null,
-      "provenance": "lint/ruff"
+      "provenance": "lint/ruff",
+      "freshness": "unknown"
     }
   ],
   "raw": null
@@ -43,12 +44,12 @@ Every CLI and MCP operation returns the same canonical ToolResult shape.
 | `raw` | bounded engine-native detail or `null`; do not build stable automation around engine-specific raw shapes. |
 | `metrics` | optional numeric/string measurements. |
 | `artifacts` | optional paths to generated/imported artifacts. |
-| `metadata` | optional execution context such as dry-run or Graft state. |
+| `metadata` | optional execution context such as dry-run or Graft state. Review aggregation records serial mode, child tool/engine/status summaries, and whether skipped/error children make the result partial; it never substitutes a clean status for those child states. |
 | `review_kind`, `review_provider` | review-only fields; provider remains null unless the stub path is activated. |
 
 ## Finding fields
 
-A finding always has path, line, rule, severity, and message values after normalization. It may include column/end coordinates, a fix description, provenance, and a stable derived ID. Messages are redacted for obvious secret assignments and output is bounded.
+A finding always has path, line, rule, severity, and message values after normalization. It may include column/end coordinates, a fix description, provenance, a deterministic redaction-safe SHA-256 `fingerprint`, and `freshness`. Direct review findings also carry a local `evidence` source-location packet when no engine/Graft evidence exists; it contains only the already-reported path and line. Direct review evidence is `unknown` unless an internal caller supplies an explicit in-memory fingerprint baseline; then review aggregation labels it `existing` or `new`. Rush exposes no baseline-file write/update command in this release. Messages are redacted for obvious secret assignments and output is bounded.
 
 ## Status versus finding severity
 
@@ -59,7 +60,7 @@ Result status describes the whole operation. Finding severity (`info`, `warn`, `
 | Result | Exit code | Automation meaning |
 |---|---:|---|
 | `ok` | 0 | completed cleanly |
-| `warn` | 0 | completed with advisory evidence |
+| `warn` | 1 | completed with advisory evidence |
 | `skipped` | 0 | did not run or had nothing applicable; inspect JSON |
 | `fail` | 1 | completed and failed criteria |
 | `error` | 2 | execution/reporting failure |

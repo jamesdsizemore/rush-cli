@@ -32,6 +32,14 @@ All notable changes to Rush are documented here.
 - Contained Phase 05 CodeQL SARIF 2.1.0 import: explicit local report evidence
   only, with engine identity, malformed-report, and target-containment checks;
   Rush never runs CodeQL, builds a database, or downloads query packs.
+- Phase 06 read-only capability inventory and deterministic non-browser
+  planning. States distinguish local configuration, PATH discovery, report
+  applicability, explicit browser/feasibility blocks, and missing prerequisites
+  without running or version-probing an engine.
+- ADR-0002 review-evidence lifecycle: deterministic fingerprints, provenance,
+  `unknown`/`existing`/`new` freshness, serial child-status retention, partial
+  result labeling, and explicit in-memory baseline comparison. No baseline file
+  is created or updated by default.
 
 ### Changed
 

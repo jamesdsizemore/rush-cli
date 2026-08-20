@@ -71,6 +71,17 @@ def test_review_heuristics_on_dirty_repo(py_repo: Path):
     assert rules_seen & {"todo-density", "missing-docstring", "naming"}, (
         f"no heuristics fired: {rules_seen}"
     )
+    assert all(len(finding["fingerprint"]) == 64 for finding in result["findings"])
+    assert {finding["freshness"] for finding in result["findings"]} == {"unknown"}
+    assert all(
+        finding["evidence"]
+        == {
+            "kind": "source-location",
+            "path": finding["path"],
+            "line": finding["line"],
+        }
+        for finding in result["findings"]
+    )
 
 
 def test_review_heuristics_on_clean_repo(tmp_path: Path):
@@ -132,6 +143,50 @@ def test_review_skip_on_non_python(tmp_path: Path):
     result = tool.run(repo)
     assert result["status"] == "ok"
     assert result["findings"] == []
+
+
+def test_review_honors_explicit_changed_file_scope_without_git_inference(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "changed.py").write_text(
+        "# TODO: scope signal\ndef changed():\n    return 1\n"
+    )
+    (tmp_path / "unscoped.py").write_text("def unscoped():\n    return 1\n")
+
+    result = ReviewTool().run(tmp_path, changed_files=["changed.py"])
+
+    assert result["status"] == "warn"
+    assert {finding["path"] for finding in result["findings"]} == {
+        str(tmp_path / "changed.py")
+    }
+    assert result["metadata"] == {
+        "graft": "not-requested",
+        "scope": {"mode": "explicit-files", "files": ["changed.py"]},
+    }
+
+
+def test_review_rejects_an_explicit_changed_file_outside_its_target(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path.parent / "outside.py"
+    outside.write_text("def outside():\n    return 1\n")
+
+    result = ReviewTool().run(tmp_path, changed_files=["../outside.py"])
+
+    assert result["status"] == "error"
+    assert "outside review target" in result["summary"]
+
+
+def test_review_preserves_empty_explicit_scope_metadata(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("not Python")
+
+    result = ReviewTool().run(tmp_path, changed_files=["notes.txt"])
+
+    assert result["status"] == "ok"
+    assert result["metadata"] == {
+        "graft": "not-requested",
+        "scope": {"mode": "explicit-files", "files": []},
+    }
 
 
 def test_review_llm_requires_env_key(tmp_path: Path):

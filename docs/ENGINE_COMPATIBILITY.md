@@ -40,6 +40,16 @@ Every future adapter must document the exact engine release, source/license, sup
 
 The catalog enforces that every engine-backed `real_adapter` has a registered deterministic suite. A registry entry is only a promotion prerequisite; the referenced tests remain the proof.
 
+## Phase 06 capability and governance boundary
+
+`rush capabilities` may report a known engine as `installed` after a local
+`PATH` lookup, but it deliberately does not run or version-probe that binary.
+The state is therefore not a compatibility assertion. Exact tested versions and
+warnings remain the responsibility of a promoted adapter's compatibility row;
+unknown or untested versions must not be presented as supported. Maintainers use
+the [scanner governance record](maintainers/scanner-governance.md) before
+promotion, deprecation, or a scanner-selection change.
+
 ## Deterministic source-policy markers
 
 `review` can flag explicitly configured unfinished-scaffold text without

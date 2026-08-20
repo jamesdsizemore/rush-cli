@@ -93,7 +93,10 @@ def capabilities(path: Path, as_json: bool) -> None:
     """Inspect local scan applicability without executing an engine."""
     from .capabilities import inspect_capabilities
 
-    result = inspect_capabilities(path)
+    try:
+        result = inspect_capabilities(path)
+    except RushConfigError as error:
+        raise click.UsageError(str(error)) from error
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
     else:
@@ -111,7 +114,7 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
 
     try:
         result = build_plan(path, profile)
-    except ValueError as error:
+    except (RushConfigError, ValueError) as error:
         raise click.UsageError(str(error)) from error
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -132,14 +135,26 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
     help="Call configured LLM (ANTHROPIC_API_KEY or OPENAI_API_KEY).",
 )
 @click.option("--use-graft", is_flag=True, help="Add optional local Graft context.")
+@click.option(
+    "--changed-file",
+    "changed_files",
+    multiple=True,
+    help="Restrict review to an explicit target-relative file; repeat as needed.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def review(path, use_llm: bool, use_graft: bool, as_json: bool) -> None:
+def review(
+    path, use_llm: bool, use_graft: bool, changed_files: tuple[str, ...], as_json: bool
+) -> None:
     """Review code for deterministic heuristics. Maturity: real adapter."""
     _run_tool(
         "review",
         path,
         as_json=as_json,
-        extra_kwargs={"use_llm": use_llm, "use_graft": use_graft},
+        extra_kwargs={
+            "use_llm": use_llm,
+            "use_graft": use_graft,
+            "changed_files": list(changed_files) or None,
+        },
     )
 
 

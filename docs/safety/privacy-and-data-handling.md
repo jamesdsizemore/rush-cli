@@ -15,3 +15,12 @@ Default review is deterministic. `--use-graft` explicitly requests local Graft c
 ## Secrets
 
 Normalized finding messages and logs redact obvious secret assignments, and secret findings should not include captured values. Redaction is defense in depth, not permission to publish raw external scanner output. Rotate any real exposed credential.
+
+## Review evidence retention
+
+Rush does not operate a durable evidence store or upload review data. Direct
+review returns local source-location evidence, deterministic fingerprints, and
+freshness metadata in the current result only. A supplied report remains a
+user-owned local input; Rush neither writes a review baseline by default nor
+uses Git history to infer scope. See [scanner governance](../maintainers/scanner-governance.md)
+for maintainer retention, error-budget, and deprecation policy.

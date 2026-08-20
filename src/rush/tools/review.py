@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 from .base import Finding, ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, now_ms
+from .common import elapsed_ms, finding_fingerprint, now_ms
 
 TODO_PATTERN = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
 MAX_FILE_BYTES = 1_000_000  # 1 MB cap — heuristics don't run on huge files
@@ -40,9 +40,18 @@ class ReviewTool(ToolFn):
         )
 
     def __call__(
-        self, path: Path, use_llm: bool = False, use_graft: bool = False
+        self,
+        path: Path,
+        use_llm: bool = False,
+        use_graft: bool = False,
+        changed_files: list[str] | None = None,
     ) -> ToolResult:
-        return self.run(path, use_llm=use_llm, use_graft=use_graft)
+        return self.run(
+            path,
+            use_llm=use_llm,
+            use_graft=use_graft,
+            changed_files=changed_files,
+        )
 
     def run(
         self,
@@ -50,6 +59,7 @@ class ReviewTool(ToolFn):
         *,
         use_llm: bool = False,
         use_graft: bool = False,
+        changed_files: list[str] | None = None,
         graft_provider=None,
         config=None,
     ) -> ToolResult:
@@ -69,8 +79,25 @@ class ReviewTool(ToolFn):
         )
 
         start = now_ms()
-        targets = _collect_reviewable_files(path)
         root = path if path.is_dir() else path.parent
+        try:
+            targets, scope = _collect_reviewable_files(
+                path, changed_files=changed_files
+            )
+        except ValueError as error:
+            return ToolResult(
+                tool="review",
+                engine="heuristic-v1",
+                engine_version=None,
+                status="error",
+                duration_ms=elapsed_ms(start),
+                summary=f"review: {error}",
+                findings=[],
+                raw=None,
+                metadata={"graft": "not-requested"},
+                review_kind="heuristic",
+                review_provider=None,
+            )
         if not targets:
             return ToolResult(
                 tool="review",
@@ -81,6 +108,7 @@ class ReviewTool(ToolFn):
                 summary=f"review: no Python files found under {path}",
                 findings=[],
                 raw=None,
+                metadata={"graft": "not-requested", "scope": scope},
                 review_kind="heuristic",
                 review_provider=None,
             )
@@ -125,6 +153,23 @@ class ReviewTool(ToolFn):
                     }
                 )
 
+        for finding in findings:
+            if "evidence" not in finding and finding.get("path"):
+                finding["evidence"] = {
+                    "kind": "source-location",
+                    "path": finding["path"],
+                    "line": finding.get("line", 0),
+                }
+            finding["fingerprint"] = finding_fingerprint(
+                str(finding.get("path", "")),
+                finding.get("line", 0) or 0,
+                finding.get("column", 0) or 0,
+                str(finding.get("rule_id") or finding.get("rule") or ""),
+                str(finding.get("severity", "")),
+                str(finding.get("message", "")),
+            )
+            finding["freshness"] = "unknown"
+
         n = len(findings)
         # Determine status — any heuristic finding → warn (heuristics are advisory).
         # LLM info-only findings don't change status.
@@ -155,7 +200,7 @@ class ReviewTool(ToolFn):
                 "heuristic_count": len(findings)
                 - sum(1 for f in findings if f.get("rule") == "llm-summary")
             },
-            metadata={"graft": graft_state},
+            metadata={"graft": graft_state, "scope": scope},
             review_kind=review_kind,  # type: ignore[typeddict-item]
             review_provider=review_provider,
         )
@@ -164,10 +209,35 @@ class ReviewTool(ToolFn):
 # --- File collection -------------------------------------------------------
 
 
-def _collect_reviewable_files(path: Path) -> list[Path]:
+def _collect_reviewable_files(
+    path: Path, *, changed_files: list[str] | None = None
+) -> tuple[list[Path], dict[str, object]]:
     """Walk `path` and return Python files (heuristics only target Python)."""
+    root = path if path.is_dir() else path.parent
+    if changed_files is not None:
+        root_resolved = root.resolve()
+        targets: list[Path] = []
+        scope_files: list[str] = []
+        for changed_file in changed_files:
+            candidate = Path(changed_file)
+            candidate = candidate if candidate.is_absolute() else root / candidate
+            candidate = candidate.resolve()
+            try:
+                relative = candidate.relative_to(root_resolved)
+            except ValueError as error:
+                raise ValueError(
+                    "explicit changed file is outside review target"
+                ) from error
+            if candidate.is_file() and candidate.suffix == ".py":
+                targets.append(candidate)
+                scope_files.append(str(relative))
+        return sorted(set(targets)), {
+            "mode": "explicit-files",
+            "files": sorted(scope_files),
+        }
+
     if path.is_file():
-        return [path] if path.suffix == ".py" else []
+        return ([path] if path.suffix == ".py" else []), {"mode": "target"}
 
     if path.is_dir():
         skip_dirs = {
@@ -180,12 +250,15 @@ def _collect_reviewable_files(path: Path) -> list[Path]:
             "build",
             ".next",
         }
-        return [
-            p
-            for p in path.rglob("*.py")
-            if not any(part in skip_dirs for part in p.parts)
-        ]
-    return []
+        return (
+            [
+                p
+                for p in path.rglob("*.py")
+                if not any(part in skip_dirs for part in p.parts)
+            ],
+            {"mode": "target"},
+        )
+    return [], {"mode": "target"}
 
 
 # --- Heuristics ------------------------------------------------------------

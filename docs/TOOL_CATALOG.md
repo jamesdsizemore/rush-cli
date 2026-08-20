@@ -4,7 +4,7 @@ The catalog contains 33 user-visible tools. **Maturity matters:** a listed tool 
 
 | Tool | Category | Maturity | Engines / behavior |
 |---|---|---|---|
-| `review` | quality | real adapter | deterministic local heuristics; optional explicit Graft; LLM no-call stub |
+| `review` | quality | real adapter | deterministic local heuristics with fingerprint/freshness/source-location evidence; optional explicit Graft and changed-file scope; LLM no-call stub |
 | `lint` | quality | feasibility gated | Ruff, ESLint, best-effort language routes |
 | `format` | quality | feasibility gated | Ruff format, Prettier; `--check` is safe mode |
 | `test` | test | feasibility gated | pytest, Vitest, language routes |

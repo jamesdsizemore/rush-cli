@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -38,6 +39,28 @@ def test_catalog_path_command_emits_canonical_json(tmp_path: Path) -> None:
 
     assert result.exit_code in {0, 1, 2}
     assert '"tool": "lint"' in result.output
+
+
+def test_review_cli_passes_only_explicit_changed_files_to_shared_tool(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "changed.py").write_text(
+        "# TODO: scope signal\ndef changed():\n    return 1\n"
+    )
+    (tmp_path / "unscoped.py").write_text(
+        "# TODO: unscoped\ndef unscoped():\n    return 1\n"
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["review", str(tmp_path), "--changed-file", "changed.py", "--json"],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert {finding["path"] for finding in payload["findings"]} == {
+        str(tmp_path / "changed.py")
+    }
 
 
 def test_mcp_instructions_are_generated_from_catalog(monkeypatch) -> None:

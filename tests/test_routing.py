@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rush.tools.routing import aggregate_results, collect_files
+from rush.tools.routing import aggregate_results, build_finding_baseline, collect_files
 
 
 def _result(
@@ -132,6 +132,60 @@ def test_review_aggregation_deduplicates_fingerprint_and_retains_provenance() ->
 
     assert len(result["findings"]) == 1
     assert result["findings"][0]["provenance"] == "lint/engine-a;lint/engine-b"
+
+
+def test_review_aggregation_assigns_a_deterministic_fingerprint_when_missing() -> None:
+    finding = {
+        "path": "src/auth.py",
+        "line": 8,
+        "column": 1,
+        "rule": "shared-rule",
+        "severity": "warn",
+        "message": "shared issue",
+    }
+
+    forward = aggregate_results("review", [_result("engine-a", "warn", [finding])])
+    reverse = aggregate_results("review", [_result("engine-a", "warn", [finding])])
+
+    assert (
+        forward["findings"][0]["fingerprint"] == reverse["findings"][0]["fingerprint"]
+    )
+    assert len(forward["findings"][0]["fingerprint"]) == 64
+
+
+def test_review_aggregation_records_partial_child_evidence_and_baseline_freshness() -> (
+    None
+):
+    finding = {
+        "path": "src/auth.py",
+        "line": 8,
+        "rule": "shared-rule",
+        "severity": "warn",
+        "message": "shared issue",
+    }
+    initial = aggregate_results("review", [_result("engine-a", "warn", [finding])])
+    baseline = build_finding_baseline(initial["findings"])
+    result = aggregate_results(
+        "review",
+        [
+            _result("engine-a", "warn", [finding]),
+            _result("engine-b", "skipped", []),
+        ],
+        baseline_fingerprints=baseline,
+    )
+
+    assert result["findings"][0]["freshness"] == "existing"
+    assert result["metadata"] == {
+        "aggregation": {
+            "mode": "serial",
+            "partial": True,
+            "children": [
+                {"tool": "lint", "engine": "engine-a", "status": "warn"},
+                {"tool": "lint", "engine": "engine-b", "status": "skipped"},
+            ],
+        },
+        "baseline": "provided",
+    }
 
 
 def test_collect_files_sorts_supported_sources_and_ignores_generated_paths(

@@ -3,6 +3,8 @@
 | Symptom | Likely reason | Exact fix |
 |---|---|---|
 | `rush: command not found` | Rush is not installed on `PATH`. | From the checkout run `uv run rush --help`, or install a wheel with `uv tool install`. |
+| `rush capabilities` says `missing` | The relevant report, configuration, or engine binary is absent. | Read the state reason; create/import only the documented local report, add an allowed `[tools.NAME]` table, or install the named engine yourself. The command never installs or runs it. |
+| `rush capabilities` says `blocked` | The item is browser/runtime or feasibility-gated. | Do not work around it with undocumented flags; choose a completed non-browser tool or wait for the explicit implementation phase. |
 | A command is `skipped` | No applicable files/evidence, optional engine absent, or permission absent. | Read `summary`; confirm project markers, install the named engine if required, or accept that the capability is not executable yet. |
 | ESLint or Prettier skips | JS tool/config is absent in this environment. | Install it in the project and verify the engine directly in the same shell. |
 | Wrong Python/packages on Windows | Global `PYTHONPATH` or an active environment contaminates execution. | Use `uv run`; contributors should clear `VIRTUAL_ENV` and `PYTHONPATH` before project-venv tests. |

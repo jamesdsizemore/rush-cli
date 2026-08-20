@@ -36,7 +36,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
     shared, non-review ToolResult schema is valid through FastMCP as well.
     """
     source = tmp_path / "review_target.py"
-    source.write_text('def example() -> int:\n    """Return one."""\n    return 1\n')
+    source.write_text("def example() -> int:\n    return 1\n")
 
     async def exercise() -> tuple[
         str, set[str], dict[str, object], dict[str, object], dict[str, object], str
@@ -64,7 +64,10 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                 listed = await session.list_tools()
                 schemas = {tool.name: tool.inputSchema for tool in listed.tools}
 
-                response = await session.call_tool("rush_review", {"path": str(source)})
+                response = await session.call_tool(
+                    "rush_review",
+                    {"path": str(source), "changed_files": ["review_target.py"]},
+                )
                 assert not response.isError
                 assert response.content
                 payload = json.loads(response.content[0].text)
@@ -98,6 +101,8 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
     assert payload["status"] in {"ok", "warn"}
     assert isinstance(payload["findings"], list)
     assert isinstance(payload["summary"], str)
+    assert all(len(finding["fingerprint"]) == 64 for finding in payload["findings"])
+    assert {finding["freshness"] for finding in payload["findings"]} <= {"unknown"}
     assert lint_payload["tool"] == "lint"
     assert lint_payload["status"] in {"ok", "warn", "fail", "skipped"}
     assert isinstance(lint_payload["findings"], list)

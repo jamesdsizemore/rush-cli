@@ -3,6 +3,7 @@
 - User support and missing engines: [Support runbook](maintainers/support-runbook.md)
 - Security/incident response: [Incident and security](maintainers/incident-and-security.md)
 - Version compatibility: [Versioning](maintainers/versioning-and-compatibility.md)
+- Scanner selection, retention, errors, and deprecation: [Scanner governance](maintainers/scanner-governance.md)
 - Documentation quality: [Style guide](maintainers/documentation-style-guide.md)
 - Durable decisions: [ADRs](maintainers/adr/README.md)
 - Release validation: [Release process](developer/release-process.md)

@@ -12,6 +12,29 @@ rush test .
 rush security .
 ```
 
+Before deciding which checks are mandatory for this repository, inspect rather
+than guess:
+
+```bash
+rush capabilities . --json
+rush plan . --profile nonbrowser --json
+```
+
+These commands do not run checks. They explain whether a local report is ready,
+a tool is configured, an engine is merely discoverable on `PATH`, a prerequisite
+is missing, or a capability is intentionally blocked. Treat `installed` as
+available to run—not proof that it has run or passed.
+
+After an edit with a known file list, you can keep the local review focused
+without granting Git access or asking Rush to infer change history:
+
+```bash
+rush review . --changed-file src/example.py --json
+```
+
+Repeat `--changed-file` for each intended file. Paths outside the target are
+rejected; an omitted flag reviews the whole target as before.
+
 ## What each step tells you
 
 1. **Review** reads Python source and reports deterministic maintainability signals. `warn` means inspect the findings; it is not human approval.

@@ -229,10 +229,10 @@ def _redact_finding_message(message: str) -> str:
     return _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", message)
 
 
-def _finding_fingerprint(
+def finding_fingerprint(
     path: str,
-    line: int,
-    column: int,
+    line: int | str,
+    column: int | str,
     rule_id: str,
     severity: str,
     message: str,
@@ -305,7 +305,7 @@ def normalize_findings(
             provenance=raw_finding.get("provenance"),
             freshness=raw_finding.get("freshness"),
         )
-        normalized["fingerprint"] = _finding_fingerprint(
+        normalized["fingerprint"] = finding_fingerprint(
             normalized["path"],
             normalized["line"],
             normalized["column"],
