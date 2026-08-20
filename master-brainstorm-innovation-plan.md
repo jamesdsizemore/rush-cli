@@ -79,31 +79,75 @@ To guarantee 100% offline reproducibility, supply chain security, and zero runti
 ```toml
 # pyproject.toml additions (Phases 31–40)
 dependencies = [
+    # Core CLI & MCP (Existing)
     "mcp==1.28.1",        # Official Python MCP SDK; stdio FastMCP server
     "click==8.4.2",       # CLI framework
     "rich==13.9.4",       # Terminal pretty-printing & TUI
     "pytest==9.0.3",      # Test runner
-    "tree-sitter==0.24.0",# High-performance incremental AST parsing & structural patching (ADR-008)
-    "tree-sitter-python==0.23.6",     # Python grammar for Tree-Sitter
-    "tree-sitter-typescript==0.23.2", # TypeScript/TSX grammar for Tree-Sitter
-    "tree-sitter-javascript==0.23.1", # JavaScript grammar for Tree-Sitter
+
+    # AST Slicing & Polyglot Parsing (Phases 33, 35, 37, 38)
+    "tree-sitter==0.24.0",            # High-performance incremental AST parsing (ADR-008)
+    "tree-sitter-python==0.23.6",     # Official Python grammar wheel
+    "tree-sitter-typescript==0.23.2", # Official TypeScript & TSX grammar wheel
+    "tree-sitter-javascript==0.23.1", # Official JavaScript grammar wheel
+
+    # Token Accounting & Cost Forecasting (Phases 31, 32, 40)
+    "tiktoken==0.9.0",                # Fast offline BPE tokenizer for token budgeting & cost (ADR-011)
+
+    # Optional Multi-Model Consensus (Phase 40)
+    "httpx==0.28.1",                  # Async HTTP client for local Ollama/vLLM & model APIs (ADR-012)
 ]
 ```
 
-### ADR-008: Native Graft Semantic Slicing & Tree-Sitter AST Engine
+### 3.1 Architectural Decision Records (ADRs)
+
+#### ADR-008: Native Graft Semantic Slicing & Tree-Sitter AST Engine
 - **Context:** Standalone `ast-grep` operates primarily as a single-file pattern search tool and requires spawning external platform-specific binaries. Coding agents require multi-file call-graph traversal, symbol dependency extraction, and context-window token pruning.
 - **Decision:** Adopt **`graft`** powered by native embedded `tree-sitter` (`tree-sitter==0.24.0`) as Rush's unified AST engine for symbol slicing, dependency tree extraction, and structural patching.
 - **Consequences:** Enables instantaneous in-process semantic symbol slicing (`rush_graft_slice`), structural code rewrites (`rush_apply_ast_patch`), and cross-language type mapping (`rush schema-sync`) with zero external binary dependencies and up to 90% reduction in agent context token consumption.
 
-### ADR-009: Cryptographic HMAC Context Boundary Framing for Prompt Injection Shielding
+#### ADR-009: Cryptographic HMAC Context Boundary Framing for Prompt Injection Shielding
 - **Context:** Indirect prompt injections in repository comments or test fixtures can hijack coding agent reasoning loops.
 - **Decision:** Wrap all MCP tool outputs and diagnostic strings in cryptographically HMAC-SHA256 signed XML boundary tags (`<rush_agent_sandbox hmac="...">`).
 - **Consequences:** Zero-overhead client-side and agent-side verification that diagnostic content cannot be interpreted as instructions.
 
-### ADR-010: Ephemeral Git Worktree Sandboxing for Pre-Flight Evaluation
+#### ADR-010: Ephemeral Git Worktree Sandboxing for Pre-Flight Evaluation
 - **Context:** Agents applying speculative fixes risk dirtying the developer's working tree or introducing uncommitted broken syntax.
 - **Decision:** Execute speculative remediation and test execution inside detached ephemeral git worktrees under `.rush/worktrees/`.
 - **Consequences:** Completely isolates agent experiments from the active workspace until verification gates pass 100%.
+
+#### ADR-011: Offline BPE Token Accounting via `tiktoken`
+- **Context:** Tools like `rush token-cost`, `rush context-diet`, and FastMCP dynamic pagination (`rush_paginate_findings`) require exact token calculations matching production frontier models (Claude, GPT-4o, DeepSeek, Gemini).
+- **Decision:** Embed `tiktoken==0.9.0` with pre-compiled BPE vocabularies (cl100k, o200k) directly in Rush.
+- **Consequences:** Deterministic, sub-millisecond offline token counting with zero external network requests.
+
+#### ADR-012: Async Local Model Bridge via `httpx`
+- **Context:** Phase 40 multi-model consensus and DeepSeek-R1 CoT reasoning require communicating with local inference runtimes (Ollama, vLLM, LM Studio, or remote endpoints).
+- **Decision:** Standardize on `httpx==0.28.1` for non-blocking asynchronous HTTP transport with strict connection timeouts (10s) and fallback handling.
+- **Consequences:** Robust, connection-pooled model queries that never block the FastMCP stdio loop.
+
+---
+
+### 3.2 Full Dependency & Runtime Matrix
+
+| Subsystem / Tool | Dependency Type | Package / Module | Version / Source | License | Binary Wheel Platforms |
+|---|---|---|---|---|---|
+| FastMCP Stdio Server | External Python Wheel | `mcp` | `1.28.1` | MIT | Pure Python |
+| Terminal UI & Rich Tables | External Python Wheel | `rich` | `13.9.4` | MIT | Pure Python |
+| CLI Parser & Flags | External Python Wheel | `click` | `8.4.2` | BSD-3-Clause | Pure Python |
+| AST Engine & Patching | External C-Extension | `tree-sitter` | `0.24.0` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
+| Python Grammar | External C-Extension | `tree-sitter-python` | `0.23.6` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
+| TypeScript / TSX Grammar | External C-Extension | `tree-sitter-typescript` | `0.23.2` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
+| JavaScript Grammar | External C-Extension | `tree-sitter-javascript` | `0.23.1` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
+| Token Estimation & Cost | External Rust-Extension | `tiktoken` | `0.9.0` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
+| Multi-Model API / Ollama | External Python Wheel | `httpx` | `0.28.1` | BSD-3-Clause | Pure Python |
+| Cryptographic Caching & WAL | Python 3.12 Standard Lib | `sqlite3` | Built-in | PSF | Native OS |
+| HMAC Sandboxing & Hashes | Python 3.12 Standard Lib | `hmac`, `hashlib` | Built-in | PSF | Native OS |
+| Levenshtein & Text Diffs | Python 3.12 Standard Lib | `difflib` | Built-in | PSF | Native OS |
+| Python AST & Async Sanity | Python 3.12 Standard Lib | `ast`, `re` | Built-in | PSF | Native OS |
+| Config & Manifest Parsing | Python 3.12 Standard Lib | `tomllib`, `json` | Built-in | PSF | Native OS |
+| Path Confinement | Python 3.12 Standard Lib | `pathlib` | Built-in | PSF | Native OS |
+| Asset Header Parsing | Python 3.12 Standard Lib | `struct` | Built-in | PSF | Native OS |
 
 ---
 
