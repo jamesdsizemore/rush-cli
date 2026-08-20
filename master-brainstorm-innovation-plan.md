@@ -486,10 +486,10 @@ Provide a unified repository-level hygiene and structure scanner (`rush repo`), 
 
 ---
 
-### Phase 38: Agent Skills Ecosystem, Dynamic Synthesis & Security Fuzzing
+### Phase 38: Agent Skills Ecosystem, Dynamic Synthesis & Repo Scaffolder
 
 #### Objective & Scope
-Build an enterprise-grade agent skills runtime: auditing `SKILL.md` frontmatter and prompt injection security, synthesizing permanent AST plugins from natural language instructions, hot-reloading skills without server restarts, translating skills across agent formats, and fuzzing skill resilience.
+Build an enterprise-grade agent skills runtime and automated non-destructive repository scaffolder: auditing `SKILL.md` frontmatter and prompt injection security, synthesizing permanent AST plugins from natural language instructions, hot-reloading skills without server restarts, translating skills across agent formats, fuzzing skill resilience, and scaffolding/auto-wiring Rush commands, rules, skills, and FastMCP configurations into blank or existing repositories without overwriting user rules.
 
 #### File Roster
 - **Allowed & Target Files:**
@@ -498,9 +498,12 @@ Build an enterprise-grade agent skills runtime: auditing `SKILL.md` frontmatter 
   - `src/rush/skills/watcher.py` (New: Zero-restart skill file watcher & MCP notification dispatcher)
   - `src/rush/skills/adapter.py` (New: Universal `CLAUDE.md` ↔ `SKILL.md` ↔ Cursor translator)
   - `src/rush/skills/fuzzer.py` (New: Skill boundary & malformed input fuzzer)
+  - `src/rush/scaffolder.py` (New: Non-destructive repo scaffolder & agent config auto-wirer)
   - `src/rush/tools/skill_audit.py` (New: CLI/MCP tool entrypoint)
-  - `src/rush/mcp.py` (Register `rush_skill_audit`, `rush_list_skills_compact`, dynamic skill handlers)
+  - `src/rush/tools/scaffold.py` (New: CLI/MCP repo scaffolder tool)
+  - `src/rush/mcp.py` (Register `rush_skill_audit`, `rush_list_skills_compact`, `rush_scaffold`, dynamic skill handlers)
   - `tests/test_skills_ecosystem.py` (New: Skill validation, synthesis, and fuzzing tests)
+  - `tests/test_scaffolder.py` (New: Non-destructive append/edit tests for CLAUDE.md, AGENTS.md, mcp.json)
 
 #### Step-by-Step Task Specifications
 1. **Task 38.1: Agent Skill Linter & Injection Scanner (`rush skill-audit`)**
@@ -516,9 +519,16 @@ Build an enterprise-grade agent skills runtime: auditing `SKILL.md` frontmatter 
    - Emits a 50-token index of available skills, loading full detailed schemas only when explicitly invoked.
 5. **Task 38.5: Skill Adversarial Fuzzer (`rush skill-fuzz`)**
    - Automated test harness passing boundary-breaking inputs (empty inputs, unicode traps, deep JSON) to skill entrypoints to verify crash immunity.
+6. **Task 38.6: Non-Destructive Agentic Repo Scaffolder (`rush scaffold` / `rush onboard`)**
+   - Non-destructively integrates Rush into blank or existing codebases without overwriting user rules:
+     - **Config Appender**: Appends/updates delimited comment blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, and `.gemini/` with recommended agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
+     - **Directory Scaffolding**: Creates `.rush/skills/` (with starter skills: `plugin_builder.md`, `plugin_installer.md`), `.rush/plugins/` (with starter `example_plugin.py`), and `.rush/rules/`.
+     - **MCP Auto-Wiring**: Generates or merges stdio FastMCP server entries into Claude Code (`.claude.json`), Cursor (`.cursor/mcp.json`), and Antigravity (`~/.gemini/antigravity-cli/mcp/rush/`).
+     - **Stack-Tailored `rush.toml`**: If missing, generates a customized `rush.toml` based on stack detection; if present, preserves all existing tables.
 
 #### Verification & Exit Criteria
-- `pytest tests/test_skills_ecosystem.py -q` passes 100%.
+- `pytest tests/test_skills_ecosystem.py tests/test_scaffolder.py -q` passes 100%.
+- Scaffolder never overwrites existing user instructions in `CLAUDE.md` or `AGENTS.md` (verified via regression tests).
 
 ---
 
