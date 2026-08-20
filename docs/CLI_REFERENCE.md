@@ -100,6 +100,7 @@ The following explicit permission flags are available across tools:
 | `ci PATH` | Inspects local workflow files and checks OpenSSF Scorecard supply chain posture. |
 | `release PATH` | Creates a dry-run inventory/plan and verifies signatures and SLSA build attestations via Cosign, Cejel, and SLSA Verifier. |
 | `tdd PATH` | Verifies Test-Driven Development (TDD) compliance and test existence for modified modules. |
+| `doctor PATH` | Diagnoses environment health, installed quality engines, PATH precedence, and virtual environment status. |
 
 ## MCP
 

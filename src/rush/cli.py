@@ -647,6 +647,173 @@ def config_check(path: Path) -> None:
         sys.exit(1)
 
 
+# --- Workflow Suites CLI commands -----------------------------------------
+
+
+def _run_suite_cli(
+    suite_name: str,
+    path: Path,
+    as_json: bool,
+    fail_fast: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+) -> None:
+    from .tools.common import exit_code_for
+    from .workflows.suites import (
+        AUDIT_SUITE,
+        CHECK_SUITE,
+        GATE_SUITE,
+        run_workflow_suite,
+    )
+
+    suite_map = {"check": CHECK_SUITE, "audit": AUDIT_SUITE, "gate": GATE_SUITE}
+    suite = suite_map[suite_name]
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    result = run_workflow_suite(
+        suite=suite,
+        path=path.resolve(),
+        permissions=perms,
+        fail_fast=fail_fast,
+    )
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        status_color = (
+            "green"
+            if result["status"] == "ok"
+            else ("yellow" if result["status"] == "warn" else "red")
+        )
+        click.secho(
+            f"[{suite.name.upper()}] Status: {result['status']}",
+            fg=status_color,
+            bold=True,
+        )
+        click.echo(result["summary"])
+        for finding in result.get("findings") or []:
+            click.echo(
+                f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
+            )
+    sys.exit(exit_code_for(result["status"]))
+
+
+@cli.command(name="check")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def check_cmd(
+    path: Path,
+    fail_fast: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Run fast inner-loop quality check suite (format, lint, typecheck, dead, slop)."""
+    _run_suite_cli(
+        "check",
+        path,
+        as_json,
+        fail_fast,
+        allow_network,
+        allow_download,
+        allow_cache_write,
+        allow_build,
+        allow_slow,
+        allow_artifact_write,
+        allow_browser,
+    )
+
+
+@cli.command(name="audit")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--fail-fast/--no-fail-fast", default=False, help="Stop on first tool failure."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def audit_cmd(
+    path: Path,
+    fail_fast: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Run security and supply chain audit suite (security, secrets, sbom, iac, containerfile)."""
+    _run_suite_cli(
+        "audit",
+        path,
+        as_json,
+        fail_fast,
+        allow_network,
+        allow_download,
+        allow_cache_write,
+        allow_build,
+        allow_slow,
+        allow_artifact_write,
+        allow_browser,
+    )
+
+
+@cli.command(name="gate")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def gate_cmd(
+    path: Path,
+    fail_fast: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Run comprehensive release gate suite (test, coverage, complexity, tdd, security, secrets)."""
+    _run_suite_cli(
+        "gate",
+        path,
+        as_json,
+        fail_fast,
+        allow_network,
+        allow_download,
+        allow_cache_write,
+        allow_build,
+        allow_slow,
+        allow_artifact_write,
+        allow_browser,
+    )
+
+
 for _catalog_tool in ALL_TOOLS:
     if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))

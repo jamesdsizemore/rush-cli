@@ -27,6 +27,7 @@ from .containerfile import ContainerfileTool
 from .contract import ContractTool
 from .coverage import CoverageTool
 from .dead import DeadTool
+from .doctor import DoctorTool
 from .e2e import E2eTool
 from .fix import FixTool
 from .flaky import FlakyTool
@@ -91,6 +92,7 @@ ALL_TOOLS: list[ToolFn] = [
     AiEvalTool(),
     TddGuardTool(),
     FixTool(),
+    DoctorTool(),
 ]
 
 __all__ = [
@@ -99,6 +101,7 @@ __all__ = [
     "AiEvalTool",
     "ComplexityTool",
     "DeadTool",
+    "DoctorTool",
     "Finding",
     "FixTool",
     "FormatTool",

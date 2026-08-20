@@ -1,6 +1,6 @@
 # CLI Cookbook & Command Recipes
 
-This cookbook provides copy-pasteable command patterns for everyday engineering tasks across all 36 tools and 121 engines in Rush CLI.
+This cookbook provides copy-pasteable command patterns for everyday engineering tasks across all 37 tools and 121 engines in Rush CLI.
 
 ---
 

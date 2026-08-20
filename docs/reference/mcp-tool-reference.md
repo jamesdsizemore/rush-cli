@@ -42,7 +42,7 @@ rush_containerfile, rush_iac, rush_secrets, rush_sbom,
 rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
 rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
 rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
-rush_codeql, rush_ai-eval, rush_tdd, rush_fix
+rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor
 ```
 
 ## Protocol guarantees

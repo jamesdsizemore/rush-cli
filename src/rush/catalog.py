@@ -334,6 +334,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Safely auto-remediate formatting and linter issues with workspace path confinement.",
         ("ruff", "biome", "eslint", "prettier", "ast-grep"),
     ),
+    "doctor": ToolSpec(
+        "doctor",
+        "workflow",
+        "Diagnose environment health, toolchain integrity, and binary resolution.",
+        "Diagnose environment health and binary resolution at <path>. Returns {status, findings[], summary}.",
+        (),
+    ),
 }
 
 
@@ -374,6 +381,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "ai-eval": "real_adapter",
     "tdd": "real_adapter",
     "fix": "real_adapter",
+    "doctor": "real_adapter",
 }
 if set(_TOOL_MATURITY) != set(TOOL_SPECS):
     raise RuntimeError("catalog maturity map must classify every tool exactly once")
