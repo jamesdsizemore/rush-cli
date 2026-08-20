@@ -1,6 +1,6 @@
 [project]
 name = "rush-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Agentic code-quality CLI + stdio MCP server for coding agents. Sibling to headcleaner."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
