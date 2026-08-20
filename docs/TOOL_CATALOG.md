@@ -1,6 +1,6 @@
 # Tool catalog
 
-The catalog contains 35 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
+The catalog contains 36 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
 
 | Tool | Category | Maturity | Engines / behavior |
 |---|---|---|---|
@@ -39,6 +39,7 @@ The catalog contains 35 user-visible tools. **Maturity matters:** a listed tool 
 | `ci` | workflow | real adapter | local workflow inspection and OpenSSF Scorecard posture checks |
 | `release` | workflow | real adapter | dry-run local artifact inventory, Cosign, Cejel (trust certificate), SLSA Verifier attestation, and Semantic-Release automated semver calculation |
 | `tdd` | workflow | real adapter | TDD Guard Red-Green-Refactor cycle enforcement and automated test discovery |
+| `fix` | quality | real adapter | automated safe multi-engine code remediation and formatting (Ruff, Biome, ESLint, Prettier, ast-grep) |
 
 Generated help is authoritative for options. See [CLI reference](reference/cli-reference.md), [Engine directory](reference/engine-directory.md), and [Permissions](safety/permissions.md).
 

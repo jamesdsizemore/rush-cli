@@ -28,6 +28,7 @@ from .contract import ContractTool
 from .coverage import CoverageTool
 from .dead import DeadTool
 from .e2e import E2eTool
+from .fix import FixTool
 from .flaky import FlakyTool
 from .format import FormatTool
 from .fuzz import FuzzTool
@@ -89,6 +90,7 @@ ALL_TOOLS: list[ToolFn] = [
     SemanticDriftTool(),
     AiEvalTool(),
     TddGuardTool(),
+    FixTool(),
 ]
 
 __all__ = [
@@ -98,6 +100,7 @@ __all__ = [
     "ComplexityTool",
     "DeadTool",
     "Finding",
+    "FixTool",
     "FormatTool",
     "LintTool",
     "LlmStatus",

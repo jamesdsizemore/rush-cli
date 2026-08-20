@@ -1,7 +1,7 @@
 # Vibers Comprehensive Code Review: Rush CLI & MCP Architecture
 
 > **Repository:** `jamesdsizemore/rush-cli`  
-> **Review Scope:** Full repository architecture, Phases 01–19 implementation (35 tools, 121 engines), backlog, plan ledgers, and 129-file documentation suite.  
+> **Review Scope:** Full repository architecture, Phases 01–19 implementation (36 tools, 121 engines), backlog, plan ledgers, and 129-file documentation suite.  
 > **Target Version:** Rush v0.2.0  
 > **Status:** Production-Ready / All 19 Phases Completed & Verified  
 
@@ -115,7 +115,7 @@ Rush has successfully evolved from a 5-tool prototype into a unified, local-firs
 
 ## 7. Done-Gate & Compliance Checklist
 
-- [x] **CLI & MCP Parity:** All 35 tools exposed identically in CLI and FastMCP.
+- [x] **CLI & MCP Parity:** All 36 tools exposed identically in CLI and FastMCP.
 - [x] **77 Engines Implemented:** All 19 phases fully integrated with deterministic reference tests.
 - [x] **Subprocess Safety:** `stdin=DEVNULL`, `shell=False`, 120s timeout, and automated secret redaction active.
 - [x] **Permission Boundaries:** All heavy/slow/network/browser/write operations gated behind `--allow-*` flags.

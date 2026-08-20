@@ -40,6 +40,7 @@ rush mcp serve
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
+| `fix PATH` | Safely auto-remediate formatting and linter issues. | Ruff, Biome, ESLint, Prettier, ast-grep. | Applies safe fixes across files; supports `--dry-run` and `--force`. |
 
 ## AI, LLM & Agent Safety (Phase 09)
 

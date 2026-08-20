@@ -1,6 +1,6 @@
 # Developer Testing Guide & Test Architecture
 
-This guide explains the 9 testing layers that maintain the 100% deterministic test pass rate across all 35 tools and 121 engines in Rush CLI.
+This guide explains the 9 testing layers that maintain the 100% deterministic test pass rate across all 36 tools and 121 engines in Rush CLI.
 
 ---
 

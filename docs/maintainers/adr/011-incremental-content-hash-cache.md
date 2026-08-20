@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Running 35 tools across large repositories incurs noticeable execution latency when scanning unchanged files.
+Running 36 tools across large repositories incurs noticeable execution latency when scanning unchanged files.
 
 ## Decision
 1. Introduce a local SQLite cache storing tool execution findings keyed by file hash, engine binary version, and tool parameters.

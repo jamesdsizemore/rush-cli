@@ -1,6 +1,6 @@
 # Configuration Schema Specification (`rush.toml`)
 
-Rush uses a typed TOML configuration model defined via Python dataclasses in `src/rush/config.py`. Configuration is discovery-driven, bounded by the repository root, and validated against the canonical catalog of all 35 tools.
+Rush uses a typed TOML configuration model defined via Python dataclasses in `src/rush/config.py`. Configuration is discovery-driven, bounded by the repository root, and validated against the canonical catalog of all 36 tools.
 
 ---
 

@@ -484,6 +484,53 @@ def sbom_cmd(
     )
 
 
+# --- Fix CLI command ------------------------------------------------------
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview automated fixes without modifying files on disk.",
+)
+@click.option(
+    "--force", is_flag=True, help="Override dirty-tree check and apply fixes."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def fix(
+    path: Path,
+    dry_run: bool,
+    force: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Safely auto-remediate formatting and linter issues across engines."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_tool(
+        "fix",
+        path,
+        as_json=as_json,
+        permissions=perms,
+        extra_kwargs={"dry_run": dry_run, "force": force},
+    )
+
+
 # --- MCP server subcommand -------------------------------------------------
 
 
@@ -531,7 +578,7 @@ def cache_clean() -> None:
 
 
 for _catalog_tool in ALL_TOOLS:
-    if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom"}:
+    if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
 

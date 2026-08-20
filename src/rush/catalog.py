@@ -327,6 +327,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Verify TDD compliance at <path>. Returns {status, findings[], summary}.",
         ("tdd-guard",),
     ),
+    "fix": ToolSpec(
+        "fix",
+        "quality",
+        "Safely auto-remediate formatting and linter issues across engines.",
+        "Safely auto-remediate formatting and linter issues with workspace path confinement.",
+        ("ruff", "biome", "eslint", "prettier", "ast-grep"),
+    ),
 }
 
 
@@ -366,6 +373,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "release": "real_adapter",
     "ai-eval": "real_adapter",
     "tdd": "real_adapter",
+    "fix": "real_adapter",
 }
 if set(_TOOL_MATURITY) != set(TOOL_SPECS):
     raise RuntimeError("catalog maturity map must classify every tool exactly once")
@@ -448,6 +456,7 @@ PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
         "tests/test_guardrails_reference.py",
     ),
     "tdd": ("tests/test_tdd_guard.py",),
+    "fix": ("tests/test_fix.py",),
 }
 
 
