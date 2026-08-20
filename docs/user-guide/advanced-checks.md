@@ -1,29 +1,49 @@
-# Optional advanced checks
+# Advanced Quality, Security & Verification Checks
 
-Rush names advanced capabilities so their safety boundaries are visible. Some
-commands import an explicit local report file; they do not launch the underlying
-test or contact a target. Presence in `rush --help` does not mean live execution.
+Rush exposes advanced verification capabilities so their safety boundaries, resource requirements, and execution modes are explicit and transparent.
 
-| Command | Intended permission | Current behavior |
-|---|---|---|
-| `mutation` | live execution would need `allow_slow` | Imports a contained local report; never runs mutation tests. |
-| `e2e` | `allow_browser` | Guarded placeholder; generic CLI has no permission option, so it skips. |
-| `fuzz` | live execution would need `allow_fuzz` | Imports a contained local report; never starts a fuzzer. |
-| `load` | live execution would need `allow_network` | Imports a contained local report; never contacts a target. |
-| `snapshot` | baseline changes would need `accept` | Imports a contained local report; never changes a baseline. |
-| `visual` | browser/baseline work needs consent | Guarded placeholder; skips. |
-| `semantic-drift` | browser **and** slow consent | Experimental engine path; CLI has no consent options and therefore skips. |
+---
 
-`coverage`, `pbt`, `flaky`, and `contract` are also contained local report
-importers. For every importer, give the report file as `PATH`; a directory
-without an explicit report remains `skipped`. Coverage accepts coverage.py JSON,
-LCOV, and Cobertura XML; flaky accepts JUnit XML; the other importers accept the
-documented JSON summaries. A malformed report is an `error`, not an empty scan.
+## 1. Advanced Check Capabilities & Permission Matrix
 
-The permission names in this table describe future safety prerequisites, not
-hidden command-line switches. No live mutation, fuzz, load, browser, provider,
-or baseline-update adapter is implemented in this release. These defaults prevent
-an ordinary command from launching a browser, consuming significant time, sending
-load to a target, fuzzing a process, or changing baselines.
+These tools operate in **dual modes**: importing local structured reports or executing live engines under explicit permissions:
 
-Do not work around a guard by calling internal Python APIs from an untrusted assistant. An eventual permission surface must be explicit, scoped, tested, and documented. Follow [Permissions](../safety/permissions.md).
+| Command | Category | Required Permissions | Supported Engines & Dual-Mode Behavior |
+|---|---|---|---|
+| `ai-eval` | Security & AI Safety | `--allow-slow` | Evaluates prompt safety, LLM security, and guardrails via **Promptfoo**, **Garak**, **DeepEval**, and **NeMo Guardrails**. |
+| `coverage` | Test Confidence | `--allow-slow` | Imports local `coverage.py` JSON, LCOV, or Cobertura XML, or executes pytest coverage / **Diff-Cover** under `--allow-slow`. |
+| `mutation` | Test Confidence | `--allow-slow` | Imports mutation reports, or executes polyglot mutation engines: **Stryker** (JS/TS/C#), **Cosmic Ray** (Python), **Infection** (PHP), **Pitest** (JVM), **Cargo-mutants** (Rust), or **mutmut**. |
+| `contract` | Test Confidence | `--allow-slow` | Imports Pact reports, or executes property-based API contract fuzzing with **Schemathesis**, **Zally**, or pact-verifier. |
+| `e2e` | Browser Runtime | `--allow-browser` | Executes headless browser end-to-end tests via **Playwright** with **Wait-On** readiness polling. |
+| `visual` | UI/UX & Visual | `--allow-browser` & `--allow-slow` | Runs visual regression audits via **Lost Pixel**, **BackstopJS**, **Lighthouse**, or **PageSpeed** (`--accept` requires `--allow-artifact-write`). |
+| `semantic-drift`| Browser Runtime | `--allow-browser` & `--allow-slow` | Runs DOM and accessibility drift verification using **Playwright** and **axe-core**. |
+| `pbt` | Test Confidence | `--allow-slow` | Imports property-based test reports, or executes **Hypothesis** under `--allow-slow`. |
+| `flaky` | Test Confidence | `--allow-slow` | Imports duplicate JUnit test reports, or executes pytest-rerun under `--allow-slow`. |
+| `snapshot` | Test Confidence | `--allow-slow` | Imports snapshot reports, or runs pytest-snapshot (`--accept` requires `--allow-artifact-write`). |
+| `fuzz` | Test Confidence | `--allow-slow` | Imports seeded fuzzing reports, or runs Atheris under `--allow-slow`. |
+| `load` | Performance | `--allow-network` | Imports load test summaries, or executes **k6** load generation under `--allow-network`. |
+| `codeql` | Security & SAST | `--allow-build` | Imports CodeQL SARIF 2.1.0 reports, or executes local CodeQL database analysis under `--allow-build`. |
+| `sbom` | Supply Chain | `--allow-artifact-write` | Generates CycloneDX SBOMs via **cdxgen**, **ScanCode**, **GUAC**, or **pip-licenses** (writing `-o` requires `--allow-artifact-write`). |
+
+---
+
+## 2. Using Dual-Mode Tools
+
+### Mode A: Report Import Mode
+When a report file already exists (from an earlier build step or CI job), pass the report path directly:
+```bash
+rush coverage coverage.json --json
+rush codeql results.sarif --json
+rush contract pact-summary.json --json
+```
+
+### Mode B: Live Execution Mode
+When running the engine live from Rush, supply the explicit permission flag:
+```bash
+rush mutation src/ --allow-slow --json
+rush e2e e2e/ --allow-browser --json
+rush ai-eval prompts/ --allow-slow --json
+rush load load-test.js --allow-network --json
+```
+
+See [Permissions Specification](../safety/permissions.md) and [Result Reference](../reference/result-reference.md).

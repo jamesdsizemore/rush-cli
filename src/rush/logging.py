@@ -43,6 +43,11 @@ class NdjsonHandler(logging.Handler):
         return msg
 
 
+def redact_secrets(msg: str) -> str:
+    """Helper to redact sensitive keywords from arbitrary strings."""
+    return NdjsonHandler._redact(msg)
+
+
 def setup_logging(level: str | None = None) -> None:
     """Wire up stderr NDJSON logging under the ``rush`` logger.
 

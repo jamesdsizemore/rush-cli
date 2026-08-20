@@ -1,14 +1,42 @@
-# Troubleshooting
+# Troubleshooting Guide & Common Resolutions
 
-Start with the user-friendly [symptom guide](user-guide/troubleshooting.md). Use the [troubleshooting matrix](TROUBLESHOOTING_MATRIX.md) for CLI, engine, MCP, Windows, configuration, and CI diagnostics.
+This guide addresses common error messages, unexpected behaviors, and troubleshooting steps across all 34 tools and 77 engines in Rush CLI.
 
-Quick checks:
+---
+
+## 1. Common Issues & Solutions
+
+### Tool Returns `status: "skipped"`
+- **Cause**: The external engine binary is not installed on your system or is missing from `PATH`.
+- **Solution**: Install the required engine locally (e.g. `npm install -g eslint`, `pip install semgrep`, `brew install trivy`). Run `rush capabilities . --json` to verify engine discovery.
+
+### Tool Returns `status: "skipped"` with Missing Permission Message
+- **Cause**: The command requires an explicit execution permission flag (e.g. running mutation testing without `--allow-slow`, or running a browser test without `--allow-browser`).
+- **Solution**: Pass the required permission flag:
+  ```bash
+  rush mutation . --allow-slow
+  rush e2e . --allow-browser
+  rush sbom . -o sbom.json --allow-artifact-write
+  ```
+
+### Tool Returns `status: "error"` Due to Malformed Report
+- **Cause**: The imported JSON/XML/SARIF report file is corrupted or contains an invalid schema.
+- **Solution**: Inspect the report file or re-generate it using the native engine.
+
+### MCP Server Fails to Connect in AI Editor (Cursor/Claude Code)
+- **Cause**: The editor launched `rush mcp serve` with an incorrect working directory or missing environment variables.
+- **Solution**: In your editor MCP settings, use absolute paths to `uv` and specify the workspace directory explicitly.
+
+---
+
+## 2. Diagnostics Commands
 
 ```bash
-rush --version
-rush --help
-rush COMMAND PATH --json
-rush --log-level debug COMMAND PATH --json
+# Inspect capabilities and discovered engines
+rush capabilities . --json
+
+# Run command with verbose logging to stderr
+rush review . --verbose
 ```
 
-Read stdout as the result and stderr as NDJSON diagnostics. A `skipped` result is not a crash; inspect its summary before changing the environment.
+See [Troubleshooting Matrix](TROUBLESHOOTING_MATRIX.md) and [User Guide Troubleshooting](user-guide/troubleshooting.md).

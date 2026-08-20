@@ -28,11 +28,10 @@ def test_pbt_imports_seeded_local_report_without_executing_tests(
     assert result["status"] == "fail"
     assert result["engine"] == "property-report"
     assert result["findings"][0]["rule"] == "property-failure"
-    assert result["metadata"] == {
-        "evidence_source": "imported-local-report",
-        "report_format": "property-json",
-        "seed": 1234,
-    }
+    assert result["metadata"]["evidence_source"] == "imported-local-report"
+    assert result["metadata"]["report_format"] == "property-json"
+    assert result["metadata"]["seed"] == 1234
+    assert result["metadata"]["execution"]["mode"] == "imported"
 
 
 def test_pbt_rejects_missing_malformed_and_outside_reports(tmp_path: Path) -> None:

@@ -43,6 +43,8 @@ Tool and engine metadata must agree with executable registries and tests. Do not
 
 Each change starts with a failing contract test, includes parser fixtures instead of requiring every runtime, updates CLI/MCP parity and docs, then runs full gates.
 
+For the completed Phases 01–19 implementation (covering all 77 unique advanced scanners, evaluators, and engines across 15 domains), read the [Phase 09–19 coding-agent handoff](developer/phase-09-19-coding-agent-handoff.md), the [Phase 07–08 coding-agent handoff](developer/phase-07-08-coding-agent-handoff.md), the [Master Innovation & Remediation Plan](developer/innovation-remediation-plan.md), the [Master Build Plan](developer/master-innovation-remediation-build-plan.md) (documenting Phases 01–19 execution ledgers), and the [Vibecoder Toolkit Plan](developer/vibecoder-toolkit-plan.md) (covering 22 specialized tools targeting AI-generated code quality and pre-flight safety).
+
 ## Testing and delivery
 
 [Test guide](developer/testing-guide.md) defines unit, parser, routing, CLI, real stdio MCP, installed-engine, package, clean-clone, and CI layers. [CI and packaging](developer/ci-and-packaging.md) and [Release process](developer/release-process.md) keep tags and publication separate from validation.

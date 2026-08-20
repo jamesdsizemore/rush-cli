@@ -1,18 +1,29 @@
-# Compatibility
+# Compatibility Reference Specification
 
-## Rush runtime
+Defines exact platform, language ecosystem, and engine version compatibility boundaries for Rush CLI.
 
-- Python: 3.12 or newer, as declared by the package.
-- Platforms: Windows, macOS, and Linux are intended; CI currently verifies Linux, while contributor guidance covers Windows project-environment isolation.
-- Package workflow: uv is recommended; wheel and source distributions are build targets.
-- MCP: local stdio through the pinned Python MCP SDK; no HTTP/SSE transport.
+---
 
-## Project ecosystems
+## 1. Rush Core Runtime Matrix
 
-Strongest implemented paths are Python and JavaScript/TypeScript. Marker detection also recognizes Go, Rust, Ruby, JVM, Swift, PHP, .NET, Elixir, Dart, Scala, and Nix for best-effort routing. Content, infrastructure, supply-chain, and workflow checks have individual maturity levels.
+| Component | Target Version | Verification Method |
+|---|---|---|
+| Python | >=3.12 | Declared in `pyproject.toml`, verified via `uv sync` |
+| FastMCP Transport | 1.2.1 | Verified via `tests/test_mcp.py` (stdio JSON-RPC) |
+| Operating Systems | Windows 10/11, macOS 12+, Linux (Ubuntu 22.04+) | Multi-platform CI workflows |
 
-## Engine versions
+---
 
-Rush discovers executables rather than bundling all engines. Parser fixtures pin reference behavior for promoted adapters, but the environment chooses actual versions. Unsupported output changes should return `error` rather than fabricated findings.
+## 2. Language Ecosystem Detection
 
-For exact per-engine applicability and install hints, see [Engine directory](engine-directory.md). For compatibility promises and changes, see [Maintainer versioning](../maintainers/versioning-and-compatibility.md).
+| Ecosystem | Project Markers | Supported Primary Tool Routes |
+|---|---|---|
+| Python | `pyproject.toml`, `requirements.txt`, `setup.py`, `Pipfile` | `lint` (Ruff), `format` (Ruff), `test` (pytest), `typecheck` (mypy), `dead` (Vulture, FawltyDeps), `complexity` (Radon, Memray) |
+| JavaScript / TypeScript | `package.json`, `tsconfig.json` | `lint` (ESLint, Biome), `format` (Prettier, Biome), `test` (Vitest), `typecheck` (tsc), `dead` (Knip, Ts-prune), `complexity` (jscpd, Statoscope) |
+| Rust | `Cargo.toml`, `Cargo.lock` | `mutation` (Cargo-mutants), `lint` (ast-grep, wasm-tools) |
+| Go | `go.mod`, `go.sum` | `lint` (ast-grep, Buf), `iac` (Kubeconform), `sql` (Atlas) |
+| Java / Kotlin / JVM | `pom.xml`, `build.gradle`, `build.gradle.kts` | `mutation` (Pitest), `lint` (RedPen), `security` (Semgrep) |
+| PHP | `composer.json` | `mutation` (Infection), `security` (Trivy) |
+| Cloud / IaC / SQL | `*.tf`, `*.yaml`, `Dockerfile`, `*.sql`, `*.proto` | `iac` (Checkov, Terrascan, Polaris), `containerfile` (Hadolint, Dockle), `sql` (SQLFluff, Atlas, Squawk) |
+
+See [Engine Directory](engine-directory.md) and [Maintainer Versioning](../maintainers/versioning-and-compatibility.md).

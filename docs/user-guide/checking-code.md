@@ -5,7 +5,7 @@
 Install only the helpers you require:
 
 ```bash
-uv add --dev ruff pytest pip-audit mypy vulture radon
+uv add --dev ruff pytest pip-audit mypy vulture radon refurb fawltydeps flake8-bugbear
 rush review .
 rush lint .
 rush format . --check
@@ -21,7 +21,7 @@ Rush detects Python through `pyproject.toml`, `setup.py`, and Python file extens
 ## JavaScript and TypeScript
 
 ```bash
-npm install --save-dev eslint prettier vitest typescript knip jscpd
+npm install --save-dev eslint prettier vitest typescript knip jscpd @biomejs/biome ts-prune stylelint
 rush lint .
 rush format . --check
 rush typecheck .
@@ -33,10 +33,13 @@ rush security .
 
 Rush detects a JavaScript/TypeScript project through `package.json` and relevant extensions. The repository's engine configuration still matters; for example, ESLint may skip when its configuration is absent.
 
-## Mixed repositories
+## Polyglot & Multi-Language Quality
 
-Run the same command at the repository root. Applicable engines run in stable order and Rush aggregates findings. One missing engine can coexist with another engine's result; use JSON provenance on findings when you need to identify the producer.
+For polyglot repositories, Rush routes structural and AST checks across languages:
+- **AST Pattern Matching**: `ast-grep` and `comby` run syntactic AST pattern matching across 20+ languages.
+- **Polyglot Linting**: `megalinter` orchestrates linters across polyglot trees.
+- **Modernization**: `refurb` (Python idioms), `biome` (JS/TS), `depcruise` (module architecture), `scaphandre` (energy profiling).
 
 ## Other ecosystems
 
-Rush recognizes markers for Go, Rust, Ruby, JVM, Swift, PHP, .NET, Elixir, Dart, Scala, and Nix. Current support is best-effort and check-only. Consult [Compatibility](../reference/compatibility.md) and do not assume every language's preferred tool is implemented.
+Rush recognizes markers for Go, Rust, Ruby, JVM, Swift, PHP, .NET, Elixir, Dart, Scala, and Nix. Consult [Compatibility](../reference/compatibility.md) and [Engine Directory](../reference/engine-directory.md) for full engine rosters.

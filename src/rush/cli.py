@@ -16,13 +16,79 @@ from . import __version__
 from .catalog import TOOL_SPECS
 from .config import RushConfigError, load_config
 from .logging import setup_logging
+from .permissions import ExecutionPermissions
 from .theme import render_result
 from .tools import ALL_TOOLS
 from .tools.base import ToolFn
 
 
+def _extract_permissions(
+    allow_network: bool = False,
+    allow_download: bool = False,
+    allow_cache_write: bool = False,
+    allow_build: bool = False,
+    allow_slow: bool = False,
+    allow_artifact_write: bool = False,
+    allow_browser: bool = False,
+) -> ExecutionPermissions:
+    return ExecutionPermissions(
+        network=allow_network,
+        download=allow_download,
+        cache_write=allow_cache_write,
+        build=allow_build,
+        slow=allow_slow,
+        artifact_write=allow_artifact_write,
+        browser=allow_browser,
+    )
+
+
+def permission_options(fn):
+    """Add standard explicit execution permission flags to a Click command."""
+    fn = click.option(
+        "--allow-network",
+        is_flag=True,
+        help="Explicitly authorize external network access.",
+    )(fn)
+    fn = click.option(
+        "--allow-download",
+        is_flag=True,
+        help="Explicitly authorize external downloads.",
+    )(fn)
+    fn = click.option(
+        "--allow-cache-write",
+        is_flag=True,
+        help="Explicitly authorize local cache modification.",
+    )(fn)
+    fn = click.option(
+        "--allow-build",
+        is_flag=True,
+        help="Explicitly authorize local build execution.",
+    )(fn)
+    fn = click.option(
+        "--allow-slow",
+        is_flag=True,
+        help="Explicitly authorize long-running execution.",
+    )(fn)
+    fn = click.option(
+        "--allow-artifact-write",
+        is_flag=True,
+        help="Explicitly authorize writing contained artifacts.",
+    )(fn)
+    fn = click.option(
+        "--allow-browser",
+        is_flag=True,
+        help="Explicitly authorize browser runtime execution.",
+    )(fn)
+    return fn
+
+
 def _run_tool(
-    tool_name: str, path: Path, *, as_json: bool, extra_kwargs: dict | None = None
+    tool_name: str,
+    path: Path,
+    *,
+    as_json: bool,
+    extra_kwargs: dict | None = None,
+    permissions: ExecutionPermissions | None = None,
 ) -> None:
     """Shared helper: find the tool, call it, render or JSON-print, exit."""
     tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
@@ -35,9 +101,13 @@ def _run_tool(
         click.echo(str(e), err=True)
         sys.exit(2)
     kwargs = dict(extra_kwargs or {})
-    # Use the .run() entry point so the CLI can pass config without
-    # leaking it into the MCP-exposed __call__ signature.
-    result = tool.run(path, config=config, **kwargs)
+    # Use the .run() entry point so the CLI can pass config and permissions
+    # without leaking it into the MCP-exposed __call__ signature.
+    try:
+        result = tool.run(path, config=config, permissions=permissions, **kwargs)
+    except TypeError:
+        # Fallback if specific tool does not yet accept permissions
+        result = tool.run(path, config=config, **kwargs)
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
     else:
@@ -58,9 +128,39 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         ),
     )
     @click.argument("path", type=click.Path(exists=True, path_type=Path))
+    @click.option(
+        "--report-path",
+        type=click.Path(path_type=Path),
+        default=None,
+        help="Optional explicit report path for import mode.",
+    )
+    @permission_options
     @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-    def command(path: Path, as_json: bool) -> None:
-        _run_tool(tool.name, path, as_json=as_json)
+    def command(
+        path: Path,
+        report_path: Path | None,
+        allow_network: bool,
+        allow_download: bool,
+        allow_cache_write: bool,
+        allow_build: bool,
+        allow_slow: bool,
+        allow_artifact_write: bool,
+        allow_browser: bool,
+        as_json: bool,
+    ) -> None:
+        perms = _extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        )
+        extra = {"report_path": report_path} if report_path is not None else None
+        _run_tool(
+            tool.name, path, as_json=as_json, permissions=perms, extra_kwargs=extra
+        )
 
     return command
 
@@ -141,15 +241,37 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
     multiple=True,
     help="Restrict review to an explicit target-relative file; repeat as needed.",
 )
+@permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def review(
-    path, use_llm: bool, use_graft: bool, changed_files: tuple[str, ...], as_json: bool
+    path: Path,
+    use_llm: bool,
+    use_graft: bool,
+    changed_files: tuple[str, ...],
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
 ) -> None:
     """Review code for deterministic heuristics. Maturity: real adapter."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
     _run_tool(
         "review",
         path,
         as_json=as_json,
+        permissions=perms,
         extra_kwargs={
             "use_llm": use_llm,
             "use_graft": use_graft,
@@ -163,14 +285,131 @@ def review(
 @click.option(
     "--check", "check_only", is_flag=True, help="Only check; don't modify files."
 )
+@permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def format(path, check_only: bool, as_json: bool) -> None:
+def format(
+    path: Path,
+    check_only: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
     """Format Python and JS/TS safely. Maturity: real adapter."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
     _run_tool(
         "format",
         path,
         as_json=as_json,
+        permissions=perms,
         extra_kwargs={"check": check_only} if check_only else None,
+    )
+
+
+@cli.command(name="commit-msg")
+@click.argument(
+    "path",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("."),
+    required=False,
+)
+@click.option(
+    "--message", "-m", "message", default="", help="Commit message to validate."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def commit_msg_cmd(
+    path: Path,
+    message: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Validate commit messages without rewriting history. Maturity: real adapter."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_tool(
+        "commit-msg",
+        path,
+        as_json=as_json,
+        permissions=perms,
+        extra_kwargs={"message": message} if message else None,
+    )
+
+
+@cli.command(name="sbom")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit output path for the generated SBOM artifact.",
+)
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    help="Explicitly permit overwriting an existing SBOM file.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def sbom_cmd(
+    path: Path,
+    output_path: Path | None,
+    overwrite: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Generate a safe SBOM artifact. Maturity: real adapter."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_tool(
+        "sbom",
+        path,
+        as_json=as_json,
+        permissions=perms,
+        extra_kwargs={
+            "output_path": output_path,
+            "overwrite": overwrite,
+        },
     )
 
 
@@ -193,7 +432,7 @@ def serve() -> None:
 
 
 for _catalog_tool in ALL_TOOLS:
-    if _catalog_tool.name not in {"review", "format"}:
+    if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
 

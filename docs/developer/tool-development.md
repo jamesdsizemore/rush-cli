@@ -1,19 +1,55 @@
-# Tool development
+# Tool Development & Registration Guide
 
-## Worked example: add `licenses`
+This guide details how to implement, register, and test a new quality tool in `src/rush/tools/`.
 
-1. **Define the contract in a failing test.** Specify purpose, safe default, result shape, and missing-engine behavior.
-2. **Add catalog metadata.** Add one `ToolSpec` with category, human and MCP descriptions, engine names, experimental flag, and honest maturity. Update the exhaustive maturity map.
-3. **Implement `LicenseTool`.** Put business logic in `run`; keep `__call__` schema-safe and free of `config`. Return canonical ToolResult for every path.
-4. **Register once.** Add the object to `ALL_TOOLS`; generated CLI/MCP parity tests should prove exposure. Do not hand-copy transport logic.
-5. **Wire configuration only if consumed.** Unknown tool tables already fail; add field behavior with a test rather than accepting a no-op.
-6. **Add engine adapters and routing** only after their contracts are fixture-backed.
-7. **Document user outcome, helper install, result meanings, and maturity.** Update tool catalog, CLI reference, engine directory, safety docs, and examples.
+---
 
-## Safety review
+## 1. Tool Lifecycle & Architecture
 
-For browser, slow, network, fuzz, baseline, filesystem-write, Git, or publication behavior: define explicit invocation-scoped permission; default to skip/refuse; constrain target and output; add denial and success tests; expose the same capability accurately in CLI and MCP; and record an ADR. A permission mentioned only in summary text is not an implemented permission surface.
+Every tool is an instance of `ToolFn` defined in `src/rush/tools/base.py`.
 
-## Done gate
+```python
+class MyTool(ToolFn):
+    name = "mytool"
+    description = "Deterministic code analysis tool."
 
-Catalog/registry parity, CLI help, MCP schema/call, config validation, deterministic output, missing engine, malformed/timeout, redaction, docs, full tests, Ruff, format, diff, links, and graph checks all pass.
+    def run(
+        self,
+        path: Path,
+        *,
+        config: RushConfig | None = None,
+        permissions: ExecutionPermissions | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """Internal execution with typed configs and permissions."""
+        ...
+
+    def __call__(
+        self,
+        path: str = ".",
+        allow_network: bool = False,
+        allow_download: bool = False,
+        allow_cache_write: bool = False,
+        allow_build: bool = False,
+        allow_slow: bool = False,
+        allow_artifact_write: bool = False,
+        allow_browser: bool = False,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """FastMCP schema surface."""
+        ...
+```
+
+---
+
+## 2. 7-Step Tool Registration Checklist
+
+1. **Implement Tool Class**: Create `src/rush/tools/<name>.py` extending `ToolFn`.
+2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py`.
+3. **Register in Catalog**: Add `ToolSpec` to `src/rush/catalog.py` under `TOOL_SPECS` and update `CATALOG_TOOLS_MATURITY`.
+4. **Register Engine Adapters**: Add engine classes in `src/rush/engines/` and register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
+5. **Add Fixtures & Reference Tests**: Add JSON fixtures to `tests/fixtures/engine_reports/` and reference test suite `tests/test_<engine>_reference.py`.
+6. **Update Parity Audit**: Add fixture suite path to `PARSER_FIXTURE_SUITES` in `src/rush/catalog.py`.
+7. **Synchronize All 13 Docs**: Update all documentation files mandated by the [Master Build Plan](master-innovation-remediation-build-plan.md).
+
+See [Engine Development](engine-development.md) and [Coding Standards](coding-standards.md).

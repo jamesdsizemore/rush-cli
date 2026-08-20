@@ -54,7 +54,7 @@ engine_args = ["--select", "E,F,W,I"]
 check = true
 ```
 
-`NAME` must exactly match one of the 33 catalog tool names. Unknown names raise `RushConfigError`. `engine_args` and `check` are parsed for every tool, but the verified direct consumer is lint's engine arguments; `check` is not a universal policy switch. `rush capabilities` reports a configured state when it reads an allowed local table; configuration does not run, install, or version-probe an engine. Prefer CLI `format --check` where supported.
+`NAME` must exactly match one of the 34 catalog tool names. Unknown names raise `RushConfigError`. `engine_args` and `check` are parsed for every tool, but the verified direct consumer is lint's engine arguments; `check` is not a universal policy switch. `rush capabilities` reports a configured state when it reads an allowed local table; configuration does not run, install, or version-probe an engine. Prefer CLI `format --check` where supported.
 
 ## Validation behavior
 

@@ -10,10 +10,14 @@ Returns skipped if neither marker is present.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
 from .routing import aggregate_results
+
+if TYPE_CHECKING:
+    from ..permissions import ExecutionPermissions
 
 _OSV_LOCKFILES = (
     "poetry.lock",
@@ -34,11 +38,40 @@ class SecurityTool(ToolFn):
             "Engines: pip-audit (Python), npm audit (JS/TS). status='skipped' means engine not on PATH."
         )
 
-    def __call__(self, path: Path) -> ToolResult:
-        return self.run(path)
+    def __call__(
+        self,
+        path: Path,
+        *,
+        allow_network: bool = False,
+        allow_download: bool = False,
+        allow_cache_write: bool = False,
+        allow_build: bool = False,
+        allow_slow: bool = False,
+        allow_artifact_write: bool = False,
+        allow_browser: bool = False,
+    ) -> ToolResult:
+        from ..permissions import ExecutionPermissions
 
-    def run(self, path: Path, *, config=None) -> ToolResult:
+        permissions = ExecutionPermissions(
+            network=allow_network,
+            download=allow_download,
+            cache_write=allow_cache_write,
+            build=allow_build,
+            slow=allow_slow,
+            artifact_write=allow_artifact_write,
+            browser=allow_browser,
+        )
+        return self.run(path, permissions=permissions)
+
+    def run(
+        self,
+        path: Path,
+        *,
+        config=None,
+        permissions: ExecutionPermissions | None = None,
+    ) -> ToolResult:
         from ..engines import ENGINES
+        from ..permissions import build_execution_metadata
 
         start = now_ms()
         project_root = _find_project_root(path)
@@ -53,17 +86,36 @@ class SecurityTool(ToolFn):
                 summary=f"security: no pyproject.toml or package.json found above {path}",
                 findings=[],
                 raw=None,
+                metadata={
+                    "execution": build_execution_metadata(
+                        "executed",
+                        granted=permissions,
+                    )
+                },
             )
 
+        engine_kwargs = {"permissions": permissions} if permissions is not None else {}
         results: list[ToolResult] = []
         if (project_root / "requirements.txt").is_file():
             results.append(
-                run_engine(ENGINES["pip-audit"], project_root, [], tool_name="security")
+                run_engine(
+                    ENGINES["pip-audit"],
+                    project_root,
+                    [],
+                    tool_name="security",
+                    **engine_kwargs,
+                )
             )
 
         if (project_root / "package-lock.json").is_file():
             results.append(
-                run_engine(ENGINES["npm-audit"], project_root, [], tool_name="security")
+                run_engine(
+                    ENGINES["npm-audit"],
+                    project_root,
+                    [],
+                    tool_name="security",
+                    **engine_kwargs,
+                )
             )
 
         lockfile = next(
@@ -76,7 +128,13 @@ class SecurityTool(ToolFn):
         )
         if lockfile is not None:
             results.append(
-                run_engine(ENGINES["osv-scanner"], lockfile, [], tool_name="security")
+                run_engine(
+                    ENGINES["osv-scanner"],
+                    lockfile,
+                    [],
+                    tool_name="security",
+                    **engine_kwargs,
+                )
             )
 
         if results:
@@ -91,6 +149,12 @@ class SecurityTool(ToolFn):
             summary=f"security: unrecognized project type at {project_root}",
             findings=[],
             raw=None,
+            metadata={
+                "execution": build_execution_metadata(
+                    "executed",
+                    granted=permissions,
+                )
+            },
         )
 
 

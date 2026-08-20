@@ -1,14 +1,23 @@
-# Versioning and compatibility
+# Maintainer Versioning & Compatibility Contracts
 
-Rush follows SemVer intent: breaking CLI, ToolResult, config, MCP schema/name, or engine-behavior changes require an appropriate major boundary once stable; additive commands/fields normally require minor versions; compatible fixes require patches.
+Guidelines for maintaining backward compatibility across CLI commands, FastMCP registrations, configuration files, and ToolResult schemas.
 
-Compatibility surfaces:
+---
 
-- Python requirement and package entry point;
-- CLI command names/options/exit mapping;
-- ToolResult/Finding fields and status semantics;
-- `rush.toml` discovery and accepted fields;
-- MCP tool names, descriptions, input/output schemas, and stdio behavior;
-- engine invocation/parser contracts and maturity labels.
+## 1. Stable Compatibility Contracts
 
-Engine versions are external. Pin reference versions in evidence docs/fixtures and fail clearly when reports are incompatible. Every breaking change updates changelog, migration guide, reference docs, package tests, and clean-install evidence.
+1. **CLI Commands and Arguments**: Command names (`rush lint`, `rush security`, `rush ai-eval`), options (`--json`, `--check`, `--allow-*`), and POSIX exit codes (0, 1, 2).
+2. **FastMCP Registration Contracts**: Tool names (`rush_<name>`), parameter types, and docstrings.
+3. **Canonical ToolResult**: The 8 required fields (`tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`).
+4. **Configuration Syntax**: `rush.toml` schema and table names.
+
+---
+
+## 2. Breaking Change Deprecation Policy
+
+If a breaking change is unavoidable:
+1. Announce deprecation in minor release notes (`0.X.0`) with actionable migration guidance.
+2. Maintain backward-compatible fallback for at least one minor release cycle.
+3. Remove deprecated behavior only in the subsequent major version release.
+
+See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/release-process.md).

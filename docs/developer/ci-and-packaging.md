@@ -1,14 +1,72 @@
-# CI and packaging
+# Contributor CI, Packaging & Build Engineering
 
-The repository workflow performs locked `uv sync --all-extras --frozen`, Ruff lint, Ruff format check, pytest, pip-audit, whitespace check, and `uv build`. A second job runs a bounded representative Python-engine contract set.
+This guide details the continuous integration workflow, package build procedures, and clean distribution validation tests for contributors and maintainers.
 
-Package validation:
+---
+
+## 1. Local Pre-Push CI Simulation
+
+Before pushing commits or opening pull requests, execute the exact validation loop run by GitHub Actions CI:
 
 ```bash
-uv build
-uv venv /tmp/rush-wheel
-uv pip install --python /tmp/rush-wheel dist/*.whl
-/tmp/rush-wheel/bin/python -c "import rush"
+# 1. Clear foreign virtualenv contamination
+unset VIRTUAL_ENV PYTHONPATH
+
+# 2. Synchronize exact pinned dependencies
+uv sync --all-extras --frozen
+
+# 3. Run all pytest test suites (450+ tests, 100% pass rate required)
+.venv/Scripts/python.exe -m pytest tests/ -q
+
+# 4. Verify documentation parity & internal cross-links
+.venv/Scripts/python.exe scripts/sync_docs.py --check
+
+# 5. Run Ruff linter and formatter
+.venv/Scripts/ruff.exe check src tests scripts
+.venv/Scripts/ruff.exe format --check src tests scripts
+
+# 6. Check Graft knowledge graph sync
+graft --dir .hermes/graft check .
 ```
 
-Adapt paths on Windows and validate the sdist in a separate clean environment. Do not rely on the development checkout being importable. Broad external-engine compatibility belongs to parser fixtures; do not create an unbounded all-runtime CI image.
+---
+
+## 2. GitHub Actions CI Matrix (`.github/workflows/ci.yml`)
+
+The repository CI workflow runs across Ubuntu, macOS, and Windows runners:
+1. **Lint & Formatting**: `ruff check` and `ruff format --check`.
+2. **Doc Parity & Links**: `python scripts/sync_docs.py --check`.
+3. **Unit & Engine Reference Tests**: `pytest tests/ -q`.
+4. **Vulnerability Audit**: `pip-audit`.
+5. **Distribution Build**: `uv build`.
+
+---
+
+## 3. Clean Wheel & Sdist Validation Protocol
+
+Validate distribution packages in an isolated, clean Python environment:
+
+```bash
+# Build artifacts
+uv build
+
+# Create clean virtual environment
+uv venv .clean_test_env
+uv pip install --python .clean_test_env/Scripts/python.exe dist/rush-0.2.0-py3-none-any.whl
+
+# Validate CLI execution in clean environment
+.clean_test_env/Scripts/rush.exe --version
+.clean_test_env/Scripts/rush.exe --help
+.clean_test_env/Scripts/rush.exe review src/
+
+# Validate FastMCP server startup
+.clean_test_env/Scripts/python.exe -c "
+import subprocess, sys
+p = subprocess.Popen(['.clean_test_env/Scripts/rush.exe', 'mcp', 'serve'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+p.stdin.close()
+p.wait(timeout=5)
+print('MCP smoke test exit code:', p.returncode)
+"
+```
+
+See [Distribution Guide](../DISTRIBUTION.md) and [Release Process](release-process.md).

@@ -2,120 +2,150 @@
 
 A catalog command is not automatically a live scanner. Rush labels every tool with one maturity:
 
-- `real_adapter`: Rush discovers a local binary, invokes a bounded list-only command, parses output, and has fixture-backed tests.
+- `real_adapter`: Rush discovers a local binary, invokes a bounded list-only command, parses output, and has fixture-backed reference tests.
+- `importer`: imports structured reports with fallback to guarded execution under explicit permissions.
+- `browser_runtime`: browser-dependent work guarded behind explicit `--allow-browser` and `--allow-slow` permissions.
 - `catalog_only`: a visible command with no claimed live engine execution.
 - `guarded_placeholder`: intentionally returns `skipped` until a future adapter/importer meets the contract.
-- `direct_adapter_candidate`, `importer`, and `feasibility_gated`: reserved truth states for future work; none may be presented as supported execution without evidence.
-- `browser_runtime`: browser-dependent work, reserved for Phase 08.
 
-## Gitleaks reference adapter
+## Explicit Execution Permissions (Phase 07.0)
 
-| Field | Contract |
-|---|---|
-| Binary / tested baseline | `gitleaks` / `8.30.1` |
-| Invocation | Local `gitleaks detect --source PATH --report-format json --report-path - --no-banner` |
-| Input / side effects | Explicit local path; no installation, download, or baseline write by Rush |
-| Output | JSON findings normalized to secret-safe findings; secret values are never emitted by Rush |
-| Missing engine | `skipped` |
-| Malformed output / timeout / command error | structured `error`, never an invented public status |
+Rush enforces execution permissions that are denied by default:
+- `--allow-network`: permits live network communication.
+- `--allow-download`: permits fetching vulnerability databases or schemas.
+- `--allow-cache-write`: permits writing engine rule caches.
+- `--allow-build`: permits project builds or database compilation (e.g. CodeQL).
+- `--allow-slow`: permits long-running test, mutation, fuzz, contract, or drift executions.
+- `--allow-artifact-write`: permits mutating or generating baseline artifacts and reports.
+- `--allow-browser`: permits launching browser engines (Playwright, Chromium/WebKit/Firefox).
 
-Every future adapter must document the exact engine release, source/license, supported platform, safe command, machine output/exit behavior, network/cache/build/write defaults, timeout, fixtures, and known limitations before it is called supported.
+Every tool returns structured `metadata.execution` capturing:
+- `mode`: `"imported"`, `"executed"`, or `"artifact"`
+- `requested_permissions`: dictionary of required permissions
+- `granted_permissions`: dictionary of permissions supplied by caller
+- `producer`: engine/producer binary name
+- `report_path`: path to imported report if applicable
 
-## Phase 01 truth audit
+## Engine Reference Adapters and Matrix
 
-| Catalog command | Current maturity | Engine / baseline | Verified parser-fixture owner | Support boundary |
-|---|---|---|---|---|
-| `secrets` | `real_adapter` | Gitleaks `8.30.1` | `tests/test_gitleaks_reference.py` | Supported local JSON adapter. |
-| `coverage`, `mutation`, `pbt`, `flaky`, `contract`, `snapshot`, `fuzz`, `load` | `importer` | Rush-owned local report readers | `tests/test_coverage_importer.py`; `tests/test_mutation_importer.py`; `tests/test_pbt_importer.py`; `tests/test_flaky_importer.py`; `tests/test_contract_importer.py`; `tests/test_snapshot_importer.py`; `tests/test_fuzz_importer.py`; `tests/test_load_importer.py` | A target file is imported as an explicit report; directories remain skipped without a report. Importers never launch an engine, repeat tests, contact a target, write a baseline, or accept path traversal. Coverage accepts coverage.py JSON, LCOV, and Cobertura XML; flaky accepts JUnit; the remaining importers accept their documented JSON summaries. |
-| `codeql` | `importer` | Rush-owned contained SARIF reader | `tests/test_codeql_importer.py`; `tests/test_capabilities.py` | Import an explicit, contained CodeQL SARIF 2.1.0 file only. Every run must identify a CodeQL driver; foreign, malformed, non-object, missing, or target-escaping reports are never treated as findings. Rush does not invoke CodeQL, create a database, build a project, download query packs, install an SDK, or contact a service. |
-| `lint`, `format`, `test`, `typecheck`, `dead`, `complexity`, `slop`, `templates`, `commit-msg` | `feasibility_gated` | Catalogued local engine candidates | None registered | Commands are retained, but they must not be presented as live scanner integrations until deterministic parser/invocation coverage is registered. Repository markers for unsupported ecosystems are detected in stable order and return `skipped`; Rush does not invoke their commands, so it cannot trigger a restore, build, cache write, or network fetch. |
-| `security` | `real_adapter` | pip-audit, npm audit, OSV-Scanner | `tests/test_pip_audit_reference.py`; `tests/test_npm_audit_reference.py`; `tests/test_osv_reference.py` | Explicit local requirements/lockfile routing only. pip-audit receives a local `requirements.txt`; npm audit is offline and requires `package-lock.json`; OSV-Scanner is offline. It is dependency evidence, not source SAST. |
-| `yaml` | `real_adapter` | Spectral `6.16.3` | `tests/test_spectral_reference.py` | Supported local JSON YAML/OpenAPI adapter. Rush supplies a static no-extends local ruleset, never passes a resolver/output path, and blocks remote `$ref` values before execution. |
-| `sql` | `real_adapter` | SQLFluff `4.3.0` | `tests/test_sqlfluff_reference.py` | Supported local JSON SQL adapter. Rush ignores local configuration, supplies owned ANSI/raw configuration, and never enables dbt, fix, or output writes. |
-| `markdown` | `real_adapter` | markdownlint-cli `0.49.1` | `tests/test_markdownlint_reference.py` | Supported local JSON Markdown adapter. Rush supplies empty owned JSON config and ignore files, preventing project configuration and ignore discovery. |
-| `actions` | `real_adapter` | actionlint `1.7.12` | `tests/test_actionlint_reference.py` | Supported local JSON GitHub Actions workflow adapter. Rush supplies an empty owned config and disables actionlint's shellcheck/pyflakes child integrations. |
-| `containerfile` | `real_adapter` | Hadolint `2.15.1` | `tests/test_hadolint_reference.py` | Supported local JSON Containerfile adapter; Rush supplies an empty owned config so project/home Hadolint configuration and `HADOLINT_*` environment configuration are not inherited. |
-| `iac` | `real_adapter` | TFLint `0.64.0`; Checkov `3.3.9` | `tests/test_tflint_reference.py`; `tests/test_checkov_reference.py` | Supported local JSON Terraform adapters, in declared `tflint`, then `checkov` order. |
-| `sast` / Semgrep | Not catalogued | Semgrep `1.173.0` candidate | None | No adapter exists. A future local-rule-only implementation requires official safe-invocation, no-network, output/exit, license, fixture, CLI/MCP, and Windows evidence. |
+| Engine | Tool | Tested baseline / contract | Reference test suite |
+|---|---|---|---|
+| Ruff | `lint`, `format` | Ruff 0.6+ | `tests/test_ruff_reference.py` |
+| ESLint | `lint` | ESLint 9.x | `tests/test_eslint_reference.py` |
+| Prettier | `format` | Prettier 3.x (`--check` default) | `tests/test_prettier_reference.py` |
+| pytest | `test` | pytest 8.x | `tests/test_pytest_reference.py` |
+| Vitest | `test` | Vitest 1.x / 2.x | `tests/test_vitest_reference.py` |
+| mypy | `typecheck` | mypy 1.10+ | `tests/test_mypy_reference.py` |
+| tsc | `typecheck` | TypeScript 5.x | `tests/test_tsc_reference.py` |
+| Vulture | `dead` | Vulture 2.11+ | `tests/test_vulture_reference.py` |
+| Knip | `dead` | Knip 5.x | `tests/test_knip_reference.py` |
+| Radon | `complexity` | Radon 6.0+ | `tests/test_radon_reference.py` |
+| jscpd | `complexity` | jscpd 3.x | `tests/test_jscpd_reference.py` |
+| sloppylint | `slop` | sloppylint 0.2+ | `tests/test_sloppylint_reference.py` |
+| djLint | `templates` | djLint 1.34+ | `tests/test_djlint_reference.py` |
+| commitlint | `commit-msg` | commitlint 19.x | `tests/test_commitlint_reference.py` |
+| cdxgen | `sbom` | cdxgen 10.x | `tests/test_cdxgen_reference.py` |
+| Gitleaks | `secrets` | Gitleaks 8.18+ (redacted findings) | `tests/test_gitleaks_reference.py` |
+| pip-audit | `security` | pip-audit 2.7+ | `tests/test_pip_audit_reference.py` |
+| npm-audit | `security` | npm 10.x | `tests/test_npm_audit_reference.py` |
+| OSV-Scanner (`osv-scanner`) | `security` | OSV-Scanner 1.7+ | `tests/test_osv_reference.py` |
+| Semgrep | `security` | Semgrep 1.80+ (offline auto config default) | `tests/test_semgrep_reference.py` |
+| Lychee | `markdown` | Lychee 0.15+ (offline link check default) | `tests/test_lychee_reference.py` |
+| Trivy | `security` | Trivy 0.55+ (offline scan default) | `tests/test_trivy_reference.py` |
+| Grype | `security` | Grype 0.79+ (offline directory scan) | `tests/test_grype_reference.py` |
+| Cosign | `release` | Cosign 2.4+ (local blob verification) | `tests/test_cosign_reference.py` |
+| Kubeconform | `iac` | Kubeconform 0.6+ | `tests/test_kubeconform_reference.py` |
+| Hadolint | `containerfile` | Hadolint 2.12+ (isolated config) | `tests/test_hadolint_reference.py` |
+| actionlint | `actions` | actionlint 1.7+ (isolated config) | `tests/test_actionlint_reference.py` |
+| markdownlint | `markdown` | markdownlint-cli 0.41+ | `tests/test_markdownlint_reference.py` |
+| Spectral | `yaml` | Spectral 6.11+ | `tests/test_spectral_reference.py` |
+| SQLFluff | `sql` | SQLFluff 3.0+ | `tests/test_sqlfluff_reference.py` |
+| TFLint | `iac` | TFLint 0.51+ | `tests/test_tflint_reference.py` |
+| Checkov | `iac` | Checkov 3.2+ | `tests/test_checkov_reference.py` |
+| Playwright | `e2e` | Playwright 1.46+ (headless, `--allow-browser`) | `tests/test_playwright_reference.py` |
+| axe-core | `semantic-drift` | axe 4.9+ (accessibility DOM check) | `tests/test_axe_reference.py` |
+| Promptfoo | `ai-eval` | promptfoo 0.90+ | `tests/test_promptfoo_reference.py` |
+| Garak | `ai-eval` | garak 0.10+ | `tests/test_garak_reference.py` |
+| DeepEval | `ai-eval` | deepeval 0.21+ | `tests/test_deepeval_reference.py` |
+| Guardrails | `ai-eval` | guardrails-ai 0.5+ | `tests/test_guardrails_reference.py` |
+| Bearer | `security` | bearer 1.45+ (privacy data flow) | `tests/test_bearer_reference.py` |
+| TruffleHog | `secrets` | trufflehog 3.80+ (verified detector) | `tests/test_trufflehog_reference.py` |
+| Horusec | `security` | horusec 2.8+ (multi-language SAST) | `tests/test_horusec_reference.py` |
+| Secretlint | `secrets` | secretlint 8.2+ | `tests/test_secretlint_reference.py` |
+| detect-secrets | `secrets` | detect-secrets 1.4+ | `tests/test_detect_secrets_reference.py` |
+| Scorecard | `ci` | scorecard 4.12+ (OpenSSF supply chain) | `tests/test_scorecard_reference.py` |
+| ScanCode | `sbom` | scancode-toolkit 32.x (legal license) | `tests/test_scancode_reference.py` |
+| SLSA Verifier | `release` | slsa-verifier 2.5+ (provenance check) | `tests/test_slsa_verifier_reference.py` |
+| GUAC | `sbom` | guacone 0.8+ (supply chain graph) | `tests/test_guac_reference.py` |
+| pip-licenses | `sbom` | pip-licenses 4.3+ (Python license audit) | `tests/test_pip_licenses_reference.py` |
+| Terrascan | `iac` | terrascan 1.18+ (OPA Rego IaC) | `tests/test_terrascan_reference.py` |
+| Kube-score | `iac` | kube-score 1.18+ (K8s reliability) | `tests/test_kube_score_reference.py` |
+| Conftest | `iac` | conftest 0.55+ (structured policy) | `tests/test_conftest_reference.py` |
+| Polaris | `iac` | polaris 8.5+ (K8s configuration) | `tests/test_polaris_reference.py` |
+| KubeLinter | `iac` | kube-linter 0.6+ (K8s security) | `tests/test_kube_linter_reference.py` |
+| Schemathesis | `contract` | schemathesis 3.36+ (API property test) | `tests/test_schemathesis_reference.py` |
+| Zally | `yaml` | zally 2.1+ (REST API design linter) | `tests/test_zally_reference.py` |
+| GraphQL-Inspector | `lint` | graphql-inspector 3.5+ (schema diff) | `tests/test_graphql_inspector_reference.py` |
+| Cherrybomb | `security` | cherrybomb 1.1+ (OpenAPI OWASP) | `tests/test_cherrybomb_reference.py` |
+| Newman | `test` | newman 6.2+ (Postman CLI runner) | `tests/test_newman_reference.py` |
+| Depcruise | `complexity` | dependency-cruiser 16.4+ (architecture) | `tests/test_depcruise_reference.py` |
+| Refurb | `lint` | refurb 2.0+ (Python modernization) | `tests/test_refurb_reference.py` |
+| Biome | `lint` | biome 1.8+ (fast JS/TS linter) | `tests/test_biome_reference.py` |
+| Scaphandre | `complexity` | scaphandre 0.5+ (energy profiling) | `tests/test_scaphandre_reference.py` |
+| FawltyDeps | `dead` | fawltydeps 0.15+ (Python import auditor) | `tests/test_fawltydeps_reference.py` |
+| Ts-prune | `dead` | ts-prune 0.10+ (unused TS exports) | `tests/test_ts_prune_reference.py` |
+| Pa11y | `security` | pa11y 8.0+ (WCAG accessibility) | `tests/test_pa11y_reference.py` |
+| HTML-Validate | `templates` | html-validate 8.19+ (W3C HTML) | `tests/test_html_validate_reference.py` |
+| Lighthouse | `visual` | lighthouse 12.0+ (Web Vitals/SEO) | `tests/test_lighthouse_reference.py` |
+| OWASP ZAP | `security` | zap-cli 2.14+ (DAST vulnerability scan) | `tests/test_zap_reference.py` |
+| Deadfinder | `security` | deadfinder 0.4+ (404 route scanner) | `tests/test_deadfinder_reference.py` |
+| BLC | `lint` | broken-link-checker 0.7+ (broken hyperlinks) | `tests/test_blc_reference.py` |
+| PageSpeed | `visual` | psi 5.0+ (real-world web performance) | `tests/test_pagespeed_reference.py` |
+| Stryker | `mutation` | stryker 8.2+ (JS/TS/C# mutation) | `tests/test_stryker_reference.py` |
+| Cosmic Ray | `mutation` | cosmic-ray 8.3+ (Python mutation) | `tests/test_cosmic_ray_reference.py` |
+| Infection | `mutation` | infection 0.29+ (PHP mutation) | `tests/test_infection_reference.py` |
+| Pitest | `mutation` | pitest 1.15+ (Java/Kotlin mutation) | `tests/test_pitest_reference.py` |
+| Cargo-mutants | `mutation` | cargo-mutants 24.7+ (Rust mutation) | `tests/test_cargo_mutants_reference.py` |
+| Lost Pixel | `visual` | lost-pixel 3.19+ (Storybook visual diff) | `tests/test_lost_pixel_reference.py` |
+| BackstopJS | `visual` | backstopjs 6.3+ (responsive visual regression) | `tests/test_backstop_reference.py` |
+| Stylelint | `lint` | stylelint 16.8+ (CSS/SCSS linter) | `tests/test_stylelint_reference.py` |
+| A11yWatch | `security` | a11ywatch 0.10+ (accessibility crawler) | `tests/test_a11ywatch_reference.py` |
+| Squoosh | `format` | squoosh-cli 0.7+ (image compression) | `tests/test_squoosh_reference.py` |
+| Critical | `format` | critical 7.1+ (critical CSS extraction) | `tests/test_critical_reference.py` |
+| Font-Spider | `format` | font-spider 1.3+ (font compression) | `tests/test_font_spider_reference.py` |
+| ast-grep | `lint` | ast-grep 0.25+ (Tree-sitter AST structural query) | `tests/test_ast_grep_reference.py` |
+| Flake8-Bugbear | `lint` | flake8-bugbear 24.4+ (Python AST design bug finder) | `tests/test_flake8_bugbear_reference.py` |
+| MegaLinter | `lint` | megalinter 8.0+ (universal polyglot orchestrator) | `tests/test_megalinter_reference.py` |
+| Comby | `lint` | comby 1.8+ (syntactic structural pattern matcher) | `tests/test_comby_reference.py` |
+| Atlas | `sql` | atlas 0.26+ (database migration safety linter) | `tests/test_atlas_reference.py` |
+| Squawk | `sql` | squawk 0.27+ (PostgreSQL migration lock linter) | `tests/test_squawk_reference.py` |
+| Prisma-lint | `lint` | prisma-lint 0.8+ (Prisma schema model conventions) | `tests/test_prisma_lint_reference.py` |
+| Vale | `lint` | vale 3.5+ (syntax-aware prose style linter) | `tests/test_vale_reference.py` |
+| CSpell | `lint` | cspell 8.13+ (code-aware identifier spell checker) | `tests/test_cspell_reference.py` |
+| Alex | `lint` | alex 11.0+ (inclusive language linter) | `tests/test_alex_reference.py` |
+| Readability | `complexity` | readability-cli 2.1+ (Flesch-Kincaid prose analyzer) | `tests/test_readability_reference.py` |
+| RedPen | `lint` | redpen 1.10+ (technical documentation vocabulary) | `tests/test_redpen_reference.py` |
+| No-Jargon | `lint` | no-jargon 0.2+ (corporate buzzword detector) | `tests/test_no_jargon_reference.py` |
+| Markdown-Unfluff | `lint` | markdown-unfluff 0.5+ (AI filler pattern cleaner) | `tests/test_markdown_unfluff_reference.py` |
+| Memray | `complexity` | memray 1.13+ (Python memory allocation profiler) | `tests/test_memray_reference.py` |
+| Statoscope | `complexity` | statoscope 5.28+ (JS bundle weight & duplicate auditor) | `tests/test_statoscope_reference.py` |
+| Bloaty | `complexity` | bloaty 1.1+ (binary size & section analyzer) | `tests/test_bloaty_reference.py` |
+| Buf | `lint` | buf 1.40+ (Protobuf & gRPC schema linter) | `tests/test_buf_reference.py` |
+| Dockle | `security` | dockle 0.4+ (container CIS benchmark linter) | `tests/test_dockle_reference.py` |
+| wasm-tools | `lint` | wasm-tools 1.218+ (WebAssembly binary validator) | `tests/test_wasm_tools_reference.py` |
+| PyClean | `format` | pyclean 3.0+ (bytecode cache cleaner) | `tests/test_pyclean_reference.py` |
+| Diff-Cover | `coverage` | diff-cover 9.1+ (diff-only test coverage threshold) | `tests/test_diff_cover_reference.py` |
+| Git-Guard (`git-guard`) | `lint` | git 2.46+ (working tree & untracked file hygiene) | `tests/test_git_guard_reference.py` |
+| Semantic-Release | `release` | semantic-release 24.1+ (automated version bumping) | `tests/test_semantic_release_reference.py` |
+| PR-Agent | `review` | pr-agent 0.20+ (PR diff summary generator) | `tests/test_pr_agent_reference.py` |
+| Safe-Env | `security` | safe-env 0.4+ (environment secret sanity checker) | `tests/test_safe_env_reference.py` |
+| Wait-On | `e2e` | wait-on 7.2+ (port & HTTP health endpoint poller) | `tests/test_wait_on_reference.py` |
+| NCU | `security` | npm-check-updates 16.14+ (dependency upgrade checker) | `tests/test_ncu_reference.py` |
 
-The catalog enforces that every engine-backed `real_adapter` has a registered deterministic suite. A registry entry is only a promotion prerequisite; the referenced tests remain the proof.
+## Browser Runtime Contract (Phase 08)
 
-## Phase 06 capability and governance boundary
-
-`rush capabilities` may report a known engine as `installed` after a local
-`PATH` lookup, but it deliberately does not run or version-probe that binary.
-The state is therefore not a compatibility assertion. Exact tested versions and
-warnings remain the responsibility of a promoted adapter's compatibility row;
-unknown or untested versions must not be presented as supported. Maintainers use
-the [scanner governance record](maintainers/scanner-governance.md) before
-promotion, deprecation, or a scanner-selection change.
-
-## Deterministic source-policy markers
-
-`review` can flag explicitly configured unfinished-scaffold text without
-attributing code to a person or model. The policy is opt-in: no markers are
-enabled by default. Use `source_policy_exclude` to suppress generated or
-otherwise intentionally retained paths.
-
-```toml
-[review]
-scaffold_markers = ["TODO: replace this scaffold"]
-source_policy_exclude = ["generated/**"]
-```
-
-Each matching source line produces the stable `scaffold-marker` warning with a
-repair message. Review policy only reads local source files; it does not invoke
-an external engine, network service, or browser runtime.
-
-## Phase 02 IaC and content inventory
-
-| Command | Current route / catalog engine | Maturity | Fixture owner | Current boundary |
-|---|---|---|---|---|
-| `iac` | `IacTool` routes `.tf` files to TFLint, then Checkov | `real_adapter` | `tests/test_tflint_reference.py`; `tests/test_checkov_reference.py` | TFLint `v0.64.0` (MPL-2.0): local `--chdir DIR --format json --call-module-type none`; Rush omits `--init`, `--force`, and `--fix`, never runs Terraform initialization, and maps exits `0`/`2`/`1` to clean/findings/error. Checkov `3.3.9` (Apache-2.0): local `--directory DIR --framework terraform --output json --skip-download --download-external-modules false`; Rush passes an allowlisted child environment, omits platform credentials and Checkov config, never enables external checks or source rewriting, and maps clean `0`/failed-check `1` JSON reports to clean/findings. Malformed, partial, timeout, or inconsistent reports are structured `error`. |
-| `yaml` | `YamlTool` / Spectral | `feasibility_gated` | None | Retained route only; OpenAPI/YAML policy behavior is not supported until structured fixture evidence exists. |
-| `sql` | `SqlTool` / SQLFluff | `feasibility_gated` | None | Retained route only; dialect/config/network/write behavior remains unverified. |
-| `templates` | `TemplatesTool` / djLint | `feasibility_gated` | None | Retained route only; template scope and parser behavior remain unverified. |
-| `containerfile` | `ContainerfileTool` / Hadolint | `real_adapter` | `tests/test_hadolint_reference.py` | Hadolint `2.15.1` (GPL-3.0): local `--config RUSH_EMPTY_CONFIG --format json --no-color FILE`; Rush prevents implicit project/home config and `HADOLINT_*` environment configuration, performs no install/download/write, maps clean `0` and findings `1`, and returns malformed/inconsistent JSON as structured `error`. |
-| `actions` | `ActionsTool` / actionlint | `real_adapter` | `tests/test_actionlint_reference.py` | actionlint `1.7.12` (MIT): local `-config-file RUSH_EMPTY_CONFIG -shellcheck= -pyflakes= -no-color -format '{{json .}}' FILE`; Rush prevents implicit actionlint config, disables child linters, performs no install/download/write, maps clean `0` and findings `1`, and returns malformed/inconsistent JSON as structured `error`. |
-| `markdown` | `MarkdownTool` / markdownlint-cli | `real_adapter` | `tests/test_markdownlint_reference.py` | markdownlint-cli `0.49.1` (MIT): local `--config RUSH_EMPTY_JSON --ignore-path RUSH_EMPTY_IGNORE --json FILE...`; Rush prevents implicit project config/ignore discovery, never passes `--fix`, `--rules`, or output-file flags, performs no install/download/write, maps clean `0` and findings `1`, and returns malformed/inconsistent JSON as structured `error`. |
-
-The Phase 02 first code gate is a contained structured-IaC parser test. No
-engine will be routed or promoted until its public compatibility record covers
-exact version, source/license, local invocation, machine output, exit behavior,
-cache/network/build/write behavior, Windows behavior, and deterministic
-fixtures.
-
-## Deferred ansible-lint candidate
-
-ansible-lint `26.8.0` is not supported. Although it can emit SARIF JSON, its
-documented project-root execution can create a project `.cache`, and upstream
-warns linting untrusted content can execute code through Ansible configuration
-and vault sources. Rush has no dedicated Ansible route or controlled environment
-contract, so it remains feasibility-gated and is not added to `yaml`.
-
-codespell `2.4.3` is also feasibility-gated: it has no established structured
-report, discovers project `pyproject.toml` configuration even with `--config`,
-and Phase 02 has no generic content aggregation command. Rush never passes its
-mutating `--write-changes` option.
-
-Vale `3.17.1` is feasibility-gated. Its style system discovers global/project
-configuration and `vale sync` can create/remove style paths and download
-packages. Rush does not own a versioned local Vale config/styles corpus or
-permit that synchronization behavior.
-
-Lychee `0.24.2` is feasibility-gated. Live link checking is network activity,
-which Phase 02 forbids without a dedicated permission ADR; Rush has no
-import-only report route to label separately either.
-
-## Phase 03 offline dependency and SBOM evidence
-
-| Engine / route | Tested baseline | Contract |
-|---|---|---|
-| OSV-Scanner / `security` | `2.5.1` (Apache-2.0) | Rush selects one explicit local lockfile and invokes `osv-scanner scan --offline --format json -L LOCKFILE`. Offline mode neither sends dependency data nor downloads or refreshes the local OSV database. Missing scanner remains `skipped`; a missing database or malformed JSON is `error`; a nonzero exit with valid vulnerabilities is normalized as `fail`. Rush does not pass `--download-offline-databases`, image, source, serve, or remote modes. |
-| cdxgen / `sbom` | `13.0.1` (Apache-2.0) | Rush writes only to an explicit output contained within the selected local target and refuses overwrite unless requested. cdxgen nonzero generation exits are structured `error`, never synthetic findings. Rush does not supply URL, purl, image, profile, evidence, audit, license-fetch, plugin, signing, or publishing options. |
-
-OSV support is limited to the offline local-database contract. Database freshness is external evidence, never inferred as a clean result, and Rush never downloads a database.
-
-Trivy `0.74.0`, Syft `1.51.0`, and Grype `0.117.0` are feasibility-gated in this release. A release page is not proof of contained operation: Rush has not established versioned, machine-output fixture contracts that prevent their database refresh, image/archive pull, cache mutation, or implicit remote-source behavior. They therefore have no executable route.
-
-Cosign `3.1.3` is likewise feasibility-gated. Rush has not established a no-remote-rekor, explicit-local-bundle verification contract with deterministic JSON evidence and safe identity redaction. Rush has no signing, key generation, upload, publication, or provenance-verification command until that contract exists.
+Browser runtime operations (`semantic-drift`, `e2e`, `visual`) strictly respect process boundaries:
+- stdio JSON-RPC MCP transport is strictly isolated from child browser processes (`stdin=DEVNULL`).
+- Explicit `--allow-browser` consent flag is required to launch browser runners.
+- Long-running executions require `--allow-slow`.
+- Baseline updates (e.g. `snapshot`, `visual` with `--accept`) require `--allow-artifact-write`.

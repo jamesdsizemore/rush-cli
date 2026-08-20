@@ -6,25 +6,21 @@ Start with the tests your project already has:
 rush test .
 ```
 
-Rush can route Python projects to pytest and JS/TS projects to Vitest. A passing test run shows the executed suite passed; it does not prove untested behavior is correct.
+Rush can route Python projects to pytest, JS/TS projects to Vitest, and Postman collections to Newman. A passing test run shows the executed suite passed; it does not prove untested behavior is correct.
 
-Rush also imports test-quality evidence that your project has already produced.
-Pass the report file itself as `PATH`; these commands do not discover a report
-inside a directory or launch a runner:
+Rush supports dual modes for test quality: importing existing local reports or executing engines under permission flags (`--allow-slow`, `--allow-network`, `--allow-browser`, `--allow-artifact-write`):
 
-| Command | Accepted local evidence | What Rush does not do |
-|---|---|---|
-| `coverage REPORT` | coverage.py JSON, LCOV, or Cobertura XML | run tests or coverage tools |
-| `pbt REPORT` | seeded property-test JSON | execute property tests |
-| `flaky REPORT` | JUnit XML with duplicate-case evidence | repeat tests |
-| `contract REPORT` | Pact summary JSON | contact a provider or broker |
-| `snapshot REPORT` | comparison JSON | accept, write, or update a baseline |
-| `mutation REPORT` | mutation summary JSON | run a mutation engine |
-| `fuzz REPORT` | seeded fuzz summary JSON | build or start a fuzzer |
-| `load REPORT` | load summary JSON | send traffic to a target |
+| Command | Accepted local evidence | Native execution engine | Required permission |
+|---|---|---|---|
+| `coverage REPORT` | coverage.py JSON, LCOV, Cobertura XML | pytest --cov / Diff-Cover | `--allow-slow` |
+| `mutation REPORT` | Stryker / mutmut summary JSON | Stryker, Cosmic Ray, Infection, Pitest, Cargo-mutants | `--allow-slow` |
+| `pbt REPORT` | seeded property-test JSON | Hypothesis | `--allow-slow` |
+| `flaky REPORT` | JUnit XML with duplicate-case evidence | pytest-rerun | `--allow-slow` |
+| `contract REPORT` | Pact summary JSON | Schemathesis, pact-verifier | `--allow-slow` |
+| `snapshot REPORT` | comparison JSON | pytest-snapshot | `--allow-slow` (`--allow-artifact-write` for `--accept`) |
+| `fuzz REPORT` | seeded fuzz summary JSON | Atheris | `--allow-slow` |
+| `load REPORT` | load summary JSON | k6 | `--allow-network` |
+| `e2e` | Playwright test suites | Playwright, Wait-On | `--allow-browser` |
+| `visual` | visual diff / baselines | Lost Pixel, BackstopJS, Lighthouse, PageSpeed | `--allow-browser` & `--allow-slow` |
 
-For example, `rush coverage coverage.xml --json` imports an existing Cobertura
-report. A missing, malformed, or out-of-project report produces a structured
-`skipped` or `error` result; it is not a clean test result. `visual` remains a
-guarded placeholder, and no browser or baseline-changing behavior is available
-through these commands. Read each JSON summary and see [Advanced checks](advanced-checks.md).
+For example, `rush coverage coverage.xml --json` imports an existing Cobertura report. Read each JSON summary and see [Advanced checks](advanced-checks.md).

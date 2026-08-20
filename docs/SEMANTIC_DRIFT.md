@@ -1,18 +1,12 @@
-# Experimental semantic-drift detection
+# Semantic-drift detection
 
-`rush semantic-drift <path>` is an experimental correctness-analysis surface for
-browser locator and self-healing drift.
+`rush semantic-drift <path>` is a correctness-analysis surface for browser locator, accessibility, and DOM drift detection.
 
 ## Safety contract
 
-- It is **skipped by default**.
-- Both `--allow-browser` and `--allow-slow` are required before any configured
-  local analysis can be considered.
-- Rush never starts a browser, invokes .NET, changes fixtures, accesses the
-  network, or installs an engine by default.
-- Without a configured local .NET or Playwright target, the enabled path also
-  returns a structured `skipped` result with an installation/configuration hint.
+- It is **skipped by default** without explicit permissions.
+- Both `--allow-browser` and `--allow-slow` are required to execute local analysis.
+- Rush runs Playwright and axe-core in headless mode with detached process boundaries (`stdin=DEVNULL`, process kill on timeout).
+- Without a configured local .NET or Playwright target, the enabled path returns a structured `skipped` result with an installation/configuration hint.
 
-The adapter accepts machine-readable local engine reports when a future
-explicitly configured runner is enabled. Normal CI uses parser and safety
-contracts only; it never requires a browser.
+Normal CI uses parser and safety contracts; it never requires a browser unless explicitly authorized.

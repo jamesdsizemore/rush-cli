@@ -1,14 +1,69 @@
-# Configuration development
+# Configuration Subsystem Development Guide
 
-Discovery begins at a file's parent or directory target, walks upward, selects the first `rush.toml`, and stops at `.git` or filesystem root. Multiple configs are not merged.
+This guide explains how configuration loading, dataclass parsing, discovery boundaries, and tool catalog validation are implemented in `src/rush/config.py`.
 
-To add a field:
+---
 
-1. Place it in the owning frozen dataclass with a safe default.
-2. Parse and type-normalize it in `_parse`; reject wrong types rather than coercing silently.
-3. Add a consumer in a specific tool; do not ship parsed no-op policy.
-4. Define precedence: default < TOML < explicit invocation option.
-5. Add discovery, boundary, parse, precedence, unknown-value, and behavior tests.
-6. Update configuration reference, cookbook, example config, environment docs if relevant, and migration notes.
+## 1. Architecture of Configuration Loading
 
-`[tools.NAME]` validation must remain catalog-driven so typos fail. Permission-sensitive actions should not become persistent blanket grants through configuration without a separate security decision.
+```text
+Target Path (file or directory)
+       │
+       ▼
+Walk Upward (find nearest rush.toml)
+       │
+       ├── Found rush.toml -> Parse and Validate against TOOL_SPECS
+       │
+       └── Hit .git boundary or root -> Return RushConfig() defaults
+```
+
+---
+
+## 2. Configuration Data Models (`src/rush/config.py`)
+
+All configuration structures are defined as frozen dataclasses:
+
+```python
+@dataclass(frozen=True)
+class ProjectConfig:
+    src: tuple[str, ...] = ("src", "lib")
+    test: tuple[str, ...] = ("tests", "test")
+    exclude: tuple[str, ...] = ("**/.venv/**", "**/node_modules/**")
+
+@dataclass(frozen=True)
+class ReviewConfig:
+    max_file_lines: int = 400
+    use_graft: bool = False
+    scaffold_markers: tuple[str, ...] = ("TODO", "FIXME", "HACK")
+    source_policy_exclude: tuple[str, ...] = ("tests/**", "fixtures/**")
+    fail_on: tuple[str, ...] = ()
+
+@dataclass(frozen=True)
+class ToolOverrideConfig:
+    engine_args: tuple[str, ...] = ()
+    check: bool = True
+
+@dataclass(frozen=True)
+class RushConfig:
+    log_level: str = "warn"
+    project: ProjectConfig = field(default_factory=ProjectConfig)
+    review: ReviewConfig = field(default_factory=ReviewConfig)
+    tools: dict[str, ToolOverrideConfig] = field(default_factory=dict)
+```
+
+---
+
+## 3. Adding New Configuration Fields
+
+When adding a configuration field:
+1. **Define Field**: Add to the respective `@dataclass(frozen=True)` in `src/rush/config.py`.
+2. **Parse in `_parse()`**: Validate value types strictly. Raise `RushConfigError` for malformed types.
+3. **Validate Tool Tables**: Validate that any `[tools.NAME]` corresponds to a key in `TOOL_SPECS`.
+4. **Unit Tests**: Add tests in `tests/test_config.py` covering:
+   - Default value initialization
+   - Valid TOML parsing
+   - Unknown tool table rejection
+   - Git boundary stopping behavior
+5. **Documentation**: Update `docs/reference/configuration-reference.md`, `docs/reference/configuration-cookbook.md`, and `docs/CONFIG_SCHEMA.md`.
+
+See [Configuration Reference](../reference/configuration-reference.md).

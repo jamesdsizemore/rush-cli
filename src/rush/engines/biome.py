@@ -1,0 +1,83 @@
+"""Biome adapter for fast JavaScript and TypeScript linting and formatting."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from ..tools.base import ToolResult
+from ..tools.common import resolve_binary, run_subprocess
+from .base import Engine, EngineResult
+
+
+class BiomeEngine(Engine):
+    name = "biome"
+    binary = "biome"
+    file_extensions = ("js", "jsx", "ts", "tsx", "json", "jsonc")
+
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+    ) -> EngineResult:
+        binary_path = resolve_binary(self.binary) or self.binary
+        default_args = ["check", "--reporter=json"]
+        argv = [binary_path, *default_args, *args, str(path)]
+
+        proc = run_subprocess(argv, cwd=cwd or path, timeout=120)
+
+        parsed = None
+        findings_raw: list[dict] = []
+        if proc.stdout.strip():
+            try:
+                parsed = json.loads(proc.stdout)
+                if isinstance(parsed, dict) and "diagnostics" in parsed:
+                    findings_raw = parsed["diagnostics"]
+            except json.JSONDecodeError:
+                parsed = None
+
+        return EngineResult(
+            exit_code=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            parsed=parsed,
+            findings=findings_raw,
+            summary=f"biome exit {proc.returncode}",
+            duration_ms=0,
+        )
+
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        findings = []
+        for item in raw.get("findings", []):
+            severity = item.get("severity", "warning").lower()
+            findings.append(
+                {
+                    "path": item.get("location", {})
+                    .get("path", {})
+                    .get("file", str(path)),
+                    "line": item.get("location", {}).get("span", [0])[0],
+                    "column": 0,
+                    "rule": f"biome/{item.get('category', 'lint')}",
+                    "severity": "fail" if severity in ("error", "fatal") else "warn",
+                    "message": item.get("description", "Biome check diagnostic"),
+                }
+            )
+
+        exit_code = raw.get("exit_code", 0)
+        status = (
+            "fail"
+            if any(f["severity"] == "fail" for f in findings)
+            else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
+        )
+
+        return ToolResult(
+            tool=tool_name,
+            engine=self.name,
+            engine_version=self.version(),
+            status=status,
+            duration_ms=raw.get("duration_ms", 0),
+            summary=f"biome: {len(findings)} diagnostic(s)",
+            findings=findings,
+            raw=raw.get("parsed"),
+        )

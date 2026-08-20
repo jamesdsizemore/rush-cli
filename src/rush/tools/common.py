@@ -19,6 +19,7 @@ from .base import Finding, ToolResult
 
 if TYPE_CHECKING:
     from ..engines.base import Engine
+    from ..permissions import ExecutionPermissions
 
 
 MAX_SUBPROCESS_OUTPUT_CHARS = 256 * 1024
@@ -118,21 +119,51 @@ def run_engine(
     cwd: Path | None = None,
     tool_name: str | None = None,
     timeout: int = 120,
+    permissions: ExecutionPermissions | None = None,
+    required_permissions: ExecutionPermissions | None = None,
 ) -> ToolResult:
     """Run an engine and always return a canonical result.
 
-    Status semantics: missing engines are `skipped`; engine/process failures
-    are `error`; valid engine findings are normalized as `warn` or `fail` by
-    the adapter. No child output is written to Rush stdout.
+    Status semantics: missing engines or ungranted permissions are `skipped`;
+    engine/process failures are `error`; valid engine findings are normalized
+    as `warn` or `fail` by the adapter. No child output is written to Rush stdout.
     """
+    from ..permissions import build_execution_metadata, check_permissions
+
     tool_name = tool_name or engine.name
     extra_args = list(args or [])
+
+    # Check execution permissions before PATH probe or process spawning
+    ok, missing = check_permissions(required_permissions, permissions)
+    if not ok:
+        missing_str = ", ".join(missing)
+        return skipped_result(
+            tool_name,
+            engine.name,
+            f"requires permission: {missing_str}",
+            metadata={
+                "execution": build_execution_metadata(
+                    "executed",
+                    requested=required_permissions,
+                    granted=permissions,
+                    producer=engine.name,
+                )
+            },
+        )
 
     if not engine_on_path(engine.binary):
         return skipped_result(
             tool_name,
             engine.name,
             f"{engine.binary} not on PATH (install: {_install_hint(engine.name)})",
+            metadata={
+                "execution": build_execution_metadata(
+                    "executed",
+                    requested=required_permissions,
+                    granted=permissions,
+                    producer=engine.name,
+                )
+            },
         )
 
     start = now_ms()
@@ -145,12 +176,28 @@ def run_engine(
             f"timed out after {timeout}s",
             duration_ms=elapsed_ms(start),
             terminal_reason="timeout",
+            metadata={
+                "execution": build_execution_metadata(
+                    "executed",
+                    requested=required_permissions,
+                    granted=permissions,
+                    producer=engine.name,
+                )
+            },
         )
     except FileNotFoundError:
         return skipped_result(
             tool_name,
             engine.name,
             f"{engine.binary} disappeared from PATH mid-run",
+            metadata={
+                "execution": build_execution_metadata(
+                    "executed",
+                    requested=required_permissions,
+                    granted=permissions,
+                    producer=engine.name,
+                )
+            },
         )
     except Exception as error:  # noqa: BLE001 - C10 requires structured engine errors
         return error_result(
@@ -158,10 +205,29 @@ def run_engine(
             engine.name,
             f"engine crashed: {error!r}",
             duration_ms=elapsed_ms(start),
+            metadata={
+                "execution": build_execution_metadata(
+                    "executed",
+                    requested=required_permissions,
+                    granted=permissions,
+                    producer=engine.name,
+                )
+            },
         )
 
     result.setdefault("duration_ms", elapsed_ms(start))
-    return engine.normalize(result, path, tool_name)
+    tool_res = engine.normalize(result, path, tool_name)
+    if "metadata" not in tool_res or tool_res["metadata"] is None:
+        tool_res["metadata"] = {}
+    if "execution" not in tool_res["metadata"]:
+        tool_res["metadata"]["execution"] = build_execution_metadata(
+            "executed",
+            requested=required_permissions,
+            granted=permissions,
+            producer=engine.name,
+            producer_version=tool_res.get("engine_version"),
+        )
+    return tool_res
 
 
 def _install_hint(engine_name: str) -> str:
@@ -177,18 +243,28 @@ def _install_hint(engine_name: str) -> str:
     }.get(engine_name, "see engine docs")
 
 
-def skipped_result(tool_name: str, engine: str | None, reason: str) -> ToolResult:
-    """Build a ToolResult for an unavailable local engine."""
-    return ToolResult(
+def skipped_result(
+    tool_name: str,
+    engine: str | None,
+    reason: str,
+    *,
+    duration_ms: int = 0,
+    metadata: dict | None = None,
+) -> ToolResult:
+    """Build a ToolResult for an unavailable local engine or missing permission."""
+    result = ToolResult(
         tool=tool_name,
         engine=engine,
         engine_version=None,
         status="skipped",
-        duration_ms=0,
+        duration_ms=duration_ms,
         summary=f"skipped: {reason}",
         findings=[],
         raw=None,
     )
+    if metadata is not None:
+        result["metadata"] = metadata
+    return result
 
 
 def error_result(
@@ -199,6 +275,7 @@ def error_result(
     duration_ms: int = 0,
     terminal_reason: str | None = None,
     partial: bool = False,
+    metadata: dict | None = None,
 ) -> ToolResult:
     """Build an engine error result with optional execution metadata."""
     result = ToolResult(
@@ -211,11 +288,12 @@ def error_result(
         findings=[],
         raw=None,
     )
+    meta = dict(metadata or {})
     if terminal_reason is not None:
-        result["metadata"] = {
-            "terminal_reason": terminal_reason,
-            "partial": partial,
-        }
+        meta["terminal_reason"] = terminal_reason
+        meta["partial"] = partial
+    if meta:
+        result["metadata"] = meta
     return result
 
 

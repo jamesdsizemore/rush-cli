@@ -1,24 +1,40 @@
-# Documentation style guide
+# Maintainer Documentation Style & Synchronization Guide
 
-## Audiences
+This style guide enforces clarity, truthfulness, and zero documentation drift across all 128 documentation files in Rush CLI.
 
-User docs lead with goals and plain language: “Rush checks your project with tools you already use.” Explain engine and MCP immediately. Do not lead with registry, adapter, routing, schema, or subprocess.
+---
 
-Developer docs may use exact module and contract terminology. Maintainer docs are operational and evidence-driven.
+## 1. Core Documentation Rules
 
-## Page contract
+1. **Audience-Driven Writing**:
+   - **User Guides (`docs/user-guide/`)**: Focus on user workflows, commands, outcomes, and clear explanations.
+   - **Reference Docs (`docs/reference/`)**: Provide exhaustive technical specifications, exact parameter types, and CLI flag matrices.
+   - **Developer Guides (`docs/developer/`)**: Cover architecture, layer boundaries, and internal contracts.
+   - **Maintainer Runbooks (`docs/maintainers/`)**: Detail operational runbooks, triage steps, and governance policies.
+2. **Capability Truth & Honest Maturity**:
+   - Never document a feature as functional if it is a development stub or placeholder.
+   - Document experimental features and permission flags explicitly.
+3. **Deterministic Verification**:
+   - Every relative markdown link in every documentation file must resolve to a valid file on disk.
+   - Run `python scripts/sync_docs.py --check` and `pytest tests/test_docs_parity_and_sync.py` to verify 100% parity.
 
-State what it is, why/when it matters, prerequisites, numbered action, expected result, explanation, safety boundary, and next link where relevant. Examples must be copyable and capability-accurate. Tables support prose; they do not replace it.
+---
 
-## Diagrams and links
+## 2. 13-File Mandatory Update Checklist
 
-Use Mermaid only when it clarifies a flow or trust boundary. Use descriptive node labels and relative links. Every local link must validate.
+Whenever a tool, engine, or permission boundary is added or modified, the maintainer must update all 13 documents:
+1. `docs/TOOL_CATALOG.md`
+2. `docs/ENGINE_COMPATIBILITY.md`
+3. `docs/CLI_REFERENCE.md`
+4. `docs/reference/cli-reference.md`
+5. `docs/ENGINES.md`
+6. `docs/reference/engine-directory.md`
+7. `docs/MCP_REFERENCE.md`
+8. `docs/reference/mcp-tool-reference.md`
+9. `docs/user-guide/advanced-checks.md`
+10. `docs/safety/permissions.md`
+11. `docs/DEVELOPER_GUIDE.md`
+12. `CHANGELOG.md`
+13. `.hermes/implementation/phase-XX-ledger.md`
 
-## Change matrix
-
-- New tool: README if user-visible, CLI reference, tool catalog, result examples, safety/maturity, tutorials if central, MCP reference, developer tool guide, changelog.
-- New engine: engine directory, compatibility, install/recovery, tool pages, engine developer evidence, changelog.
-- New config field: configuration reference/cookbook/example, migration, developer config guide, changelog.
-- New permission/data boundary: safety, privacy/security, CLI/MCP reference, ADR, tests, changelog.
-
-Never describe a stub, parsed no-op setting, or internal-only option as usable. Generated help and executable tests win over stale prose.
+See [Master Build Plan](../developer/master-innovation-remediation-build-plan.md).

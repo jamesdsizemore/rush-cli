@@ -49,7 +49,7 @@ Guided lessons:
 
 ## I contribute or maintain Rush
 
-Start with [Contributor onboarding](developer/contributor-onboarding.md), then use the [Developer guide](DEVELOPER_GUIDE.md), [architecture](developer/architecture.md), [testing guide](developer/testing-guide.md), and [maintainer runbooks](maintainers/support-runbook.md).
+Start with [Contributor onboarding](developer/contributor-onboarding.md), then use the [Developer guide](DEVELOPER_GUIDE.md), [architecture](developer/architecture.md), [testing guide](developer/testing-guide.md), [Phase 09–19 handoff](developer/phase-09-19-coding-agent-handoff.md), and [maintainer runbooks](maintainers/support-runbook.md). Agents continuing roadmap evolution should consult the handoff and build plan before modifying production code.
 
 ## Capability note
 

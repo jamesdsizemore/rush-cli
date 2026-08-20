@@ -1,15 +1,24 @@
-# Tutorial: adopt Rush as a team
+# Tutorial: Adopting Rush Across an Engineering Team
 
-**Outcome:** introduce Rush without surprising developers or overloading CI.
+**Goal:** Roll out Rush across an engineering organization smoothly without disrupting developer velocity or breaking existing CI builds.
 
-1. Trial Rush on one representative repository.
-2. Choose a small required set: usually review, lint, format-check, test, and dependency security.
-3. Record required optional engines and ownership.
-4. Add project settings only where the current implementation consumes them.
-5. Define how `warn` and `skipped` are handled; exit code alone is insufficient for mandatory checks.
-6. Add bounded CI jobs and a troubleshooting owner.
-7. Expand to content, infrastructure, or supply-chain checks after measuring usefulness.
+---
 
-**Expected:** a documented, explainable policy—not every catalog command installed everywhere.
+## 1. 4-Stage Rollout Strategy
 
-**Next:** [Configuration cookbook](../reference/configuration-cookbook.md) and [CI overview](../integrations/ci-overview.md).
+```text
+Stage 1: Local Developer Pilot -> Install Rush locally and test CLI commands beside existing scripts.
+Stage 2: Standardize Pre-Commit -> Add rush review and rush lint to Git hooks.
+Stage 3: CI Quality Gate -> Add single-step Rush verification jobs in GitHub Actions/GitLab CI.
+Stage 4: AI Agent Enablement -> Connect Rush FastMCP stdio server to Cursor, Windsurf, or Claude Code.
+```
+
+---
+
+## 2. Adoption Best Practices
+
+1. **Keep Engine Roster Bounded**: Only install the engines needed for your team's languages. Do not mandate all 77 engines in developer onboarding.
+2. **Start with Non-Mutating Checks**: Introduce `rush format . --check` and `rush lint .` before introducing deeper AST rules or mutation testing.
+3. **Establish CI Policy for `skipped`**: Ensure CI flags missing engines as policy violations if those engines are designated mandatory.
+
+See [First 10 Minutes](first-10-minutes.md) and [Configuration Cookbook](../reference/configuration-cookbook.md).

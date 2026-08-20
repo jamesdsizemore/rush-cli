@@ -8,6 +8,7 @@ Architecture §3.5. ALL_TOOLS is iterated by both:
 from __future__ import annotations
 
 from .actions import ActionsTool
+from .ai_eval import AiEvalTool
 from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
 from .ci import CiTool
 from .codeql import CodeqlTool
@@ -85,11 +86,13 @@ ALL_TOOLS: list[ToolFn] = [
     CiTool(),
     ReleaseTool(),
     SemanticDriftTool(),
+    AiEvalTool(),
 ]
 
 __all__ = [
     # registry
     "ALL_TOOLS",
+    "AiEvalTool",
     "ComplexityTool",
     "DeadTool",
     "Finding",

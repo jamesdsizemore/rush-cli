@@ -59,12 +59,11 @@ A missing engine is not the same as a passing check. Decide whether your policy 
 
 ## Optional advanced checks
 
-Advanced checks are permission-sensitive. Mutation, fuzz, load, snapshot, and
-related confidence commands import contained local report files rather than
-starting live work. Browser-oriented `e2e` and `visual` remain skipped
-placeholders, while semantic drift is experimental and requires explicit
-browser/slow consent not exposed by its CLI command. See [Advanced
-checks](user-guide/advanced-checks.md).
+Advanced checks are permission-sensitive. Rush supports dual modes across test confidence and quality verification:
+1. **Imported Mode**: Pass existing local report files (`coverage`, `mutation`, `fuzz`, `load`, `contract`, `snapshot`, `codeql`) for instant offline normalization.
+2. **Executed Mode**: Run native test engines under explicit permission flags (`--allow-slow`, `--allow-network`, `--allow-build`, `--allow-browser`, `--allow-artifact-write`).
+
+See [Advanced checks](user-guide/advanced-checks.md) and [Permissions](safety/permissions.md).
 
 ## Use Rush with an AI coding assistant
 

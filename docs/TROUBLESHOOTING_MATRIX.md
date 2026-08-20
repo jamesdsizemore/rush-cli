@@ -12,5 +12,5 @@
 | MCP | JSON-RPC corruption | banner on stdout | remove wrapper output; logs stderr only |
 | MCP/Windows | child engine hangs/fails | client replaced environment | preserve ordinary OS environment and override only needed vars |
 | CI | green despite skipped check | exit code 0, JSON `skipped` | enforce status policy in JSON step |
-| Advanced | consent flag unknown | generic help lacks option | capability not exposed; do not invent a flag |
+| Advanced | `skipped`, permission missing | `metadata.execution` shows ungranted permission | pass required permission flag (`--allow-slow`, `--allow-network`, `--allow-build`, `--allow-browser`, `--allow-artifact-write`) |
 | Security | secret appears in raw log | external engine raw output | remove artifact, rotate credential, report privately |

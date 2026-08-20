@@ -1,31 +1,90 @@
-# MCP client setup
+# Model Context Protocol (MCP) Client Configuration Guide
 
-Rush has verified generic stdio behavior. Client-specific configuration formats change independently, so this guide does not claim a vendor-specific schema without repository evidence.
+Configure Rush as a local Model Context Protocol (MCP) server across Claude Desktop, Claude Code, Cursor, Windsurf, Zed, and other AI coding assistants.
 
-## Generic template
+---
 
+## 1. FastMCP Transport Architecture
+
+Rush runs as a dedicated local child process using the Model Context Protocol over standard input/output (`stdio`).
+
+```text
+AI Coding Assistant (Client)
+       │ (JSON-RPC requests over stdin)
+       ▼
+rush mcp serve (Server)
+       │ (Detached subprocesses with stdin=DEVNULL)
+       ├── rush_review, rush_lint, rush_security, rush_ai_eval, etc.
+       ▼
+JSON-RPC responses on stdout (Diagnostics on stderr)
+```
+
+---
+
+## 2. Configuration for Specific MCP Clients
+
+### Claude Desktop (`claude_desktop_config.json`)
 ```json
 {
-  "command": "uv",
-  "args": [
-    "run",
-    "--directory",
-    "/absolute/path/to/rush-cli",
-    "rush",
-    "mcp",
-    "serve"
-  ],
-  "env": {"RUSH_LOG_LEVEL": "warn"}
+  "mcpServers": {
+    "rush": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "C:\\Users\\james\\developer\\rush-cli",
+        "rush",
+        "mcp",
+        "serve"
+      ],
+      "env": {
+        "RUSH_LOG_LEVEL": "warn"
+      }
+    }
+  }
 }
 ```
 
-On Windows, use a valid absolute Windows path understood by the client. The client must preserve ordinary process environment variables; replacing the entire environment with only `RUSH_LOG_LEVEL` can break Python and child processes.
+### Cursor IDE (`.cursor/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "rush": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${workspaceFolder}",
+        "rush",
+        "mcp",
+        "serve"
+      ]
+    }
+  }
+}
+```
 
-## Verify
+### Zed Editor (`~/.config/zed/settings.json`)
+```json
+{
+  "context_servers": {
+    "rush": {
+      "command": {
+        "path": "uv",
+        "args": ["run", "rush", "mcp", "serve"]
+      }
+    }
+  }
+}
+```
 
-1. Run `uv run --directory /absolute/path/to/rush-cli rush --help` manually.
-2. Start the client and list tools; expect 32 `rush_...` tools.
-3. Call `rush_review` on an existing path.
-4. If it fails, enable `RUSH_LOG_LEVEL=debug` and inspect stderr only.
+---
 
-Do not add shell wrappers that echo banners to stdout; they corrupt JSON-RPC. See [Troubleshooting](../user-guide/troubleshooting.md).
+## 3. Verification Protocol
+
+1. Start your MCP client.
+2. Verify all **34 canonical tools** appear with the `rush_` prefix:
+   - `rush_review`, `rush_lint`, `rush_format`, `rush_test`, `rush_security`, `rush_typecheck`, `rush_dead`, `rush_complexity`, `rush_slop`, `rush_markdown`, `rush_actions`, `rush_yaml`, `rush_sql`, `rush_templates`, `rush_containerfile`, `rush_iac`, `rush_secrets`, `rush_sbom`, `rush_ai_eval`, `rush_codeql`, `rush_coverage`, `rush_pbt`, `rush_flaky`, `rush_contract`, `rush_snapshot`, `rush_visual`, `rush_mutation`, `rush_e2e`, `rush_fuzz`, `rush_load`, `rush_semantic_drift`, `rush_commit_msg`, `rush_ci`, `rush_release`.
+3. Invoke `rush_review` with `{"path": "."}` and verify structured `ToolResult` JSON output.
+
+See [MCP Overview](mcp-overview.md) and [MCP Reference](../MCP_REFERENCE.md).

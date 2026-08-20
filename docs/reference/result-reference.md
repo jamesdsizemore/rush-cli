@@ -44,7 +44,7 @@ Every CLI and MCP operation returns the same canonical ToolResult shape.
 | `raw` | bounded engine-native detail or `null`; do not build stable automation around engine-specific raw shapes. |
 | `metrics` | optional numeric/string measurements. |
 | `artifacts` | optional paths to generated/imported artifacts. |
-| `metadata` | optional execution context such as dry-run or Graft state. Review aggregation records serial mode, child tool/engine/status summaries, and whether skipped/error children make the result partial; it never substitutes a clean status for those child states. |
+| `metadata` | optional execution context such as dry-run, Graft state, or `execution` metadata (`mode`: `imported`/`executed`/`skipped`, `requested_permissions`, `granted_permissions`, `producer`, `report_path`). Review aggregation records serial mode, child tool/engine/status summaries, and whether skipped/error children make the result partial; it never substitutes a clean status for those child states. |
 | `review_kind`, `review_provider` | review-only fields; provider remains null unless the stub path is activated. |
 
 ## Finding fields

@@ -1,7 +1,43 @@
-# Rush configuration
+# Rush Configuration Overview
 
-Use [`reference/configuration-reference.md`](reference/configuration-reference.md) for the exact fields and implementation notes, and [`reference/configuration-cookbook.md`](reference/configuration-cookbook.md) for complete examples.
+Rush configuration is designed to be optional, lightweight, and local-first. Most repositories require zero configuration because Rush uses intelligent ecosystem discovery and sensible defaults across all 77 quality engines.
 
-Rush configuration is optional. Discovery starts at the target, walks upward, and stops at the Git root. Built-in defaults are overridden by the nearest `rush.toml`, then explicit CLI arguments.
+---
 
-> Not every parsed field is currently consumed by every tool. The reference labels verified consumers so teams do not build policy on a no-op setting.
+## 1. Quick Start
+
+Create a `rush.toml` file at your repository root:
+
+```toml
+log_level = "warn"
+
+[project]
+src = ["src"]
+test = ["tests"]
+exclude = ["**/.venv/**", "**/node_modules/**"]
+
+[review]
+max_file_lines = 400
+use_graft = false
+scaffold_markers = ["TODO", "FIXME", "HACK"]
+
+[tools.lint]
+check = true
+```
+
+---
+
+## 2. Configuration Features
+
+- **Automatic Upward Discovery**: Rush walks upward from the target directory until it finds the nearest `rush.toml` file or reaches the `.git` boundary.
+- **Strict Catalog Validation**: Every `[tools.<name>]` section is validated against `TOOL_SPECS` in `src/rush/catalog.py` at parse time. Typographical errors raise actionable configuration errors immediately.
+- **Engine Arguments Pass-Through**: Pass specific flags to underlying linters (e.g. `engine_args = ["--select", "E,F,W,I"]`).
+- **Observability with `rush capabilities`**: Inspect how Rush perceives your configuration and installed tools using `rush capabilities . --json`.
+
+---
+
+## 3. Related Documentation
+
+- [Configuration Reference](reference/configuration-reference.md): Full field-by-field specification and type constraints.
+- [Configuration Cookbook](reference/configuration-cookbook.md): Production configurations for Python, TypeScript, polyglot, and cloud-native repositories.
+- [Configuration Schema](CONFIG_SCHEMA.md): Schema validation rules.

@@ -10,7 +10,7 @@ from rush.mcp import build_server_instructions
 
 
 def test_every_catalogued_tool_has_a_declared_valid_maturity() -> None:
-    assert len(TOOL_SPECS) == 33
+    assert len(TOOL_SPECS) == 34
     assert all(spec.maturity in TOOL_MATURITY_VALUES for spec in TOOL_SPECS.values())
     assert TOOL_SPECS["coverage"].maturity == "importer"
     assert TOOL_SPECS["codeql"].maturity == "importer"
@@ -19,6 +19,7 @@ def test_every_catalogued_tool_has_a_declared_valid_maturity() -> None:
     assert TOOL_SPECS["secrets"].maturity == "real_adapter"
     assert TOOL_SPECS["iac"].maturity == "real_adapter"
     assert TOOL_SPECS["iac"].engine_names == ("tflint", "checkov")
+    assert TOOL_SPECS["ai-eval"].maturity == "real_adapter"
 
 
 def test_rejects_config_for_non_configurable_browser_tools(

@@ -18,6 +18,7 @@ project interpreter:
 ```bash
 unset VIRTUAL_ENV PYTHONPATH
 .venv/Scripts/python.exe -m pytest tests/ -q
+.venv/Scripts/python.exe scripts/sync_docs.py --check
 .venv/Scripts/ruff.exe check src tests
 .venv/Scripts/ruff.exe format --check src tests
 ```

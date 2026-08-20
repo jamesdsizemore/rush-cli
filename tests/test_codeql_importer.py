@@ -58,10 +58,9 @@ def test_codeql_imports_contained_sarif_without_running_codeql(tmp_path: Path) -
         }
     ]
     assert result["artifacts"] == [str(report)]
-    assert result["metadata"] == {
-        "evidence_source": "imported-local-report",
-        "report_format": "sarif-2.1.0",
-    }
+    assert result["metadata"]["evidence_source"] == "imported-local-report"
+    assert result["metadata"]["report_format"] == "sarif-2.1.0"
+    assert result["metadata"]["execution"]["mode"] == "imported"
 
 
 def test_codeql_preserves_nonblocking_sarif_severity(tmp_path: Path) -> None:

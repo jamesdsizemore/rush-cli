@@ -1,41 +1,42 @@
 # Tool catalog
 
-The catalog contains 33 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, feasibility-gated route, importer/guarded placeholder, catalog-only contract, or experimental browser runtime.
+The catalog contains 34 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
 
 | Tool | Category | Maturity | Engines / behavior |
 |---|---|---|---|
-| `review` | quality | real adapter | deterministic local heuristics with fingerprint/freshness/source-location evidence; optional explicit Graft and changed-file scope; LLM no-call stub |
-| `lint` | quality | feasibility gated | Ruff, ESLint, best-effort language routes |
-| `format` | quality | feasibility gated | Ruff format, Prettier; `--check` is safe mode |
-| `test` | test | feasibility gated | pytest, Vitest, language routes |
-| `security` | security | real adapter | pip-audit, npm audit, OSV routing |
-| `typecheck` | quality | feasibility gated | mypy, tsc |
-| `dead` | quality | feasibility gated | Vulture, Knip |
-| `complexity` | quality | feasibility gated | Radon, jscpd |
-| `slop` | quality | feasibility gated | sloppylint, deterministic JS/TS fallback |
-| `markdown` | quality | real adapter | markdownlint-cli with contained config |
+| `review` | quality | real adapter | deterministic local heuristics with fingerprint/freshness/source-location evidence; PR-Agent structured PR summary; Graft and changed-file scope; LLM no-call stub |
+| `lint` | quality | real adapter | Ruff, ESLint, Stylelint, ast-grep (Tree-sitter AST), Flake8-Bugbear, MegaLinter, Comby, Prisma-lint, Vale (prose style), CSpell (code spellcheck), Alex (inclusive language), RedPen, No-Jargon, Markdown-Unfluff, Buf (Protobuf), wasm-tools, Git-Guard |
+| `format` | quality | real adapter | Ruff format, Prettier, Squoosh (WebP/AVIF image compression), Critical (CSS extraction), Font-Spider (font glyph compression), PyClean (cache cleanup); `--check` is safe verification mode |
+| `test` | test | real adapter | pytest, Vitest, Newman (Postman CLI runner); deterministic reference test suites |
+| `security` | security | real adapter | pip-audit, npm audit, OSV-Scanner, Semgrep, Trivy, Grype, Bearer, Horusec, Pa11y, OWASP ZAP, Deadfinder, A11yWatch, Dockle (container CIS), Safe-Env (environment sanity), NCU (dependency upgrade) |
+| `typecheck` | quality | real adapter | mypy, tsc; reference test suites |
+| `dead` | quality | real adapter | Vulture, Knip, FawltyDeps (Python import/dependency auditor), Ts-prune (unused TS exports); reference test suites |
+| `complexity` | quality | real adapter | Radon, jscpd, Depcruise (architectural cycles), Scaphandre (energy/carbon estimation), Readability (Flesch-Kincaid), Memray (memory profiling), Statoscope (JS bundle analysis), Bloaty (binary footprint) |
+| `slop` | quality | real adapter | sloppylint, deterministic JS/TS fallback, Markdown-Unfluff |
+| `markdown` | quality | real adapter | markdownlint-cli, Lychee, Vale, Alex, No-Jargon with contained config and offline default |
 | `actions` | quality | real adapter | Actionlint with external child integrations disabled |
-| `yaml` | quality | real adapter | Spectral with owned rules and remote-ref block |
-| `sql` | quality | real adapter | SQLFluff |
-| `templates` | quality | feasibility gated | djLint |
-| `containerfile` | quality | real adapter | Hadolint |
-| `iac` | security | real adapter | TFLint then contained Checkov |
-| `secrets` | security | real adapter | Gitleaks with normalized redaction |
-| `sbom` | security | catalog only | cdxgen implementation exists; incomplete CLI controls |
-| `codeql` | security | importer | contained CodeQL SARIF 2.1.0 report; never runs CodeQL |
-| `coverage` | test | importer | coverage.py JSON, LCOV, or Cobertura report; never runs tests |
-| `pbt` | test | importer | seeded local property-test JSON report; never executes tests |
-| `flaky` | test | importer | local JUnit duplicate-case evidence; never repeats tests |
-| `contract` | test | importer | local Pact summary; never contacts provider or broker |
-| `snapshot` | test | importer | local comparison report; never accepts or writes a baseline |
-| `visual` | test | guarded placeholder | no visual baseline acceptance by default |
-| `mutation` | test | importer | local mutation summary; never runs a mutation engine |
-| `e2e` | test | guarded placeholder | requires browser consent; CLI flag absent |
-| `fuzz` | test | importer | local seeded fuzz summary; never builds or runs a fuzzer |
-| `load` | test | importer | local load summary; never contacts a target |
-| `semantic-drift` | test | browser runtime | experimental; browser + slow consent; CLI flags absent |
-| `commit-msg` | workflow | feasibility gated | local Conventional Commit validation; CLI message option absent |
-| `ci` | workflow | real adapter | local workflow inspection only |
-| `release` | workflow | real adapter | dry-run local artifact inventory; publication unavailable |
+| `yaml` | quality | real adapter | Spectral, Zally with owned rules and remote-ref block |
+| `sql` | quality | real adapter | SQLFluff (ANSI rules), Atlas (schema migration safety), Squawk (PostgreSQL lock analysis) |
+| `templates` | quality | real adapter | djLint, HTML-Validate with reference test suites |
+| `containerfile` | quality | real adapter | Hadolint, Dockle with owned CIS benchmark configurations |
+| `iac` | security | real adapter | TFLint, Checkov, Kubeconform, Terrascan, Kube-score, Conftest, Polaris, KubeLinter |
+| `secrets` | security | real adapter | Gitleaks, TruffleHog, Secretlint, detect-secrets, Safe-Env with normalized redaction |
+| `sbom` | security | real adapter | cdxgen, ScanCode, GUAC, pip-licenses; requires `--allow-artifact-write` for overwrites |
+| `ai-eval` | security | real adapter | Promptfoo, Garak, DeepEval, Guardrails evaluation for LLMs and agent safety |
+| `codeql` | security | importer | contained CodeQL SARIF 2.1.0 report import, or local CodeQL CLI under `--allow-build` |
+| `coverage` | test | importer | coverage.py JSON, LCOV, Diff-Cover diff threshold, or Cobertura report import, or pytest/coverage runner under `--allow-slow` |
+| `pbt` | test | importer | seeded local property-test JSON report import, or Hypothesis under `--allow-slow` |
+| `flaky` | test | importer | local JUnit duplicate-case report import, or pytest-rerun under `--allow-slow` |
+| `contract` | test | importer | Schemathesis property tests, local Pact summary report import, or pact-verifier under `--allow-slow` |
+| `snapshot` | test | importer | local snapshot report import, or pytest-snapshot runner under `--allow-slow` (and `--allow-artifact-write` for `--accept`) |
+| `visual` | test | real adapter | browser visual comparison runner, Lighthouse, PageSpeed, Lost Pixel, BackstopJS; requires `--allow-browser` and `--allow-slow` |
+| `mutation` | test | real adapter | Stryker, Cosmic Ray, Infection, Pitest, Cargo-mutants, or mutmut runner under `--allow-slow` |
+| `e2e` | test | real adapter | Playwright browser E2E runner, Wait-On readiness poller; requires `--allow-browser` |
+| `fuzz` | test | importer | local seeded fuzz report import, or Atheris runner under `--allow-slow` |
+| `load` | test | importer | local load report import, or k6 runner under `--allow-network` |
+| `semantic-drift` | test | browser runtime | DOM/accessibility drift detection with Playwright/axe; requires `--allow-browser` and `--allow-slow` |
+| `commit-msg` | workflow | real adapter | local Conventional Commit validation with `-m/--message` and file reading; commitlint reference test suite |
+| `ci` | workflow | real adapter | local workflow inspection and OpenSSF Scorecard posture checks |
+| `release` | workflow | real adapter | dry-run local artifact inventory, Cosign, SLSA Verifier attestation, and Semantic-Release automated semver calculation |
 
 Generated help is authoritative for options. See [CLI reference](reference/cli-reference.md), [Engine directory](reference/engine-directory.md), and [Permissions](safety/permissions.md).

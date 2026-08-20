@@ -1,11 +1,36 @@
-# Dependency policy
+# Dependency & Engine Discovery Policy
 
-Rush pins every direct runtime, development, and build dependency with `==`.
+Rush enforces a strict, reproducible dependency policy to maintain rock-solid stability, zero runtime bloat, and offline-first guarantees across all operating systems.
 
-| Scope | Policy | Verification |
+---
+
+## 1. Direct Python Dependencies
+
+1. **Exact Version Pinning**: All direct runtime, development, and linting dependencies in `pyproject.toml` are pinned with exact versions (`==`).
+2. **Deterministic Lockfile**: `uv.lock` is committed to the repository and enforced in CI via `uv sync --all-extras --frozen`.
+3. **Automated Auditing**: Every CI run audits direct dependencies using `pip-audit` to ensure zero known vulnerabilities.
+
+| Package | Purpose | Verification Contract |
 |---|---|---|
-| Runtime/development | Resolved in `uv.lock`; direct entries in `pyproject.toml` are exact. | `tests/test_dependency_policy.py` and `uv sync --all-extras --frozen` |
-| Build backend | `hatchling==1.32.0` is independently resolved by the build frontend. It is **not** expected in `uv.lock`. | `uv build` |
-| Optional scanners | Never bundled Rush dependencies. Users install them locally; Rush discovers them from the active venv or `PATH`. | Adapter fixture and version tests |
+| `click==8.1.8` | CLI command routing & option parsing | Tested via `tests/test_cli_registry.py` |
+| `mcp==1.2.1` | FastMCP stdio server transport | Tested via `tests/test_mcp.py` |
+| `rich==13.9.4` | Terminal output rendering & formatting | Tested via `tests/test_theme.py` |
+| `hatchling==1.32.0` | Isolated build backend | Verified via `uv build` |
 
-Rush never installs an engine, rule pack, package manager, browser runtime, or vulnerability database. A changed runtime/development dependency requires an inspected `uv.lock` update; a build-only pin does not.
+---
+
+## 2. External Engine Discovery Policy
+
+1. **Zero Engine Bundling**: Rush does **not** bundle Node.js, Go, Rust, Java, or C++ binaries. Quality engines (such as Ruff, ESLint, Semgrep, Trivy, Hadolint) are discovered dynamically from the host environment (`PATH` or active virtualenv).
+2. **Non-Fatal Absence (`skipped`)**: When an optional engine is not installed, Rush returns a structured `skipped` result explaining what binary is missing and provides an install hint. Rush **never** attempts to silently download or install binaries.
+3. **Reproducibility**: Polyglot teams only need to install the specific checkers relevant to their tech stack.
+
+---
+
+## 3. Subprocess Safety Boundary
+
+When invoking discovered engine binaries:
+- `stdin=subprocess.DEVNULL` ensures external engines cannot consume or block MCP stdio JSON-RPC streams.
+- `shell=False` prevents shell injection vulnerabilities.
+- `timeout=120.0` prevents hung processes.
+- Output redaction strips credentials, tokens, and keys from findings before JSON emission.
