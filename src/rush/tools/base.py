@@ -40,6 +40,8 @@ class Finding(TypedDict, total=False):
     provenance: str | None
     fingerprint: str
     freshness: str | None
+    patch: str | None
+    suggested_fix: str | None
 
 
 class ToolResult(TypedDict, total=False):
