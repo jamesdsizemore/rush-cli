@@ -47,7 +47,25 @@ uv sync --all-extras --frozen
 uv run rush review .
 ```
 
-## Install from a wheel
+## Standalone and Package Manager Installation
+
+### Homebrew (macOS / Linux)
+```bash
+brew install jamesdsizemore/tap/rush
+```
+
+### Scoop (Windows)
+```bash
+scoop bucket add rush https://github.com/jamesdsizemore/rush-cli
+scoop install rush
+```
+
+### Windows Package Manager (Winget)
+```bash
+winget install jamesdsizemore.rush
+```
+
+## Install from a wheel or source
 
 A release or local build may provide a `.whl` file. Install it into an isolated environment rather than a system Python:
 

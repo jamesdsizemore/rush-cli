@@ -34,6 +34,20 @@ flowchart TB
   - Isolated provider abstractions in `src/rush/providers/` (`LLMProvider`, `AnthropicProvider`, `OpenAIProvider`) decoupling runtime AI model invocations from the core CLI and MCP transport layers.
 - **Binary Resolution Caching**:
   - In-memory `@lru_cache` (`_resolve_binary_cached`) eliminating repetitive `shutil.which` PATH searches on Windows.
+- **Flag-Salted Result Caching (Phase 21)**:
+  - SQLite-backed result cache (`src/rush/cache.py`) with content-hashed, flag-salted cryptographic keys (`.rush/cache.db`).
+- **Real-Time Debounced Watcher (Phase 25)**:
+  - Multi-threaded file system watcher (`src/rush/watcher.py`) with configurable debounce windows (300ms default) and automatic directory pruning (`.git`, `node_modules`, `.venv`).
+- **Polyglot Monorepo Scoping (Phase 26)**:
+  - Deterministic workspace topology discovery (`src/rush/discovery/workspace.py`) for npm, pnpm, yarn, Cargo, and Turborepo with strict path containment.
+- **Authenticated In-Memory Web Dashboard & Rich TUI (Phase 27)**:
+  - Single-binary zero-dependency local HTTP server (`src/rush/dashboard.py`) binding exclusively to `127.0.0.1` with ephemeral `X-Rush-Auth` tokens, DNS rebinding prevention, and CSRF Origin validation.
+  - Interactive terminal finding explorer (`src/rush/tui.py`) built with Rich layouts.
+- **Trust-Gated Dynamic Plugin Runtime (Phase 28)**:
+  - Declarative script plugin execution (`src/rush/plugins/`) with local repository trust verification (`~/.rush/trusted_repositories.json`) preventing arbitrary code execution in untrusted checkouts.
+- **Closed-Loop AI Patch Remediation & Session Memory (Phase 29)**:
+  - Bounded multi-turn session memory ledger (`src/rush/session_memory.py`) framed with strict XML boundary tags (`<rush_session_memory>`).
+  - Atomic unified diff patch generator and applier (`src/rush/patch_generator.py`) with sensitive file shielding (`.git`, `.env`).
 - **TDD & Architectural Sensors**:
   - `rush tdd` verifies Red-Green-Refactor compliance.
   - AST and modular boundary sensors (`tach`, `aislop`, `globstar`, `sentrux`, `medusa`, `clines`, `undercover`, `cejel`) enforce structural architectural hygiene without requiring runtime network calls.

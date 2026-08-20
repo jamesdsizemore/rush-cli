@@ -4,7 +4,21 @@ Rush prioritizes code security, execution isolation, and responsible disclosure.
 
 ---
 
-## 1. Security Architecture Highlights
+## 1. The 7 Defensive Controls
+
+Rush implements seven defense-in-depth architectural controls:
+
+1. **Control 1 (Flag-Salted Cryptographic Caching)**: Cache keys incorporate file content hashes and runtime CLI flags (`src/rush/cache.py`), preventing stale result pollution or bypass via command-line manipulation.
+2. **Control 2 (Path Boundary Confinement & Monorepo Scoping)**: Tools strictly validate target paths against the repository root (`assert_safe_workspace_path` and `discover_workspaces`), rejecting `..` traversal escapes.
+3. **Control 3 (Shell Injection Prevention & Typed Arguments)**: Package installation (`src/rush/tools/setup_wizard.py`) validates package names via strict regex `^[a-zA-Z0-9@_./-]+$` and executes subprocesses with typed argv lists (`shell=False`, `stdin=DEVNULL`).
+4. **Control 4 (Binary Integrity & Anti-Shadowing)**: Environment doctor (`src/rush/tools/doctor.py`) checks PATH precedence (virtualenv -> system PATH) and flags binary shadowing vulnerabilities in current working directories.
+5. **Control 5 (Dashboard Auth, Loopback Binding, DNS Rebinding & CSRF Protection)**: The local web dashboard (`src/rush/dashboard.py`) binds strictly to `127.0.0.1`, enforces ephemeral 64-hex token auth (`X-Rush-Auth`), validates `Host` headers to defeat DNS rebinding, and rejects cross-origin `fetch` requests.
+6. **Control 6 (Repository Trust Gating)**: Custom script plugins and hooks are blocked in untrusted repository directories by default until explicitly authorized via `rush trust` (`src/rush/plugins/trust.py`), preventing RCE on newly cloned checkouts.
+7. **Control 7 (Patch Confinement & XML Session Memory Framing)**: Automated patches (`src/rush/patch_generator.py`) shield sensitive paths (`.git/`, `.env`, `.rush/cache.db`), and multi-turn session history (`src/rush/session_memory.py`) is framed in strict XML boundary tags (`<rush_session_memory>`) with XML escaping to neutralize prompt injection.
+
+---
+
+## 2. Security Architecture Highlights
 
 1. **Subprocess Isolation**: External engines are launched using `stdin=subprocess.DEVNULL`, `shell=False`, and a 120s timeout, preventing arbitrary shell expansion and MCP pipe corruption.
 2. **Automated Secret Redaction**: High-entropy strings, API keys, tokens, and credentials identified by secret scanners or stderr logs are masked as `[REDACTED]`.

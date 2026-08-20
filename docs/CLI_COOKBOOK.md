@@ -158,3 +158,76 @@ rush commit-msg . -m "feat(security): add trufflehog scanner adapter"
 rush release . --json
 ```
 *Engines:* Cosign (cryptographic signatures), SLSA Verifier (provenance attestations), Semantic-Release (automated semver calculation).
+
+---
+
+## 7. Workflow Suites, Watcher & Dashboards (Phases 21–27)
+
+### Fast Inner-Loop Developer Check
+Run lint, format verification, and type checking in parallel:
+```bash
+rush check .
+```
+
+### Security & Supply Chain Audit Suite
+```bash
+rush audit .
+```
+
+### Strict Pre-Merge Gate (with Fail-Fast)
+```bash
+rush gate . --fail-fast
+```
+
+### Automated Code Remediation & Dry-Run Preview
+```bash
+# Preview proposed fixes without altering files
+rush fix . --dry-run
+
+# Apply safe automated fixes across engines
+rush fix .
+```
+
+### Real-Time File Watcher
+```bash
+# Watch files and auto-trigger fast check suite
+rush watch .
+
+# Watch files and trigger a specific tool with custom debounce
+rush watch . --tool lint --debounce 500
+```
+
+### Interactive Terminal TUI & Web Dashboard
+```bash
+# Launch interactive terminal findings explorer
+rush ui .
+
+# Launch authenticated local web dashboard on 127.0.0.1
+rush dashboard . --port 8080
+```
+
+---
+
+## 8. Monorepos, Plugins & Trust Gating (Phases 26, 28)
+
+### Monorepo Scoped Evaluation
+```bash
+# Evaluate a single package in a monorepo
+rush lint . -w @myorg/frontend
+
+# Evaluate all packages in topological order
+rush test . --all-workspaces
+```
+
+### Custom Plugin Execution & Repository Trust
+```bash
+# Authorize local repository in trust ledger (Control 6)
+rush trust .
+
+# List custom plugins defined in rush.toml
+rush plugin list .
+
+# Execute a custom plugin
+rush plugin run custom-ast-linter .
+```
+
