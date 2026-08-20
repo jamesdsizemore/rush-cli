@@ -76,6 +76,64 @@ def test_aggregate_results_merges_metrics_and_deduplicates_artifacts() -> None:
     assert result["artifacts"] == ["coverage.xml", "coverage/lcov.info"]
 
 
+def test_aggregate_results_preserves_child_provenance_without_caller_order() -> None:
+    security_finding = {
+        "path": "src/auth.py",
+        "line": 8,
+        "rule": "GITLEAKS-001",
+        "message": "secret-like value",
+    }
+    security = {
+        "tool": "secrets",
+        "engine": "gitleaks",
+        "engine_version": "8.30.1",
+        "status": "fail",
+        "duration_ms": 3,
+        "summary": "secrets: finding",
+        "findings": [security_finding],
+        "raw": None,
+    }
+    quality = _result(
+        "ruff",
+        "warn",
+        [{"path": "src/auth.py", "line": 2, "rule": "F401", "message": "unused"}],
+    )
+
+    forward = aggregate_results("review", [security, quality])
+    reverse = aggregate_results("review", [quality, security])
+
+    assert forward == reverse
+    assert forward["engine"] == "ruff+gitleaks"
+    assert [item["provenance"] for item in forward["findings"]] == [
+        "lint/ruff",
+        "secrets/gitleaks",
+    ]
+    assert "provenance" not in security_finding
+
+
+def test_review_aggregation_deduplicates_fingerprint_and_retains_provenance() -> None:
+    duplicate = {
+        "path": "src/auth.py",
+        "line": 8,
+        "column": 1,
+        "rule": "shared-rule",
+        "severity": "warn",
+        "message": "shared issue",
+        "fingerprint": "shared",
+    }
+
+    result = aggregate_results(
+        "review",
+        [
+            _result("engine-a", "warn", [duplicate]),
+            _result("engine-b", "warn", [duplicate]),
+        ],
+    )
+
+    assert len(result["findings"]) == 1
+    assert result["findings"][0]["provenance"] == "lint/engine-a;lint/engine-b"
+
+
 def test_collect_files_sorts_supported_sources_and_ignores_generated_paths(
     tmp_path: Path,
 ) -> None:

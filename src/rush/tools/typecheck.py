@@ -21,18 +21,9 @@ class TypecheckTool(ToolFn):
 
     def run(self, path: Path, *, config=None) -> ToolResult:
         from ..engines import ENGINES
-        from ..engines.language import LANGUAGE_TYPE_ENGINES
 
         start = now_ms()
-        language_results = [
-            run_engine(LANGUAGE_TYPE_ENGINES[language], path, [], tool_name=self.name)
-            for language in detect_project_languages(path)
-            if language in LANGUAGE_TYPE_ENGINES
-        ]
-        if language_results:
-            result = aggregate_results(self.name, language_results)
-            result["duration_ms"] = elapsed_ms(start)
-            return result
+        languages = detect_project_languages(path)
         engines = (ENGINES["mypy"], ENGINES["tsc"])
         files = collect_files(
             path, {ext for engine in engines for ext in engine.file_extensions}
@@ -44,7 +35,13 @@ class TypecheckTool(ToolFn):
                 engine_version=None,
                 status="skipped",
                 duration_ms=elapsed_ms(start),
-                summary=f"typecheck: no supported source files found under {path}",
+                summary=(
+                    "typecheck: detected "
+                    + ", ".join(languages)
+                    + " project markers, but their adapters are feasibility-gated"
+                    if languages
+                    else f"typecheck: no supported source files found under {path}"
+                ),
                 findings=[],
                 raw=None,
             )

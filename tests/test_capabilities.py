@@ -1,0 +1,39 @@
+"""Read-only Phase 06 capability inventory contracts."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from rush.capabilities import build_plan, inspect_capabilities
+from rush.cli import cli
+
+
+def test_capabilities_detect_markers_without_executing_or_probing_versions(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'example'\n")
+    (tmp_path / "coverage.json").write_text("{}")
+    result = inspect_capabilities(tmp_path)
+
+    assert result["path"] == str(tmp_path)
+    assert result["languages"] == ["python"]
+    assert result["reports"] == ["coverage.json"]
+    assert result["tools"]["coverage"]["state"] == "applicable"
+    assert result["tools"]["semantic-drift"]["state"] == "blocked"
+
+
+def test_capabilities_cli_emits_the_read_only_inventory(tmp_path: Path) -> None:
+    result = CliRunner().invoke(cli, ["capabilities", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0
+    assert '"tools"' in result.output
+
+
+def test_plan_is_deterministic_and_excludes_browser_runtime(tmp_path: Path) -> None:
+    first = build_plan(tmp_path, "nonbrowser")
+    second = build_plan(tmp_path, "nonbrowser")
+
+    assert first == second
+    assert "semantic-drift" not in [step["tool"] for step in first["steps"]]

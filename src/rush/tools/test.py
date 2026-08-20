@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
-from .routing import aggregate_results, detect_project_languages
+from .routing import detect_project_languages
 
 
 class TestTool(ToolFn):
@@ -31,7 +31,6 @@ class TestTool(ToolFn):
 
     def run(self, path: Path, *, config=None) -> ToolResult:
         from ..engines import ENGINES
-        from ..engines.language import LANGUAGE_TEST_ENGINES
 
         start = now_ms()
         project_root = _find_project_root(path)
@@ -48,15 +47,7 @@ class TestTool(ToolFn):
                 raw=None,
             )
 
-        language_results = [
-            run_engine(
-                LANGUAGE_TEST_ENGINES[language], project_root, [], tool_name="test"
-            )
-            for language in detect_project_languages(project_root)
-            if language in LANGUAGE_TEST_ENGINES
-        ]
-        if language_results:
-            return aggregate_results("test", language_results)
+        languages = detect_project_languages(project_root)
 
         if (project_root / "pyproject.toml").exists() or (
             project_root / "setup.py"
@@ -73,6 +64,22 @@ class TestTool(ToolFn):
                 # Fall back to skipping; v0.2 may add a generic npm-test fallback
                 pass
             return r
+
+        if languages:
+            return ToolResult(
+                tool="test",
+                engine=None,
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary=(
+                    "test: detected "
+                    + ", ".join(languages)
+                    + " project markers, but their adapters are feasibility-gated"
+                ),
+                findings=[],
+                raw=None,
+            )
 
         return ToolResult(
             tool="test",

@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 
 from . import __version__
+from .catalog import TOOL_SPECS
 from .config import RushConfigError, load_config
 from .logging import setup_logging
 from .theme import render_result
@@ -49,7 +50,13 @@ def _run_tool(
 def build_catalog_path_command(tool: ToolFn) -> click.Command:
     """Build the standard ``PATH --json`` CLI surface for a catalog tool."""
 
-    @click.command(name=tool.name, help=tool.mcp_description)
+    @click.command(
+        name=tool.name,
+        help=(
+            f"{tool.mcp_description} Maturity: "
+            f"{TOOL_SPECS[tool.name].maturity.replace('_', ' ')}."
+        ),
+    )
     @click.argument("path", type=click.Path(exists=True, path_type=Path))
     @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
     def command(path: Path, as_json: bool) -> None:
@@ -77,6 +84,42 @@ def cli(log_level: str) -> None:
     setup_logging(log_level)
 
 
+@cli.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--json", "as_json", is_flag=True, help="Print capability inventory JSON."
+)
+def capabilities(path: Path, as_json: bool) -> None:
+    """Inspect local scan applicability without executing an engine."""
+    from .capabilities import inspect_capabilities
+
+    result = inspect_capabilities(path)
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        for name, capability in result["tools"].items():
+            click.echo(f"{name}: {capability['state']} ({capability['reason']})")
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--profile", default="default", show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Print deterministic plan JSON.")
+def plan(path: Path, profile: str, as_json: bool) -> None:
+    """Plan completed non-browser checks without executing them."""
+    from .capabilities import build_plan
+
+    try:
+        result = build_plan(path, profile)
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        for step in result["steps"]:
+            click.echo(f"{step['tool']}: {step['state']} ({step['reason']})")
+
+
 # --- Subcommands (one per tool) --------------------------------------------
 
 
@@ -91,7 +134,7 @@ def cli(log_level: str) -> None:
 @click.option("--use-graft", is_flag=True, help="Add optional local Graft context.")
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def review(path, use_llm: bool, use_graft: bool, as_json: bool) -> None:
-    """Review code for size, TODO density, docstrings, naming, complexity."""
+    """Review code for deterministic heuristics. Maturity: real adapter."""
     _run_tool(
         "review",
         path,
@@ -107,7 +150,7 @@ def review(path, use_llm: bool, use_graft: bool, as_json: bool) -> None:
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def format(path, check_only: bool, as_json: bool) -> None:
-    """Format Python (ruff format) and JS/TS (prettier) files."""
+    """Format Python and JS/TS safely. Maturity: real adapter."""
     _run_tool(
         "format",
         path,

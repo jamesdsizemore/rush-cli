@@ -95,13 +95,28 @@ def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
     metrics: dict[str, int | float | str] = {}
     artifacts: list[str] = []
 
-    for result in results:
+    ordered_results = results
+    if tool == "review":
+        ordered_results = sorted(
+            results,
+            key=lambda item: (
+                str(item.get("tool", "")),
+                str(item.get("engine", "")),
+                str(item.get("engine_version", "")),
+            ),
+        )
+
+    for result in ordered_results:
         status = combine_status(status, str(result.get("status", "skipped")))
         duration_ms += int(result.get("duration_ms", 0) or 0)
         engine = result.get("engine")
         if engine and engine not in engines:
             engines.append(engine)
-        findings.extend(result.get("findings", []))
+        source = f"{result.get('tool', tool)}/{engine or 'no-engine'}"
+        for finding in result.get("findings", []):
+            normalized = Finding(**finding)
+            normalized["provenance"] = normalized.get("provenance") or source
+            findings.append(normalized)
 
         for key, value in (result.get("metrics") or {}).items():
             if key not in metrics and isinstance(value, (int, float, str)):
@@ -110,6 +125,8 @@ def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
             if artifact not in artifacts:
                 artifacts.append(artifact)
 
+    if tool == "review":
+        findings = _deduplicate_review_findings(findings)
     findings.sort(key=_finding_sort_key)
     engine_label = "+".join(engines) if engines else None
     summary = f"{tool} [{engine_label or 'no engine'}]: {len(findings)} finding(s)"
@@ -129,6 +146,32 @@ def aggregate_results(tool: str, results: Sequence[ToolResult]) -> ToolResult:
     if artifacts:
         output["artifacts"] = artifacts
     return output
+
+
+def _deduplicate_review_findings(findings: list[Finding]) -> list[Finding]:
+    """Collapse identical review evidence while retaining every source."""
+    by_fingerprint: dict[str, Finding] = {}
+    for finding in findings:
+        fingerprint = str(finding.get("fingerprint") or "")
+        if not fingerprint:
+            fingerprint = "\x1f".join(
+                str(finding.get(field, ""))
+                for field in ("path", "line", "column", "rule", "severity", "message")
+            )
+        existing = by_fingerprint.get(fingerprint)
+        if existing is None:
+            by_fingerprint[fingerprint] = finding
+            continue
+        provenance = [
+            item
+            for item in (
+                str(existing.get("provenance") or "").split(";")
+                + str(finding.get("provenance") or "").split(";")
+            )
+            if item
+        ]
+        existing["provenance"] = ";".join(dict.fromkeys(provenance))
+    return list(by_fingerprint.values())
 
 
 def _finding_sort_key(finding: Finding) -> tuple[str, int, int, str, str]:

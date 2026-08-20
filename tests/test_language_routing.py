@@ -32,44 +32,35 @@ def test_unmarked_directory_has_no_detected_ecosystems(tmp_path: Path) -> None:
     assert detect_project_languages(tmp_path) == []
 
 
-def test_test_tool_aggregates_multiple_detected_language_engines(
+def test_test_tool_does_not_execute_feasibility_gated_language_adapters(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     (tmp_path / "go.mod").write_text("module example\n")
     (tmp_path / "Cargo.toml").write_text("[package]\nname = 'example'\n")
 
-    monkeypatch.setattr(
-        "rush.tools.test.run_engine",
-        lambda engine, path, args, tool_name: {
-            "tool": tool_name,
-            "engine": engine.name,
-            "engine_version": None,
-            "status": "skipped",
-            "duration_ms": 0,
-            "summary": "fixture engine unavailable",
-            "findings": [],
-            "raw": None,
-        },
-    )
-
     result = TestTool().run(tmp_path)
 
     assert result["status"] == "skipped"
-    assert result["engine"] == "go-test+cargo-test"
+    assert "feasibility-gated" in result["summary"]
 
 
-def test_typecheck_tool_routes_detected_language_projects(tmp_path: Path) -> None:
+def test_typecheck_does_not_execute_feasibility_gated_language_adapter(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "go.mod").write_text("module example\n")
 
     result = TypecheckTool().run(tmp_path)
 
-    assert result["engine"] == "go-vet"
+    assert result["status"] == "skipped"
+    assert "feasibility-gated" in result["summary"]
 
 
-def test_lint_tool_routes_detected_language_projects(tmp_path: Path) -> None:
+def test_lint_does_not_execute_feasibility_gated_language_adapter(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "go.mod").write_text("module example\n")
 
     result = LintTool().run(tmp_path)
 
-    assert result["engine"] == "golangci-lint"
+    assert result["status"] == "skipped"
+    assert "feasibility-gated" in result["summary"]

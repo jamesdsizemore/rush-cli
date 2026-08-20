@@ -6,11 +6,31 @@ engine binaries remain optional and are resolved at runtime by ``run_engine``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 ToolCategory = Literal["quality", "security", "test", "workflow"]
 EngineCapability = Literal["lint", "format", "test", "security", "metrics", "workflow"]
+ToolMaturity = Literal[
+    "real_adapter",
+    "catalog_only",
+    "guarded_placeholder",
+    "direct_adapter_candidate",
+    "importer",
+    "feasibility_gated",
+    "browser_runtime",
+]
+TOOL_MATURITY_VALUES: frozenset[ToolMaturity] = frozenset(
+    {
+        "real_adapter",
+        "catalog_only",
+        "guarded_placeholder",
+        "direct_adapter_candidate",
+        "importer",
+        "feasibility_gated",
+        "browser_runtime",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +44,7 @@ class ToolSpec:
     engine_names: tuple[str, ...]
     supports_path: bool = True
     experimental: bool = False
+    maturity: ToolMaturity = "catalog_only"
 
 
 @dataclass(frozen=True)
@@ -135,8 +156,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         name="markdown",
         category="quality",
         description="Check Markdown without rewriting files.",
-        mcp_description="Check Markdown at <path> without rewriting; missing markdownlint-cli2 returns status='skipped'.",
-        engine_names=("markdownlint-cli2",),
+        mcp_description="Check Markdown at <path> without rewriting; missing markdownlint-cli returns status='skipped'.",
+        engine_names=("markdownlint-cli",),
     ),
     "actions": ToolSpec(
         "actions",
@@ -148,15 +169,15 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     "yaml": ToolSpec(
         "yaml",
         "quality",
-        "Check YAML and OpenAPI files.",
-        "Check YAML at <path>; missing spectral returns status='skipped'.",
+        "Check YAML and OpenAPI files with Rush-owned local rules.",
+        "Check YAML at <path> with local rules only; missing spectral returns status='skipped'.",
         ("spectral",),
     ),
     "sql": ToolSpec(
         "sql",
         "quality",
-        "Check SQL files.",
-        "Check SQL at <path>; missing sqlfluff returns status='skipped'.",
+        "Check SQL files with Rush-owned local configuration.",
+        "Check SQL at <path> locally; missing sqlfluff returns status='skipped'.",
         ("sqlfluff",),
     ),
     "templates": ToolSpec(
@@ -177,7 +198,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "iac",
         "quality",
         "Check Terraform infrastructure as code.",
-        "Check Terraform at <path>; missing tflint returns status='skipped'.",
+        "Check Terraform at <path>; missing local engines return status='skipped'.",
         ("tflint", "checkov"),
     ),
     "secrets": ToolSpec(
@@ -288,6 +309,69 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 }
 
 
+_TOOL_MATURITY: dict[str, ToolMaturity] = {
+    "semantic-drift": "browser_runtime",
+    "review": "real_adapter",
+    "lint": "feasibility_gated",
+    "format": "feasibility_gated",
+    "test": "feasibility_gated",
+    "security": "real_adapter",
+    "typecheck": "feasibility_gated",
+    "dead": "feasibility_gated",
+    "complexity": "feasibility_gated",
+    "slop": "feasibility_gated",
+    "markdown": "real_adapter",
+    "actions": "real_adapter",
+    "yaml": "real_adapter",
+    "sql": "real_adapter",
+    "templates": "feasibility_gated",
+    "containerfile": "real_adapter",
+    "iac": "real_adapter",
+    "secrets": "real_adapter",
+    "sbom": "catalog_only",
+    "coverage": "importer",
+    "mutation": "importer",
+    "e2e": "guarded_placeholder",
+    "pbt": "importer",
+    "visual": "guarded_placeholder",
+    "snapshot": "importer",
+    "flaky": "importer",
+    "fuzz": "importer",
+    "load": "importer",
+    "contract": "importer",
+    "commit-msg": "feasibility_gated",
+    "ci": "real_adapter",
+    "release": "real_adapter",
+}
+if set(_TOOL_MATURITY) != set(TOOL_SPECS):
+    raise RuntimeError("catalog maturity map must classify every tool exactly once")
+TOOL_SPECS = {
+    name: replace(spec, maturity=_TOOL_MATURITY[name])
+    for name, spec in TOOL_SPECS.items()
+}
+
+# A `real_adapter` with an external engine requires a deterministic parser and
+# invocation suite. Presence here is a promotion prerequisite, never a test
+# substitute.
+PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
+    "iac": (
+        "tests/test_tflint_reference.py",
+        "tests/test_checkov_reference.py",
+    ),
+    "containerfile": ("tests/test_hadolint_reference.py",),
+    "actions": ("tests/test_actionlint_reference.py",),
+    "markdown": ("tests/test_markdownlint_reference.py",),
+    "yaml": ("tests/test_spectral_reference.py",),
+    "sql": ("tests/test_sqlfluff_reference.py",),
+    "secrets": ("tests/test_gitleaks_reference.py",),
+    "security": (
+        "tests/test_pip_audit_reference.py",
+        "tests/test_npm_audit_reference.py",
+        "tests/test_osv_reference.py",
+    ),
+}
+
+
 ENGINE_SPECS: dict[str, EngineSpec] = {
     "ruff": EngineSpec(
         "ruff", "ruff", "pip install ruff", ("py", "pyi"), ("pyproject.toml",), "lint"
@@ -334,6 +418,20 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
     ),
     "npm-audit": EngineSpec(
         "npm-audit", "npm", "ships with npm", (), ("package.json",), "security"
+    ),
+    "osv-scanner": EngineSpec(
+        "osv-scanner",
+        "osv-scanner",
+        "install osv-scanner",
+        (),
+        (
+            "poetry.lock",
+            "requirements.txt",
+            "package-lock.json",
+            "Cargo.lock",
+            "go.sum",
+        ),
+        "security",
     ),
     "mypy": EngineSpec(
         "mypy", "mypy", "pip install mypy", ("py", "pyi"), ("pyproject.toml",), "lint"
@@ -386,10 +484,10 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
         ("pyproject.toml",),
         "lint",
     ),
-    "markdownlint-cli2": EngineSpec(
-        "markdownlint-cli2",
-        "markdownlint-cli2",
-        "npm install -D markdownlint-cli2",
+    "markdownlint-cli": EngineSpec(
+        "markdownlint-cli",
+        "markdownlint",
+        "npm install -D markdownlint-cli",
         ("md", "mdx"),
         (),
         "lint",
@@ -455,4 +553,12 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
 }
 
 
-__all__ = ["ENGINE_SPECS", "TOOL_SPECS", "EngineSpec", "ToolSpec"]
+__all__ = [
+    "ENGINE_SPECS",
+    "PARSER_FIXTURE_SUITES",
+    "TOOL_MATURITY_VALUES",
+    "TOOL_SPECS",
+    "EngineSpec",
+    "ToolMaturity",
+    "ToolSpec",
+]
