@@ -60,6 +60,8 @@ class RefurbEngine(Engine):
                     "message": item.get(
                         "message", "Python modernization recommendation"
                     ),
+                    "fix": item.get("fix") or item.get("suggestion"),
+                    "remediation": item.get("message"),
                 }
             )
 

@@ -15,11 +15,11 @@
    uv run rush --help
    ```
    Expected: a generated command list and `mcp` group.
-3. Run review:
+3. Run review and export an interactive HTML dashboard:
    ```bash
-   uv run rush review src
+   uv run rush review src --export-html review.html
    ```
-   Expected: `ok` or `warn`, not source changes.
+   Expected: `ok` or `warn`, with a self-contained visual inspection report generated at `review.html`.
 4. Run JSON mode:
    ```bash
    uv run rush review src --json

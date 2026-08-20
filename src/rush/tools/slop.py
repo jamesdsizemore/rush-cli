@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .base import ToolFn, ToolResult
-from .common import elapsed_ms, now_ms, run_engine
+from .common import elapsed_ms, engine_on_path, now_ms, run_engine
 from .routing import collect_files
 
 
@@ -42,8 +42,11 @@ class SlopTool(ToolFn):
                             }
                         )
         if python_files:
+            engine_to_use = (
+                ENGINES["aislop"] if engine_on_path("aislop") else ENGINES["sloppylint"]
+            )
             result = run_engine(
-                ENGINES["sloppylint"],
+                engine_to_use,
                 path,
                 [str(file) for file in python_files],
                 tool_name=self.name,

@@ -1,4 +1,4 @@
-"""FastMCP server — stdio transport, 5 registered tools.
+"""FastMCP server — stdio transport, 35 registered catalog tools.
 
 Architecture §5, §6.
 
@@ -33,7 +33,7 @@ def build_server_instructions() -> str:
 
 
 def build_server():
-    """Construct and return the FastMCP server with all 5 tools registered.
+    """Construct and return the FastMCP server with all catalog tools registered.
 
     Does NOT start serving — caller decides transport. See ``run_stdio``.
     """

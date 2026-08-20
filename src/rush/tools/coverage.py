@@ -145,7 +145,18 @@ class CoverageTool(ToolFn):
                 },
             )
 
-        # Run executed coverage check via pytest-cov or coverage run
+        # Run executed coverage check via undercover, pytest-cov, or coverage run
+        if engine_on_path("undercover"):
+            from ..engines import ENGINES
+            from .common import run_engine
+
+            return run_engine(
+                ENGINES["undercover"],
+                path,
+                [],
+                tool_name=self.name,
+            )
+
         if not engine_on_path("coverage") and not engine_on_path("pytest"):
             return skipped_result(
                 self.name,

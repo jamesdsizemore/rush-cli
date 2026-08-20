@@ -24,7 +24,7 @@ class TypecheckTool(ToolFn):
 
         start = now_ms()
         languages = detect_project_languages(path)
-        engines = (ENGINES["mypy"], ENGINES["tsc"])
+        engines = (ENGINES["mypy"], ENGINES["tsc"], ENGINES["pyrefly"])
         files = collect_files(
             path, {ext for engine in engines for ext in engine.file_extensions}
         )

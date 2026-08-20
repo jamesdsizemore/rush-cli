@@ -4,19 +4,25 @@ This recipe book provides battle-tested command workflows for multi-language rep
 
 ---
 
-## 1. Multi-Language Quality Audit (Python + TypeScript + Rust)
+## 1. Multi-Language Quality & Architecture Audit (Python + TypeScript + Rust)
 
 ```bash
-# 1. Run all linters (Ruff, ESLint, Stylelint, ast-grep)
+# 1. Enforce Test-Driven Development (TDD)
+rush tdd .
+
+# 2. Check modular boundaries with Tach and code decay with Sentrux
+rush complexity . --json > complexity_results.json
+
+# 3. Run all linters (Ruff, ESLint, Globstar, ast-grep)
 rush lint . --json > lint_results.json
 
-# 2. Check formatting compliance across all languages
+# 4. Check formatting compliance across all languages
 rush format . --check --json > format_results.json
 
-# 3. Type check Python (mypy) and TypeScript (tsc)
+# 5. Type check Python (pyrefly / mypy) and TypeScript (tsc)
 rush typecheck . --json > typecheck_results.json
 
-# 4. Run test suites (pytest + Vitest)
+# 6. Run test suites (pytest + Vitest)
 rush test . --json > test_results.json
 ```
 

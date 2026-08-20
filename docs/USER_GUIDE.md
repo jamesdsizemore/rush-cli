@@ -25,18 +25,22 @@ uv run rush review .
 After finishing a feature:
 
 ```bash
-rush review .
+rush tdd .
+rush review . --export-html report.html
 rush lint .
 rush format . --check
 rush test .
 rush security .
+rush complexity .
 ```
 
-- `review`: catches maintainability signals without modifying code. Good: `ok`; `warn`: inspect advisory findings.
-- `lint`: runs applicable linters. Good: `ok`; `fail`: fix reported rules; `skipped`: install the named engine only if needed.
-- `format --check`: asks whether files match formatter rules without rewriting. Good: `ok`; failure means run and review your project's formatter.
-- `test`: runs applicable test engines. Good: `ok`; `fail`: inspect failed test findings/output.
-- `security`: checks supported dependency manifests. Good: `ok`; `fail`: evaluate and remediate reported advisories.
+- `tdd`: verifies Test-Driven Development compliance and test suite existence for modified code.
+- `review`: catches maintainability signals without modifying code. Supports `--export-html` for standalone reports and `--export-sarif` for IDE/CI integrations.
+- `lint`: runs applicable linters and AST query checkers (Ruff, ESLint, Globstar, ast-grep).
+- `format --check`: asks whether files match formatter rules without rewriting.
+- `test`: runs applicable test engines (pytest, Vitest, Newman).
+- `security`: checks dependency manifests and agent hooks (pip-audit, npm-audit, Medusa, Trivy, Bearer).
+- `complexity`: measures cyclomatic complexity, modular boundaries (Tach), and token density (Clines).
 
 See [Everyday workflow](user-guide/everyday-workflow.md) for the full story.
 
@@ -50,12 +54,20 @@ See [Everyday workflow](user-guide/everyday-workflow.md) for the full story.
 
 A missing engine is not the same as a passing check. Decide whether your policy requires that engine. See [Understanding results](user-guide/understanding-results.md).
 
+## Exporting Reports & Visual Artifacts
+
+Rush provides built-in multi-format export flags across all 35 catalog tools:
+- `--json`: Machine-readable raw ToolResult JSON output.
+- `--export-sarif <path>`: Standard SARIF 2.1.0 report for GitHub Code Scanning and IDE viewers.
+- `--export-html <path>`: Single-file interactive HTML dashboard with metric cards, status badges, and suggested remediation.
+
 ## Use Rush for common jobs
 
 - Python, JS/TS, mixed repositories: [Checking code](user-guide/checking-code.md)
 - Markdown, YAML, SQL, Dockerfiles, Actions: [Checking project files](user-guide/checking-project-files.md)
 - Dependencies, secrets, SBOM: [Security and supply chain](user-guide/security-and-supply-chain.md)
 - Tests and evidence: [Testing confidence](user-guide/testing-confidence.md)
+- TDD & Architecture: [Quality and Architecture](user-guide/advanced-checks.md)
 
 ## Optional advanced checks
 

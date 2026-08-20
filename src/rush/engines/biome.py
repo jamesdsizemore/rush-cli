@@ -61,6 +61,13 @@ class BiomeEngine(Engine):
                     "rule": f"biome/{item.get('category', 'lint')}",
                     "severity": "fail" if severity in ("error", "fatal") else "warn",
                     "message": item.get("description", "Biome check diagnostic"),
+                    "fix": item.get("fix")
+                    or (
+                        {"advices": item.get("advices")}
+                        if item.get("advices")
+                        else None
+                    ),
+                    "remediation": item.get("description"),
                 }
             )
 

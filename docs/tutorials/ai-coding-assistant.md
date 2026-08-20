@@ -42,8 +42,11 @@ Add to your editor's MCP configuration (`.cursor/mcp.json` or `claude_desktop_co
 ## 3. Test Prompts with Your AI Assistant
 
 Once connected, test with these prompts:
+- *"Run rush_tdd to verify that all my new changes have unit test coverage before I open a PR."*
+- *"Run rush_slop on src/ to check for AI boilerplate, redundant comments, or stub routines."*
+- *"Run rush_complexity to check if my changes violate any modular boundary rules with Tach."*
 - *"Run rush_review on this repository and tell me if there are any scaffold TODOs or overly complex files."*
-- *"Run rush_security to check for vulnerable dependencies and unredacted secrets."*
+- *"Run rush_security to check for vulnerable dependencies, agent hook security risks via Medusa, and unredacted secrets."*
 - *"Run rush_lint on src/ and fix any issues reported by the linters."*
 
 See [Working with AI Agents](../user-guide/working-with-ai-agents.md) and [MCP Overview](../integrations/mcp-overview.md).

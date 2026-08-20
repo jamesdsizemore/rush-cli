@@ -1,4 +1,4 @@
-"""click CLI entrypoint — 5 subcommands + `mcp serve`.
+"""Click CLI entrypoint — 34 canonical subcommands + `mcp serve`.
 
 Architecture §6. Each subcommand calls the same ToolFn.__call__ that the
 MCP tool calls (requirement C3 — single source of truth).
@@ -89,6 +89,8 @@ def _run_tool(
     as_json: bool,
     extra_kwargs: dict | None = None,
     permissions: ExecutionPermissions | None = None,
+    export_sarif: Path | None = None,
+    export_html: Path | None = None,
 ) -> None:
     """Shared helper: find the tool, call it, render or JSON-print, exit."""
     tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
@@ -108,6 +110,19 @@ def _run_tool(
     except TypeError:
         # Fallback if specific tool does not yet accept permissions
         result = tool.run(path, config=config, **kwargs)
+
+    if export_sarif is not None:
+        from .sarif import export_to_sarif
+
+        sarif_doc = export_to_sarif(result, tool_name=tool_name)
+        export_sarif.write_text(json.dumps(sarif_doc, indent=2), encoding="utf-8")
+
+    if export_html is not None:
+        from .html_export import export_to_html
+
+        html_doc = export_to_html(result, title=f"Rush {tool_name} Report")
+        export_html.write_text(html_doc, encoding="utf-8")
+
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
     else:
@@ -134,11 +149,25 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         default=None,
         help="Optional explicit report path for import mode.",
     )
+    @click.option(
+        "--export-sarif",
+        type=click.Path(path_type=Path),
+        default=None,
+        help="Optional destination path to export SARIF 2.1.0 JSON report.",
+    )
+    @click.option(
+        "--export-html",
+        type=click.Path(path_type=Path),
+        default=None,
+        help="Optional destination path to export standalone HTML report artifact.",
+    )
     @permission_options
     @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
     def command(
         path: Path,
         report_path: Path | None,
+        export_sarif: Path | None,
+        export_html: Path | None,
         allow_network: bool,
         allow_download: bool,
         allow_cache_write: bool,
@@ -159,7 +188,13 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         )
         extra = {"report_path": report_path} if report_path is not None else None
         _run_tool(
-            tool.name, path, as_json=as_json, permissions=perms, extra_kwargs=extra
+            tool.name,
+            path,
+            as_json=as_json,
+            permissions=perms,
+            extra_kwargs=extra,
+            export_sarif=export_sarif,
+            export_html=export_html,
         )
 
     return command

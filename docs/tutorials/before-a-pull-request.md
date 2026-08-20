@@ -1,13 +1,16 @@
 # Tutorial: use Rush before every pull request
 
-**Outcome:** produce a repeatable local evidence bundle before review.
+**Outcome:** produce a repeatable local evidence bundle before opening a pull request.
 
 1. Start from a clean understanding of your Git diff.
-2. Run:
+2. Enforce TDD compliance and run quality checks:
    ```bash
-   rush review .
+   rush tdd .
+   rush review . --export-html artifacts/pr-review.html
    rush lint .
    rush format . --check
+   rush complexity .
+   rush slop .
    rush test .
    rush security .
    ```
@@ -16,9 +19,10 @@
    rush markdown .
    rush actions .
    rush secrets .
+   rush coverage . --allow-slow
    ```
 4. Treat a required `skipped` result as incomplete setup.
-5. Rerun after repairs and summarize the actual commands/results in the PR.
+5. Attach the generated `artifacts/pr-review.html` or SARIF artifact to the PR summary.
 
 **Expected:** no source rewrite from checks; format remains check-only. Rush does not open the PR or claim human review.
 

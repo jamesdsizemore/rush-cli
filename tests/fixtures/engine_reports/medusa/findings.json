@@ -1,0 +1,10 @@
+[
+  {
+    "file": ".claude/hooks/pre-exec.sh",
+    "line": 5,
+    "check_id": "dangerous-remote-curl",
+    "severity": "high",
+    "description": "Agent hook downloads and executes untrusted remote script via curl | sh",
+    "remediation": "Pin hash or remove automated remote execution in agent hooks"
+  }
+]

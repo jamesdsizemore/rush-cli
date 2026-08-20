@@ -1,0 +1,11 @@
+[
+  {
+    "file": "src/domain/user.py",
+    "line": 15,
+    "kind": "unauthorized-import",
+    "is_error": true,
+    "message": "Domain module cannot import infrastructure layer",
+    "suggested_fix": "Use dependency injection interface",
+    "remediation": "Move DB dependency to infrastructure"
+  }
+]

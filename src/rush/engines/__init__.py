@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .a11ywatch import A11ywatchEngine
 from .actionlint import ActionlintEngine
+from .aislop import AislopEngine
 from .alex import AlexEngine
 from .ast_grep import AstGrepEngine
 from .atlas import AtlasEngine
@@ -21,8 +22,10 @@ from .bloaty import BloatyEngine
 from .buf import BufEngine
 from .cargo_mutants import CargoMutantsEngine
 from .cdxgen import CdxgenEngine
+from .cejel import CejelEngine
 from .checkov import CheckovEngine
 from .cherrybomb import CherrybombEngine
+from .clines import ClinesEngine
 from .comby import CombyEngine
 from .commitlint import CommitlintEngine
 from .conftest import ConftestEngine
@@ -44,6 +47,7 @@ from .font_spider import FontSpiderEngine
 from .garak import GarakEngine
 from .git_guard import GitGuardEngine
 from .gitleaks import GitleaksEngine
+from .globstar import GlobstarEngine
 from .graphql_inspector import GraphQLInspectorEngine
 from .grype import GrypeEngine
 from .guac import GuacEngine
@@ -62,6 +66,7 @@ from .lost_pixel import LostPixelEngine
 from .lychee import LycheeEngine
 from .markdown_unfluff import MarkdownUnfluffEngine
 from .markdownlint import MarkdownlintEngine
+from .medusa import MedusaEngine
 from .megalinter import MegalinterEngine
 from .memray import MemrayEngine
 from .mypy import MypyEngine
@@ -82,6 +87,7 @@ from .prettier import PrettierEngine
 from .prisma_lint import PrismaLintEngine
 from .promptfoo import PromptfooEngine
 from .pyclean import PycleanEngine
+from .pyrefly import PyreflyEngine
 from .pytest import PytestEngine
 from .radon import RadonEngine
 from .readability import ReadabilityEngine
@@ -97,6 +103,7 @@ from .secretlint import SecretlintEngine
 from .semantic_drift import SemanticDriftEngine
 from .semantic_release import SemanticReleaseEngine
 from .semgrep import SemgrepEngine
+from .sentrux import SentruxEngine
 from .sloppylint import SloppylintEngine
 from .slsa_verifier import SlsaVerifierEngine
 from .spectral import SpectralEngine
@@ -106,12 +113,14 @@ from .squoosh import SquooshEngine
 from .statoscope import StatoscopeEngine
 from .stryker import StrykerEngine
 from .stylelint import StylelintEngine
+from .tach import TachEngine
 from .terrascan import TerrascanEngine
 from .tflint import TflintEngine
 from .trivy import TrivyEngine
 from .trufflehog import TruffleHogEngine
 from .ts_prune import TsPruneEngine
 from .tsc import TscEngine
+from .undercover import UndercoverEngine
 from .vale import ValeEngine
 from .vitest import VitestEngine
 from .vulture import VultureEngine
@@ -244,6 +253,16 @@ ENGINES: dict[str, Engine] = {
     "safe-env": SafeEnvEngine(),
     "wait-on": WaitOnEngine(),
     "ncu": NcuEngine(),
+    # Innovation Extensions (CLAW Top-3)
+    "aislop": AislopEngine(),
+    "tach": TachEngine(),
+    "undercover": UndercoverEngine(),
+    "medusa": MedusaEngine(),
+    "pyrefly": PyreflyEngine(),
+    "globstar": GlobstarEngine(),
+    "clines": ClinesEngine(),
+    "cejel": CejelEngine(),
+    "sentrux": SentruxEngine(),
 }
 
 __all__ = ["ENGINES", "Engine"]

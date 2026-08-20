@@ -7,7 +7,8 @@ Rush is packaged as a local CLI application and stdio Model Context Protocol (MC
 ## 1. Core Tool Contract (`src/rush/tools/base.py`)
 
 ### `ToolFn`
-The abstract base class for all 34 Rush tools.
+### `ToolFn`
+The abstract base class for all 35 Rush tools.
 ```python
 class ToolFn:
     name: str
@@ -80,14 +81,14 @@ class Finding(TypedDict):
 ## 2. Engine Adapter Contract (`src/rush/engines/base.py`)
 
 ### `Engine`
-The abstract adapter for external quality binaries:
+The abstract adapter for external quality binaries (86 total):
 ```python
 class Engine:
     name: str
     binary: str
 
     def is_available(self) -> bool:
-        """Checks whether binary exists on PATH."""
+        """Checks whether binary exists on PATH using cache."""
         ...
 
     def run(self, target: Path, options: dict[str, Any]) -> ToolResult:
@@ -97,7 +98,7 @@ class Engine:
 
 ---
 
-## 3. Subprocess Isolation (`src/rush/tools/common.py`)
+## 3. Subprocess Isolation & Resolution (`src/rush/tools/common.py`)
 
 ```python
 def run_subprocess(
@@ -108,11 +109,48 @@ def run_subprocess(
 ) -> tuple[int, str, str]:
     """Runs external commands with stdin=DEVNULL, shell=False, and stdout/stderr capture."""
     ...
+
+def resolve_binary(binary_name: str) -> str | None:
+    """Resolves binary location using in-memory @lru_cache for performance."""
+    ...
 ```
 
 ---
 
-## 4. Execution Permissions (`src/rush/permissions.py`)
+## 4. Exporters & Report Generation
+
+### HTML Dashboard Exporter (`src/rush/html_export.py`)
+```python
+def export_to_html(result: ToolResult, output_path: Path | str) -> Path:
+    """Renders a self-contained, standalone HTML report with dark mode and filterable tables."""
+    ...
+```
+
+### SARIF 2.1.0 Exporter (`src/rush/sarif.py`)
+```python
+def export_to_sarif(result: ToolResult, output_path: Path | str) -> Path:
+    """Converts normalized findings into standard SARIF 2.1.0 JSON format."""
+    ...
+```
+
+---
+
+## 5. Pluggable LLM Provider Layer (`src/rush/providers/`)
+
+```python
+class LLMProvider(ABC):
+    @abstractmethod
+    def review(self, files: dict[str, str], instructions: str | None = None) -> list[Finding]:
+        """Review code files using provider LLM."""
+        ...
+
+class AnthropicProvider(LLMProvider): ...
+class OpenAIProvider(LLMProvider): ...
+```
+
+---
+
+## 6. Execution Permissions (`src/rush/permissions.py`)
 
 ```python
 @dataclass(frozen=True)

@@ -10,20 +10,30 @@ flowchart TB
   MCP --> Tools
   Config[rush.toml discovery] --> Tools
   Tools --> Routing[language/applicability + aggregation]
-  Routing --> Adapters[engine adapters]
+  Routing --> Adapters[engine adapters - 86 total]
   Adapters --> Proc[bounded subprocess; stdin DEVNULL]
   Proc --> Normalize[canonical ToolResult]
+  Normalize --> SARIF[src/rush/sarif.py SARIF 2.1.0]
+  Normalize --> HTML[src/rush/html_export.py HTML Dashboard]
   Normalize --> CLI
   Normalize --> MCP
+  Tools --> LLM[src/rush/providers/ LLM Provider Runtime]
 ```
 
 ## Core contracts
 
-- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity.
+- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity across all 35 tools and 121 engines.
 - `ToolFn.run(path, *, config, ...)` is the internal execution surface. `ToolFn.__call__` is MCP-facing and must expose only JSON-schema-safe parameters.
 - ToolResult required keys are `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; optional extensions include metrics, artifacts, metadata, and review fields.
 - A missing optional executable returns `skipped`; it must not raise or install anything.
 - Multi-engine aggregation is deterministic: worst status wins (`error > fail > warn > ok > skipped`), durations sum, findings sort by location/rule/message, and provenance is retained.
+- **Reporting Subsystems**:
+  - `src/rush/sarif.py`: Multi-SARIF 2.1.0 generator for GitHub Security Scanning integration.
+  - `src/rush/html_export.py`: Standalone, zero-dependency HTML interactive dashboard with dark mode and filterable finding tables.
+- **Pluggable LLM Provider Architecture**:
+  - `src/rush/providers/`: Provider abstraction decoupling Anthropic, OpenAI, and local LLM heuristics from CLI/MCP transport layers.
+- **Binary Resolution Cache**:
+  - `@lru_cache` in `src/rush/tools/common.py` avoiding expensive repeated `PATH` searches on Windows.
 
 ## Configuration flow
 

@@ -10,7 +10,7 @@ Rush uses a multi-layered testing strategy combining deterministic parser fixtur
 tests/
 ├── fixtures/
 │   └── engine_reports/         # Deterministic fixture outputs (clean, findings, malformed)
-├── test_*_reference.py         # Dedicated reference test suites for all 77 engines
+├── test_*_reference.py         # Dedicated reference test suites for all 121 engines
 ├── test_docs_parity_and_sync.py # Zero-drift documentation and link validation suite
 ├── test_phase01_truth_audit.py # Truth audit verifying PARSER_FIXTURE_SUITES registration
 ├── test_mcp.py                 # FastMCP stdio transport and schema validation

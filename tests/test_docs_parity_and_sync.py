@@ -16,11 +16,18 @@ from scripts.sync_docs import (
     audit_doc_links,
     audit_engine_compatibility,
     audit_engines_directory,
+    audit_global_counts,
     audit_mcp_reference,
     audit_tool_catalog,
 )
 
 DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+
+
+def test_docs_global_counts_and_roster_parity() -> None:
+    """Every single one of the 136 markdown docs must have accurate tool and engine counts."""
+    errors = audit_global_counts(DOCS_DIR)
+    assert not errors, "Global documentation count discrepancies:\n" + "\n".join(errors)
 
 
 def test_docs_tool_catalog_parity() -> None:

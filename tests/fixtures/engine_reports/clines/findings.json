@@ -1,0 +1,14 @@
+{
+  "metrics": {
+    "total_loc": 50000
+  },
+  "warnings": [
+    {
+      "file": "src/monolith.py",
+      "line": 1,
+      "kind": "high-token-density",
+      "message": "File exceeds 15,000 tokens — excessive LLM context overhead",
+      "remediation": "Decompose monolith into smaller cohesive modules"
+    }
+  ]
+}

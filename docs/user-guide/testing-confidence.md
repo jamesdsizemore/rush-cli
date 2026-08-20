@@ -12,7 +12,8 @@ Rush supports dual modes for test quality: importing existing local reports or e
 
 | Command | Accepted local evidence | Native execution engine | Required permission |
 |---|---|---|---|
-| `coverage REPORT` | coverage.py JSON, LCOV, Cobertura XML | pytest --cov / Diff-Cover | `--allow-slow` |
+| `tdd` | Test discovery evidence | TDD Guard | None (Offline) |
+| `coverage REPORT` | coverage.py JSON, LCOV, Cobertura XML | pytest --cov / Diff-Cover / Undercover | `--allow-slow` |
 | `mutation REPORT` | Stryker / mutmut summary JSON | Stryker, Cosmic Ray, Infection, Pitest, Cargo-mutants | `--allow-slow` |
 | `pbt REPORT` | seeded property-test JSON | Hypothesis | `--allow-slow` |
 | `flaky REPORT` | JUnit XML with duplicate-case evidence | pytest-rerun | `--allow-slow` |
@@ -23,4 +24,9 @@ Rush supports dual modes for test quality: importing existing local reports or e
 | `e2e` | Playwright test suites | Playwright, Wait-On | `--allow-browser` |
 | `visual` | visual diff / baselines | Lost Pixel, BackstopJS, Lighthouse, PageSpeed | `--allow-browser` & `--allow-slow` |
 
-For example, `rush coverage coverage.xml --json` imports an existing Cobertura report. Read each JSON summary and see [Advanced checks](advanced-checks.md).
+For example:
+- `rush tdd .` enforces that all newly modified source files have associated unit test suites.
+- `rush coverage . --allow-slow` executes diff-based structural coverage verification via **Undercover** and **Diff-Cover**.
+- `rush test . --export-html artifacts/tests.html` exports a visual HTML dashboard of test execution.
+
+Read each JSON summary and see [Advanced checks](advanced-checks.md).

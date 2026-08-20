@@ -17,7 +17,7 @@ Stage 4: AI Agent Enablement -> Connect Rush FastMCP stdio server to Cursor, Win
 
 ## 2. Adoption Best Practices
 
-1. **Keep Engine Roster Bounded**: Only install the engines needed for your team's languages. Do not mandate all 77 engines in developer onboarding.
+1. **Keep Engine Roster Bounded**: Only install the engines needed for your team's languages. Do not mandate all 121 engines in developer onboarding.
 2. **Start with Non-Mutating Checks**: Introduce `rush format . --check` and `rush lint .` before introducing deeper AST rules or mutation testing.
 3. **Establish CI Policy for `skipped`**: Ensure CI flags missing engines as policy violations if those engines are designated mandatory.
 

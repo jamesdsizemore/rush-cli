@@ -46,6 +46,7 @@ from .semantic_drift import SemanticDriftTool
 from .slop import SlopTool
 from .snapshot import SnapshotTool
 from .sql import SqlTool
+from .tdd_guard import TddGuardTool
 from .templates import TemplatesTool
 from .test import TestTool
 from .typecheck import TypecheckTool
@@ -87,6 +88,7 @@ ALL_TOOLS: list[ToolFn] = [
     ReleaseTool(),
     SemanticDriftTool(),
     AiEvalTool(),
+    TddGuardTool(),
 ]
 
 __all__ = [

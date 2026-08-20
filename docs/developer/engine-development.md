@@ -14,12 +14,13 @@ class MyEngine(Engine):
     binary: str = "my-engine-cli"
 
     def is_available(self) -> bool:
-        """Check if binary is found on PATH or in current venv."""
-        return shutil.which(self.binary) is not None
+        """Check if binary is found on PATH or in current venv using resolution cache."""
+        return resolve_binary(self.binary) is not None
 
     def run(self, target: Path, options: dict[str, Any]) -> ToolResult:
         """Constructs bounded argv, executes with run_subprocess(), and parses output."""
-        if not self.is_available():
+        bin_path = resolve_binary(self.binary)
+        if not bin_path:
             return ToolResult(
                 tool=options.get("tool", "mytool"),
                 engine=self.name,
@@ -31,16 +32,39 @@ class MyEngine(Engine):
                 raw=None,
             )
 
-        cmd = [self.binary, "--format", "json", str(target)]
-        code, stdout, stderr = run_subprocess(cmd, timeout=120.0)
+        cmd = [bin_path, "--format", "json", str(target)]
+        code, stdout, stderr = run_subprocess(cmd, cwd=target, timeout=120.0)
 
         # Parse JSON and normalize findings
-        return self._parse_output(code, stdout, stderr, target)
+        return self.normalize(stdout, stderr, code, str(target))
 ```
 
 ---
 
-## 2. Mandatory Steps for New Engines
+## 2. Specialized Engine Patterns
+
+### AST Query & Tree-Sitter Adapters (`aislop`, `globstar`, `ast-grep`)
+- Process AST pattern matching against polyglot syntax trees.
+- Normalize code snippet context, rule IDs, and automated suggested fixes into `Finding.fix`.
+
+### Modular Monolith & Architecture Sensors (`tach`, `sentrux`, `depcruise`)
+- Inspect internal module import trees against boundary policies.
+- Surface cyclomatic spikes and cross-boundary illegal coupling as actionable findings with file:line accuracy.
+
+### Structural Diff-Coverage Adapters (`undercover`, `diff-cover`)
+- Intersect git branch diffs with LCOV/Cobertura coverage reports.
+- Flag newly introduced methods or changed blocks lacking unit test assertions.
+
+### Agent Hook & Security Scanners (`medusa`, `trufflehog`, `bearer`)
+- Target agent instruction configurations (`.claude/`, `.cursor/`, `.windsurf/`).
+- Auto-redact detected credentials as `[REDACTED]` prior to generating `ToolResult`.
+
+### Offline Cryptographic Trust Attestation (`cejel`)
+- Verify cryptographic pass certificates for release readiness without network calls.
+
+---
+
+## 3. Mandatory Steps for New Engines
 
 1. **Adapter File**: Create `src/rush/engines/<engine_name>.py`.
 2. **Parser Fixtures**: Add deterministic sample outputs to `tests/fixtures/engine_reports/<engine_name>/`:
@@ -54,8 +78,8 @@ class MyEngine(Engine):
    - Missing binary -> `status: "skipped"`
 4. **Registration**:
    - Register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
-   - Add to `TOOL_SPECS` engine list in `src/rush/catalog.py`.
+   - Add to `ENGINE_SPECS` and `TOOL_SPECS` engine list in `src/rush/catalog.py`.
    - Register in `PARSER_FIXTURE_SUITES` in `src/rush/catalog.py`.
-5. **Documentation**: Update all 13 documentation files as mandated by the [Master Build Plan](master-innovation-remediation-build-plan.md).
+5. **Documentation**: Run `python scripts/sync_docs.py --update` to verify and auto-sync all documentation files across the repository.
 
 See [Tool Development](tool-development.md) and [Coding Standards](coding-standards.md).

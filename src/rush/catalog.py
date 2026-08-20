@@ -320,6 +320,13 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Evaluate LLM prompts, agent workflows, and safety guardrails; requires explicit permissions for live runs.",
         ("promptfoo", "garak", "deepeval", "guardrails"),
     ),
+    "tdd": ToolSpec(
+        "tdd",
+        "workflow",
+        "Verify Test-Driven Development (TDD) compliance and test existence.",
+        "Verify TDD compliance at <path>. Returns {status, findings[], summary}.",
+        ("tdd-guard",),
+    ),
 }
 
 
@@ -358,6 +365,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "ci": "real_adapter",
     "release": "real_adapter",
     "ai-eval": "real_adapter",
+    "tdd": "real_adapter",
 }
 if set(_TOOL_MATURITY) != set(TOOL_SPECS):
     raise RuntimeError("catalog maturity map must classify every tool exactly once")
@@ -373,6 +381,7 @@ PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
     "lint": (
         "tests/test_ruff_reference.py",
         "tests/test_eslint_reference.py",
+        "tests/test_globstar_reference.py",
     ),
     "format": (
         "tests/test_ruff_reference.py",
@@ -385,6 +394,7 @@ PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
     "typecheck": (
         "tests/test_mypy_reference.py",
         "tests/test_tsc_reference.py",
+        "tests/test_pyrefly_reference.py",
     ),
     "dead": (
         "tests/test_vulture_reference.py",
@@ -393,8 +403,14 @@ PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
     "complexity": (
         "tests/test_radon_reference.py",
         "tests/test_jscpd_reference.py",
+        "tests/test_tach_reference.py",
+        "tests/test_clines_reference.py",
+        "tests/test_sentrux_reference.py",
     ),
-    "slop": ("tests/test_sloppylint_reference.py",),
+    "slop": (
+        "tests/test_sloppylint_reference.py",
+        "tests/test_aislop_reference.py",
+    ),
     "templates": ("tests/test_djlint_reference.py",),
     "commit-msg": ("tests/test_commitlint_reference.py",),
     "sbom": ("tests/test_cdxgen_reference.py",),
@@ -412,20 +428,26 @@ PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
         "tests/test_pip_audit_reference.py",
         "tests/test_npm_audit_reference.py",
         "tests/test_osv_reference.py",
+        "tests/test_medusa_reference.py",
     ),
+    "coverage": ("tests/test_undercover_reference.py",),
     "e2e": ("tests/test_playwright_reference.py",),
     "visual": ("tests/test_browser_evidence.py",),
     "semantic-drift": (
         "tests/test_axe_reference.py",
         "tests/test_browser_evidence.py",
     ),
-    "release": ("tests/test_cosign_reference.py",),
+    "release": (
+        "tests/test_cosign_reference.py",
+        "tests/test_cejel_reference.py",
+    ),
     "ai-eval": (
         "tests/test_promptfoo_reference.py",
         "tests/test_garak_reference.py",
         "tests/test_deepeval_reference.py",
         "tests/test_guardrails_reference.py",
     ),
+    "tdd": ("tests/test_tdd_guard.py",),
 }
 
 
@@ -1311,6 +1333,78 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
         ("json",),
         ("package.json",),
         "workflow",
+    ),
+    "aislop": EngineSpec(
+        "aislop",
+        "aislop",
+        "pip install aislop",
+        ("py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "c", "cpp"),
+        (),
+        "lint",
+    ),
+    "tach": EngineSpec(
+        "tach",
+        "tach",
+        "pip install tach",
+        ("py", "pyi"),
+        ("pyproject.toml",),
+        "lint",
+    ),
+    "undercover": EngineSpec(
+        "undercover",
+        "undercover",
+        "gem install undercover",
+        ("rb", "py", "js", "ts"),
+        (),
+        "metrics",
+    ),
+    "medusa": EngineSpec(
+        "medusa",
+        "medusa",
+        "pip install medusa",
+        ("json", "yaml", "yml", "toml", "py", "sh", "md"),
+        (),
+        "security",
+    ),
+    "pyrefly": EngineSpec(
+        "pyrefly",
+        "pyrefly",
+        "cargo install pyrefly",
+        ("py", "pyi"),
+        (),
+        "lint",
+    ),
+    "globstar": EngineSpec(
+        "globstar",
+        "globstar",
+        "install globstar",
+        ("py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "c", "cpp"),
+        (),
+        "lint",
+    ),
+    "clines": EngineSpec(
+        "clines",
+        "clines",
+        "cargo install clines",
+        (),
+        (),
+        "metrics",
+    ),
+    "cejel": EngineSpec(
+        "cejel",
+        "cejel",
+        "install cejel",
+        (),
+        (),
+        "workflow",
+    ),
+    "sentrux": EngineSpec(
+        "sentrux",
+        "sentrux",
+        "cargo install sentrux",
+        ("rs", "py", "js", "ts", "go"),
+        (),
+        "metrics",
     ),
 }
 

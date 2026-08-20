@@ -1,6 +1,6 @@
 # Developer Testing Guide & Test Architecture
 
-This guide explains the 9 testing layers that maintain the 100% deterministic test pass rate across all 34 tools and 77 engines in Rush CLI.
+This guide explains the 9 testing layers that maintain the 100% deterministic test pass rate across all 35 tools and 121 engines in Rush CLI.
 
 ---
 
@@ -8,7 +8,7 @@ This guide explains the 9 testing layers that maintain the 100% deterministic te
 
 ```text
 Layer 1: Unit Contracts (Finding normalization, fingerprint hashing, secret redaction)
-Layer 2: Parser Fixtures (tests/fixtures/engine_reports/ for all 77 engines)
+Layer 2: Parser Fixtures (tests/fixtures/engine_reports/ for all 121 engines)
 Layer 3: Subprocess Invocation Tests (Mocked run_subprocess proving argv and timeout)
 Layer 4: Routing & Aggregation Tests (Language marker detection and status precedence)
 Layer 5: CLI Registry Tests (Click argument parsing, JSON emission, exit codes)

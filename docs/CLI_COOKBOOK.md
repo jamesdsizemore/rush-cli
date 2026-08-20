@@ -1,6 +1,6 @@
 # CLI Cookbook & Command Recipes
 
-This cookbook provides copy-pasteable command patterns for everyday engineering tasks across all 34 tools and 77 engines in Rush CLI.
+This cookbook provides copy-pasteable command patterns for everyday engineering tasks across all 35 tools and 121 engines in Rush CLI.
 
 ---
 
@@ -29,13 +29,28 @@ rush review . --use-graft
 
 ---
 
-## 2. Code Quality, Linters & Modernization (Phases 14, 18, 19)
+### Export Standalone HTML & SARIF 2.1.0 Reports
+Generate visual inspection artifacts for human reviewers and CI systems:
+```bash
+rush review . --export-html report.html --export-sarif review.sarif
+rush security . --export-html security.html
+```
+
+### Enforce Test-Driven Development (TDD)
+Verify that tests exist and define contracts before merging implementation code:
+```bash
+rush tdd .
+```
+
+---
+
+## 2. Code Quality, Linters & Modernization (Phases 14, 18, 19, 20)
 
 ### Check Code Style and AST Patterns
 ```bash
 rush lint . --json
 ```
-*Engines:* Ruff (Python), ESLint (JS/TS), Stylelint (CSS/SCSS), ast-grep (Tree-sitter AST), MegaLinter (polyglot orchestrator), Comby (structural pattern matcher), Flake8-Bugbear (AST bug finder), Buf (Protobuf), wasm-tools (WebAssembly).
+*Engines:* Ruff (Python), ESLint (JS/TS), Globstar (Tree-Sitter custom patterns), Stylelint (CSS/SCSS), ast-grep (Tree-sitter AST), MegaLinter (polyglot orchestrator), Comby (structural pattern matcher), Flake8-Bugbear (AST bug finder), Buf (Protobuf), wasm-tools (WebAssembly).
 
 ### Check Dead Code, Unused Imports & Exports
 ```bash
@@ -43,17 +58,17 @@ rush dead . --json
 ```
 *Engines:* Vulture (Python dead code), Knip (JS/TS unused files/deps), FawltyDeps (undeclared/unused Python dependencies), Ts-prune (unused TypeScript exports).
 
-### Complexity, Memory Profiling & Binary Footprint
+### Modular Architecture, Complexity & Binary Footprint
 ```bash
 rush complexity . --json
 ```
-*Engines:* Radon (cyclomatic complexity), jscpd (copy-paste duplication), Depcruise (architectural dependency cycles), Memray (Python memory allocation), Statoscope (JS bundle analysis), Bloaty (binary section/symbol footprint), Scaphandre (energy/carbon estimation).
+*Engines:* Tach (modular boundaries & cycle enforcement), Sentrux (code decay sensors), Clines (token density & complexity), Radon (cyclomatic complexity), jscpd (copy-paste duplication), Depcruise (architectural dependency cycles), Memray (Python memory allocation), Statoscope (JS bundle analysis), Bloaty (binary section/symbol footprint), Scaphandre (energy/carbon estimation).
 
 ### Vibecoder AI Anti-Slop & Repetition Cleaner
 ```bash
 rush slop . --json
 ```
-*Engines:* sloppylint (AI filler patterns, repetitive comments, hallucinated structures), Markdown-Unfluff (prose fluff and AI noise).
+*Engines:* aislop (AST anti-pattern scanner across 10 languages), sloppylint (AI filler patterns, repetitive comments, hallucinated structures), Markdown-Unfluff (prose fluff and AI noise).
 
 ---
 

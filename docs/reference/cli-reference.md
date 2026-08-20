@@ -97,7 +97,8 @@ The following explicit permission flags are available across tools:
 |---|---|
 | `commit-msg PATH [-m MESSAGE]` | Validates Conventional Commit message passed via `-m/--message` or read from file. commitlint reference test suite. Never rewrites history. |
 | `ci PATH` | Inspects local workflow files and checks OpenSSF Scorecard supply chain posture. |
-| `release PATH` | Creates a dry-run inventory/plan and verifies signatures and SLSA build attestations via Cosign and SLSA Verifier. |
+| `release PATH` | Creates a dry-run inventory/plan and verifies signatures and SLSA build attestations via Cosign, Cejel, and SLSA Verifier. |
+| `tdd PATH` | Verifies Test-Driven Development (TDD) compliance and test existence for modified modules. |
 
 ## MCP
 

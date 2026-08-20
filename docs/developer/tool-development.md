@@ -42,14 +42,29 @@ class MyTool(ToolFn):
 
 ---
 
+---
+
 ## 2. 7-Step Tool Registration Checklist
 
-1. **Implement Tool Class**: Create `src/rush/tools/<name>.py` extending `ToolFn`.
-2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py`.
+1. **Implement Tool Class**: Create `src/rush/tools/<name>.py` extending `ToolFn` (e.g. `TddGuardTool`).
+2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py` (maintaining 35 tools).
 3. **Register in Catalog**: Add `ToolSpec` to `src/rush/catalog.py` under `TOOL_SPECS` and update `CATALOG_TOOLS_MATURITY`.
 4. **Register Engine Adapters**: Add engine classes in `src/rush/engines/` and register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
 5. **Add Fixtures & Reference Tests**: Add JSON fixtures to `tests/fixtures/engine_reports/` and reference test suite `tests/test_<engine>_reference.py`.
 6. **Update Parity Audit**: Add fixture suite path to `PARSER_FIXTURE_SUITES` in `src/rush/catalog.py`.
-7. **Synchronize All 13 Docs**: Update all documentation files mandated by the [Master Build Plan](master-innovation-remediation-build-plan.md).
+7. **Synchronize All 130 Docs**: Run `python scripts/sync_docs.py --update` to verify and auto-sync all documentation files across the repository.
+
+---
+
+## 3. Exporter & Reporting Integration
+
+All `ToolFn` executions support unified artifact generation:
+- **CLI Exporter Flags**:
+  - `--export-html <path>`: Generates standalone interactive dashboard via `src/rush/html_export.py`.
+  - `--export-sarif <path>`: Generates standard static analysis interchange JSON via `src/rush/sarif.py`.
+  - `--json`: Emits raw `ToolResult` JSON payload.
+- **FastMCP Protocol Integration**:
+  - Tools expose clean JSON-serializable parameters on `__call__`.
+  - Stdio messages strictly use `stdout` for JSON-RPC frames while diagnostics write to `stderr`.
 
 See [Engine Development](engine-development.md) and [Coding Standards](coding-standards.md).

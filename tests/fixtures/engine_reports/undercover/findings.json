@@ -1,0 +1,9 @@
+[
+  {
+    "file": "src/api/routes.py",
+    "line": 88,
+    "kind": "method",
+    "name": "delete_account",
+    "message": "Uncovered method in diff: delete_account"
+  }
+]

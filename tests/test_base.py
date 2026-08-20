@@ -168,10 +168,24 @@ def test_resolve_binary_returns_path_when_found():
 
     from rush.tools.common import _venv_scripts_dir
 
-    if (_venv_scripts_dir() / ("ruff.exe" if os.name == "nt" else "ruff")).exists():
+    scripts = _venv_scripts_dir()
+    if (
+        scripts is not None
+        and (scripts / ("ruff.exe" if os.name == "nt" else "ruff")).exists()
+    ):
         path = resolve_binary("ruff")
         assert path is not None
-        assert path.endswith(("ruff", "ruff.exe"))
+        assert os.path.exists(path)
+
+
+def test_resolve_binary_caching():
+    from rush.tools.common import clear_binary_cache
+
+    clear_binary_cache()
+    # Looking up nonexistent binary should return None and be cached
+    assert resolve_binary("nonexistent_binary_xyz_123") is None
+    assert not engine_on_path("nonexistent_binary_xyz_123")
+    clear_binary_cache()
 
 
 def test_resolve_binary_returns_none_for_missing():

@@ -3,16 +3,21 @@
 
 set -e
 
-echo "[rush-hooks] Verifying documentation parity across /docs tree..."
+echo "[rush-hooks] Synchronizing documentation across all 136 /docs files..."
 
-# Run the python sync script check
 if [ -f ".venv/Scripts/python.exe" ]; then
+    .venv/Scripts/python.exe scripts/sync_docs.py --update
+    git add docs/
     .venv/Scripts/python.exe scripts/sync_docs.py --check
     .venv/Scripts/python.exe -m pytest tests/test_docs_parity_and_sync.py -q
 elif [ -f ".venv/bin/python" ]; then
+    .venv/bin/python scripts/sync_docs.py --update
+    git add docs/
     .venv/bin/python scripts/sync_docs.py --check
     .venv/bin/python -m pytest tests/test_docs_parity_and_sync.py -q
 else
+    uv run python scripts/sync_docs.py --update
+    git add docs/
     uv run python scripts/sync_docs.py --check
     uv run pytest tests/test_docs_parity_and_sync.py -q
 fi

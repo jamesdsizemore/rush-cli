@@ -16,7 +16,6 @@ Heuristics only — no LLM call unless --llm=True AND env key set.
 from __future__ import annotations
 
 import ast
-import os
 import re
 from pathlib import Path
 
@@ -457,26 +456,23 @@ def _maybe_call_llm(findings: list[Finding]) -> dict | None:
     """Call configured LLM provider if env key is present.
 
     Architecture §10.1:
-      - Reads ANTHROPIC_API_KEY or OPENAI_API_KEY
-      - Provider = "anthropic" if ANTHROPIC_API_KEY set, else "openai"
-      - Returns {"provider": ..., "summary": ...} or None if no key
-
-    NB: this is a stub. Phase 5 will wire actual provider calls.
-    For now, returns None when no key (preserves the heuristic default).
+      - Discovers active provider (Anthropic, OpenAI) from environment
+      - Returns {"provider": ..., "summary": ...} or None if no key configured
     """
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if not anthropic_key and not openai_key:
-        return None  # no key → no LLM call → stay heuristic
+    from ..providers import get_configured_provider
 
-    # Stub: real provider call lands in Phase 5. For now, return a
-    # deterministic summary so the LLM path is exercised end-to-end.
-    provider = "anthropic" if anthropic_key else "openai"
-    n_findings = len(findings)
+    provider = get_configured_provider()
+    if provider is None:
+        return None
+
+    # Format findings as raw dicts for provider consumption
+    raw_findings = [f if isinstance(f, dict) else f.to_dict() for f in findings]
+    response = provider.summarize_findings(raw_findings)
+    if response is None:
+        return None
+
     return {
-        "provider": provider,
-        "summary": (
-            f"[LLM stub] would summarize {n_findings} finding(s) for {provider}; "
-            f"Phase 5 will wire the real provider call."
-        ),
+        "provider": response.provider,
+        "summary": response.content,
+        "model": response.model,
     }

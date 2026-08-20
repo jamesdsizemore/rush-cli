@@ -1,0 +1,11 @@
+[
+  {
+    "file": "src/utils.go",
+    "line": 56,
+    "column": 2,
+    "pattern_id": "unhandled-goroutine-panic",
+    "severity": "error",
+    "message": "Goroutine launched without recover() guard",
+    "remediation": "Wrap goroutine execution in safe defer/recover block"
+  }
+]

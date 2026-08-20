@@ -42,19 +42,41 @@ jobs:
       - name: Install Dependencies
         run: uv sync --all-extras --frozen
 
-      - name: Code Review Heuristics
-        run: uv run rush review . --json > review_results.json
+      - name: TDD Guard
+        run: uv run rush tdd . --json > tdd_results.json
+
+      - name: Code Review Heuristics & Reports
+        run: |
+          uv run rush review . --export-html review.html --export-sarif review.sarif --json > review_results.json
+          uv run rush security . --export-sarif security.sarif --json > security_results.json
+
+      - name: Upload Security SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: security.sarif
+          category: rush-security
+
+      - name: Upload Review HTML Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rush-review-report
+          path: review.html
 
       - name: Linting & AST Analysis
         run: uv run rush lint . --check --json > lint_results.json
 
+      - name: Modular Architecture & Slop Audits
+        run: |
+          uv run rush complexity . --json > complexity_results.json
+          uv run rush slop . --json > slop_results.json
+
       - name: Formatting Compliance
         run: uv run rush format . --check --json > format_results.json
 
-      - name: Security & Secret Audits
-        run: |
-          uv run rush security . --json > security_results.json
-          uv run rush secrets . --json > secrets_results.json
+      - name: Secret Audits
+        run: uv run rush secrets . --json > secrets_results.json
 
       - name: Unit Tests
         run: uv run rush test . --json > test_results.json

@@ -9,6 +9,9 @@ ADRs explain durable choices and their consequences.
 - [ADR-005: fixture-first adapter tests](005-fixture-first-adapter-tests.md)
 - [ADR-006: bounded CI](006-bounded-ci.md)
 - [ADR-007: Git-root-bounded configuration](007-git-root-bounded-configuration.md)
+- [ADR-008: HTML and SARIF artifact export](008-html-and-sarif-artifact-export.md)
+- [ADR-009: pluggable LLM providers](009-pluggable-llm-providers.md)
+- [ADR-010: TDD guard and continuous sensors](010-tdd-guard-and-continuous-sensors.md)
 
 The implementation program also maintains detailed phase and evidence ADRs in
 the [program ADR index](../../adr/README.md). Those records complement rather

@@ -137,6 +137,20 @@ class SecurityTool(ToolFn):
                 )
             )
 
+        # Check for Medusa scanner
+        from .common import engine_on_path
+
+        if engine_on_path("medusa"):
+            results.append(
+                run_engine(
+                    ENGINES["medusa"],
+                    project_root,
+                    [],
+                    tool_name="security",
+                    **engine_kwargs,
+                )
+            )
+
         if results:
             return aggregate_results(self.name, results)
 

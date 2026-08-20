@@ -36,17 +36,28 @@ class ReleaseTool(ToolFn):
             )
         else:
             artifacts = _local_dist_artifacts(path)
+            from .common import engine_on_path
+
+            findings = []
+            if engine_on_path("cejel"):
+                from ..engines import ENGINES
+                from .common import run_engine
+
+                cejel_res = run_engine(ENGINES["cejel"], path, [], tool_name=self.name)
+                findings.extend(cejel_res.get("findings", []))
+
+            status = "fail" if findings else "ok"
             result = ToolResult(
                 tool=self.name,
-                engine="builtin",
+                engine="builtin+cejel" if engine_on_path("cejel") else "builtin",
                 engine_version=None,
-                status="ok",
+                status=status,
                 duration_ms=0,
                 summary=(
                     "release dry-run plan; no tag, release, or upload was created; "
                     f"{len(artifacts)} local artifact(s) found"
                 ),
-                findings=[],
+                findings=findings,
                 raw=None,
                 artifacts=artifacts,
                 metadata={

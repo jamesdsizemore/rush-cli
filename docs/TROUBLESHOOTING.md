@@ -1,6 +1,6 @@
 # Troubleshooting Guide & Common Resolutions
 
-This guide addresses common error messages, unexpected behaviors, and troubleshooting steps across all 34 tools and 77 engines in Rush CLI.
+This guide addresses common error messages, unexpected behaviors, and troubleshooting steps across all 35 tools and 121 engines in Rush CLI.
 
 ---
 

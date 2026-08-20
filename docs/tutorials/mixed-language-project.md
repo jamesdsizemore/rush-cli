@@ -15,11 +15,12 @@ Assume a monorepo containing:
 
 ## 2. Step-by-Step Execution
 
-### Step 1: Universal Code Review
+### Step 1: Universal Code Review & TDD Verification
 ```bash
-rush review .
+rush tdd .
+rush review . --export-html artifacts/polyglot-report.html
 ```
-Rush evaluates file sizes, scaffold markers (`TODO`, `FIXME`), and maintainability across all files deterministically.
+Rush evaluates TDD compliance, file sizes, scaffold markers (`TODO`, `FIXME`), and maintainability across all files deterministically, generating an interactive HTML report.
 
 ### Step 2: Multi-Language Linting & Formatting
 ```bash
@@ -27,27 +28,35 @@ rush lint . --json
 rush format . --check --json
 ```
 Rush automatically discovers and invokes:
-- **Python**: Ruff, Flake8-Bugbear, ast-grep
+- **Python**: Ruff, Flake8-Bugbear, ast-grep, Globstar
 - **TypeScript**: ESLint, Biome, Prettier
 - **Infrastructure**: Hadolint, TFLint
 
-### Step 3: Polyglot Security & Secret Audit
+### Step 3: Architecture, Complexity & AI Anti-Slop
+```bash
+rush complexity . --json
+rush slop . --json
+```
+Rush checks Python modular boundaries with Tach, tracks decay with Sentrux, measures token costs with Clines, and scans 10 languages for AI boilerplate with aislop.
+
+### Step 4: Polyglot Security & Secret Audit
 ```bash
 rush security . --json
 rush secrets . --json
 ```
-Rush runs pip-audit, npm audit, Semgrep, Trivy, Gitleaks, and TruffleHog, merging all findings into coordinate-sorted `ToolResult` JSON output with redacted credentials.
+Rush runs pip-audit, npm audit, Semgrep, Trivy, Medusa, Gitleaks, and TruffleHog, merging all findings into coordinate-sorted `ToolResult` JSON output with redacted credentials.
 
-### Step 4: Multi-Language Test Suites
+### Step 5: Multi-Language Test Suites & Diff Coverage
 ```bash
 rush test . --json
+rush coverage . --allow-slow --json
 ```
-Rush runs pytest for the Python backend and Vitest for the TypeScript frontend, aggregating test durations and failure messages.
+Rush runs pytest for the Python backend and Vitest for the TypeScript frontend, while verifying diff coverage with Undercover.
 
 ---
 
 ## 3. Key Takeaway
 
-You run the exact same 4 commands (`review`, `lint`, `security`, `test`) regardless of how many languages exist in the repo.
+You run standard, consistent commands (`tdd`, `review`, `lint`, `complexity`, `slop`, `security`, `test`) regardless of how many languages exist in the repo.
 
 See [Tutorials Overview](../TUTORIALS.md) and [CI Integration Guide](ci-integration.md).

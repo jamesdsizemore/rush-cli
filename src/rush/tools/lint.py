@@ -108,6 +108,14 @@ class LintTool(ToolFn):
             summaries.append(r.get("summary", ""))
             last_status = combine_status(last_status, r.get("status", "ok"))
 
+        if engine_on_path("globstar"):
+            globstar_args = [str(p) for p in targets] + (engine_args or [])
+            r = run_engine(ENGINES["globstar"], path, globstar_args, tool_name="lint")
+            findings_all.extend(r.get("findings", []))
+            engines_used.append("globstar")
+            summaries.append(r.get("summary", ""))
+            last_status = combine_status(last_status, r.get("status", "ok"))
+
         # If neither engine is installed, return a single skipped result.
         if not engines_used:
             engines_missing = []

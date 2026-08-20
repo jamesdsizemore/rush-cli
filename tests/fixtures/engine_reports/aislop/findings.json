@@ -1,0 +1,12 @@
+[
+  {
+    "file": "src/app.py",
+    "line": 42,
+    "column": 5,
+    "rule_id": "hallucinated-import",
+    "severity": "error",
+    "message": "Import of non-existent standard library submodule",
+    "fix": "import os",
+    "remediation": "Remove hallucinated module reference"
+  }
+]

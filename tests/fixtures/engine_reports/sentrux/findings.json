@@ -1,0 +1,12 @@
+{
+  "status": "warning",
+  "alerts": [
+    {
+      "file": "src/core/dispatch.py",
+      "line": 105,
+      "sensor": "cyclomatic-complexity-spike",
+      "message": "Cyclomatic complexity jumped from 6 to 35 in recent edit",
+      "remediation": "Extract dispatch logic into strategy pattern"
+    }
+  ]
+}

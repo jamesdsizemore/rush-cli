@@ -15,11 +15,14 @@ Client configuration formats differ. Use [MCP client setup](../integrations/mcp-
 
 ## Useful requests
 
-- “Use Rush to review the Python files I changed. Explain each warning.”
+- “Run `rush_tdd` to verify that my new features include test coverage before opening a PR.”
+- “Run `rush_slop` to detect AI boilerplate, empty stubs, or redundant docstrings.”
+- “Run `rush_complexity` to check for modular architecture violations with Tach.”
+- “Use `rush_review` on the files I changed. Export the report to `artifacts/review.html`.”
 - “Run relevant lint and test checks. Tell me which result was skipped and why.”
-- “Check this repository for dependency and secret findings without changing files.”
+- “Check this repository for dependency findings, agent hook vulnerabilities with Medusa, and unredacted secrets.”
 - “Inspect the GitHub Actions files and summarize only actionable results.”
 
 ## Boundaries
 
-The assistant receives Rush's structured local results. Rush opens no network server. External engines still run as local subprocesses and may have their own behavior. `review --llm` is not a working AI review; MCP does not change that. Do not grant browser, network, slow, fuzz, baseline, release, or publication authority implicitly.
+The assistant receives Rush's structured local results via FastMCP. Rush opens no external network port and runs standard JSON-RPC over stdio. External engines run as contained local subprocesses with `stdin=DEVNULL`. Do not grant browser, network, slow, fuzz, baseline, release, or publication authority implicitly.

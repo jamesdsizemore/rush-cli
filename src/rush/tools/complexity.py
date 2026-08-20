@@ -23,9 +23,22 @@ class ComplexityTool(ToolFn):
         from ..engines import ENGINES
 
         start = now_ms()
-        engines = (ENGINES["radon"], ENGINES["jscpd"])
+        engines = (
+            ENGINES["radon"],
+            ENGINES["jscpd"],
+            ENGINES["tach"],
+            ENGINES["clines"],
+            ENGINES["sentrux"],
+        )
         files = collect_files(
-            path, {ext for engine in engines for ext in engine.file_extensions}
+            path,
+            {
+                ext
+                for engine in engines
+                for ext in getattr(engine, "file_extensions", ())
+                if ext
+            }
+            or {"py", "js", "ts", "rs", "go"},
         )
         if not files:
             return ToolResult(

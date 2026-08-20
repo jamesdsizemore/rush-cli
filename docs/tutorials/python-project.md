@@ -1,19 +1,22 @@
 # Tutorial: set up a Python project
 
-**Outcome:** run review, lint, format-check, type, test, and dependency checks on Python.
+**Outcome:** run TDD checks, review, lint, format-check, type, modular complexity, anti-slop, test, and dependency checks on Python.
 
 **Prerequisites:** Rush and a Python project with `pyproject.toml` or Python source.
 
 1. Install chosen helpers in the project:
    ```bash
-   uv add --dev ruff pytest pip-audit mypy
+   uv add --dev ruff pytest pip-audit mypy tach pyrefly aislop
    ```
 2. Run the safe sequence:
    ```bash
-   rush review .
+   rush tdd .
+   rush review . --export-html artifacts/review.html
    rush lint .
    rush format . --check
    rush typecheck .
+   rush complexity .
+   rush slop .
    rush test .
    rush security .
    ```

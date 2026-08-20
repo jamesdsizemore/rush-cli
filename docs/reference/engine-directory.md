@@ -181,6 +181,20 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Wait-On (`wait-on`) | Service readiness poller | `e2e` | `npm install -g wait-on` | Polls local HTTP and TCP endpoints for service readiness. |
 | NCU (`ncu`) | Dependency freshness checker | `security` | `npm install -g npm-check-updates` | Checks for outdated npm packages and major version upgrades. |
 
+## AI Anti-Slop, Modular Boundaries & Continuous Intelligence (Phase 20)
+
+| Engine | What / who | Command | Catalog install hint | Applicability and recovery |
+|---|---|---|---|---|
+| aislop (`aislop`) | AST AI anti-pattern scanner | `slop` | `pip install aislop` | 50+ deterministic AST anti-slop rules across 10 languages. |
+| Tach (`tach`) | Modular boundary & cycle enforcer | `complexity` | `pip install tach` | Python modular architecture and dependency boundary enforcement. |
+| Undercover (`undercover`) | Diff-based structural code coverage | `coverage` | `gem install undercover` | Identifies methods and code blocks modified in diff lacking test coverage. |
+| Medusa (`medusa`) | Agent hook & prompt injection auditor | `security` | `pip install medusa` | Scans `.claude/`, `.cursor/`, and agent hooks for security risks. |
+| Pyrefly (`pyrefly`) | Fast Rust-based Python type checker | `typecheck` | `cargo install pyrefly` | Rust-based high-speed Python type checking. |
+| Globstar (`globstar`) | Tree-Sitter custom pattern checker | `lint` | `install globstar` | Tree-Sitter query pattern checker for custom repository lint rules. |
+| Clines (`clines`) | Token density & complexity analyzer | `complexity` | `cargo install clines` | Measures LOC, duplicate chunks, and LLM context token costs. |
+| Cejel (`cejel`) | Offline trust certificate verifier | `release` | `install cejel` | Self-contained offline cryptographic certificates verifying quality/security suite pass states. |
+| Sentrux (`sentrux`) | Architectural sensor & code decay monitor | `complexity` | `cargo install sentrux` | Real-time sensor tracking code decay and complexity spikes. |
+
 ## Missing-engine experience
 
 ```json

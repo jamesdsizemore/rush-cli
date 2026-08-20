@@ -18,10 +18,14 @@ project interpreter:
 ```bash
 unset VIRTUAL_ENV PYTHONPATH
 .venv/Scripts/python.exe -m pytest tests/ -q
+.venv/Scripts/python.exe scripts/sync_docs.py --update
 .venv/Scripts/python.exe scripts/sync_docs.py --check
-.venv/Scripts/ruff.exe check src tests
-.venv/Scripts/ruff.exe format --check src tests
+.venv/Scripts/ruff.exe check src tests scripts
+.venv/Scripts/ruff.exe format --check src tests scripts
 ```
+
+## Mandatory Documentation Synchronization
+Every code change affecting tools, engines, CLI flags, configuration schema, or architecture must run `scripts/sync_docs.py --update` to automatically synchronize all 136 documentation files across the `/docs` tree. The test `tests/test_docs_parity_and_sync.py` will fail if any document drifts.
 
 Use `run_subprocess()` for external engine commands. It captures output and
 passes `stdin=DEVNULL`, preventing a child engine from consuming the MCP

@@ -6,16 +6,19 @@
 
 1. Install the helpers your team adopts:
    ```bash
-   npm install --save-dev eslint prettier vitest typescript knip jscpd
+   npm install --save-dev eslint prettier vitest typescript knip jscpd @biomejs/biome ts-prune
    ```
 2. Ensure each helper has its normal project configuration.
 3. Run:
    ```bash
+   rush tdd .
+   rush review . --export-html artifacts/review.html
    rush lint .
    rush format . --check
    rush typecheck .
    rush dead .
    rush complexity .
+   rush slop .
    rush test .
    rush security .
    ```

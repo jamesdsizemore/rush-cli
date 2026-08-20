@@ -48,25 +48,11 @@ def _venv_scripts_dir() -> Path | None:
     return None
 
 
-def engine_on_path(binary: str) -> bool:
-    """True if `binary` is findable on PATH or in the active venv's Scripts/."""
-    if shutil.which(binary) is not None:
-        return True
-    scripts = _venv_scripts_dir()
-    if scripts is not None:
-        ext = ".exe" if os.name == "nt" else ""
-        if (scripts / (binary + ext)).is_file():
-            return True
-    return False
+from functools import lru_cache
 
 
-def resolve_binary(binary: str) -> str | None:
-    """Return an executable from the active venv Scripts/bin, then PATH.
-
-    This resolver is the only engine-discovery policy. Configuration cannot
-    supply an executable path, which prevents a project file from selecting an
-    arbitrary local binary.
-    """
+@lru_cache(maxsize=256)
+def _resolve_binary_cached(binary: str) -> str | None:
     scripts = _venv_scripts_dir()
     if scripts is not None:
         ext = ".exe" if os.name == "nt" else ""
@@ -74,6 +60,26 @@ def resolve_binary(binary: str) -> str | None:
         if candidate.is_file():
             return str(candidate)
     return shutil.which(binary)
+
+
+def clear_binary_cache() -> None:
+    """Clear the in-memory binary resolution cache."""
+    _resolve_binary_cached.cache_clear()
+
+
+def resolve_binary(binary: str) -> str | None:
+    """Return an executable from the active venv Scripts/bin, then PATH.
+
+    This resolver is the only engine-discovery policy. Configuration cannot
+    supply an executable path, which prevents a project file from selecting an
+    arbitrary local binary. Results are cached in-memory for fast repeated lookups.
+    """
+    return _resolve_binary_cached(binary)
+
+
+def engine_on_path(binary: str) -> bool:
+    """True if `binary` is findable on PATH or in the active venv's Scripts/."""
+    return resolve_binary(binary) is not None
 
 
 def run_subprocess(

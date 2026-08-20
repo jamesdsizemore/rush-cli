@@ -58,25 +58,57 @@ rush actions .github/workflows/
 
 ---
 
-## 4. Test Quality & Verification
+---
+
+## 4. Test Quality, TDD & Verification
 
 ```bash
-# 1. Run unit & integration tests
+# 1. Enforce Test-Driven Development (TDD) compliance
+rush tdd .
+
+# 2. Run unit & integration tests
 rush test . --json
 
-# 2. Run polyglot mutation testing under slow permission
+# 3. Run polyglot mutation testing under slow permission
 rush mutation . --allow-slow --json
 
-# 3. Import existing coverage XML report for unified normalization
-rush coverage coverage.xml --json
+# 4. Run diff-based structural coverage verification
+rush coverage . --allow-slow --json
 
-# 4. Launch headless browser E2E test suite
+# 5. Launch headless browser E2E test suite
 rush e2e . --allow-browser --json
 ```
 
 ---
 
-## 5. Model Context Protocol (MCP) Server for AI Agents
+## 5. Modular Architecture, AST Anti-Slop & Continuous Sensors
+
+```bash
+# 1. Check Python modular boundaries with Tach and token metrics with Clines
+rush complexity . --json
+
+# 2. Scan polyglot codebase for AI filler slop and hallucinated structures
+rush slop . --json
+
+# 3. Verify offline cryptographic trust certificates before release
+rush release . --json
+```
+
+---
+
+## 6. HTML Dashboard & SARIF 2.1.0 Artifact Generation
+
+```bash
+# 1. Export interactive dark-mode HTML inspection dashboard
+rush review . --export-html artifacts/review.html
+
+# 2. Export SARIF 2.1.0 for GitHub Code Scanning
+rush security . --export-sarif artifacts/security.sarif
+```
+
+---
+
+## 7. Model Context Protocol (MCP) Server for AI Agents
 
 ```bash
 # Start local stdio MCP server for Cursor, Claude Code, or Windsurf

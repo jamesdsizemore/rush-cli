@@ -1,9 +1,9 @@
-# Master Innovation & Remediation Build Plan: 77-Engine Phased Implementation Guide (Phases 09 – 19)
+# Master Innovation & Remediation Build Plan: 86-Engine Phased Implementation Guide (Phases 09 – 20)
 
 > **Document Type:** Master Implementation Blueprint & Architecture Guide  
-> **Status:** Implemented & Verified across Phases 09–19 (All 77 Engines Integrated with Reference Test Suites and Implementation Ledgers)  
-> **Target Scope:** Phased integration of all 77 innovative and vibecoder tools into Rush CLI  
-> **Target Versions:** Rush v0.3.0 through v0.9.0  
+> **Status:** Implemented & Verified across Phases 09–20 (All 86 Engines Integrated with Reference Test Suites and Implementation Ledgers)  
+> **Target Scope:** Phased integration of all 86 innovative, architectural, and vibecoder tools into Rush CLI  
+> **Target Versions:** Rush v0.3.0 through v1.0.0  
 > **Repository Alignment:** Python 3.12, stdio MCP transport + Click CLI, canonical `ToolResult`, explicit execution permissions (`--allow-*`), offline-first default posture, isolated bounded subprocess execution (`stdin=DEVNULL`, `shell=False`).
 
 ---
@@ -602,6 +602,104 @@ Upon completion of each individual phase, the executing agent must update **all*
 | 75 | Safe-Env | `safe-env` | Python / Node.js| Offline | None |
 | 76 | Wait-On | `wait-on` | Node.js | Local port poll | `--allow-network` |
 | 77 | NPM-Check-Updates | `ncu` | Node.js | Offline cache | None |
+| 78 | aislop | `aislop` | Python / Rust | Offline AST | None |
+| 79 | Tach | `tach` | Python | Offline boundaries | None |
+| 80 | Undercover | `undercover` | Ruby | Offline git diff | None |
+| 81 | Medusa | `medusa` | Python | Offline agent audit| None |
+| 82 | Pyrefly | `pyrefly` | Rust | Offline typecheck | None |
+| 83 | Globstar | `globstar` | Go / Tree-sitter | Offline AST | None |
+| 84 | Clines | `clines` | Rust | Offline token metric| None |
+| 85 | Cejel | `cejel` | Go / Rust | Offline crypto cert | None |
+| 86 | Sentrux | `sentrux` | Rust | Offline sensor | None |
+
+---
+
+### Phase 20: AI Anti-Slop, Modular Boundaries & Continuous Intelligence
+
+#### Objective & Scope
+Integrate next-generation AI anti-pattern detection, modular architecture boundary enforcement, diff-based test coverage, agent hook security audits, high-speed typechecking, token complexity analysis, offline cryptographic trust certificates, real-time code decay sensors, interactive HTML report generation, and TDD guard enforcement into Rush CLI and MCP.
+
+#### 1. Engine Specifications
+
+1. **`aislop` (AST AI Anti-Pattern Scanner)**
+   - **Command Mapping:** `rush slop`
+   - **Binary:** `aislop`
+   - **Capability:** AST-level scanner with 50+ deterministic rules detecting hallucinated structures, stub implementations, repetitive docstrings, and redundant comments across 10 programming languages.
+   - **Adapter File:** `src/rush/engines/aislop.py`
+   - **Reference Test:** `tests/test_aislop_reference.py`
+
+2. **`tach` (Modular Architecture & Dependency Cycle Enforcer)**
+   - **Command Mapping:** `rush complexity`
+   - **Binary:** `tach`
+   - **Capability:** Enforces strict domain module boundaries, prevents circular package imports, and validates modular monolith architectural layers.
+   - **Adapter File:** `src/rush/engines/tach.py`
+   - **Reference Test:** `tests/test_tach_reference.py`
+
+3. **`undercover` (Diff-Based Structural Code Coverage)**
+   - **Command Mapping:** `rush coverage`
+   - **Binary:** `undercover`
+   - **Capability:** Combines git diffs and test coverage payloads to pinpoint modified methods, classes, and code blocks that lack unit test coverage.
+   - **Adapter File:** `src/rush/engines/undercover.py`
+   - **Reference Test:** `tests/test_undercover_reference.py`
+
+4. **`medusa` (Agent Hook & Prompt Injection Auditor)**
+   - **Command Mapping:** `rush security`
+   - **Binary:** `medusa`
+   - **Capability:** Scans `.claude/`, `.cursor/`, `.windsurf/`, and MCP agent configuration files for privilege escalation, untrusted shell execution, and prompt injection vectors.
+   - **Adapter File:** `src/rush/engines/medusa.py`
+   - **Reference Test:** `tests/test_medusa_reference.py`
+
+5. **`pyrefly` (High-Speed Rust-Based Python Typechecker)**
+   - **Command Mapping:** `rush typecheck`
+   - **Binary:** `pyrefly`
+   - **Capability:** Sub-millisecond Python typechecking engine written in Rust for instantaneous type safety verification.
+   - **Adapter File:** `src/rush/engines/pyrefly.py`
+   - **Reference Test:** `tests/test_pyrefly_reference.py`
+
+6. **`globstar` (Tree-Sitter Custom Pattern Static Analyzer)**
+   - **Command Mapping:** `rush lint`
+   - **Binary:** `globstar`
+   - **Capability:** Tree-Sitter query pattern checker for evaluating custom repository AST rules across polyglot codebases.
+   - **Adapter File:** `src/rush/engines/globstar.py`
+   - **Reference Test:** `tests/test_globstar_reference.py`
+
+7. **`clines` (Token Density & LLM Context Cost Analyzer)**
+   - **Command Mapping:** `rush complexity`
+   - **Binary:** `clines`
+   - **Capability:** Measures token density, LOC distributions, duplicate code chunks, and LLM context window costs.
+   - **Adapter File:** `src/rush/engines/clines.py`
+   - **Reference Test:** `tests/test_clines_reference.py`
+
+8. **`cejel` (Offline Cryptographic Trust Certificate Verifier)**
+   - **Command Mapping:** `rush release`
+   - **Binary:** `cejel`
+   - **Capability:** Generates and verifies offline cryptographic trust certificates attesting to complete quality and security gate pass states.
+   - **Adapter File:** `src/rush/engines/cejel.py`
+   - **Reference Test:** `tests/test_cejel_reference.py`
+
+9. **`sentrux` (Architectural Sensor & Code Decay Monitor)**
+   - **Command Mapping:** `rush complexity`
+   - **Binary:** `sentrux`
+   - **Capability:** Real-time architectural sensor tracking code decay, complexity spikes, and maintainability regressions.
+   - **Adapter File:** `src/rush/engines/sentrux.py`
+   - **Reference Test:** `tests/test_sentrux_reference.py`
+
+#### 2. Tool & Exporter Specifications
+
+1. **`rush tdd` (Test-Driven Development Guard)**
+   - **Tool File:** `src/rush/tools/tdd_guard.py`
+   - **Capability:** Evaluates repository test suites, verifies test discovery for newly introduced code files, and gates PR readiness on TDD compliance.
+   - **Test File:** `tests/test_tdd_guard.py`
+
+2. **`--export-html <path>` (Interactive HTML Exporter)**
+   - **Module:** `src/rush/html_export.py`
+   - **Capability:** Generates standalone, zero-dependency HTML inspection reports with metric cards, status badges, finding severity filters, and suggested fixes.
+   - **Test File:** `tests/test_html_export.py`
+
+3. **`--export-sarif <path>` (Multi-SARIF 2.1.0 Exporter)**
+   - **Module:** `src/rush/sarif.py`
+   - **Capability:** Converts any tool findings into standard SARIF 2.1.0 format for GitHub Code Scanning and IDE viewers.
+   - **Test File:** `tests/test_sarif.py`
 
 ---
 

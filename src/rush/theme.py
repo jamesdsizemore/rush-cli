@@ -10,8 +10,14 @@ Architecture §9, requirement C8.
 Red is banned. Yellow is allowed (review-needed / warnings).
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from rich.console import Console
+from rich.panel import Panel
 from rich.style import Style
+from rich.table import Table
 from rich.theme import Theme
 
 CYAN = "#22D3EE"
@@ -55,13 +61,7 @@ def console() -> Console:
 
 
 def render_result(result: dict) -> None:
-    """Human-facing rich render of a ToolResult. CLI-only (requirement C4 — MCP returns raw JSON).
-
-    Phase 3 stub: prints one summary line + a findings table if any.
-    Phase 4/5 will expand this to per-tool glyphs and richer formatting.
-    """
-    from rich.table import Table
-
+    """Human-facing rich render of a ToolResult. CLI-only (requirement C4 — MCP returns raw JSON)."""
     tool = result.get("tool", "?")
     status = result.get("status", "?")
     summary = result.get("summary", "")
@@ -71,9 +71,12 @@ def render_result(result: dict) -> None:
     glyph = {
         "review": "⚡",
         "lint": "✓",
-        "format": "�",
+        "format": "✦",
         "test": "▶",
         "security": "⛨",
+        "mutation": "☣",
+        "coverage": "◎",
+        "ai-eval": "🤖",
     }.get(tool, "•")
     c.print(f"{glyph} [{tool}.{tool}] [{status}.{status}] {summary}")
 
@@ -84,15 +87,68 @@ def render_result(result: dict) -> None:
         t.add_column("rule")
         t.add_column("severity")
         t.add_column("message")
+        t.add_column("fix", style="italic dim")
+
+        has_any_fix = any(bool(f.get("fix")) for f in findings)
+        if not has_any_fix:
+            t.columns[5].visible = False
+
         for f in findings[:50]:  # cap render at 50
             sev = f.get("severity", "info")
+            fix_val = f.get("fix")
+            fix_str = str(fix_val)[:40] if fix_val else ""
             t.add_row(
                 str(f.get("path", "")),
                 str(f.get("line", "")),
                 str(f.get("rule", "")),
                 f"[severity.{sev}]{sev}[/]",
                 str(f.get("message", ""))[:120],
+                fix_str,
             )
         c.print(t)
         if len(findings) > 50:
             c.print(f"[dim]... and {len(findings) - 50} more[/dim]")
+
+
+def render_dashboard(results: list[dict[str, Any]]) -> None:
+    """Render a comprehensive interactive multi-tool execution dashboard."""
+    c = console()
+    t = Table(
+        title="⚡ Rush Quality & Verification Dashboard",
+        show_header=True,
+        header_style="bold",
+    )
+    t.add_column("Tool", style="bold")
+    t.add_column("Engine", style="dim")
+    t.add_column("Status", justify="center")
+    t.add_column("Duration", justify="right")
+    t.add_column("Findings", justify="right")
+    t.add_column("Summary")
+
+    total_findings = 0
+    total_duration = 0
+
+    for r in results:
+        tool = r.get("tool", "?")
+        engine = r.get("engine") or "-"
+        status = r.get("status", "ok")
+        duration = r.get("duration_ms", 0)
+        findings = r.get("findings", []) or []
+        summary = r.get("summary", "")
+
+        total_findings += len(findings)
+        total_duration += duration
+
+        t.add_row(
+            tool,
+            engine,
+            f"[{status}.{status}]{status.upper()}[/]",
+            f"{duration}ms",
+            str(len(findings)),
+            summary[:80],
+        )
+
+    c.print(Panel(t, border_style=CYAN))
+    c.print(
+        f"[dim]Total tools executed: {len(results)} | Total duration: {total_duration}ms | Total findings: {total_findings}[/dim]"
+    )

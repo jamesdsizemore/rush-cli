@@ -1,6 +1,6 @@
 # JSON Schema & Output Specification
 
-Rush produces standardized, machine-readable JSON output for all 34 tools when invoked with `--json` or via FastMCP.
+Rush produces standardized, machine-readable JSON output for all 35 tools when invoked with `--json` or via FastMCP.
 
 ---
 

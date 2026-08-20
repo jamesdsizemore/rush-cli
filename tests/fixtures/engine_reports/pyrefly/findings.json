@@ -1,0 +1,9 @@
+[
+  {
+    "path": "src/types.py",
+    "line": 34,
+    "column": 12,
+    "name": "incompatible-types",
+    "description": "Expression `123` has type `int`, expected `str`"
+  }
+]

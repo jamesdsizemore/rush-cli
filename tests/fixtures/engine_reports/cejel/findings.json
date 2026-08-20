@@ -1,0 +1,10 @@
+{
+  "status": "invalid",
+  "violations": [
+    {
+      "file": "rush.toml",
+      "rule": "unattested-mutation",
+      "description": "Configuration modified without signed offline attestation hash"
+    }
+  ]
+}
