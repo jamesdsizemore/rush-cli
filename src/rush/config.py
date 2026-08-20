@@ -55,10 +55,18 @@ class ReviewConfig:
 
 
 @dataclass
+class CacheConfig:
+    enabled: bool = True
+    dir: str = ".rush"
+    max_size_mb: int = 100
+
+
+@dataclass
 class RushConfig:
     project: ProjectConfig = field(default_factory=ProjectConfig)
     tools: dict[str, ToolConfig] = field(default_factory=dict)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
     log_level: str = "warn"
     # Path of the rush.toml we loaded from, or None if defaults-only.
     source: Path | None = None
@@ -149,10 +157,18 @@ def _parse(raw: dict, source: Path) -> RushConfig:
         source_policy_exclude=list(review_raw.get("source_policy_exclude", [])),
     )
 
+    cache_raw = raw.get("cache", {}) or {}
+    cache = CacheConfig(
+        enabled=bool(cache_raw.get("enabled", True)),
+        dir=str(cache_raw.get("dir", ".rush")),
+        max_size_mb=int(cache_raw.get("max_size_mb", 100)),
+    )
+
     return RushConfig(
         project=project,
         tools=tools,
         review=review,
+        cache=cache,
         log_level=str(raw.get("log_level", "warn")),
         source=source,
     )

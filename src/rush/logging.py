@@ -72,3 +72,19 @@ def get_logger(name: str | None = None) -> logging.Logger:
     if name is None:
         return logging.getLogger("rush")
     return logging.getLogger(f"rush.{name}")
+
+
+def log_subsystem(subsystem: str, level: str, msg: str) -> None:
+    """Write structured subsystem message to stderr.
+
+    Format: [rush-<subsystem>:<LEVEL>] <redacted_msg>
+    """
+    clean_msg = redact_secrets(msg)
+    tag = f"[rush-{subsystem}:{level.upper()}]"
+    try:
+        # Also log to standard Python logger
+        log = get_logger(subsystem)
+        lvl_num = getattr(logging, level.upper(), logging.INFO)
+        log.log(lvl_num, f"{tag} {clean_msg}")
+    except Exception:  # noqa: BLE001, S110
+        pass

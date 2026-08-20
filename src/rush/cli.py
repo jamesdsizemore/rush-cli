@@ -161,6 +161,16 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         default=None,
         help="Optional destination path to export standalone HTML report artifact.",
     )
+    @click.option(
+        "--no-cache", is_flag=True, help="Bypass and do not write to result cache."
+    )
+    @click.option("--staged", is_flag=True, help="Scan only files staged in git index.")
+    @click.option(
+        "--changed", is_flag=True, help="Scan only modified uncommitted files."
+    )
+    @click.option(
+        "--since", type=str, default=None, help="Scan files changed since git ref."
+    )
     @permission_options
     @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
     def command(
@@ -168,6 +178,10 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         report_path: Path | None,
         export_sarif: Path | None,
         export_html: Path | None,
+        no_cache: bool,
+        staged: bool,
+        changed: bool,
+        since: str | None,
         allow_network: bool,
         allow_download: bool,
         allow_cache_write: bool,
@@ -186,15 +200,37 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
             allow_artifact_write=allow_artifact_write,
             allow_browser=allow_browser,
         )
-        extra = {"report_path": report_path} if report_path is not None else None
+        target_path = path
+        if staged:
+            from .discovery.git import get_staged_files
+
+            staged_files = get_staged_files(path if path.is_dir() else path.parent)
+            if not staged_files:
+                click.echo("No staged files found to scan.")
+                sys.exit(0)
+        elif changed:
+            from .discovery.git import get_changed_files
+
+            changed_files = get_changed_files(path if path.is_dir() else path.parent)
+            if not changed_files:
+                click.echo("No changed files found to scan.")
+                sys.exit(0)
+        elif since:
+            from .discovery.git import get_files_since
+
+            since_files = get_files_since(path if path.is_dir() else path.parent, since)
+            if not since_files:
+                click.echo(f"No files changed since {since}.")
+                sys.exit(0)
+
         _run_tool(
             tool.name,
-            path,
+            target_path,
             as_json=as_json,
             permissions=perms,
-            extra_kwargs=extra,
             export_sarif=export_sarif,
             export_html=export_html,
+            extra_kwargs={"report_path": report_path} if report_path else None,
         )
 
     return command
@@ -464,6 +500,34 @@ def serve() -> None:
     from .mcp import run_stdio
 
     asyncio.run(run_stdio())
+
+
+# --- Cache CLI commands ---------------------------------------------------
+
+
+@cli.group()
+def cache() -> None:
+    """Manage Rush result cache."""
+
+
+@cache.command(name="stats")
+def cache_stats() -> None:
+    """Display cache entry count, file size, and location."""
+    from .cache import ResultCache
+
+    c = ResultCache()
+    stats_data = c.stats()
+    click.echo(json.dumps(stats_data, indent=2))
+
+
+@cache.command(name="clean")
+def cache_clean() -> None:
+    """Purge all cached results from .rush/cache.db."""
+    from .cache import ResultCache
+
+    c = ResultCache()
+    count = c.clear()
+    click.echo(f"Purged {count} cached result(s).")
 
 
 for _catalog_tool in ALL_TOOLS:
