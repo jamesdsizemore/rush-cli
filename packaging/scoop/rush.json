@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "description": "Zero-dependency local CLI and stdio-only MCP quality server",
+  "homepage": "https://github.com/jamesdsizemore/rush-cli",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v0.2.0/rush-windows-x86_64.zip",
+      "bin": "rush.exe"
+    }
+  },
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v$version/rush-windows-x86_64.zip"
+      }
+    }
+  }
+}

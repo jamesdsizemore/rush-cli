@@ -1,0 +1,15 @@
+PackageIdentifier: jamesdsizemore.rush
+PackageVersion: 0.2.0
+PackageName: Rush CLI
+Publisher: jamesdsizemore
+License: MIT
+ShortDescription: Zero-dependency local CLI and stdio-only MCP quality server.
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/jamesdsizemore/rush-cli/releases/download/v0.2.0/rush-windows-x86_64.zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: rush.exe
+ManifestType: singleton
+ManifestVersion: 1.6.0
