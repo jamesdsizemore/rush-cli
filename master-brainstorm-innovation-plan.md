@@ -520,15 +520,23 @@ Build an enterprise-grade agent skills runtime and automated non-destructive rep
 5. **Task 38.5: Skill Adversarial Fuzzer (`rush skill-fuzz`)**
    - Automated test harness passing boundary-breaking inputs (empty inputs, unicode traps, deep JSON) to skill entrypoints to verify crash immunity.
 6. **Task 38.6: Non-Destructive Agentic Repo Scaffolder (`rush scaffold` / `rush onboard`)**
-   - Non-destructively integrates Rush into blank or existing codebases without overwriting user rules:
-     - **Config Appender**: Appends/updates delimited comment blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, and `.gemini/` with recommended agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
-     - **Directory Scaffolding**: Creates `.rush/skills/` (with starter skills: `plugin_builder.md`, `plugin_installer.md`), `.rush/plugins/` (with starter `example_plugin.py`), and `.rush/rules/`.
-     - **MCP Auto-Wiring**: Generates or merges stdio FastMCP server entries into Claude Code (`.claude.json`), Cursor (`.cursor/mcp.json`), and Antigravity (`~/.gemini/antigravity-cli/mcp/rush/`).
-     - **Stack-Tailored `rush.toml`**: If missing, generates a customized `rush.toml` based on stack detection; if present, preserves all existing tables.
+   - Integrates Rush seamlessly into either **Blank (Greenfield)** or **Occupied (Brownfield)** repositories:
+     - **Blank Repository Scaffolding (Greenfield Mode)**:
+       - **Interactive / Flag Stack Selection**: Supports `--stack=python|typescript|fullstack|rust|go|polyglot` (or interactive prompt).
+       - **Core Repository Scaffolding**: Generates `.gitignore` (with `.rush/cache.db`, `.rush/worktrees/`, `.env`), `README.md` (with `rush score` badge template), `LICENSE` (MIT baseline), and initializes Git repo (`git init`) if not already present.
+       - **Agent Directives Generation**: Creates clean `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with project guidelines and embedded `<!-- RUSH_START --> ... <!-- RUSH_END -->` blocks.
+       - **Subsystem & Skills Bootstrapping**: Generates `.rush/skills/` (with `plugin_builder.md`, `plugin_installer.md`), `.rush/plugins/` (with `example_plugin.py`), `.rush/rules/`, and a stack-tailored `rush.toml`.
+       - **MCP Auto-Wiring**: Writes ready-to-run FastMCP stdio server configurations into `.claude.json`, `.cursor/mcp.json`, and `.gemini/`.
+     - **Occupied Repository Scaffolding (Brownfield Mode)**:
+       - **Zero Overwrite Invariant**: Never modifies or deletes existing user rules, code, or configs.
+       - **Non-Destructive Config Appender**: Inserts or updates delimited boundary blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in existing `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
+       - **Safe MCP Config Merging**: Parses existing JSON in `.claude.json` / `.cursor/mcp.json` / `.gemini/` and merges the `"rush"` stdio transport entry without disturbing existing MCP servers.
+       - **Schema-Preserving `rush.toml`**: If `rush.toml` exists, validates schema without altering user settings; if absent, runs stack discovery and generates tailored config.
 
 #### Verification & Exit Criteria
 - `pytest tests/test_skills_ecosystem.py tests/test_scaffolder.py -q` passes 100%.
-- Scaffolder never overwrites existing user instructions in `CLAUDE.md` or `AGENTS.md` (verified via regression tests).
+- Greenfield test: Scaffolding a completely empty folder creates a fully functional, passing `rush check` workspace with git, MCP, and agent rules.
+- Brownfield test: Scaffolding an existing repo with custom `CLAUDE.md` and `.claude.json` appends Rush rules without overwriting or deleting any user lines.
 
 ---
 
