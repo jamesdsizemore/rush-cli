@@ -577,6 +577,76 @@ def cache_clean() -> None:
     click.echo(f"Purged {count} cached result(s).")
 
 
+# --- Setup & Init CLI commands ---------------------------------------------
+
+
+@cli.command(name="setup")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--non-interactive",
+    is_flag=True,
+    default=True,
+    help="Run without interactive confirmation prompts.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Print detected stacks and installation summary as JSON.",
+)
+def setup_cmd(path: Path, non_interactive: bool, as_json: bool) -> None:
+    """Inspect repository stacks and set up recommended quality toolchains."""
+    from .tools.setup_wizard import run_setup_wizard
+
+    res = run_setup_wizard(path.resolve(), non_interactive=non_interactive)
+    if as_json:
+        click.echo(json.dumps(res, indent=2))
+    else:
+        click.echo(f"Detected stacks: {', '.join(res['stacks']) or 'none'}")
+        if res["skipped"]:
+            click.echo(f"Recommended engines: {', '.join(res['skipped'])}")
+
+
+@cli.command(name="init")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option("--force", is_flag=True, help="Overwrite existing rush.toml file.")
+def init_cmd(path: Path, force: bool) -> None:
+    """Generate a starter rush.toml configuration tailored to the repository."""
+    from .tools.init_config import generate_initial_config
+
+    root = path.resolve()
+    target_cfg = (root if root.is_dir() else root.parent) / "rush.toml"
+    if target_cfg.is_file() and not force:
+        click.echo(
+            f"rush.toml already exists at {target_cfg}. Pass --force to overwrite."
+        )
+        sys.exit(1)
+
+    cfg_content = generate_initial_config(root)
+    target_cfg.write_text(cfg_content, encoding="utf-8")
+    click.echo(f"Created rush.toml at {target_cfg}")
+
+
+@cli.group(name="config")
+def config_grp() -> None:
+    """Inspect and validate rush.toml configuration."""
+
+
+@config_grp.command(name="check")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def config_check(path: Path) -> None:
+    """Validate syntax and schema of rush.toml."""
+    try:
+        cfg = load_config(start=path.resolve())
+        if cfg.source:
+            click.echo(f"Valid configuration loaded from {cfg.source}")
+        else:
+            click.echo("No rush.toml found; using default built-in configuration.")
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"Configuration error: {exc}", err=True)
+        sys.exit(1)
+
+
 for _catalog_tool in ALL_TOOLS:
     if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))
