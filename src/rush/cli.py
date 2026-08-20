@@ -1012,6 +1012,86 @@ def dashboard_cmd(
         server.shutdown()
 
 
+# --- Trust & Plugin CLI commands ------------------------------------------
+
+
+@cli.command(name="trust")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--revoke", is_flag=True, help="Revoke trust for the specified repository."
+)
+def trust_cmd(path: Path, revoke: bool) -> None:
+    """Authorize or revoke local execution trust for repository custom plugins (Control 6)."""
+    from .plugins.trust import revoke_trust, trust_repo
+
+    root = path.resolve()
+    if revoke:
+        revoke_trust(root)
+        click.echo(f"Revoked trust for repository: {root}")
+    else:
+        trust_repo(root)
+        click.echo(f"Approved repository as trusted: {root}")
+
+
+@cli.group(name="plugin")
+def plugin_grp() -> None:
+    """Manage and execute custom quality plugins."""
+
+
+@plugin_grp.command(name="list")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def plugin_list(path: Path) -> None:
+    """List all custom plugins configured in rush.toml."""
+    from .plugins.loader import discover_plugins
+
+    plugins = discover_plugins(path.resolve())
+    if not plugins:
+        click.echo("No custom plugins configured.")
+        return
+    click.echo(f"Discovered {len(plugins)} plugin(s):")
+    for p in plugins:
+        click.echo(f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})")
+
+
+@plugin_grp.command(name="run")
+@click.argument("plugin_name", type=str)
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
+    """Execute a configured custom plugin against path."""
+    from .plugins.loader import discover_plugins, execute_plugin
+    from .plugins.trust import is_repo_trusted
+    from .tools.common import exit_code_for
+
+    root = path.resolve()
+    plugins = discover_plugins(root)
+    matched = next((p for p in plugins if p.name == plugin_name), None)
+    if not matched:
+        click.echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
+        sys.exit(1)
+
+    trusted = is_repo_trusted(root if root.is_dir() else root.parent)
+    result = execute_plugin(matched, target_path=root, is_trusted=trusted)
+
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        status_color = (
+            "green"
+            if result["status"] == "ok"
+            else ("yellow" if result["status"] == "warn" else "red")
+        )
+        click.secho(
+            f"[{result['tool']}] Status: {result['status']}", fg=status_color, bold=True
+        )
+        click.echo(result["summary"])
+        for finding in result.get("findings") or []:
+            click.echo(
+                f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
+            )
+    sys.exit(exit_code_for(result["status"]))
+
+
 for _catalog_tool in ALL_TOOLS:
     if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
         cli.add_command(build_catalog_path_command(_catalog_tool))

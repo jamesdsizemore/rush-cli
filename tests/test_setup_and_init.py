@@ -43,8 +43,13 @@ def test_install_engine_package_rejection(tmp_path: Path) -> None:
 
 
 def test_install_engine_package_mock(tmp_path: Path) -> None:
+    import subprocess
+
     with patch(
-        "rush.tools.setup_wizard.run_subprocess", return_value=(0, "installed", "")
+        "rush.tools.setup_wizard.run_subprocess",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="installed", stderr=""
+        ),
     ):
         success = install_engine_package("uv", "ruff", cwd=tmp_path)
         assert success is True

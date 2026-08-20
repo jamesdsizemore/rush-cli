@@ -146,8 +146,8 @@ class FixTool(ToolFn):
             if dry_run
             else ["ruff", "format", str(target_path)]
         )
-        code_fmt, _, _ = run_subprocess(fmt_cmd, cwd=repo_root)
-        if code_fmt == 0:
+        proc_fmt = run_subprocess(fmt_cmd, cwd=repo_root)
+        if proc_fmt.returncode == 0:
             files_fixed += 1
             summary_parts.append("ruff-format")
 
@@ -156,8 +156,8 @@ class FixTool(ToolFn):
             if dry_run
             else ["ruff", "check", "--fix", str(target_path)]
         )
-        code_chk, _, _ = run_subprocess(chk_cmd, cwd=repo_root)
-        if code_chk == 0:
+        proc_chk = run_subprocess(chk_cmd, cwd=repo_root)
+        if proc_chk.returncode == 0:
             summary_parts.append("ruff-check")
 
         mode_str = " (dry run)" if dry_run else ""

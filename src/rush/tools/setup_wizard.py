@@ -50,11 +50,8 @@ def install_engine_package(
         )
         return False
 
-    log_subsystem(
-        "setup", "INFO", f"Installing package '{package_name}' via {package_manager}"
-    )
-    code, _, _ = run_subprocess(cmd, cwd=cwd_path)
-    return code == 0
+    proc = run_subprocess(cmd, cwd=cwd_path)
+    return proc.returncode == 0
 
 
 def run_setup_wizard(root: Path, non_interactive: bool = True) -> dict[str, Any]:
