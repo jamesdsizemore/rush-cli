@@ -98,8 +98,10 @@ def run_subprocess(
     """
     if not argv or any(not isinstance(arg, str) for arg in argv):
         raise ValueError("argv must be a non-empty list of strings")
+    resolved_cmd = resolve_binary(argv[0]) or argv[0]
+    exec_argv = [resolved_cmd, *argv[1:]]
     result = subprocess.run(
-        argv,
+        exec_argv,
         cwd=str(cwd) if cwd is not None else None,
         timeout=timeout,
         stdin=subprocess.DEVNULL,

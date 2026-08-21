@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -16,6 +15,7 @@ from rush.engines.radon import RadonEngine
 from rush.engines.sloppylint import SloppylintEngine
 from rush.engines.tsc import TscEngine
 from rush.engines.vulture import VultureEngine
+from rush.tools.common import resolve_binary
 from rush.tools.complexity import ComplexityTool
 from rush.tools.dead import DeadTool
 from rush.tools.slop import SlopTool
@@ -38,7 +38,7 @@ from rush.tools.typecheck import TypecheckTool
 )
 def test_static_engine_is_opt_in_and_discoverable(binary: str, marker: str) -> None:
     """Real-engine contract: probe the installed adapter without source config."""
-    if shutil.which(binary) is None:
+    if resolve_binary(binary) is None:
         pytest.skip(f"{marker}: {binary} not installed")
     assert ENGINES[binary].version() is not None
 

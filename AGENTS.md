@@ -24,8 +24,8 @@ unset VIRTUAL_ENV PYTHONPATH
 .venv/Scripts/ruff.exe format --check src tests scripts
 ```
 
-## Mandatory Documentation Synchronization
-Every code change affecting tools, engines, CLI flags, configuration schema, or architecture must run `scripts/sync_docs.py --update` to automatically synchronize all 136 documentation files across the `/docs` tree. The test `tests/test_docs_parity_and_sync.py` will fail if any document drifts.
+## Mandatory Pre-Commit Documentation Synchronization
+Documentation synchronization is enforced automatically via `.git/hooks/pre-commit` before every `git commit`. Every commit automatically executes `scripts/sync_docs.py --update` and `scripts/sync_docs.py --check` across all 187 documentation files in `/docs`. The test `tests/test_docs_parity_and_sync.py` will fail if any document drifts.
 
 Use `run_subprocess()` for external engine commands. It captures output and
 passes `stdin=DEVNULL`, preventing a child engine from consuming the MCP

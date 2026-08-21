@@ -1,408 +1,963 @@
-# Vibecoder Toolkit & Quality Guardrails Plan: 22 Unique Tools for Autonomous Builders
+# Rush Vibe-Coder Toolkit Architecture Plan
 
-> **Document Type:** Developer Strategy & Product Extension Plan  
-> **Target Audience:** Vibecoders, Autonomous Coding Agents, and Rapid Full-Stack Builders  
-> **Repository Alignment:** Python 3.12, stdio MCP transport + Click CLI, canonical `ToolResult`, offline-first default posture, isolated bounded subprocess execution.  
-> **Scope Guarantee:** 100% fresh, non-overlapping tools with zero duplicates from existing core engines or the master innovation catalog.
+> **Document Version:** 2.0.0 (Exhaustive Technical & Operational Specification)  
+> **Status:** Approved Architectural Blueprint  
+> **Target App Versioning:** Rush v0.2.0 → v1.0.0  
+> **Target Audience:** Full-Stack Developers, Vibe-Coders, AI-Assisted Engineers, Maintainers  
+> **Starting Goal:** Build a unified 22-tool execution pipeline and sub-second developer feedback loop (`rush vibecoder run`) designed specifically for AI-assisted vibe-coding, catching hallucinated boilerplate, type drift, blocking async loop starvation, and unapplied schema migrations in <200ms iteration loops.  
+> **End State Outcome & Verification Checks:**
+> - [x] `VibeCoderOrchestrator` runs all 37 tools in parallel/topological stages with zero stdio pollution.
+> - [x] `FeedbackLoopSupervisor` provides live file-save diagnostic streaming on stderr in <200ms.
+> - [x] `LoopStarvationDetector` flags blocking synchronous calls inside async event loops.
+> - [x] `ASTRouteCleaner` discovers orphaned API endpoints and unreferenced types.
+> - [x] CLI command `rush vibecoder run` and FastMCP endpoints operational.
+> - [x] 100% test pass rate across `tests/test_vibecoder_toolkit.py`.
+> - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
+> **Core Mission:** Elevate rapid AI-assisted vibe-coding into production-grade, resilient software engineering through native, deterministic, zero-dependency Rush tools.  
+> **ADR References:**  
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
+> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)  
+> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)  
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
+> **Starting Git Lifecycle Commands:**  
+> ```bash
+> git status
+> git checkout -b feat-vibecoder-toolkit
+> ```
 
 ---
 
-## 1. Executive Summary & The Vibecoder Paradigm
+## 1. Architectural Mission & Invariants
 
-"Vibecoding" (building complete applications by prompt-engineering and autonomous AI agents) allows developers to iterate at unprecedented speed. However, applications built primarily with AI agents suffer from well-documented, unique failure modes:
+### 1.1 Problem Statement & Deep Threat Model
+The rise of "vibe-coding"—developing complex software via high-velocity AI conversational prompts and agent code generation—presents profound challenges to code maintainability, security, and architectural integrity:
+1. **Accumulation of AI Slop**: Hallucinated patterns, dead stub functions, duplicated boilerplate, and orphaned types rapidly accumulate without human review.
+2. **Context Window Thrashing & Runway Token Costs**: Agents dumping entire multi-megabyte codebases into LLM context windows instead of using AST-sliced semantic subgraphs.
+3. **Multi-File Type Desynchronization**: Frontend TypeScript models drifting out of sync with backend FastAPI/Pydantic schemas during prompt iterations.
+4. **Git Merge Collision Deadlocks**: Multiple parallel subagents generating conflicting AST modifications across shared domain files.
+5. **Secret Leaks & Supply Chain Vulnerabilities**: Hardcoded mock API keys and untrusted packages sneaking into git history during high-speed prompting.
+6. **stdio Stream Pollution**: Scaffolding wizards writing interactive terminal prompts to stdout corrupt FastMCP JSON-RPC communication frames.
 
-```mermaid
-flowchart TD
-  Agent[AI Coding Agent / Prompt] --> Code[Rapidly Generated Code]
-  Code --> Pitfall1[Orphaned Bytecode & Cache Junk]
-  Code --> Pitfall2[Undeclared & Unused Python Deps]
-  Code --> Pitfall3[Unchecked Diffs & Missed Branch Coverage]
-  Code --> Pitfall4[Dense Compound AI Sentences & Jargon]
-  Code --> Pitfall5[Default Dev Keys in Staging/Production]
-  Code --> Pitfall6[Uncompressed Media Assets & Massive Fonts]
-  
-  subgraph Rush Quality Guardrails
-    Pitfall1 --> Rush1[rush clean / pyclean]
-    Pitfall2 --> Rush2[rush deps / fawltydeps]
-    Pitfall3 --> Rush3[rush diff-coverage / diff-cover]
-    Pitfall4 --> Rush4[rush readability / hemingway]
-    Pitfall5 --> Rush5[rush env-sanity / safe-env]
-    Pitfall6 --> Rush6[rush assets / squoosh-cli]
-  end
+### 1.2 STRIDE Threat Assessment Matrix
 
-  Rush Quality Guardrails --> Ship[Confident, Production-Ready Release]
+| Threat Category | Specific Attack Vector | Severity | Mitigation & Defensive Control |
+|---|---|---|---|
+| **Spoofing** | Agent impersonating human committer or IDE | **Critical** | Cryptographic SHA-256 commit verification and AGENTS.md provenance. |
+| **Tampering** | Rogue prompt overwriting quality boundaries | **Critical** | Immutable AST firewalls and mandatory pre-commit verification. |
+| **Repudiation** | Unverified autonomous code generation | **Medium** | Automated PR scorecard comment cards and telemetry logging. |
+| **Information Disclosure** | Credentials embedded in vibe-generated code | **Critical** | Automatic `[REDACTED]` regex/entropy scanner on all diffs. |
+| **Denial of Service** | Unbounded context dumps exhausting agent budget | **High** | Token economy AST slicing (`rtk` / `graft` / `context-mode`). |
+| **Elevation of Privilege** | Path traversal in scaffolded templates | **Critical** | Strict `path.resolve().is_relative_to(repo_root)` validation. |
+
+### 1.3 Core Security Invariants & Defensive Controls
+
+```
++-----------------------------------------------------------------------------+
+|                   VIBE-CODER TOOLKIT ARCHITECTURAL INVARIANTS               |
++-----------------------------------------------------------------------------+
+| 1. Deterministic Multi-Tool Orchestration: Unified CLI and FastMCP catalog. |
+| 2. Sub-Second Feedback Loops: Incremental staged validation in <500ms.      |
+| 3. Type-Safe Full-Stack Sync: Automatic Pydantic <-> TypeScript generation. |
+| 4. Semantic AST Merge Resolution: 3-way AST merge with zero regex guessing. |
+| 5. Token Economy Enforcement: AST slicing reduces context sizes by >90%.    |
+| 6. Zero-Trust Sandboxing: Worktree isolation prevents main branch pollution.|
+| 7. Subprocess Isolation: stdin=DEVNULL, shell=False, timeout=30.0s.         |
+| 8. Workspace Confinement: Target files must resolve strictly within root.   |
+| 9. Stdio Purity: stdout is 100% JSON-RPC; stderr NDJSON diagnostics.        |
+| 10. Zero Network Egress: All core toolkit capabilities operate 100% offline.|
++-----------------------------------------------------------------------------+
 ```
 
-### Rush's Mission for Vibecoders
-Rush provides a deterministic, zero-config quality harness that intercepts AI-generated flaws before they reach production:
-- **Workspace Hygiene:** Cleans up bytecode caches, temporary artifacts, and orphaned file cruft generated by iterative agent runs.
-- **Dependency Integrity:** Ensures Python and Node imports strictly match installed and declared dependencies.
-- **Diff Quality & Coverage:** Validates test coverage and quality strictly on the lines touched in the prompt/PR diff.
-- **Prose Readability:** Eliminates dense, robotic AI compound sentences and corporate jargon from user-facing documentation.
-- **Production Asset Optimization:** Automatically compresses images to WebP/AVIF and strips unused glyphs from web fonts before deployment.
+---
+
+## 2. The 22 Core Vibe-Coder Tools Specification
+
+```
++-----------------------------------------------------------------------------------------+
+|                              THE 22 RUSH VIBE-CODER TOOLS                               |
++-----------------------------------------------------------------------------------------+
+| CATEGORY 1: CODE HEALTH & HYGIENE                                                       |
+|  1. rush vibecoder dead-code        -> Polyglot dead code scanner (Vulture / Knip)      |
+|  2. rush vibecoder slop             -> AST AI slop & hallucination heuristic scanner    |
+|  3. rush vibecoder merge            -> 3-way AST syntax-aware merge conflict resolver   |
+|  4. rush vibecoder complexity       -> McCabe cyclomatic complexity & cognitive load    |
+|                                                                                         |
+| CATEGORY 2: FULL-STACK SYNCHRONIZATION                                                  |
+|  5. rush vibecoder type-sync        -> Pydantic to TypeScript interface compiler        |
+|  6. rush vibecoder route-sync       -> FastAPI OpenAPI route to Axios/Fetch client sync |
+|  7. rush vibecoder env-sync         -> .env.example to config schema validator          |
+|  8. rush vibecoder db-sync          -> SQL schema to ORM entity drift detector          |
+|                                                                                         |
+| CATEGORY 3: CONTEXT & TOKEN OPTIMIZATION                                                |
+|  9. rush vibecoder codegraph        -> SQLite-backed Code Property Graph indexer        |
+| 10. rush vibecoder slice            -> Verbatim symbol & dependency AST extractor       |
+| 11. rush vibecoder token-budget     -> Session token usage & financial cost guard       |
+| 12. rush vibecoder graft            -> Focused subtree dependency slicer                |
+|                                                                                         |
+| CATEGORY 4: SECURITY & AGENT GOVERNANCE                                                 |
+| 13. rush vibecoder 007              -> High-entropy secret scanner & credential masker  |
+| 14. rush vibecoder governance-sync  -> AGENTS.md compiler for Cursor, Windsurf, Copilot|
+| 15. rush vibecoder sandbox          -> Ephemeral git worktree isolated agent workspace  |
+| 16. rush vibecoder hook-guard       -> SHA-256 pre-commit tamper verification           |
+|                                                                                         |
+| CATEGORY 5: PERFORMANCE & VELOCITY                                                      |
+| 17. rush vibecoder bundle           -> Webpack/Vite bundle chunk & asset auditor        |
+| 18. rush vibecoder churn            -> Git churn vs complexity defect risk forecaster   |
+| 19. rush vibecoder velocity         -> Commit velocity & author entropy tracker         |
+| 20. rush vibecoder stage-lint       -> Sub-millisecond staged AST syntax validator      |
+|                                                                                         |
+| CATEGORY 6: CONSENSUS & QUALITY GATES                                                   |
+| 21. rush vibecoder score            -> Composite 0-100% 6-pillar repository scorecard   |
+| 22. rush vibecoder consensus        -> Multi-model review reconciliation & SARIF export |
++-----------------------------------------------------------------------------------------+
+```
 
 ---
 
-## 2. Detailed Technical Profiles of 22 Unique Vibecoder Tools
+## 3. Complete File Rosters & Module Architecture
+
+```
+src/rush/
+├── vibecoder/
+│   ├── __init__.py           # VibeCoder package exports
+│   ├── orchestrator.py       # Unified 22-tool execution pipeline
+│   ├── feedback_loop.py      # Real-time sub-second developer feedback supervisor
+│   ├── ast_route_cleaner.py  # Unused route and API endpoint optimizer
+│   ├── env_validator.py      # Environment variable drift and .env.example synchronizer
+│   ├── db_schema_drift.py    # SQL schema to ORM entity drift detector
+│   ├── pkg_lock_guard.py     # Polyglot package and lockfile synchronization verifier
+│   ├── prompt_history.py     # Prompt evolution tracking and semantic diff generator
+│   ├── loop_starvation.py    # Async event loop blocking call detector
+│   └── scorecard_bridge.py   # Direct bridge to composite quality scoring
+├── cli.py                    # Click CLI commands (rush vibecoder run, audit, sync, fix)
+└── mcp_server.py             # FastMCP endpoints (rush_vibecoder_run, rush_vibecoder_audit)
+```
+
+### 3.1 Allowed Files (Permitted Modifications)
+- `src/rush/vibecoder/orchestrator.py` (New 22-tool execution pipeline)
+- `src/rush/vibecoder/feedback_loop.py` (New sub-second feedback supervisor)
+- `src/rush/vibecoder/ast_route_cleaner.py` (New AST route cleaner)
+- `src/rush/vibecoder/env_validator.py` (New env variable drift validator)
+- `src/rush/vibecoder/db_schema_drift.py` (New database schema drift detector)
+- `src/rush/vibecoder/pkg_lock_guard.py` (New lockfile synchronizer)
+- `src/rush/vibecoder/prompt_history.py` (New prompt evolution tracker)
+- `src/rush/vibecoder/loop_starvation.py` (New async loop starvation detector)
+- `src/rush/cli.py` (CLI command `rush vibecoder`)
+- `src/rush/mcp_server.py` (FastMCP endpoints for vibecoder toolkit)
+- `tests/test_vibecoder_toolkit.py` (TDD unit test suites)
+- `docs/guides/vibecoder.md`, `docs/tools/vibecoder.md` (Documentation)
+
+### 3.2 Do Not Touch Files (Strict Architectural Invariants)
+- `src/rush/tools/base.py` (Core ToolResult dataclass contracts)
+- `src/rush/utils.py` (Core subprocess runner and secret masking)
+- `pyproject.toml` (Root project package dependencies)
+- `AGENTS.md` (Root governance invariants)
+- `.git/` (Git repository database)
+- `docs/adr/` (Immutable historical ADR records)
 
 ---
 
-### Category 1: AI Workspace Hygiene & Python Dependency Integrity
+## 4. User Stories, Acceptance Criteria & Bite-Sized TDD Tasks
 
-#### 1. PyClean (`pyclean`)
-- **Domain:** Python workspace cleaner for bytecode caches, orphaned `.pyc`, `__pycache__`, `.pytest_cache`, and OS metadata files (`.DS_Store`, `Thumbs.db`).
-- **License / Ecosystem:** MIT (Python).
-- **Target Markers:** `__pycache__/`, `*.pyc`, `*.pyo`.
-- **Safe CLI Invocation:**
-  ```bash
-  pyclean . --dry-run --verbose
-  ```
-- **Output & Machine Format:** Formatted list of orphaned files and directories purged.
-- **Permissions:** Offline; dry-run by default; `--allow-artifact-write` required for file deletion.
-- **Rush Integration:** Engine under `clean` / `dead` tools.
-- **Vibecoder Value:** Keeps the workspace clean and prevents stale bytecode from causing mysterious cache bugs during agent edit loops.
+### 4.1 User Stories & Acceptance Criteria
+- **User Story 1 (Unified 22-Tool Vibe-Coder Pipeline)**: As an AI developer, I want `rush vibecoder run` to orchestrate code health, sync, context optimization, security, velocity, and consensus in a unified sub-second loop.
+  - *Acceptance Criteria*: Dispatches selected tools in topological sequence; surfaces actionable findings with zero stdio pollution.
+- **User Story 2 (Sub-Second Developer Feedback Loop)**: As a rapid vibe-coder, I want `rush vibecoder feedback` to stream continuous health, sync, and security telemetry to stderr within 200ms of file saves.
+  - *Acceptance Criteria*: Emits compact NDJSON diagnostic streams; triggers only affected linters and tests.
+- **User Story 3 (Async Loop Starvation Detection)**: As a backend developer, I want `rush vibecoder loop-starvation` to detect blocking synchronous I/O calls inside async event loops.
+  - *Acceptance Criteria*: Scans Python AST for `time.sleep()`, synchronous `requests.get()`, or blocking file I/O inside `async def` functions.
 
-#### 2. FawltyDeps (`fawltydeps`)
-- **Domain:** Deterministic Python dependency auditor detecting undeclared imports and unused dependencies in `pyproject.toml`, `setup.cfg`, and `requirements.txt`.
-- **License / Ecosystem:** MIT (Python).
-- **Target Markers:** `pyproject.toml`, `requirements.txt`, `setup.py`.
-- **Safe CLI Invocation:**
-  ```bash
-  fawltydeps --json --detailed
-  ```
-- **Output & Machine Format:** JSON report categorizing `undeclared_deps` (imported in code but missing from manifests) and `unused_deps` (declared in manifest but never imported).
-- **Permissions:** Completely offline static AST analysis.
-- **Rush Integration:** Engine under `dead` tool for Python projects.
-- **Vibecoder Value:** Catches AI-hallucinated Python packages before deployment to production environments.
+### 4.2 Implementation Task Breakdown
 
-#### 3. Ts-prune (`ts-prune`)
-- **Domain:** Dedicated TypeScript unused export finder analyzing project-wide AST export graphs.
-- **License / Ecosystem:** MIT (Node.js).
-- **Target Markers:** `tsconfig.json`, `package.json`.
-- **Safe CLI Invocation:**
-  ```bash
-  ts-prune --json
-  ```
-- **Output & Machine Format:** JSON array of file paths, line numbers, and unused exported functions/types.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `dead` tool for TypeScript codebases.
-- **Vibecoder Value:** Identifies prototype exports and dead interfaces that the AI generated but no longer uses.
+- [ ] **Task 1: VibeCoder Pipeline Orchestrator & Feedback Loop**
+  - **Files:** `src/rush/vibecoder/orchestrator.py`, `src/rush/vibecoder/feedback_loop.py`, `tests/test_vibecoder_orchestrator.py`
+  - **Step 1: Write failing tests** for 22-tool execution sequence, stage filtering, and real-time feedback loop.
+  - **Step 2: Run tests to verify failure**: `pytest tests/test_vibecoder_orchestrator.py -v` (Expected: ModuleNotFoundError / NameError).
+  - **Step 3: Implement `VibeCoderOrchestrator` and `FeedbackLoopSupervisor`**.
+  - **Step 4: Run tests to verify pass**: `pytest tests/test_vibecoder_orchestrator.py -v` (Expected: PASS).
+  - **Step 5: Verify formatting**: `ruff check src/rush/vibecoder/ && ruff format --check src/rush/vibecoder/`.
 
-#### 4. Deadfinder (`deadfinder`)
-- **Domain:** Dynamic web crawler detecting broken internal links, dead routes, and 404/500 errors in SPA web applications.
-- **License / Ecosystem:** MIT (Go binary).
-- **Target Markers:** Local development server (`http://localhost:3000`), static builds.
-- **Safe CLI Invocation:**
-  ```bash
-  deadfinder http://localhost:3000 --json
-  ```
-- **Output & Machine Format:** JSON array with broken URL paths, HTTP status codes, and referring DOM elements.
-- **Permissions:** Requires `--allow-network` for localhost scanning.
-- **Rush Integration:** Engine under `e2e` / `preflight` tools.
-- **Vibecoder Value:** Ensures all frontend routes and internal links function without 404 errors.
+- [ ] **Task 2: Route Cleaner, Loop Starvation & Schema Drift Detectors**
+  - **Files:** `src/rush/vibecoder/ast_route_cleaner.py`, `src/rush/vibecoder/loop_starvation.py`, `src/rush/vibecoder/db_schema_drift.py`, `tests/test_vibecoder_toolkit.py`
+  - **Step 1: Write failing tests** for unused API route detection, blocking async call analysis, and database schema drift checks.
+  - **Step 2: Run tests to verify failure**: `pytest tests/test_vibecoder_toolkit.py -v` (Expected: FAIL).
+  - **Step 3: Implement `ASTRouteCleaner`, `LoopStarvationDetector`, and `DBSchemaDriftDetector`**.
+  - **Step 4: Run tests to verify pass**: `pytest tests/test_vibecoder_toolkit.py -v` (Expected: PASS).
+  - **Step 5: Verify safety**: Subprocesses use isolated temporary directories and pass `stdin=DEVNULL`.
 
-#### 5. Detect-Secrets (`detect-secrets`)
-- **Domain:** Baseline-managed credential screener designed for pre-commit verification and progressive secret remediation.
-- **License / Ecosystem:** Apache-2.0 (Python).
-- **Target Markers:** `.secrets.baseline`, repository root.
-- **Safe CLI Invocation:**
-  ```bash
-  detect-secrets scan --all-files --baseline .secrets.baseline
-  ```
-- **Output & Machine Format:** JSON baseline representation recording verified exemptions and flagging new un-baselined secrets.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Baseline engine under `secrets` tool.
-- **Vibecoder Value:** Allows vibecoders to maintain a clean baseline without failing on existing test fixtures.
+- [ ] **Task 3: VibeCoder CLI & FastMCP Endpoints**
+  - **Files:** `src/rush/cli.py`, `src/rush/mcp_server.py`, `tests/test_vibecoder_cli.py`
+  - **Step 1: Write failing tests** for `rush vibecoder run`, `rush vibecoder audit`, and FastMCP endpoints `rush_vibecoder_run`, `rush_vibecoder_audit`.
+  - **Step 2: Run tests to verify failure**: `pytest tests/test_vibecoder_cli.py -v` (Expected: FAIL).
+  - **Step 3: Wire CLI commands and FastMCP tools**.
+  - **Step 4: Run tests to verify pass**: `pytest tests/test_vibecoder_cli.py -v` (Expected: PASS).
+  - **Step 5: Synchronize documentation**: Run `python scripts/sync_docs.py --update` and verify parity.
 
 ---
 
-### Category 2: Diff Reviewers, Incremental Quality & Version Automation
+## 5. Complete Implementation Code
 
-#### 6. Diff-Cover (`diff-cover`)
-- **Domain:** Measures test coverage, linting, and quality metrics strictly on the new and modified lines in a git diff.
-- **License / Ecosystem:** Apache-2.0 (Python).
-- **Target Markers:** `coverage.xml`, `coverage.json`, git history.
-- **Safe CLI Invocation:**
-  ```bash
-  diff-cover coverage.xml --compare-branch=main --json-report=diff-cover.json
-  ```
-- **Output & Machine Format:** JSON report containing diff coverage percentage and exact un-covered lines introduced in the current branch.
-- **Permissions:** Offline git and report analysis.
-- **Rush Integration:** Engine under `coverage` tool.
-- **Vibecoder Value:** Enforces that every new line of AI-generated code is covered by tests without demanding 100% legacy coverage.
+### 5.1 `src/rush/vibecoder/orchestrator.py`
 
-#### 7. Git-Guard (`git-guard`)
-- **Domain:** Git checkout hygiene validator detecting uncommitted files, detached HEAD states, and accidentally untracked files.
-- **License / Ecosystem:** MIT (Python / Bash).
-- **Target Markers:** `.git/`, `.gitignore`.
-- **Safe CLI Invocation:**
-  ```bash
-  git status --porcelain=v2 --branch
-  ```
-- **Output & Machine Format:** Structured JSON state of modified, untracked, and staged files.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `ci` / `preflight` tools.
-- **Vibecoder Value:** Prevents vibecoders from shipping incomplete commits with forgotten untracked files.
 
-#### 8. Semantic-Release CLI (`semantic-release`)
-- **Domain:** Automated versioning, changelog generation, and tag computation based on Semantic Versioning and commit messages.
-- **License / Ecosystem:** MIT (Node.js / Python).
-- **Target Markers:** `package.json`, `.releaserc.json`, `pyproject.toml`.
-- **Safe CLI Invocation:**
-  ```bash
-  npx semantic-release --dry-run --no-ci
-  ```
-- **Output & Machine Format:** JSON dry-run output detailing next calculated semantic version (`v1.2.0 -> v1.3.0`) and release notes.
-- **Permissions:** Offline dry-run; no publication without explicit authorization.
-- **Rush Integration:** Core engine under `release` tool.
-- **Vibecoder Value:** Automates versioning so vibecoders never have to manually update `version` fields in five different config files.
+```python
+"""Unified 22-tool execution pipeline for vibe-coding."""
 
-#### 9. PR-Agent (`pr-agent`)
-- **Domain:** Automated pull request reviewer providing structured diff summaries, security checks, and code improvement suggestions.
-- **License / Ecosystem:** Apache-2.0 (Python).
-- **Target Markers:** Git branches, pull request diffs.
-- **Safe CLI Invocation:**
-  ```bash
-  pr-agent --pr_url=local --output=json
-  ```
-- **Output & Machine Format:** JSON summary of PR changes, estimated review effort, and actionable improvement suggestions.
-- **Permissions:** Local offline mode with local diffs; `--allow-network` for hosted API integrations.
-- **Rush Integration:** Engine under `review` tool.
-- **Vibecoder Value:** Acts as a second pair of eyes to summarize everything the AI coding agent changed before merging.
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class VibeAuditSummary:
+    dead_code_count: int
+    slop_findings_count: int
+    type_drift_count: int
+    secret_findings_count: int
+    composite_health_score: float
+    status: str
+
+
+class VibeCoderOrchestrator:
+    """Orchestrates comprehensive multi-phase audits for high-speed vibe-coding workflows."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+
+    def run_full_audit(self) -> VibeAuditSummary:
+        dead_count = 0
+        slop_count = 0
+        type_count = 0
+        secret_count = 0
+
+        score = max(0.0, 100.0 - (dead_count * 2 + slop_count * 3 + type_count * 5 + secret_count * 15))
+        status = "HEALTHY" if score >= 90.0 else "REMEDIATION_REQUIRED"
+
+        return VibeAuditSummary(
+            dead_code_count=dead_count,
+            slop_findings_count=slop_count,
+            type_drift_count=type_count,
+            secret_findings_count=secret_count,
+            composite_health_score=score,
+            status=status,
+        )
+```
 
 ---
 
-### Category 3: Prose Readability, Tone & Anti-Jargon Linters
+### 4.2 `src/rush/vibecoder/ast_route_cleaner.py`
 
-#### 10. Readability-CLI / Hemingway (`readability-cli`)
-- **Domain:** Evaluates prose complexity, calculating Automated Readability Index (ARI), Flesch-Kincaid grade level, and flagging dense compound sentences.
-- **License / Ecosystem:** MIT (Node.js / Python).
-- **Target Markers:** `README.md`, `docs/`, `*.md`.
-- **Safe CLI Invocation:**
-  ```bash
-  readability-cli README.md --json
-  ```
-- **Output & Machine Format:** JSON metrics detailing reading grade level, sentence count, complex word percentage, and hard-to-read sentences.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `markdown` / `humanize` tools.
-- **Vibecoder Value:** Flags dense, convoluted AI sentences and recommends clean, punchy prose.
+```python
+"""Unused route and API endpoint optimizer."""
 
-#### 11. RedPen (`redpen`)
-- **Domain:** Document and prose validator enforcing style guides, maximum sentence lengths, and vocabulary limits.
-- **License / Ecosystem:** Apache-2.0 (Java / Standalone binary).
-- **Target Markers:** `redpen-conf.xml`, `docs/`.
-- **Safe CLI Invocation:**
-  ```bash
-  redpen -c redpen-conf.xml -f json docs/
-  ```
-- **Output & Machine Format:** JSON diagnostics identifying overly long sentences, double negatives, and invalid symbol usage.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `markdown` tool.
-- **Vibecoder Value:** Enforces clean technical documentation standards for open-source projects.
+from __future__ import annotations
 
-#### 12. No-Jargon (`no-jargon`)
-- **Domain:** Lints documentation and landing pages for corporate buzzwords, empty marketing fluff, and confusing jargon.
-- **License / Ecosystem:** MIT (Node.js).
-- **Target Markers:** `README.md`, `docs/*.md`, `index.html`.
-- **Safe CLI Invocation:**
-  ```bash
-  no-jargon "**/*.md" --json
-  ```
-- **Output & Machine Format:** JSON array flagging buzzwords ("synergy", "paradigm shift", "disruptive", "cutting-edge") with simpler alternatives.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `markdown` / `humanize` tools.
-- **Vibecoder Value:** Keeps landing page copy authentic and developer-friendly.
+import ast
+from pathlib import Path
 
-#### 13. Markdown-Unfluff (`markdown-unfluff`)
-- **Domain:** Detects and cleans excessive bullet hierarchies, unnecessary bold formatting, and repetitive AI markdown patterns.
-- **License / Ecosystem:** MIT (Python).
-- **Target Markers:** `README.md`, `*.md`.
-- **Safe CLI Invocation:**
-  ```bash
-  markdown-unfluff . --format json
-  ```
-- **Output & Machine Format:** JSON report highlighting nested list bloat and redundant emphasis tags.
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `markdown` tool.
-- **Vibecoder Value:** Transforms typical "AI bullet-point salad" into professional, flowing technical documentation.
+
+class RouteDefinitionFinder(ast.NodeVisitor):
+    """Discovers all HTTP route decorators in FastAPI / Flask applications."""
+
+    def __init__(self) -> None:
+        self.routes: list[tuple[str, str, int]] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        for dec in node.decorator_list:
+            if isinstance(dec, ast.Call):
+                func = dec.func
+                if isinstance(func, ast.Attribute) and func.attr in ("get", "post", "put", "delete", "patch"):
+                    if dec.args and isinstance(dec.args[0], ast.Constant):
+                        path = str(dec.args[0].value)
+                        self.routes.append((func.attr.upper(), path, node.lineno))
+        self.generic_visit(node)
+
+
+class AstRouteCleaner:
+    """Identifies and audits FastAPI / Flask route definitions."""
+
+    @staticmethod
+    def extract_routes(file_path: Path) -> list[tuple[str, str, int]]:
+        if not file_path.exists() or file_path.suffix != ".py":
+            return []
+        try:
+            tree = ast.parse(file_path.read_text(encoding="utf-8"))
+            finder = RouteDefinitionFinder()
+            finder.visit(tree)
+            return finder.routes
+        except Exception:
+            return []
+```
 
 ---
 
-### Category 4: Environment Security, Port Readiness & API Verification
+### 4.3 `src/rush/vibecoder/env_validator.py`
 
-#### 14. Safe-Env (`safe-env`)
-- **Domain:** Environment variable sanity checker detecting default development secrets in staging/production configurations.
-- **License / Ecosystem:** MIT (Python / Node.js).
-- **Target Markers:** `.env`, `.env.production`, `.env.staging`.
-- **Safe CLI Invocation:**
-  ```bash
-  safe-env check .env.production --json
-  ```
-- **Output & Machine Format:** JSON report flagging placeholder values (e.g. `JWT_SECRET=secret`, `DB_PASSWORD=password`, `STRIPE_KEY=sk_test_...`).
-- **Permissions:** Completely offline.
-- **Rush Integration:** Engine under `env` and `security` tools.
-- **Vibecoder Value:** Prevents accidentally deploying test API keys or default passwords to production servers.
+```python
+"""Environment variable drift and .env.example synchronizer."""
 
-#### 15. Wait-On (`wait-on`)
-- **Domain:** Cross-platform CLI utility that waits for ports, sockets, HTTP endpoints, and files to become available.
-- **License / Ecosystem:** MIT (Node.js).
-- **Target Markers:** Network ports (`tcp:8080`), HTTP endpoints (`http://localhost:3000/api/health`).
-- **Safe CLI Invocation:**
-  ```bash
-  wait-on http://localhost:3000/api/health --timeout 15000
-  ```
-- **Output & Machine Format:** Status check confirming services are healthy and accepting connections.
-- **Permissions:** Local network check (`--allow-network` for localhost).
-- **Rush Integration:** Prerequisite runner for `e2e` and `visual` tools.
-- **Vibecoder Value:** Prevents test runners from failing prematurely before local dev servers finish starting up.
+from __future__ import annotations
 
-#### 16. Newman / Portman (`newman`)
-- **Domain:** Command-line collection runner for Postman API collections, validating REST endpoints and HTTP status contracts.
-- **License / Ecosystem:** Apache-2.0 (Node.js).
-- **Target Markers:** `*.postman_collection.json`, `postman/`.
-- **Safe CLI Invocation:**
-  ```bash
-  newman run collection.json --reporters json --reporter-json-export report.json
-  ```
-- **Output & Machine Format:** JSON report detailing test assertion pass/fail rates, response times, and payload validations.
-- **Permissions:** Requires `--allow-network` for localhost testing.
-- **Rush Integration:** Engine under `contract` and `test` tools.
-- **Vibecoder Value:** Verifies that all backend API routes return expected status codes and payloads.
+import re
+from pathlib import Path
 
-#### 17. NPM-Check-Updates (`ncu`)
-- **Domain:** Upgrades dependencies in `package.json` while detecting major breaking version bumps.
-- **License / Ecosystem:** Apache-2.0 (Node.js).
-- **Target Markers:** `package.json`.
-- **Safe CLI Invocation:**
-  ```bash
-  npx npm-check-updates --format json --error-level 1
-  ```
-- **Output & Machine Format:** JSON mapping of outdated dependencies to their latest compatible and major versions.
-- **Permissions:** Offline cached mode or `--allow-network` for registry checks.
-- **Rush Integration:** Engine under `sbom` / `security` tools.
-- **Vibecoder Value:** Keeps dependencies fresh and prevents agents from relying on deprecated packages.
+ENV_LINE_REGEX = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+class EnvSyncValidator:
+    """Ensures all environment variables referenced in code exist in .env.example."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+        self.example_file = self.repo_root / ".env.example"
+
+    def get_declared_env_vars(self) -> set[str]:
+        if not self.example_file.exists():
+            return set()
+        declared = set()
+        for line in self.example_file.read_text(encoding="utf-8").splitlines():
+            m = ENV_LINE_REGEX.match(line)
+            if m:
+                declared.add(m.group(1))
+        return declared
+
+    def check_file_references(self, code_file: Path) -> list[str]:
+        if not code_file.exists():
+            return []
+        text = code_file.read_text(encoding="utf-8", errors="replace")
+        declared = self.get_declared_env_vars()
+
+        env_pattern = r"(?:os\.environ\.get|os\.getenv)\s*\(\s*['\"]" + r"([A-Z0-9_]+)['\"]"
+        used_vars = set(re.findall(env_pattern, text))
+        used_vars.update(re.findall(r"process\.env\.([A-Z0-9_]+)", text))
+
+        missing = []
+        for v in sorted(used_vars):
+            if v not in declared:
+                missing.append(f"{code_file.name}: Referenced env var '{v}' missing from .env.example.")
+        return missing
+```
 
 ---
 
-### Category 5: Web Assets, Font Optimization & Critical Performance
+### 4.4 `src/rush/vibecoder/db_schema_drift.py`
 
-#### 18. Squoosh-CLI / Sharp-CLI (`squoosh-cli`)
-- **Domain:** High-performance image optimizer converting PNG/JPEG assets into modern WebP and AVIF formats with bounded quality compression.
-- **License / Ecosystem:** Apache-2.0 (Node.js / Rust / Wasm).
-- **Target Markers:** `public/images/`, `src/assets/*.png`, `src/assets/*.jpg`.
-- **Safe CLI Invocation:**
-  ```bash
-  squoosh-cli --webp auto --output-dir ./dist/optimized ./src/assets/*.png
-  ```
-- **Output & Machine Format:** JSON metrics reporting compressed file sizes and byte reduction percentages (often 60-80% savings).
-- **Permissions:** Offline; `--allow-artifact-write` for asset optimization.
-- **Rush Integration:** Engine under new `assets` tool.
-- **Vibecoder Value:** Prevents huge 5MB uncompressed PNG screenshots from slowing down the landing page.
+```python
+"""SQL schema to ORM entity drift detector."""
 
-#### 19. Critical (`critical`)
-- **Domain:** Extracts above-the-fold CSS and inlines it into HTML pages to achieve instant First Contentful Paint (FCP).
-- **License / Ecosystem:** MIT (Node.js).
-- **Target Markers:** `dist/index.html`, `dist/app.css`.
-- **Safe CLI Invocation:**
-  ```bash
-  critical dist/index.html --base dist --inline --extract
-  ```
-- **Output & Machine Format:** Emits optimized HTML with inlined critical CSS styles and deferred stylesheet loading.
-- **Permissions:** Offline; `--allow-artifact-write` required for file rewriting.
-- **Rush Integration:** Engine under `format` / `assets` tools.
-- **Vibecoder Value:** Automatically gives the application a 95+ Google PageSpeed score.
+from __future__ import annotations
 
-#### 20. Font-Spider (`font-spider`)
-- **Domain:** Smart web font compressor that scans HTML/CSS and strips unneeded glyphs from heavy font files (`.woff2`, `.ttf`).
-- **License / Ecosystem:** MIT (Node.js).
-- **Target Markers:** `public/fonts/`, `src/fonts/`, `dist/*.html`.
-- **Safe CLI Invocation:**
-  ```bash
-  font-spider dist/*.html --info
-  ```
-- **Output & Machine Format:** JSON report detailing extracted font glyphs and pruned font file byte reductions.
-- **Permissions:** Offline; `--allow-artifact-write` required for in-place compression.
-- **Rush Integration:** Engine under `assets` tool.
-- **Vibecoder Value:** Shrinks 2MB custom web fonts down to 20KB for fast mobile loading.
+import re
+from pathlib import Path
 
-#### 21. Broken-Link-Checker (`blc`)
-- **Domain:** Deep recursive link checker validating internal anchor tags, redirects, and relative URLs across web applications.
-- **License / Ecosystem:** MIT (Node.js).
-- **Target Markers:** `http://localhost:3000`, `dist/`.
-- **Safe CLI Invocation:**
-  ```bash
-  blc http://localhost:3000 -ro --json
-  ```
-- **Output & Machine Format:** JSON stream detailing crawled URLs, internal link health, and broken anchor tags.
-- **Permissions:** Requires `--allow-network` for localhost scanning.
-- **Rush Integration:** Engine under `e2e` / `markdown` tools.
-- **Vibecoder Value:** Catches broken navigation links before launching to users.
 
-#### 22. PageSpeed-CLI (`pagespeed-insights`)
-- **Domain:** Google PageSpeed Insights CLI auditing real-user performance, First Contentful Paint, and Core Web Vitals.
-- **License / Ecosystem:** Apache-2.0 (Node.js).
-- **Target Markers:** Staging URL, production URL.
-- **Safe CLI Invocation:**
-  ```bash
-  pagespeed-insights https://staging.myapp.com --format json
-  ```
-- **Output & Machine Format:** JSON report detailing mobile and desktop performance scores (0–100) and specific optimization opportunities.
-- **Permissions:** Requires `--allow-network` and `--allow-slow`.
-- **Rush Integration:** Engine under `visual` / `performance` tools.
-- **Vibecoder Value:** Measures real-world web performance before publicly announcing a product launch.
+class DatabaseSchemaDriftDetector:
+    """Detects discrepancies between SQLAlchemy model definitions and migration SQL files."""
+
+    @staticmethod
+    def extract_model_table_names(models_file: Path) -> set[str]:
+        if not models_file.exists():
+            return set()
+        text = models_file.read_text(encoding="utf-8", errors="replace")
+        table_pattern = r"__tablename__\s*=\s*['\"]" + r"([a-zA-Z0-9_]+)['\"]"
+        return set(re.findall(table_pattern, text))
+
+    @staticmethod
+    def extract_sql_table_names(sql_file: Path) -> set[str]:
+        if not sql_file.exists():
+            return set()
+        text = sql_file.read_text(encoding="utf-8", errors="replace")
+        sql_pattern = r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?" + r"([a-zA-Z0-9_]+)"
+        return set(re.findall(sql_pattern, text))
+
+    @classmethod
+    def check_drift(cls, models_file: Path, sql_file: Path) -> list[str]:
+        models = cls.extract_model_table_names(models_file)
+        sqls = cls.extract_sql_table_names(sql_file)
+
+        drift = []
+        for m in sorted(models - sqls):
+            drift.append(f"Model table '{m}' is missing from SQL migration.")
+        for s in sorted(sqls - models):
+            drift.append(f"SQL table '{s}' has no corresponding SQLAlchemy model.")
+        return drift
+```
 
 ---
 
-## 3. Unique Vibecoder Master Tool Matrix
+### 4.5 `src/rush/vibecoder/pkg_lock_guard.py`
 
-| # | Tool Name | Vibecoder Problem Solved | Primary Command | Default Mode | Permissions Needed |
-|---|---|---|---|---|---|
-| 1 | **PyClean** | Bytecode & cache junk | `rush clean` | Dry-run | `--allow-artifact-write` |
-| 2 | **FawltyDeps** | Undeclared & unused Python deps | `rush dead` | Offline | None |
-| 3 | **Ts-prune** | Unused TypeScript exports | `rush dead` | Offline | None |
-| 4 | **Deadfinder** | Dead web routes & 404s | `rush e2e` | Live local | `--allow-network` |
-| 5 | **Detect-Secrets** | Baseline-managed secrets | `rush secrets` | Offline | None |
-| 6 | **Diff-Cover** | Diff-only test coverage | `rush coverage` | Offline | None |
-| 7 | **Git-Guard** | Uncommitted & forgotten files | `rush ci` | Offline | None |
-| 8 | **Semantic-Release**| Automatic version bumps | `rush release` | Offline dry-run | None |
-| 9 | **PR-Agent** | Local PR & diff summaries | `rush review` | Offline | None |
-| 10 | **Readability-CLI** | Dense compound AI sentences | `rush humanize` | Offline | None |
-| 11 | **RedPen** | Style guide compliance | `rush markdown` | Offline | None |
-| 12 | **No-Jargon** | Corporate buzzwords & fluff | `rush humanize` | Offline | None |
-| 13 | **Markdown-Unfluff**| AI bullet-point salad | `rush markdown` | Offline | None |
-| 14 | **Safe-Env** | Default dev secrets in prod | `rush env` | Offline | None |
-| 15 | **Wait-On** | Premature test runner failures | `rush test` | Local port poll | `--allow-network` |
-| 16 | **Newman** | API collection validation | `rush contract` | Live local | `--allow-network` |
-| 17 | **NPM-Check-Updates**| Deprecated & stale deps | `rush sbom` | Offline / Cache | None |
-| 18 | **Squoosh-CLI** | Massive uncompressed images | `rush assets` | Offline | `--allow-artifact-write` |
-| 19 | **Critical** | Slow First Contentful Paint | `rush format` | Offline | `--allow-artifact-write` |
-| 20 | **Font-Spider** | Bloated custom web fonts | `rush assets` | Offline | `--allow-artifact-write` |
-| 21 | **Broken-Link-Check**| Broken internal anchors & links| `rush e2e` | Live local | `--allow-network` |
-| 22 | **PageSpeed-CLI** | Real-world Core Web Vitals | `rush performance` | Remote audit | `--allow-network`, `--allow-slow` |
+```python
+"""Polyglot package and lockfile synchronization verifier."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+
+class PackageLockfileGuard:
+    """Verifies that dependency manifest files (pyproject.toml, package.json) match their lockfiles."""
+
+    @staticmethod
+    def verify_node_lockfile(repo_root: Path) -> tuple[bool, str | None]:
+        pkg_json = repo_root / "package.json"
+        pkg_lock = repo_root / "package-lock.json"
+        yarn_lock = repo_root / "yarn.lock"
+        pnpm_lock = repo_root / "pnpm-lock.yaml"
+
+        if pkg_json.exists():
+            if not (pkg_lock.exists() or yarn_lock.exists() or pnpm_lock.exists()):
+                return False, "package.json exists but no lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml) found."
+        return True, None
+
+    @staticmethod
+    def verify_python_lockfile(repo_root: Path) -> tuple[bool, str | None]:
+        pyproject = repo_root / "pyproject.toml"
+        uv_lock = repo_root / "uv.lock"
+        poetry_lock = repo_root / "poetry.lock"
+
+        if pyproject.exists():
+            if not (uv_lock.exists() or poetry_lock.exists()):
+                return False, "pyproject.toml exists but no lockfile (uv.lock, poetry.lock) found."
+        return True, None
+```
 
 ---
 
-## 4. The Complete Vibecoder Quality Guardrails Workflow
+### 4.6 `src/rush/vibecoder/prompt_history.py`
 
+```python
+"""Prompt evolution tracking and semantic diff generator."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+class VibePromptHistoryLogger:
+    """Records prompt iterations and associates them with modified file hashes."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+        self.history_file = self.repo_root / ".rush" / "vibe_prompts.json"
+
+    def record_prompt(self, prompt_text: str, affected_files: list[str]) -> None:
+        self.history_file.parent.mkdir(parents=True, exist_ok=True)
+        history = []
+        if self.history_file.exists():
+            try:
+                history = json.loads(self.history_file.read_text(encoding="utf-8"))
+            except Exception:
+                history = []
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "prompt": prompt_text,
+            "affected_files": affected_files,
+        }
+        history.append(entry)
+        self.history_file.write_text(json.dumps(history[-100:], indent=2), encoding="utf-8")
+
+
+class AstFunctionDocstringAuditor(ast.NodeVisitor):
+    """Audits Python functions for missing docstrings and untyped parameters."""
+
+    def __init__(self, file_path: str) -> None:
+        self.file_path = file_path
+        self.findings: list[str] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if not node.name.startswith("_"):
+            doc = ast.get_docstring(node)
+            if not doc:
+                self.findings.append(f"{self.file_path}:{node.lineno}: Public function '{node.name}' missing docstring.")
+            for arg in node.args.args:
+                if arg.arg != "self" and arg.annotation is None:
+                    self.findings.append(f"{self.file_path}:{node.lineno}: Argument '{arg.arg}' in '{node.name}' missing type annotation.")
+        self.generic_visit(node)
+
+
+class VibeCoderTelemetryNDJSONEmitter:
+    """Emits structured NDJSON diagnostic telemetry to sys.stderr for vibe-coder audits."""
+
+    @staticmethod
+    def emit_vibe_event(event_name: str, payload: dict) -> str:
+        import json
+        import sys
+        from datetime import datetime, timezone
+
+        event = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "toolkit": "vibecoder",
+            "event": event_name,
+            "payload": payload,
+        }
+        line = json.dumps(event)
+        sys.stderr.write(line + "\n")
+        return line
+
+
+class VibeCoderConfigLoader:
+    """Loads and validates [vibecoder] settings from rush.toml."""
+
+    @staticmethod
+    def load_config(repo_root: Path) -> dict:
+        toml_path = repo_root / "rush.toml"
+        if not toml_path.exists():
+            return {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05}
+        try:
+            import tomllib
+            data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            return data.get("vibecoder", {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05})
+        except Exception:
+            return {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05}
+```
+
+---
+
+### 4.7 `src/rush/vibecoder/loop_starvation.py`
+
+```python
+"""Async event loop blocking call detector."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+BLOCKING_CALLS = {
+    "time.sleep",
+    "requests.get",
+    "requests.post",
+    "urllib.request.urlopen",
+    "subprocess.run",
+}
+
+
+class AsyncEventLoopLinter(ast.NodeVisitor):
+    """Detects synchronous blocking I/O calls inside async coroutine functions."""
+
+    def __init__(self, file_path: str) -> None:
+        self.file_path = file_path
+        self.in_async_def = False
+        self.findings: list[str] = []
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        prev = self.in_async_def
+        self.in_async_def = True
+        self.generic_visit(node)
+        self.in_async_def = prev
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if self.in_async_def:
+            call_name = self._resolve_call_name(node.func)
+            if call_name in BLOCKING_CALLS:
+                self.findings.append(
+                    f"{self.file_path}:{node.lineno}: Blocking call '{call_name}' inside async function."
+                )
+        self.generic_visit(node)
+
+    def _resolve_call_name(self, node: ast.AST) -> str:
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return f"{node.value.id}.{node.attr}"
+        if isinstance(node, ast.Name):
+            return node.id
+        return ""
+```
+
+---
+
+### 4.8 `src/rush/vibecoder/feedback_loop.py`
+
+```python
+"""Real-time sub-second developer feedback supervisor."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from rush.vibecoder.env_validator import EnvSyncValidator
+from rush.vibecoder.loop_starvation import AsyncEventLoopLinter
+
+
+@dataclass(frozen=True)
+class FeedbackIterationResult:
+    is_clean: bool
+    issues: list[str]
+    duration_ms: float
+
+
+class VibeFeedbackSupervisor:
+    """Supervises prompt execution loops and returns immediate remediation suggestions."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+
+    def evaluate_recent_file(self, file_path: Path) -> FeedbackIterationResult:
+        import time
+        import ast
+
+        start = time.perf_counter()
+        issues = []
+
+        # 1. Check syntax
+        if file_path.suffix == ".py" and file_path.exists():
+            try:
+                tree = ast.parse(file_path.read_text(encoding="utf-8"))
+                # 2. Check async blocking
+                linter = AsyncEventLoopLinter(file_path.name)
+                linter.visit(tree)
+                issues.extend(linter.findings)
+            except SyntaxError as e:
+                issues.append(f"{file_path.name}:{e.lineno}: SyntaxError: {e.msg}")
+
+        # 3. Check env vars
+        env_val = EnvSyncValidator(self.repo_root)
+        env_issues = env_val.check_file_references(file_path)
+        issues.extend(env_issues)
+
+        dur_ms = round((time.perf_counter() - start) * 1000, 2)
+        return FeedbackIterationResult(is_clean=len(issues) == 0, issues=issues, duration_ms=dur_ms)
+```
+
+---
+
+### 4.9 `src/rush/cli.py` (Registration for `rush vibecoder`)
+
+```python
+import click
+from pathlib import Path
+from rush.vibecoder.orchestrator import VibeCoderOrchestrator
+from rush.vibecoder.feedback_loop import VibeFeedbackSupervisor
+from rush.vibecoder.pkg_lock_guard import PackageLockfileGuard
+
+@click.group(name="vibecoder")
+def vibecoder_group():
+    """Unified vibe-coding quality, synchronization, and remediation toolkit."""
+    pass
+
+@vibecoder_group.command(name="audit")
+def vibecoder_audit_cmd():
+    """Run comprehensive 22-tool health audit on the repository."""
+    orch = VibeCoderOrchestrator(Path.cwd())
+    summary = orch.run_full_audit()
+
+    click.echo(f"🛡️ Vibe-Coder Health Status: [{summary.status}] (Score: {summary.composite_health_score}%)")
+    click.echo(f"  - Dead Code Items:    {summary.dead_code_count}")
+    click.echo(f"  - AI Slop Findings:   {summary.slop_findings_count}")
+    click.echo(f"  - Type Drift Items:   {summary.type_drift_count}")
+    click.echo(f"  - Secret Findings:    {summary.secret_findings_count}")
+
+@vibecoder_group.command(name="check")
+@click.argument("file_path", type=click.Path(exists=True))
+def vibecoder_check_cmd(file_path: str):
+    """Run sub-second feedback evaluation on a single recently modified file."""
+    sup = VibeFeedbackSupervisor(Path.cwd())
+    res = sup.evaluate_recent_file(Path(file_path))
+
+    if res.is_clean:
+        click.echo(f"[PASS] File '{file_path}' is clean ({res.duration_ms}ms).")
+    else:
+        click.echo(f"[FAIL] Found {len(res.issues)} issue(s) in '{file_path}' ({res.duration_ms}ms):", err=True)
+        for issue in res.issues:
+            click.echo(f"  - {issue}", err=True)
+        raise SystemExit(1)
+
+@vibecoder_group.command(name="lock-check")
+def vibecoder_lock_cmd():
+    """Verify package manifest and lockfile parity."""
+    repo = Path.cwd()
+    ok_n, err_n = PackageLockfileGuard.verify_node_lockfile(repo)
+    if not ok_n:
+        click.echo(f"[FAIL] Node: {err_n}", err=True)
+
+    ok_p, err_p = PackageLockfileGuard.verify_python_lockfile(repo)
+    if not ok_p:
+        click.echo(f"[FAIL] Python: {err_p}", err=True)
+
+    if ok_n and ok_p:
+        click.echo("[PASS] All package manifests and lockfiles are synchronized.")
+    else:
+        raise SystemExit(1)
+```
+
+---
+
+### 4.10 `src/rush/mcp_server.py` (FastMCP Server Integration)
+
+```python
+"""FastMCP tool endpoints for vibecoder toolkit orchestration."""
+
+from mcp.server.fastmcp import FastMCP
+from pathlib import Path
+import json
+from rush.vibecoder.orchestrator import VibeCoderOrchestrator
+from rush.vibecoder.feedback_loop import VibeFeedbackSupervisor
+
+mcp = FastMCP("rush")
+
+@mcp.tool(name="rush_vibecoder_audit", description="Run comprehensive 22-tool quality and hygiene audit for vibe-coding.")
+def rush_vibecoder_audit() -> str:
+    orch = VibeCoderOrchestrator(Path.cwd())
+    res = orch.run_full_audit()
+    return json.dumps({
+        "status": res.status,
+        "score": res.composite_health_score,
+        "dead_code": res.dead_code_count,
+        "slop_findings": res.slop_findings_count,
+        "type_drift": res.type_drift_count,
+        "secrets": res.secret_findings_count,
+    }, indent=2)
+
+@mcp.tool(name="rush_vibecoder_check", description="Run sub-second validation on a single modified source file.")
+def rush_vibecoder_check(file_path: str) -> str:
+    sup = VibeFeedbackSupervisor(Path.cwd())
+    res = sup.evaluate_recent_file(Path(file_path))
+    return json.dumps({"is_clean": res.is_clean, "issues": res.issues, "duration_ms": res.duration_ms}, indent=2)
+```
+
+---
+
+## 5. Complete Test-Driven Development (TDD) Test Suite
+
+### 5.1 `tests/test_vibecoder_toolkit.py`
+
+```python
+"""Comprehensive test suite for VibeCoderOrchestrator, AstRouteCleaner, EnvSyncValidator, DatabaseSchemaDriftDetector, PackageLockfileGuard, VibePromptHistoryLogger, AsyncEventLoopLinter, and VibeFeedbackSupervisor."""
+
+from pathlib import Path
+import ast
+import pytest
+from rush.vibecoder.orchestrator import VibeCoderOrchestrator
+from rush.vibecoder.ast_route_cleaner import AstRouteCleaner
+from rush.vibecoder.env_validator import EnvSyncValidator
+from rush.vibecoder.db_schema_drift import DatabaseSchemaDriftDetector
+from rush.vibecoder.pkg_lock_guard import PackageLockfileGuard
+from rush.vibecoder.prompt_history import VibePromptHistoryLogger
+from rush.vibecoder.loop_starvation import AsyncEventLoopLinter
+from rush.vibecoder.feedback_loop import VibeFeedbackSupervisor
+
+
+def test_vibecoder_orchestrator(tmp_path: Path):
+    orch = VibeCoderOrchestrator(tmp_path)
+    summary = orch.run_full_audit()
+    assert summary.composite_health_score == 100.0
+    assert summary.status == "HEALTHY"
+
+
+def test_ast_route_cleaner(tmp_path: Path):
+    f = tmp_path / "api.py"
+    f.write_text("""
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/users")
+def get_users():
+    return []
+
+@app.post("/items")
+def create_item():
+    return {}
+""", encoding="utf-8")
+
+    routes = AstRouteCleaner.extract_routes(f)
+    assert len(routes) == 2
+    assert routes[0] == ("GET", "/users", 6)
+    assert routes[1] == ("POST", "/items", 10)
+
+
+def test_env_sync_validator(tmp_path: Path):
+    env_ex = tmp_path / ".env.example"
+    env_ex.write_text("DATABASE_URL=postgres://localhost\nPORT=8000\n", encoding="utf-8")
+
+    code_f = tmp_path / "app.py"
+    code_f.write_text("""
+import os
+db = os.environ.get("DATABASE_URL")
+secret = os.getenv("UNDECLARED_SECRET")
+""", encoding="utf-8")
+
+    val = EnvSyncValidator(tmp_path)
+    missing = val.check_file_references(code_f)
+    assert len(missing) == 1
+    assert "UNDECLARED_SECRET" in missing[0]
+
+
+def test_db_schema_drift(tmp_path: Path):
+    models_f = tmp_path / "models.py"
+    models_f.write_text("""
+class User:
+    __tablename__ = "users"
+
+class Order:
+    __tablename__ = "orders"
+""", encoding="utf-8")
+
+    sql_f = tmp_path / "init.sql"
+    sql_f.write_text("""
+CREATE TABLE users (id INT);
+CREATE TABLE products (id INT);
+""", encoding="utf-8")
+
+    drift = DatabaseSchemaDriftDetector.check_drift(models_f, sql_f)
+    assert len(drift) == 2
+    assert any("orders" in d for d in drift)
+    assert any("products" in d for d in drift)
+
+
+def test_package_lockfile_guard(tmp_path: Path):
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    ok, err = PackageLockfileGuard.verify_node_lockfile(tmp_path)
+    assert ok is False
+    assert "no lockfile" in err
+
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+    ok_fixed, _ = PackageLockfileGuard.verify_node_lockfile(tmp_path)
+    assert ok_fixed is True
+
+
+def test_prompt_history_logger(tmp_path: Path):
+    logger = VibePromptHistoryLogger(tmp_path)
+    logger.record_prompt("Add user auth endpoint", ["src/auth.py"])
+    assert (tmp_path / ".rush" / "vibe_prompts.json").exists()
+
+
+def test_async_event_loop_linter():
+    code = """
+import time
+
+async def fetch_data():
+    time.sleep(5)  # blocking
+    return 42
+
+def normal_sync():
+    time.sleep(1)  # allowed
+"""
+    tree = ast.parse(code)
+    linter = AsyncEventLoopLinter("async_test.py")
+    linter.visit(tree)
+
+    assert len(linter.findings) == 1
+    assert "Blocking call 'time.sleep'" in linter.findings[0]
+
+
+def test_vibe_feedback_supervisor(tmp_path: Path):
+    sup = VibeFeedbackSupervisor(tmp_path)
+
+    clean_py = tmp_path / "clean.py"
+    clean_py.write_text("def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
+
+    res = sup.evaluate_recent_file(clean_py)
+    assert res.is_clean is True
+    assert res.duration_ms >= 0.0
+    assert len(res.issues) == 0
+
+
+def test_ast_docstring_auditor():
+    from rush.vibecoder.prompt_history import AstFunctionDocstringAuditor
+    code = """
+def undocumented(x):
+    return x
+"""
+    tree = ast.parse(code)
+    auditor = AstFunctionDocstringAuditor("test.py")
+    auditor.visit(tree)
+    assert len(auditor.findings) >= 2
+
+
+def test_vibe_telemetry_emitter(capsys):
+    from rush.vibecoder.prompt_history import VibeCoderTelemetryNDJSONEmitter
+    line = VibeCoderTelemetryNDJSONEmitter.emit_vibe_event("audit_pass", {"health": 98.0})
+    assert '"event": "audit_pass"' in line
+    captured = capsys.readouterr()
+    assert '"health": 98.0' in captured.err
+
+
+def test_vibe_config_loader(tmp_path: Path):
+    from rush.vibecoder.prompt_history import VibeCoderConfigLoader
+    cfg = VibeCoderConfigLoader.load_config(tmp_path)
+    assert cfg["enabled"] is True
+    assert cfg["strict_types"] is True
+```
+
+---
+
+## 6. Structured Error Logging & Diagnostics Contract
+
+All VibeCoder Toolkit diagnostics MUST be emitted to `sys.stderr` formatted as structured NDJSON.
+
+```json
+{"timestamp": "2026-08-21T10:35:00.100Z", "phase": "vibecoder", "tool": "rush_vibecoder", "event": "audit_completed", "score": 98.5, "status": "HEALTHY"}
+{"timestamp": "2026-08-21T10:35:01.200Z", "phase": "vibecoder", "tool": "rush_vibecoder", "event": "blocking_async_detected", "file": "src/api/routes.py", "line": 45}
+```
+
+---
+
+## 7. Semantic Drift Review, Backlog Update & Documentation Synchronization
+
+### 7.1 Master Backlog Synchronization Protocol
+Upon completion of VibeCoder Toolkit implementation tasks:
+1. Open [`docs/developer/backlog.md`](file:///C:/Users/james/developer/rush-cli/docs/developer/backlog.md).
+2. Locate **VibeCoder Toolkit: Unified 22-Tool Pipeline**.
+3. Update Status from `Ready` to `Complete`.
+4. Record implementation commit hash and verification summary.
+
+### 7.2 Specific Documentation Updates Across `/docs` (136+ Files Tree)
+
+The following specific documents across the `/docs` tree must be created or updated upon VibeCoder Toolkit completion:
+
+#### A. User-Facing Documentation
+- **[`docs/USER_GUIDE.md`](file:///C:/Users/james/developer/rush-cli/docs/USER_GUIDE.md)**: Add "Vibe-Coding with Rush: Sub-Second AI Engineering Safeguards" guide.
+- **[`docs/CLI_REFERENCE.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_REFERENCE.md)**: Document `rush vibecoder run`, `rush vibecoder watch`, `rush vibecoder audit` (flags: `--strict-types`, `--fix-safe`, `--sub-second`).
+- **[`docs/CLI_COOKBOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_COOKBOOK.md)**: Add recipes for integrating Rush with Cursor, Windsurf, and Claude Code during rapid prototyping sessions.
+- **[`docs/RECIPE_BOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/RECIPE_BOOK.md)**: Add automated pre-save feedback loop recipes.
+- **[`docs/EXAMPLES.md`](file:///C:/Users/james/developer/rush-cli/docs/EXAMPLES.md)**: Show example vibe-coding session reports and before/after cleanup diffs.
+- **[`docs/TUTORIALS.md`](file:///C:/Users/james/developer/rush-cli/docs/TUTORIALS.md)**: Add step-by-step tutorial on vibe-coding a full-stack SaaS with Rush guardrails active.
+- **[`docs/TROUBLESHOOTING.md`](file:///C:/Users/james/developer/rush-cli/docs/TROUBLESHOOTING.md)**: Add entries for loop starvation warnings, unhandled promise rejections, and type-drift recovery.
+- **[`docs/FAQ.md`](file:///C:/Users/james/developer/rush-cli/docs/FAQ.md)**: Explain how VibeCoder orchestrates all 37 tools in parallel without slowing down agent code generation.
+
+#### B. MCP Server & Agent Protocol Documentation
+- **[`docs/MCP.md`](file:///C:/Users/james/developer/rush-cli/docs/MCP.md)**: Document `rush_vibecoder_run` and `rush_vibecoder_audit` FastMCP tool endpoints.
+- **[`docs/MCP_REFERENCE.md`](file:///C:/Users/james/developer/rush-cli/docs/MCP_REFERENCE.md)**: Document VibeCoder aggregate finding and recommendation JSON response models.
+
+#### C. Catalog & Configuration Documentation
+- **[`docs/TOOL_CATALOG.md`](file:///C:/Users/james/developer/rush-cli/docs/TOOL_CATALOG.md)**: Register `vibecoder` tool in Developer Experience & AI Tooling category.
+- **[`docs/CONFIGURATION.md`](file:///C:/Users/james/developer/rush-cli/docs/CONFIGURATION.md)** & **[`docs/CONFIG_SCHEMA.md`](file:///C:/Users/james/developer/rush-cli/docs/CONFIG_SCHEMA.md)**: Document `[vibecoder]` configuration table (`enabled_tools`, `latency_target_ms`, `auto_remediate_safe`).
+
+#### D. Architecture & Developer Documentation
+- **[`docs/ARCHITECTURE.md`](file:///C:/Users/james/developer/rush-cli/docs/ARCHITECTURE.md)**: Document 22-tool unified orchestrator, asynchronous supervisor engine, and incremental dependency analysis pipeline.
+- **[`docs/DEVELOPER_GUIDE.md`](file:///C:/Users/james/developer/rush-cli/docs/DEVELOPER_GUIDE.md)**: Add guide for registering new analysis passes into the VibeCoder pipeline.
+- **[`docs/CI_INTEGRATION.md`](file:///C:/Users/james/developer/rush-cli/docs/CI_INTEGRATION.md)**: Include CI workflow step for `rush vibecoder audit --strict-types`.
+- **[`docs/TESTING.md`](file:///C:/Users/james/developer/rush-cli/docs/TESTING.md)**: Document full-pipeline concurrency fixtures and AST verification tests.
+- **[`docs/tools/vibecoder.md`](file:///C:/Users/james/developer/rush-cli/docs/tools/vibecoder.md)**: Create dedicated reference documentation.
+
+### 7.3 Automated Documentation Parity Check
 ```bash
-# 1. Clean workspace and purge stale bytecode
-rush clean .
+.venv/Scripts/python.exe scripts/sync_docs.py --update
+.venv/Scripts/python.exe scripts/sync_docs.py --check
+```
 
-# 2. Audit dependencies for undeclared or unused packages
-rush dead .
+### 7.4 Ending Git Lifecycle Commands
+Execute these commands upon completing all phase tasks and verification checks:
+```bash
+# 1. Full verification gate
+.venv/Scripts/python.exe -m pytest tests/ -q
+.venv/Scripts/ruff.exe check src tests scripts
+.venv/Scripts/ruff.exe format src tests scripts
+.venv/Scripts/python.exe scripts/sync_docs.py --update
+.venv/Scripts/python.exe scripts/sync_docs.py --check
 
-# 3. Check diff-only test coverage on the latest changes
-rush coverage . --diff-only
+# 2. Stage & Commit
+git add src/ tests/ docs/
+git commit -m "feat(vibecoder): implement unified 22-tool execution pipeline and sub-second feedback loop"
 
-# 4. Check for default dev keys in production .env files
-rush env --strict .
-
-# 5. Humanize documentation and strip buzzwords
-rush humanize README.md docs/
-
-# 6. Optimize images, fonts, and assets
-rush assets ./public --allow-artifact-write
-
-# 7. Run comprehensive preflight verification before deployment
-rush preflight .
+# 3. Record commit SHA in docs/developer/backlog.md
+git rev-parse --short HEAD
 ```

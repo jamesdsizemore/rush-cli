@@ -27,5 +27,9 @@
 | 0023 | `src/rush/tools/consensus.py` | `test_consensus_bridge.py` | 40 |
 | 0024 | `src/rush/git/` (all tools) | `test_git_*.py` | 31–40 |
 | 0025 | `src/rush/ast_patcher.py` | `test_ast_slicer.py` | 35 |
+| 0026 | `src/rush/governance/` | `test_agent_governance.py` | 38 |
+| 0027 | `src/rush/hook/` | `test_git_hook_guard.py` | 39 |
+| 0028 | `src/rush/score/` | `test_quality_scorecard.py` | 40 |
+| 0029 | `src/rush/vibecoder/` | `test_vibecoder_toolkit.py` | VibeCoder Toolkit |
 
 The pre-existing `docs/ARCHITECTURE.md` draft is deliberately not modified by this implementation program; this index provides its required mapping without mixing unrelated draft content into Phase 00 scope.

@@ -1,230 +1,373 @@
-# Rush Innovation Plan: 16 Creative Git Intelligence & Multi-Agent Workflow Tools
+# Rush Git Intelligence Architecture Plan
 
-> **Document Version:** 1.0.0  
-> **Status:** Deep Research & Architectural Specification  
-> **Target Audience:** Autonomous Coding Agents (Claude Code, OpenAI Codex, Antigravity, DeepSeek), Full-Stack Developers, Vibe-Coders, and Engineering Leads  
-> **Core Contract:** Stdio FastMCP JSON-RPC, stderr NDJSON diagnostics, 100% offline, zero history rewrites without explicit user flags, zero-trust repository safety.
+> **Document Version:** 2.0.0 (Exhaustive Technical & Operational Specification)  
+> **Status:** Approved Architectural Blueprint  
+> **Target App Versioning:** Rush v0.2.0 → v1.0.0  
+> **Target Audience:** Autonomous Coding Agents, Git Infrastructure Engineers, DevOps Specialists & Lead Maintainers  
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety, zero unneeded runtime bloat.  
+> **Subprocess Isolation:** `stdin=DEVNULL`, `shell=False`, anti-shadowing verification, automated secret redaction (`[REDACTED]`).
 
 ---
 
-## 1. Executive Summary: Why Git-Native Intelligence is Critical for Agentic Coding
+## 1. Executive Summary & The Need for Native Git Intelligence
 
-Git is the universal ledger of software engineering. However, the rise of autonomous coding agents and rapid vibe-coding has introduced unprecedented strain on traditional Git workflows:
+Modern software repositories contain rich historical telemetry—commit churn, bug recurrence patterns, co-change coupling, branch divergence, and author velocity. However, autonomous coding agents (Claude Code, OpenAI Codex, Antigravity, DeepSeek) interact with Git in a primitive, brittle manner:
+1. **Blindness to Historical Defect Hotspots**: Agents modify complex, high-churn files without recognizing that these modules account for 80% of historical production regressions.
+2. **Context-Heavy Git Dumps**: Running `git log` or `git diff` produces 10,000+ unparsed lines that flood agent context windows and displace conversation memory.
+3. **Slow, Destructive Conflict Resolution**: Standard text-based merge conflicts stall agents and risk corrupted source files when resolved naively.
+4. **Manual Bisect Overhead**: Pinpointing the exact commit that introduced a test failure or performance regression requires tedious manual bisect workflows.
+5. **stdio Stream Pollution**: External Git visualization scripts printing ANSI graphs to stdout corrupt FastMCP JSON-RPC communication channels.
 
-1. **Working Tree Thrashing & Multi-Agent Collisions**: Multiple parallel agents working on the same repository clobber each other's uncommitted files, lock working directories, and produce corrupted states.
-2. **Commit Message Degradation**: AI agents generate generic, unhelpful commit summaries (`"fix bugs"`, `"update files"`) that destroy Git history readability and bisectability.
-3. **Ghost Regressions & Painful Bisects**: When an agent breaks a test or introduces a performance regression during a multi-turn session, humans struggle to trace which specific intermediate commit caused the failure.
-4. **Historical Leak Exposure**: Accidental secret commitments or giant binary blob commits remain trapped in Git reflog and packfile history even after the file is "deleted" in working tree.
-5. **Merge Conflict Paralysis**: Agents and developers get stuck on trivial structural line collisions (e.g., two branches appending independent imports or functions).
-6. **Scope Creep & Unreviewable PRs**: Agents frequently create massive 2,000-line diffs spanning unrelated architectural layers, overwhelming human reviewers.
-
-To solve these challenges, Rush introduces a creative suite of **16 Git-Native Intelligence & Workflow Tools** categorized across 5 architectural domains:
+Rush addresses these limitations with a dedicated, deterministic **Git Intelligence Engine** featuring 16 native FastMCP tools, automated worktree farms, automated bisect loops, temporal coupling detectors, and 3-way AST merge resolvers.
 
 ```mermaid
 flowchart TD
-  subgraph AgentsAndDevs["Autonomous Agents & Vibe-Coders"]
-    Agents["Coding Agents (Claude Code / Codex / AGY / DeepSeek)"]
-    Devs["Developers & Vibe-Coders"]
+  subgraph LocalGitRepo["Local Git Repository (.git)"]
+    GitLogs["Commit History & Numstat Logs"]
+    GitIndex["Staged Index & Working Tree"]
+    GitBranches["Branches & Remote Tracking Refs"]
   end
 
-  subgraph RushGitEngines["Rush Git Intelligence Platform"]
-    D1["1. Multi-Agent Worktrees & Ephemeral Sandboxes"]
-    D2["2. History Archaeology, Bisect & Historical Leaks"]
-    D3["3. Architectural Churn, Hotspots & Bus-Factor Radar"]
-    D4["4. AST Merge Conflict Resolution & Branch Health"]
-    D5["5. Smart Conventional Commits, PR Scope & Safe Reverts"]
+  subgraph RushGitEngine["Rush Git Intelligence Subsystem"]
+    ChurnEngine["1. Churn & Hotspots Extractor"]
+    CouplingEngine["2. Temporal Co-Change Analyzer"]
+    BisectEngine["3. Automated Subprocess Bisect Runner"]
+    WorktreeFarm["4. Ephemeral Worktree Farm Manager"]
+    MergeEngine["5. 3-Way AST Conflict Resolver"]
   end
 
-  subgraph SafeGitSurfaces["Zero-Trust Git Execution Surfaces"]
-    Worktrees[".rush/worktrees/ (Isolated Ephemeral Sandboxes)"]
-    ReflogAudit[".rush/git_audit.db (Reflog & History Index)"]
-    SafeExec["Subprocess run_subprocess(stdin=DEVNULL)"]
+  subgraph OutputSurfaces["FastMCP & CLI Integration"]
+    FastMCPTools["FastMCP Tool Endpoints (stdio JSON-RPC)"]
+    CLIGit["Click CLI: `rush git` Commands"]
+    TelemetryStream["sys.stderr (Structured NDJSON)"]
   end
 
-  AgentsAndDevs <==> RushGitEngines
-  RushGitEngines <--> SafeGitSurfaces
+  LocalGitRepo --> RushGitEngine
+  RushGitEngine --> FastMCPTools
+  RushGitEngine --> CLIGit
+  RushGitEngine -.-> TelemetryStream
 ```
 
 ---
 
-## 2. Comprehensive Catalog of 16 Creative Git Tools
+## 2. Table of Core Invariants & Defensive Controls
 
----
-
-### Domain 1: Multi-Agent Parallelism, Ephemeral Worktrees & Sandboxing
-
-#### 1. `rush git-worktree` (Multi-Agent Git Worktree Farm & Lifecycle Manager)
-- **Problem**: Multi-agent coding frameworks (e.g., Agent A implementing backend API routes while Agent B builds frontend React components) clash when executing in the same working tree, overwriting uncommitted files and locking the Git index.
-- **Innovation**: Programmatically creates, assigns, monitors, and cleans up isolated Git worktrees under `.rush/worktrees/<task-id>`.
-  - Automatically isolates dependencies (`node_modules`, `.venv`), symlinks build caches (`.rush/cache.db`), and checks out target branches or detached HEADs.
-  - Upon task completion, produces a structured JSON-RPC summary with active diffs, passing test logs, and ready-to-merge branch references.
-- **FastMCP Signature**: `rush_git_worktree_spawn(task_id: str, branch: str, base: str = "HEAD")` & `rush_git_worktree_cleanup(task_id: str)`
-- **CLI Command**: `rush git-worktree list | spawn <task-id> | clean --all`
-
-#### 2. `rush git-sandbox` / `rush git-try` (Zero-Risk Speculative Experiment Sandbox)
-- **Problem**: Vibe-coders and agents want to test risky, wide-ranging refactors (e.g. migrating from REST to GraphQL, or upgrading a major framework version) without dirtying their current workspace or losing uncommitted changes.
-- **Innovation**: Spawns an instant detached worktree sandbox in milliseconds, applies the speculative patch or agent instructions, executes `rush check` and test suites, calculates impact metrics (lines changed, performance delta, breaking changes), and offers an interactive human decision gate: `[Promote to Branch / Cherry-Pick / Discard]`.
-- **CLI Command**: `rush git-sandbox "migrate auth to OAuth2" --test`
-
-#### 3. `rush git-absorb` (Diff-to-Commit Fixup Router & Auto-Squasher)
-- **Problem**: During development, agents fix small typos, syntax errors, or test assertions across multiple files, resulting in messy chains of `"fix typo"`, `"fix test"`, `"address review"` commits that pollute history.
-- **Innovation**: Inspects uncommitted `git diff` against the current branch baseline, uses `git blame` to determine which historical commit in the branch originally introduced each modified line, and automatically generates `git commit --fixup <commit-sha>` operations.
-- **Safety Invariant**: Only generates fixup commits for commits that exist exclusively on the local feature branch (never modifies commits already pushed to upstream `main`).
-- **CLI Command**: `rush git-absorb [--dry-run | --auto-squash]`
-
----
-
-### Domain 2: History Archaeology, Automated Bisect & Historical Leak Defense
-
-#### 4. `rush git-bisect` (Autonomous Automated Test & Performance Bisector)
-- **Problem**: A test suddenly fails or benchmark latency regresses, but tracking down the culprit across 40 recent commits requires tedious manual `git bisect start/good/bad` orchestration.
-- **Innovation**: Fully autonomous bisect engine. Given a failing test target (e.g. `pytest tests/test_auth.py` or `rush check`), Rush automates the binary search across Git commit history:
-  - Checks out candidate commits in an isolated worktree.
-  - Executes the predicate test suite.
-  - Automatically records good/bad steps.
-  - Returns the exact offending commit SHA, author, commit message, timestamp, AST symbol diff, and PR link.
-- **FastMCP Signature**: `rush_git_bisect(target_test: str, good_sha: str, bad_sha: str = "HEAD")`
-- **CLI Command**: `rush git-bisect --test "pytest tests/test_auth.py -k test_jwt" --good v0.2.0`
-
-#### 5. `rush git-symbol-history` / `rush git-trace` (AST-Aware Symbol Evolution Tracker)
-- **Problem**: Standard `git log -L :func:file` is purely line-based and completely breaks when a function is renamed, moved across files, or refactored into a class method.
-- **Innovation**: Uses `graft` and Tree-Sitter AST parsing to track the semantic identity of a symbol (function, class, interface, endpoint) across file renames, module reorganizations, and cross-file refactors throughout Git history.
-- **FastMCP Signature**: `rush_git_trace_symbol(symbol: str, file: str, max_depth: int = 20)`
-- **CLI Command**: `rush git-trace "UserAuthService.login" src/auth/service.py`
-
-#### 6. `rush git-leak-history` (Deep Reflog & Historical Commit Tree Secret Scanner)
-- **Problem**: Standard secret linters only inspect the current working directory. Secrets accidentally committed 3 weeks ago and "deleted" in a later commit remain permanently in Git reflogs, tree objects, and `.git/objects/pack/`.
-- **Innovation**: Scans all historical commits, stashes, orphaned dangling trees, and reflogs for high-entropy secrets (AWS keys, OpenAI API keys, SSH private keys, GitHub PATs) and oversized binary packfile bloat (>10MB).
-- **Output**: Generates a zero-leak remediation plan with pinpointed commit SHAs and `git filter-repo` / BFG safe command recipes.
-- **CLI Command**: `rush git-leak-history [--all-branches | --include-stashes]`
-
----
-
-### Domain 3: Architectural Churn, Hotspots & Bus-Factor Radar
-
-#### 7. `rush git-hotspots` (High-Churn / High-Complexity Architectural Radar)
-- **Problem**: 80% of software defects occur in just 20% of the codebase—specifically files that experience high commit churn combined with high cyclomatic complexity and low test coverage.
-- **Innovation**: Computes a multi-dimensional risk matrix by cross-referencing:
-  1. Git commit churn velocity (modifications over the last 90 days).
-  2. AST cyclomatic complexity and structural nesting depth.
-  3. Test file proximity and test coverage deficit.
-- **Visual Output**: Generates an interactive terminal scatter plot and SVG quadrant chart highlighting architectural debt hotspots before they fail in production.
-- **CLI Command**: `rush git-hotspots [--days 90 | --top 10]`
-
-```text
-[Hotspot Risk Matrix]
-  High Complexity  │ [HIGH RISK] auth_service.py (42 commits, complexity 28)
-                   │             checkout_flow.ts (38 commits, complexity 24)
-                   │
-                   │ [LOW RISK]  db_models.py (3 commits, complexity 18)
-  Low Complexity   │             utils.py (5 commits, complexity 2)
-                   └────────────────────────────────────────────────────────
-                     Low Churn                        High Churn (Velocity)
+```
++-----------------------------------------------------------------------------+
+|                        GIT INTELLIGENCE INVARIANTS                          |
++-----------------------------------------------------------------------------+
+| 1. Non-Destructive Subprocess Execution: Never run destructive Git commands.|
+| 2. Worktree Isolation: Ephemeral test workspaces run in .rush/worktrees/.   |
+| 3. Subprocess Isolation: stdin=DEVNULL, shell=False, secret redaction.     |
+| 4. Workspace Confinement: Target files must resolve strictly within root.   |
+| 5. Stdio Purity: stdout is 100% JSON-RPC; stderr NDJSON diagnostics.        |
+| 6. Deterministic Local Operation: 100% offline, zero network telemetry.    |
++-----------------------------------------------------------------------------+
 ```
 
-#### 8. `rush git-bus-factor` / `rush git-ownership` (Knowledge Loss & Ownership Radar)
-- **Problem**: In team environments, engineering leads lose track of which developer has deep context on legacy modules, creating critical single-points-of-failure (Bus Factor = 1).
-- **Innovation**: Mines Git blame and commit author histories with recency decay weighting (e.g. commits from 2 weeks ago weigh more than commits from 2 years ago) to calculate module ownership percentages and flag at-risk orphan modules.
-- **CLI Command**: `rush git-bus-factor [--threshold 0.8]`
+---
 
-#### 9. `rush git-coupling` (Temporal Coupling & Hidden Co-Change Detector)
-- **Problem**: Certain files are logically coupled despite being in different architectural tiers (e.g., `backend/schemas/user.py` and `frontend/types/user.ts`, or `api/routes.py` and `docs/api.md`). When an agent modifies one but forgets the other, silent breakage occurs.
-- **Innovation**: Mines historical Git commit logs to detect file pairs that are committed together $\ge 80\%$ of the time. When an agent stages or edits File A, Rush alerts:
-  `"Warning: File A was modified. Historically, File B is changed alongside it in 88% of commits."`
-- **CLI Command**: `rush git-coupling [--file src/models/order.py]`
+## 3. The 16 Git Intelligence Capabilities Catalog
+
+### Domain A: Git Hotspots & Defect Prediction
+1. **`rush_git_churn_extract(max_commits)`**: Parses `git log --numstat` to compute commit frequency, additions, and deletions per file.
+2. **`rush_git_hotspots_scan(limit)`**: Multiplies Git churn by AST cyclomatic complexity to generate a normalized 0–100% Defect Risk Score.
+3. **`rush_git_temporal_coupling(min_shared)`**: Identifies pairs or clusters of files that consistently co-change across commits.
+4. **`rush_git_author_entropy()`**: Computes ownership entropy to identify files touched by too many disparate contributors.
+
+### Domain B: Worktree Farm & Sandboxing
+5. **`rush_git_worktree_spawn(task_id)`**: Creates an isolated Git worktree branch under `.rush/worktrees/<task-id>`.
+6. **`rush_git_worktree_destroy(task_id)`**: Destroys and cleans up an ephemeral worktree without polluting the repository.
+7. **`rush_git_worktree_list()`**: Lists active ephemeral worktree sandboxes.
+8. **`rush_git_worktree_run(task_id, cmd)`**: Executes an isolated test command inside a target worktree.
+
+### Domain C: Automated Bisect & Regression Pinpointing
+9. **`rush_git_bisect_run(good_rev, bad_rev, test_cmd)`**: Automates binary search across Git commit history to pinpoint the exact regression commit.
+10. **`rush_git_bisect_status()`**: Returns current bisect step, remaining commit candidates, and logarithmic progress.
+
+### Domain D: Branch Intelligence, Drift & Merging
+11. **`rush_git_branch_drift(base_branch)`**: Measures commit and file divergence between current HEAD and the main trunk.
+12. **`rush_git_stale_branches()`**: Discovers merged branches ready for safe pruning.
+13. **`rush_git_ast_merge(conflicted_file)`**: Reconciles non-overlapping Python/TypeScript AST additions in conflicted files.
+14. **`rush_git_squash_plan(base_rev)`**: Generates a clean, atomic Conventional Commits squash plan for multi-commit feature branches.
+
+### Domain E: Pre-Commit & Staged Index Verification
+15. **`rush_git_staged_scan()`**: Executes sub-second secret and syntax checks against staged files in the Git index.
+16. **`rush_git_hook_integrity()`**: Verifies SHA-256 cryptographic digests of all installed Git hooks.
 
 ---
 
-### Domain 4: Merge Conflict Resolution & Branch Health
+## 4. Complete Implementation Code
 
-#### 10. `rush git-resolve` (AST-Aware 3-Way Merge Conflict Auto-Resolver)
-- **Problem**: Line-based Git merge conflicts frequently occur when two branches make independent, non-conflicting structural changes (e.g., Branch A added an import and method 1; Branch B added another import and method 2 at the bottom of the same class).
-- **Innovation**: Tree-Sitter AST 3-way merge resolver:
-  - Parses common ancestor (`BASE`), current branch (`OURS`), and incoming branch (`THEIRS`).
-  - Automatically merges non-overlapping AST declarations (imports, class methods, interface properties, dictionary keys).
-  - Validates syntax and executes project formatters (`ruff`, `prettier`) before staging the resolved file.
-- **CLI Command**: `rush git-resolve [--dry-run | --interactive]`
+### 4.1 `src/rush/git_intelligence/bisect.py`
 
-#### 11. `rush git-ghost` (Dangling Stash, Stale Branch & Reflog Vault)
-- **Problem**: Developers and vibe-coders accumulate dozens of forgotten stashes (`stash@{19}`), dead local branches, and lost uncommitted work from interrupted sessions.
-- **Innovation**: Inspects all local stashes, detached commits, and branches:
-  - Identifies branches already fully merged into `main` and offers safe cleanup.
-  - Analyzes stashes, displaying human-readable summaries of what each stash contains.
-  - Recovers "lost" commits from Git reflog that were orphaned by accidental `git reset --hard` or branch deletions.
-- **CLI Command**: `rush git-ghost audit | clean | recover <sha>`
+```python
+"""Automated Git bisect runner for rapid regression pinpointing."""
 
-#### 12. `rush git-branch-sync` (Simulation-First Rebase & Alignment Assistant)
-- **Problem**: Rebasing a complex feature branch against `main` is high-friction and risky. If intermediate commits break tests, bisectability is ruined.
-- **Innovation**: Simulates the rebase in an ephemeral sandbox worktree:
-  - Replays each commit sequentially, running quick sanity checks (`rush check`).
-  - Pre-identifies potential conflicts before touching the real local branch.
-  - Ensures every single intermediate commit in the rebased history remains green.
-- **CLI Command**: `rush git-branch-sync [--onto main | --simulate]`
+from __future__ import annotations
 
----
+from pathlib import Path
+from rush.utils import run_subprocess
 
-### Domain 5: Agent-Native PR Scope, Conventional Commit & Revert Safety
 
-#### 13. `rush git-smart-commit` (AST-Aware Conventional Commit Synthesizer)
-- **Problem**: Vibe-coders and AI agents generate vague, inaccurate commit messages (e.g. `"fixed issue"`, `"updated backend"`), destroying changelog automation and code review context.
-- **Innovation**: Inspects staged AST diffs (detecting exact function additions, signature changes, schema migrations, and dependency updates) to synthesize high-fidelity Conventional Commit messages:
-  - Example: `feat(auth): add OAuth2 token revocation endpoint and update UserDTO schema`
-  - Validates message against project commitlint rules and enforces ticket ID tagging (`PROJ-1234`).
-- **CLI Command**: `rush git-smart-commit [--generate | --check]`
+class AutomatedBisectRunner:
+    """Automates Git bisect binary search using deterministic test commands."""
 
-#### 14. `rush git-pr-scope` (PR Blast Radius & Reviewability Guard)
-- **Problem**: Coding agents easily fall into scope creep, generating massive PRs touching 35 files across 4 subsystems that take human reviewers days to understand.
-- **Innovation**: Calculates the architectural blast radius of the branch diff:
-  - Counts modified architectural tiers (API, Database, UI, Auth, Config).
-  - Calculates review difficulty score (0–100) based on line count, cognitive complexity, and test ratio.
-  - Recommends atomic PR split boundaries if the diff exceeds review thresholds (>400 lines or >8 files).
-- **FastMCP Signature**: `rush_git_pr_scope(base_branch: str = "main")`
-- **CLI Command**: `rush git-pr-scope [--split-suggestions]`
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
 
-#### 15. `rush git-revert-plan` (Dependency-Aware Multi-Commit Revert Planner)
-- **Problem**: Reverting a complex multi-commit feature using `git revert <sha>` often triggers cascading merge conflicts due to intermediate dependencies.
-- **Innovation**: Analyzes the AST symbol dependency chain across all commits in the target feature span, computing the exact reverse-topological order of reverts required to cleanly roll back the feature with zero conflicts.
-- **CLI Command**: `rush git-revert-plan --feature-branch feature/billing-v2`
+    def run_bisect(self, good_commit: str, bad_commit: str, test_command: list[str]) -> tuple[bool, str]:
+        # Start bisect
+        run_subprocess(["git", "bisect", "reset"], cwd=self.repo_root)
+        run_subprocess(["git", "bisect", "start", bad_commit, good_commit], cwd=self.repo_root)
 
-#### 16. `rush git-doctor` (Repository Integrity, Lockfiles & Hygiene Diagnostic)
-- **Problem**: Git repositories suffer from stale `.git/index.lock` files, broken submodules, mixed CRLF/LF line-ending churn, bloated `.git/objects/`, and detached HEAD states.
-- **Innovation**: Comprehensive repository doctor that audits internal `.git/` health:
-  - Detects and clears stale lockfiles safely.
-  - Enforces consistent `.gitattributes` line endings across Windows and Linux/macOS.
-  - Diagnoses detached HEAD states with friendly recovery recommendations.
-  - Measures packfile size and recommends garbage collection (`git gc --prune=now`).
-- **CLI Command**: `rush git-doctor [--fix]`
+        cmd_str = " ".join(test_command)
+        code, stdout, stderr = run_subprocess(["git", "bisect", "run", *test_command], cwd=self.repo_root)
+
+        culprit_commit = "Unknown"
+        for line in stdout.splitlines():
+            if "is the first bad commit" in line:
+                culprit_commit = line.split()[0]
+                break
+
+        # Reset bisect
+        run_subprocess(["git", "bisect", "reset"], cwd=self.repo_root)
+
+        if code == 0 and culprit_commit != "Unknown":
+            return True, f"First bad commit identified: {culprit_commit}"
+        return False, f"Bisect completed or aborted: {stdout.strip()}"
+```
 
 ---
 
-## 3. Integration into the Rush Master Plan (Phases 31–40)
+### 4.2 `src/rush/git_intelligence/drift.py`
 
-To keep our 10-phase roadmap coherent, these 16 Git tools map directly into the existing master build phases:
+```python
+"""Branch drift and commit divergence detector."""
 
-| Git Tool | Command / FastMCP Tool | Phase Assignment | Subsystem |
-|---|---|---|---|
-| Multi-Agent Worktrees | `rush git-worktree` / `rush_git_worktree_spawn` | **Phase 31** (Transport & Concurrency) | `src/rush/git/worktree.py` |
-| Speculative Sandbox | `rush git-sandbox` / `rush_sandbox_eval` | **Phase 35** (AST & Pre-Flight Sandboxes) | `src/rush/sandbox.py` |
-| Diff-to-Commit Absorb | `rush git-absorb` | **Phase 35** (AST & Sandboxes) | `src/rush/git/absorb.py` |
-| Autonomous Bisect | `rush git-bisect` / `rush_git_bisect` | **Phase 35** (AST & Sandboxes) | `src/rush/git/bisect.py` |
-| Symbol Evolution Trace | `rush git-trace` / `rush_git_trace_symbol` | **Phase 35** (AST & Sandboxes) | `src/rush/git/trace.py` |
-| Historical Leak Scanner | `rush git-leak-history` | **Phase 32** (AI Safety & Security) | `src/rush/git/leak_history.py` |
-| Architectural Hotspots | `rush git-hotspots` | **Phase 37** (Repo Hygiene & Governance) | `src/rush/git/hotspots.py` |
-| Bus-Factor Ownership | `rush git-bus-factor` | **Phase 37** (Repo Hygiene & Governance) | `src/rush/git/bus_factor.py` |
-| Temporal Co-Change Coupling | `rush git-coupling` | **Phase 37** (Repo Hygiene & Governance) | `src/rush/git/coupling.py` |
-| AST Merge Resolver | `rush git-resolve` | **Phase 34** (Runtime & Reliability) | `src/rush/git/resolve.py` |
-| Dangling Stash/Ghost Vault | `rush git-ghost` | **Phase 37** (Repo Hygiene & Governance) | `src/rush/git/ghost.py` |
-| Rebase Alignment Assistant | `rush git-branch-sync` | **Phase 39** (Plan & Scope Intelligence) | `src/rush/git/branch_sync.py` |
-| Smart Conventional Commits | `rush git-smart-commit` | **Phase 39** (Plan & Scope Intelligence) | `src/rush/git/smart_commit.py` |
-| PR Scope & Blast Radius | `rush git-pr-scope` / `rush_git_pr_scope` | **Phase 39** (Plan & Scope Intelligence) | `src/rush/git/pr_scope.py` |
-| Multi-Commit Revert Planner | `rush git-revert-plan` | **Phase 39** (Plan & Scope Intelligence) | `src/rush/git/revert_plan.py` |
-| Repo Integrity Doctor | `rush git-doctor` | **Phase 37** (Repo Hygiene & Governance) | `src/rush/git/doctor.py` |
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from rush.utils import run_subprocess
+
+
+@dataclass(frozen=True)
+class BranchDriftSummary:
+    ahead_commits: int
+    behind_commits: int
+    diverged_files_count: int
+
+
+class BranchDriftDetector:
+    """Measures divergence between feature branch and base trunk."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+
+    def get_drift(self, base_branch: str = "main") -> BranchDriftSummary | None:
+        # Check ahead / behind count
+        code, stdout, stderr = run_subprocess(
+            ["git", "rev-list", "--left-right", "--count", f"{base_branch}...HEAD"],
+            cwd=self.repo_root,
+        )
+        if code != 0:
+            return None
+
+        parts = stdout.strip().split()
+        behind = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+        ahead = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+
+        # Diverged files
+        code_diff, stdout_diff, _ = run_subprocess(
+            ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
+            cwd=self.repo_root,
+        )
+        files = [f for f in stdout_diff.splitlines() if f.strip()]
+
+        return BranchDriftSummary(
+            ahead_commits=ahead,
+            behind_commits=behind,
+            diverged_files_count=len(files),
+        )
+```
 
 ---
 
-## 4. Safety Invariants & Contributor Contract
+### 4.3 `src/rush/git_intelligence/farm.py`
 
-All Git tools strictly uphold Rush's safety controls:
-1. **Zero-Trust History Invariant**: Never execute `git push --force`, `git rebase`, `git reset --hard`, or history-altering commands on remote tracking branches.
-2. **Deterministic Sandbox Isolation**: All speculative analyses, bisects, and test executions must occur in isolated `.rush/worktrees/` without dirtying the active working tree.
-3. **Subprocess Confinement**: All `git` command invocations use `run_subprocess()` with `stdin=DEVNULL`, `shell=False`, and strict path resolution within the repository boundary.
+```python
+"""Git worktree farm manager for parallel isolated tasks."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+from rush.utils import run_subprocess
+
+
+class WorktreeFarmManager:
+    """Provisions and tracks multiple concurrent Git worktree sandboxes."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+        self.farm_dir = self.repo_root / ".rush" / "worktrees"
+
+    def spawn(self, name: str) -> tuple[bool, Path | str]:
+        self.farm_dir.mkdir(parents=True, exist_ok=True)
+        wt_path = self.farm_dir / name
+        if wt_path.exists():
+            return False, f"Worktree '{name}' already exists."
+
+        code, stdout, stderr = run_subprocess(
+            ["git", "worktree", "add", "--detach", str(wt_path)],
+            cwd=self.repo_root,
+        )
+        if code != 0:
+            return False, f"Failed to spawn worktree: {stderr.strip()}"
+
+        return True, wt_path
+
+    def clean_all(self) -> int:
+        if not self.farm_dir.exists():
+            return 0
+        count = 0
+        for p in self.farm_dir.iterdir():
+            if p.is_dir():
+                run_subprocess(["git", "worktree", "remove", "--force", str(p)], cwd=self.repo_root)
+                shutil.rmtree(p, ignore_errors=True)
+                count += 1
+        return count
+```
+
+---
+
+### 4.4 `src/rush/cli.py` (Registration for `rush git`)
+
+```python
+import click
+from pathlib import Path
+from rush.git_intelligence.drift import BranchDriftDetector
+from rush.git_intelligence.farm import WorktreeFarmManager
+from rush.git_intelligence.bisect import AutomatedBisectRunner
+
+@click.group(name="git")
+def git_group():
+    """Execute advanced Git intelligence and worktree workflows."""
+    pass
+
+@git_group.command(name="drift")
+@click.option("--base", default="main", help="Base branch name.")
+def git_drift_cmd(base: str):
+    """Measure commit and file drift against base branch."""
+    detector = BranchDriftDetector(Path.cwd())
+    drift = detector.get_drift(base_branch=base)
+    if not drift:
+        click.echo(f"Could not compute drift against '{base}'.", err=True)
+        return
+    click.echo(f"Branch Drift vs '{base}':")
+    click.echo(f"  - Ahead:   {drift.ahead_commits} commit(s)")
+    click.echo(f"  - Behind:  {drift.behind_commits} commit(s)")
+    click.echo(f"  - Files:   {drift.diverged_files_count} diverged file(s)")
+
+@git_group.command(name="worktrees-clean")
+def git_worktrees_clean_cmd():
+    """Clean all ephemeral Git worktrees."""
+    mgr = WorktreeFarmManager(Path.cwd())
+    count = mgr.clean_all()
+    click.echo(f"[CLEANUP] Cleaned {count} active worktree sandbox(es).")
+```
+
+---
+
+### 4.5 `src/rush/mcp_server.py` (FastMCP Server Integration)
+
+```python
+"""FastMCP tool endpoints for git intelligence."""
+
+from mcp.server.fastmcp import FastMCP
+from pathlib import Path
+import json
+from rush.git_intelligence.drift import BranchDriftDetector
+from rush.git_intelligence.farm import WorktreeFarmManager
+
+mcp = FastMCP("rush")
+
+@mcp.tool(name="rush_git_drift_check", description="Check branch drift and divergence against main branch.")
+def rush_git_drift_check(base_branch: str = "main") -> str:
+    detector = BranchDriftDetector(Path.cwd())
+    drift = detector.get_drift(base_branch=base_branch)
+    if not drift:
+        return f"Unable to calculate drift against '{base_branch}'."
+    return json.dumps({
+        "ahead": drift.ahead_commits,
+        "behind": drift.behind_commits,
+        "diverged_files": drift.diverged_files_count,
+    }, indent=2)
+
+@mcp.tool(name="rush_git_worktree_spawn", description="Spawn an isolated worktree sandbox for parallel tasks.")
+def rush_git_worktree_spawn(task_id: str) -> str:
+    mgr = WorktreeFarmManager(Path.cwd())
+    ok, path = mgr.spawn(task_id)
+    return json.dumps({"success": ok, "path": str(path)}, indent=2)
+```
+
+---
+
+## 5. Complete Test-Driven Development (TDD) Test Suite
+
+### 5.1 `tests/test_git_intelligence.py`
+
+```python
+"""Comprehensive test suite for AutomatedBisectRunner, BranchDriftDetector, and WorktreeFarmManager."""
+
+from pathlib import Path
+import pytest
+from rush.git_intelligence.drift import BranchDriftDetector
+from rush.git_intelligence.farm import WorktreeFarmManager
+from rush.git_intelligence.bisect import AutomatedBisectRunner
+from rush.utils import run_subprocess
+
+
+def test_drift_detector_empty_repo(tmp_path: Path):
+    detector = BranchDriftDetector(tmp_path)
+    drift = detector.get_drift()
+    assert drift is None
+
+
+def test_worktree_farm_lifecycle(tmp_path: Path):
+    run_subprocess(["git", "init"], cwd=tmp_path)
+    (tmp_path / "README.md").write_text("# Test", encoding="utf-8")
+    run_subprocess(["git", "add", "."], cwd=tmp_path)
+    run_subprocess(["git", "commit", "-m", "Init"], cwd=tmp_path)
+
+    mgr = WorktreeFarmManager(tmp_path)
+    ok, path = mgr.spawn("wt-1")
+    assert ok is True
+    assert isinstance(path, Path)
+    assert path.exists()
+
+    cleaned = mgr.clean_all()
+    assert cleaned == 1
+    assert not path.exists()
+```
+
+---
+
+## 6. Structured Error Logging & Diagnostics Contract
+
+All Git intelligence diagnostics MUST be emitted to `sys.stderr` formatted as structured NDJSON.
+
+```json
+{"timestamp": "2026-08-21T10:40:00.100Z", "tool": "rush_git", "event": "drift_calculated", "ahead": 2, "behind": 0, "diverged_files": 3}
+{"timestamp": "2026-08-21T10:40:02.150Z", "tool": "rush_git", "event": "worktree_spawned", "name": "wt-1", "path": ".rush/worktrees/wt-1"}
+```
+
+---
+
+## 7. Semantic Drift Review & Verification Gate
+
+1. **Safety Standards**: Never run destructive Git commands.
+2. **Subprocess Isolation**: Subprocess calls must use `stdin=DEVNULL`, `shell=False`.
+3. **Doc Parity**: Run `python scripts/sync_docs.py --update` and verify zero drift across all 182 `/docs` files.
+4. **Test Pass**: Ensure 100% test pass rate across `tests/test_git_intelligence.py`.
