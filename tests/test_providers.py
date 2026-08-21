@@ -59,3 +59,58 @@ def test_get_configured_provider(monkeypatch):
     prov2 = get_configured_provider()
     assert prov2 is not None
     assert prov2.name == "anthropic"
+
+
+def test_anthropic_provider_allow_network_mock(monkeypatch):
+    import io
+    import json
+    import urllib.request
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+    provider = AnthropicProvider()
+
+    mock_resp_data = {
+        "model": "claude-3-5-sonnet-20241022",
+        "content": [{"type": "text", "text": "Fix the missing return type annotation."}],
+    }
+
+    class MockUrlopen:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return io.BytesIO(json.dumps(mock_resp_data).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(urllib.request, "urlopen", MockUrlopen)
+    res = provider.summarize_findings([{"rule": "typecheck", "message": "missing"}], allow_network=True)
+    assert res is not None
+    assert "Fix the missing return type" in res.content
+
+
+def test_openai_provider_allow_network_mock(monkeypatch):
+    import io
+    import json
+    import urllib.request
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test-key")
+    provider = OpenAIProvider()
+
+    mock_resp_data = {
+        "model": "gpt-4o",
+        "choices": [{"message": {"content": "Resolved security vulnerability in auth."}}],
+    }
+
+    class MockUrlopen:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return io.BytesIO(json.dumps(mock_resp_data).encode("utf-8"))
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(urllib.request, "urlopen", MockUrlopen)
+    res = provider.summarize_findings([{"rule": "security", "message": "auth"}], allow_network=True)
+    assert res is not None
+    assert "Resolved security vulnerability" in res.content
+
