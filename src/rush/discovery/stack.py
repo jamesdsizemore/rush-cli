@@ -17,6 +17,16 @@ class DetectedStack:
     suggested_engines: list[str] = field(default_factory=list)
 
 
+class StackDetector:
+    """Heuristic scanner for discovering project languages, package managers, and tools."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+
+    def detect(self) -> list[DetectedStack]:
+        return detect_project_stacks(self.repo_root)
+
+
 def detect_project_stacks(root: Path) -> list[DetectedStack]:
     """Inspect repository markers to determine active polyglot technology stacks."""
     stacks: list[DetectedStack] = []
@@ -40,7 +50,7 @@ def detect_project_stacks(root: Path) -> list[DetectedStack]:
                 language="python",
                 package_manager=pm,
                 frameworks=["pytest"],
-                suggested_engines=["ruff", "mypy", "pytest", "pip-audit", "bandit"],
+                suggested_engines=["ruff", "mypy", "pytest", "pip-audit", "bandit", "aislop", "tach"],
             )
         )
 
@@ -79,8 +89,44 @@ def detect_project_stacks(root: Path) -> list[DetectedStack]:
             DetectedStack(
                 language="go",
                 package_manager="go",
-                suggested_engines=["golangci-lint", "govulncheck"],
+                suggested_engines=["golangci-lint", "govulncheck", "gofmt"],
+            )
+        )
+
+    # 5. PHP Detection
+    if (resolved / "composer.json").is_file():
+        stacks.append(
+            DetectedStack(
+                language="php",
+                package_manager="composer",
+                suggested_engines=["phpstan", "php-cs-fixer"],
+            )
+        )
+
+    # 6. Elixir Detection
+    if (resolved / "mix.exs").is_file():
+        stacks.append(
+            DetectedStack(
+                language="elixir",
+                package_manager="mix",
+                suggested_engines=["credo", "dialyxir"],
+            )
+        )
+
+    # 7. Java / Kotlin Detection
+    if (
+        (resolved / "pom.xml").is_file()
+        or (resolved / "build.gradle").is_file()
+        or (resolved / "build.gradle.kts").is_file()
+    ):
+        pm = "maven" if (resolved / "pom.xml").is_file() else "gradle"
+        stacks.append(
+            DetectedStack(
+                language="java/kotlin",
+                package_manager=pm,
+                suggested_engines=["spotless", "detekt"],
             )
         )
 
     return stacks
+
