@@ -38,10 +38,21 @@ DEFAULT_IGNORES = [
     "*/build/*",
     "*/dist/*",
     "*/target/*",
-    "*/coverage/*",
     "*.egg-info/*",
     "*.egg-info",
 ]
+
+DEFAULT_IGNORE_DIRS: frozenset[str] = frozenset({
+    ".git",
+    ".venv",
+    "node_modules",
+    ".rush",
+    "__pycache__",
+    "build",
+    "dist",
+    "target",
+    ".codegraph",
+})
 
 EXTENSION_TOOL_MAP: dict[str, list[str]] = {
     ".py": ["ruff", "mypy", "pytest", "aislop", "tach", "bandit"],
@@ -71,11 +82,20 @@ class PathFilter:
         self.patterns = list(DEFAULT_IGNORES) + (custom_ignores or [])
 
     def is_ignored(self, path: Path) -> bool:
+        for part in path.parts:
+            if part in DEFAULT_IGNORE_DIRS:
+                return True
         path_str = path.as_posix()
         for pattern in self.patterns:
-            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
+            if (
+                fnmatch.fnmatch(path_str, pattern)
+                or fnmatch.fnmatch(f"/{path_str}", pattern)
+                or fnmatch.fnmatch(f"/{path_str}/", pattern)
+                or fnmatch.fnmatch(path.name, pattern)
+            ):
                 return True
         return False
+
 
 
 class ToolRouter:

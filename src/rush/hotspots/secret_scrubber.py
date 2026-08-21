@@ -18,5 +18,9 @@ class SecretScrubber:
     def scrub_text(text: str) -> str:
         scrubbed = text
         for pat in SECRET_PATTERNS:
-            scrubbed = pat.sub(r"\1: [REDACTED]", scrubbed)
+            if pat.groups >= 1:
+                scrubbed = pat.sub(r"\1: [REDACTED]", scrubbed)
+            else:
+                scrubbed = pat.sub("[REDACTED]", scrubbed)
         return scrubbed
+

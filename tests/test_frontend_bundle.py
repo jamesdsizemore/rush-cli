@@ -26,16 +26,19 @@ def test_bundle_chunk_calculator(tmp_path: Path) -> None:
 
 
 def test_performance_budget_gate(tmp_path: Path) -> None:
+    import os
+
     dist = tmp_path / "dist"
     dist.mkdir()
     js_file = dist / "vendor.huge.js"
-    js_file.write_bytes(b"x" * 200000)
+    js_file.write_bytes(os.urandom(20000))
 
     reports = BundleChunkCalculator.measure_directory(dist)
     gate = PerformanceBudgetGate(max_gzip_bytes=500)
     violations = gate.evaluate_chunks(reports)
     assert len(violations) == 1
     assert violations[0].file_name == "vendor.huge.js"
+
 
 
 def test_orphaned_asset_scanner(tmp_path: Path) -> None:

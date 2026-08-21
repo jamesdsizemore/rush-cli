@@ -20,6 +20,18 @@ logger = get_logger("plugins.loader")
 
 
 @dataclass(frozen=True)
+class PluginSpec:
+    """Specification for an external trust-gated plugin."""
+
+    name: str
+    executable_path: Path
+    command: list[str]
+    description: str = ""
+    file_extensions: tuple[str, ...] = ()
+    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
 class CustomPlugin:
     """Represents a discovered user-defined or agent-generated plugin."""
 
@@ -27,6 +39,7 @@ class CustomPlugin:
     command: list[str]
     description: str = ""
     file_extensions: tuple[str, ...] = ()
+
 
 
 def discover_plugins(root: Path) -> list[CustomPlugin]:
@@ -106,3 +119,14 @@ def execute_plugin(
         )
 
     return validate_plugin_output(proc.stdout, plugin_name=plugin.name)
+
+
+class PluginLoader:
+    """Discovers and manages external plugins from rush.toml."""
+
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root.resolve()
+
+    def discover_plugins(self) -> list[CustomPlugin]:
+        return discover_plugins(self.repo_root)
+
