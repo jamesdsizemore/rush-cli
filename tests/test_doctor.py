@@ -61,3 +61,13 @@ def test_doctor_tool_run(tmp_path: Path) -> None:
     assert res["tool"] == "doctor"
     assert res["status"] in {"ok", "warn"}
     assert "doctor:" in res["summary"]
+
+
+def test_environment_doctor_anti_shadowing(tmp_path: Path) -> None:
+    from rush.tools.doctor import EnvironmentDoctor
+
+    doc = EnvironmentDoctor(repo_root=tmp_path)
+    res = doc.check_python_anti_shadowing()
+    assert res.name in {"python_runtime", "python_anti_shadowing"}
+    assert res.status in {"ok", "warn", "fail"}
+

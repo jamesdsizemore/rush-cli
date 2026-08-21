@@ -17,7 +17,59 @@ from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolFn, ToolName, ToolResult
 
+from dataclasses import dataclass, field
+
 logger = get_logger("tools.doctor")
+
+
+@dataclass(frozen=True)
+class HealthCheck:
+    name: str
+    status: str  # "ok", "warn", "fail"
+    message: str
+    remediation: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+class EnvironmentDoctor:
+    """Performs deep health checks on Python runtime, PATH ordering, and external engines."""
+
+    def __init__(self, repo_root: Path | None = None) -> None:
+        self.repo_root = (repo_root or Path.cwd()).resolve()
+
+    def check_python_anti_shadowing(self) -> HealthCheck:
+        """Verify that current interpreter belongs to project virtual environment."""
+        venv_path = self.repo_root / ".venv"
+        current_exe = Path(sys.executable).resolve()
+
+        if not venv_path.exists():
+            return HealthCheck(
+                name="python_runtime",
+                status="warn",
+                message=f"No local .venv found at '{venv_path}'. Using global interpreter '{current_exe}'.",
+                remediation="Run 'uv venv' or 'python -m venv .venv' to create a project-isolated environment.",
+                details={"executable": str(current_exe), "expected_venv": str(venv_path)},
+            )
+
+        if not current_exe.is_relative_to(venv_path):
+            return HealthCheck(
+                name="python_anti_shadowing",
+                status="fail",
+                message=f"Interpreter Shadowing Detected: Running from '{current_exe}', but project venv is at '{venv_path}'.",
+                remediation="Activate project virtual environment or invoke via '.venv/Scripts/python.exe' directly.",
+                details={"active_executable": str(current_exe), "project_venv": str(venv_path)},
+            )
+
+        return HealthCheck(
+            name="python_anti_shadowing",
+            status="ok",
+            message=f"Python runtime correctly isolated to project venv ('{current_exe}').",
+            details={"executable": str(current_exe)},
+        )
+
+    def diagnose_all(self) -> list[HealthCheck]:
+        return [self.check_python_anti_shadowing()]
+
 
 
 def resolve_binary_secure(name: str, cwd: Path | None = None) -> Path | None:
