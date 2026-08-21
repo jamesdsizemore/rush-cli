@@ -1424,8 +1424,26 @@ def bundle_analyze_cmd(dist_dir: Path) -> None:
         click.echo(f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, brotli: ~{r.brotli_est_bytes} B)")
 
 
+@cli.group(name="hotspots")
+def hotspots_group() -> None:
+    """Git commit churn, defect risk matrix, and developer velocity analytics."""
+
+
+@hotspots_group.command(name="analyze")
+def hotspots_analyze_cmd() -> None:
+    """Compute composite defect risk scores across files."""
+    from rush.hotspots.risk_matrix import RiskMatrixCalculator
+
+    calculator = RiskMatrixCalculator(Path.cwd())
+    scores = calculator.analyze_hotspots()
+    click.echo(f"Analyzed Hotspots ({len(scores)}):")
+    for s in scores[:10]:
+        click.echo(f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} (Churn: {s.churn_score}, Complexity: {s.complexity_score})")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 

@@ -29,16 +29,18 @@
 | **ISS-034-01** | Phase 34 | Codebase Hygiene | Dead code detection and 3-way AST merge solver | Implemented `PolyglotDeadCodeDetector`, `AstImportMerger`, `ASTConflictMerger` | **Closed** |
 | **ISS-035-01** | Phase 35 | Polyglot AST Slicing | Tree-Sitter based code property graph slicing | Implemented `CodeGraphStore`, `PythonCodeGraphBuilder`, `VerbatimAstSlicer` | **Closed** |
 | **ISS-036-01** | Phase 36 | Asset Optimization | Bundle budget checking and dead asset auditing | Implemented `BundleChunkCalculator`, `PerformanceBudgetGate`, `OrphanedAssetScanner` | **Closed** |
+| **ISS-037-01** | Phase 37 | Git Hotspots | Code velocity, churn, and bus-factor analysis | Implemented `GitChurnExtractor`, `CyclomaticComplexityCalculator`, `RiskMatrixCalculator` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 37+)
+## 2. Active & Upcoming Issues (Phases 38+)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-037-01** | Phase 37 | Git Hotspots | Code velocity, churn, and bus-factor analysis | Phase 37 | Open |
 | **ISS-038-01** | Phase 38 | Agent Governance | Centralized AGENTS.md compiler and repo scaffolding | Phase 38 | Open |
 | **ISS-039-01** | Phase 39 | Hook Intelligence | Pre-commit intelligence and hook guard verification | Phase 39 | Open |
+| **ISS-040-01** | Phase 40 | Consensus & Scorecard | Multi-model consensus reconciliation and 6-pillar score | Phase 40 | Open |
+
 
 
 

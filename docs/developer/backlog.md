@@ -30,7 +30,7 @@
 | **Phase 34** | Codebase Hygiene & Merge Resolution | `rush hygiene dead-code`, `rush conflict solve`, 3-way AST merger | Complete | ADR-0019, 0021, 0024 |
 | **Phase 35** | Polyglot AST Slicing & CodeGraph | `rush codegraph explore`, `slice`, Tree-Sitter polyglot, CPG store | Complete | ADR-0019, 0024 |
 | **Phase 36** | Frontend Asset & Bundle Optimization | `rush bundle analyze`, `budget`, `dead-assets`, barrel auditor | Complete | ADR-0003, 0024 |
-| **Phase 37** | Git Hotspots & Code Velocity | `rush hotspots analyze`, `churn`, `bus-factor`, temporal coupling | Ready | ADR-0003, 0024 |
+| **Phase 37** | Git Hotspots & Code Velocity | `rush hotspots analyze`, `churn`, `bus-factor`, temporal coupling | Complete | ADR-0003, 0024 |
 | **Phase 38** | Agent Governance & Repo Scaffolding | `rush governance sync`, `scaffold init`, AGENTS.md compiler | Ready | ADR-0003, 0010, 0020, 0024 |
 | **Phase 39** | Git Pre-Commit Intelligence & Hooks | `rush hook run`, `install`, `verify`, SHA-256 hook tamper detection | Ready | ADR-0003, 0010, 0024 |
 | **Phase 40** | Multi-Model Consensus & Scorecard | `rush score compute`, `consensus reconcile`, 0–100% 6-pillar score | Ready | ADR-0003, 0010, 0023, 0024 |
