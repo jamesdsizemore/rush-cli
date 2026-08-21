@@ -86,16 +86,17 @@ dependencies = [
     "pytest==9.0.3",      # Test runner
 
     # AST Slicing & Polyglot Parsing (Phases 33, 34, 35, 37, 38, 39)
-    "tree-sitter==0.24.0",            # High-performance incremental AST parsing (ADR-008)
-    "tree-sitter-python==0.23.6",     # Official Python grammar wheel
-    "tree-sitter-typescript==0.23.2", # Official TypeScript & TSX grammar wheel
-    "tree-sitter-javascript==0.23.1", # Official JavaScript grammar wheel
+    "tree-sitter==0.24.0",                # High-performance incremental AST parsing (ADR-008)
+    "tree-sitter-python==0.23.6",         # Official Python grammar wheel
+    "tree-sitter-typescript==0.23.2",     # Official TypeScript & TSX grammar wheel
+    "tree-sitter-javascript==0.23.1",     # Official JavaScript grammar wheel
+    "tree-sitter-language-pack==0.4.0",   # 370+ pre-compiled grammars for polyglot AST (ADR-014)
 
     # Token Accounting & Cost Forecasting (Phases 31, 32, 40)
-    "tiktoken==0.9.0",                # Fast offline BPE tokenizer for token budgeting & cost (ADR-011)
+    "tiktoken==0.9.0",                    # Fast offline BPE tokenizer for token budgeting & cost (ADR-011)
 
     # Optional Multi-Model Consensus (Phase 40)
-    "httpx==0.28.1",                  # Async HTTP client for local Ollama/vLLM & model APIs (ADR-012)
+    "httpx==0.28.1",                      # Async HTTP client for local Ollama/vLLM & model APIs (ADR-012)
 ]
 ```
 
@@ -131,6 +132,11 @@ dependencies = [
 - **Decision:** Standardize all Git operations on direct, hardened `run_subprocess(["git", ...])` calls with `stdin=DEVNULL`, `shell=False`, strict path resolution, and parameter sanitization.
 - **Consequences:** 100% portable, secure, zero-overhead Git integration compatible with any Git 2.25+ installation on Windows, macOS, and Linux.
 
+#### ADR-014: Polyglot Grammar Expansion via `tree-sitter-language-pack`
+- **Context:** Coding agents and vibe-coders operate across polyglot codebases (Python, TypeScript, JavaScript, Rust, Go, Java, C#, Ruby, Kotlin, Swift, Elixir). Managing individual grammar wheels in `pyproject.toml` leads to dependency sprawl.
+- **Decision:** Adopt `tree-sitter-language-pack==0.4.0` alongside native `tree-sitter==0.24.0`.
+- **Consequences:** Provides instantaneous, offline access to 370+ pre-compiled Tree-Sitter language grammars through a unified API with zero compiler toolchain requirements on user systems.
+
 ---
 
 ### 3.2 Full Dependency & Runtime Matrix
@@ -144,6 +150,7 @@ dependencies = [
 | Python Grammar | External C-Extension | `tree-sitter-python` | `0.23.6` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
 | TypeScript / TSX Grammar | External C-Extension | `tree-sitter-typescript` | `0.23.2` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
 | JavaScript Grammar | External C-Extension | `tree-sitter-javascript` | `0.23.1` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
+| Polyglot 370+ Grammars | External C-Extension | `tree-sitter-language-pack` | `0.4.0` | MIT / Apache-2.0 | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
 | Token Estimation & Cost | External Rust-Extension | `tiktoken` | `0.9.0` | MIT | Windows x64, macOS arm64/x64, Linux x64/aarch64 |
 | Multi-Model API / Ollama | External Python Wheel | `httpx` | `0.28.1` | BSD-3-Clause | Pure Python |
 | Cryptographic Caching & WAL | Python 3.12 Standard Lib | `sqlite3` | Built-in | PSF | Native OS |
@@ -178,11 +185,13 @@ To preserve Rush's strict offline operation without requiring remote API calls, 
 In accordance with the Rush project contract, external quality engines are never bundled as hard dependencies. They are discovered dynamically from the user's PATH (with virtual environment precedence and anti-shadowing verification):
 
 ```text
-[Linting & Formatting]     ruff, eslint, prettier, biome, biome-check
+[Linting & Formatting]     ruff, eslint, prettier, biome, biome-check, rumdl
+[Codemods & AST Refactor]  putout
 [Typechecking & Dead Code] mypy, pyright, tsc, vulture, knip
 [Security & Secrets]       pip-audit, npm-audit, trivy, gitleaks, semgrep, hadolint
 [Testing & QA]             pytest, vitest, playwright, hypothesis, fast-check, locust
 [Build & Supply Chain]     syft, cosign, slsa-verifier, actionlint, checkov, sqlfluff, yamllint
+[CLI & Telemetry Tools]    glow, miller (mlr)
 ```
 
 Missing engines return canonical structured `skipped` results without breaking execution or failing test gates.
