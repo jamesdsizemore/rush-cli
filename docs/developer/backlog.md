@@ -32,7 +32,7 @@
 | **Phase 36** | Frontend Asset & Bundle Optimization | `rush bundle analyze`, `budget`, `dead-assets`, barrel auditor | Complete | ADR-0003, 0024 |
 | **Phase 37** | Git Hotspots & Code Velocity | `rush hotspots analyze`, `churn`, `bus-factor`, temporal coupling | Complete | ADR-0003, 0024 |
 | **Phase 38** | Agent Governance & Repo Scaffolding | `rush governance sync`, `scaffold init`, AGENTS.md compiler | Complete | ADR-0003, 0010, 0020, 0024 |
-| **Phase 39** | Git Pre-Commit Intelligence & Hooks | `rush hook run`, `install`, `verify`, SHA-256 hook tamper detection | Ready | ADR-0003, 0010, 0024 |
+| **Phase 39** | Git Pre-Commit Intelligence & Hooks | `rush hook run`, `install`, `verify`, SHA-256 hook tamper detection | Complete | ADR-0003, 0010, 0024 |
 | **Phase 40** | Multi-Model Consensus & Scorecard | `rush score compute`, `consensus reconcile`, 0–100% 6-pillar score | Ready | ADR-0003, 0010, 0023, 0024 |
 | **VibeCoder** | Unified Vibe-Coder 22-Tool Suite | `rush vibecoder run`, sub-second feedback loop, loop starvation check | Ready | ADR-0003, 0010, 0017, 0024 |
 

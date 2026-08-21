@@ -1474,8 +1474,57 @@ def scaffold_init_cmd() -> None:
         click.echo(f"  - {c.name}")
 
 
+@cli.group(name="hook")
+def hook_group() -> None:
+    """Git pre-commit intelligence, AST linting, and hook guard verification."""
+
+
+@hook_group.command(name="run")
+def hook_run_cmd() -> None:
+    """Execute pre-commit intelligence suite across staged files."""
+    from rush.hook.ast_linter import FastIncrementalAstLinter
+    from rush.hook.branch_guard import BranchProtectionGuard
+    from rush.hook.conflict_guard import ConflictMarkerGuard
+    from rush.hook.staged_scanner import StagedFileScanner
+    from rush.hook.trojan_source import TrojanSourceDetector
+
+    guard = BranchProtectionGuard(Path.cwd())
+    ok, err = guard.check_current_branch()
+    if not ok:
+        click.echo(f"[HOOK BLOCKED] {err}", err=True)
+        sys.exit(1)
+
+    scanner = StagedFileScanner(Path.cwd())
+    staged = scanner.get_staged_files()
+    if not staged:
+        click.echo("No staged files to check.")
+        return
+
+    ast_errs = FastIncrementalAstLinter.lint_staged_python(staged)
+    if ast_errs:
+        for e in ast_errs:
+            click.echo(f"[AST ERROR] {e}", err=True)
+        sys.exit(1)
+
+    for p in staged:
+        trojans = TrojanSourceDetector.inspect_file(p)
+        if trojans:
+            for t in trojans:
+                click.echo(f"[SECURITY ERROR] {t}", err=True)
+            sys.exit(1)
+
+        conflicts = ConflictMarkerGuard.inspect_file(p)
+        if conflicts:
+            for c in conflicts:
+                click.echo(f"[CONFLICT ERROR] {c}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Pre-commit checks passed across {len(staged)} staged files.")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
