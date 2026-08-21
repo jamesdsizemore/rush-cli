@@ -20,5 +20,12 @@
 | 0016 | `src/rush/tui.py`, `src/rush/dashboard.py` | `test_tui.py`, `test_dashboard.py` | 27 |
 | 0017 | `src/rush/workflows/`, `src/rush/watcher.py` | `test_workflows.py`, `test_watcher.py` | 24, 25 |
 | 0018 | `src/rush/tools/base.py`, `src/rush/session_memory.py` | `test_session_memory.py`, `test_agent_remediation.py` | 29 |
+| 0019 | `src/rush/ast_patcher.py`, `src/rush/tools/graft_slice.py` | `test_ast_slicer.py`, `test_ast_patcher.py` | 35 |
+| 0020 | `src/rush/agent_sandbox.py` | `test_agent_sandbox.py` | 31 |
+| 0021 | `src/rush/git/worktree.py` | `test_agent_worktree.py` | 31 |
+| 0022 | `src/rush/tools/token_cost.py` | `test_token_cost.py` | 32 |
+| 0023 | `src/rush/tools/consensus.py` | `test_consensus_bridge.py` | 40 |
+| 0024 | `src/rush/git/` (all tools) | `test_git_*.py` | 31–40 |
+| 0025 | `src/rush/ast_patcher.py` | `test_ast_slicer.py` | 35 |
 
 The pre-existing `docs/ARCHITECTURE.md` draft is deliberately not modified by this implementation program; this index provides its required mapping without mixing unrelated draft content into Phase 00 scope.
