@@ -21,7 +21,7 @@
 | **Phase 25** | Real-Time File System Watcher | `rush watch`, async event loop, debouncing coalescer, process supervisor | Complete | ADR-0017 |
 | **Phase 26** | Monorepo & Workspace Boundaries | `rush workspace list`, `graph`, `affected`, boundary import guard | Complete | ADR-0018, 0020 |
 | **Phase 27** | Ephemeral Dashboard & Rich TUI | `rush dashboard`, `rush ui`, Starlette ASGI, session tokens, Textual | Complete | ADR-0016 |
-| **Phase 28** | Trust-Gated Plugins & Agent Skills | `rush trust`, `rush plugin`, SHA-256 trust store, `SKILL.md` generator | Ready | ADR-0015, 0020 |
+| **Phase 28** | Trust-Gated Plugins & Agent Skills | `rush trust`, `rush plugin`, SHA-256 trust store, `SKILL.md` generator | Complete | ADR-0015, 0020 |
 | **Phase 29** | Isolated AI Patch Remediation | `rush patch`, Git worktree sandbox, circuit breaker, SQLite memory | Ready | ADR-0018, 0021 |
 | **Phase 30** | Packaging, Versioning & Hardened CI | `rush release`, `rush ci`, SemVer validator, 40-char SHA GitHub Actions | Ready | ADR-0024 |
 | **Phase 31** | Agent Safety & Worktree Sandboxing | `rush guard`, command interceptor, Shannon entropy secret redactor | Ready | ADR-0020, 0021, 0024 |

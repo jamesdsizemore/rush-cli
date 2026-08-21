@@ -20,15 +20,17 @@
 | **ISS-025-01** | Phase 25 | Watcher | High CPU during rapid batch file saves | Added `PathFilter` ignore engine and debounced snapshot coalescing | **Closed** |
 | **ISS-026-01** | Phase 26 | Monorepo Boundaries | Support multi-package dependency graphs across pnpm/cargo/uv workspaces | Implemented `WorkspaceDiscovery`, `DependencyGraphBuilder`, `WorkspaceBoundaryGuard` | **Closed** |
 | **ISS-027-01** | Phase 27 | TUI / Dashboard | Session token expiry handling for Starlette local server | Implemented `SessionAuthManager` with CSPRNG bearer token validation | **Closed** |
+| **ISS-028-01** | Phase 28 | Trust Store | SHA-256 trust verification for third-party agent skills | Implemented `PluginTrustStore` and `PreExecutionHashVerifier` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 28+)
+## 2. Active & Upcoming Issues (Phases 29+)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-028-01** | Phase 28 | Trust Store | SHA-256 trust verification for third-party agent skills | Phase 28 | Open |
 | **ISS-029-01** | Phase 29 | AI Patch Sandbox | Git worktree isolation and circuit breaker for patch loop | Phase 29 | Open |
 | **ISS-030-01** | Phase 30 | Packaging & Release | SemVer and SHA-pinned GitHub Actions packaging validation | Phase 30 | Open |
+| **ISS-031-01** | Phase 31 | Worktree Sandboxing | Isolated git worktree environment for autonomous agents | Phase 31 | Open |
+
 
 
