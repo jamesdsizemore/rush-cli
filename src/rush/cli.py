@@ -1097,5 +1097,78 @@ for _catalog_tool in ALL_TOOLS:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
 
+@cli.group(name="workspace")
+def workspace_group() -> None:
+    """Monorepo workspace discovery, topological execution, and boundary enforcement."""
+
+
+@workspace_group.command(name="list")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def workspace_list_cmd(path: Path) -> None:
+    """List discovered monorepo packages."""
+    from rush.workspaces.discovery import WorkspaceDiscovery
+
+    discovery = WorkspaceDiscovery(path)
+    packages = discovery.discover_all()
+    click.echo(f"Discovered {len(packages)} workspace package(s):")
+    for p in packages:
+        click.echo(f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})")
+
+
+@workspace_group.command(name="affected")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def workspace_affected_cmd(path: Path) -> None:
+    """List affected packages based on current working tree changes."""
+    from rush.discovery.git import get_changed_files
+    from rush.workspaces.affected import AffectedCalculator
+    from rush.workspaces.discovery import WorkspaceDiscovery
+    from rush.workspaces.graph import DependencyGraphBuilder
+
+    repo_root = path.resolve()
+    discovery = WorkspaceDiscovery(repo_root)
+    packages = discovery.discover_all()
+    graph = DependencyGraphBuilder.build_graph(packages)
+    calc = AffectedCalculator(repo_root, graph)
+    changed = get_changed_files(repo_root)
+    affected = calc.get_affected_packages(changed)
+
+    click.echo(f"Affected package(s) ({len(affected)}):")
+    for name in affected:
+        click.echo(f"  - {name}")
+
+
+@workspace_group.command(name="boundary")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def workspace_boundary_cmd(path: Path) -> None:
+    """Check workspace boundaries against illegal cross-package relative imports."""
+    from rush.workspaces.boundary import WorkspaceBoundaryGuard
+    from rush.workspaces.discovery import WorkspaceDiscovery
+
+    repo_root = path.resolve()
+    discovery = WorkspaceDiscovery(repo_root)
+    packages = discovery.discover_all()
+    guard = WorkspaceBoundaryGuard(repo_root)
+    result = guard.check_package_boundaries(packages)
+    click.echo(result["summary"])
+    for f in result.get("findings") or []:
+        click.echo(f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} {f.get('message')}")
+    if result["status"] == "fail":
+        sys.exit(1)
+
+
+@workspace_group.command(name="locks")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def workspace_locks_cmd(path: Path) -> None:
+    """Validate monorepo lockfile consistency."""
+    from rush.workspaces.locks import WorkspaceLockValidator
+
+    validator = WorkspaceLockValidator(path.resolve())
+    result = validator.validate_lockfiles()
+    click.echo(result["summary"])
+    for f in result.get("findings") or []:
+        click.echo(f"  - [{f.get('severity', 'info')}] {f.get('message')}")
+
+
 if __name__ == "__main__":
     cli()
+

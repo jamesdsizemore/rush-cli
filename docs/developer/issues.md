@@ -18,13 +18,15 @@
 | **ISS-023-01** | Phase 23 | Setup Wizard | Arbitrary package names passed to installer | Added `SAFE_PACKAGE_NAME` regex sanitization in `install_engine_package` | **Closed** |
 | **ISS-024-01** | Phase 24 | Environment Doctor | CWD binary shadowing project virtualenv | Implemented `resolve_binary_secure` with strict PATH filtering | **Closed** |
 | **ISS-025-01** | Phase 25 | Watcher | High CPU during rapid batch file saves | Added `PathFilter` ignore engine and debounced snapshot coalescing | **Closed** |
+| **ISS-026-01** | Phase 26 | Monorepo Boundaries | Support multi-package dependency graphs across pnpm/cargo/uv workspaces | Implemented `WorkspaceDiscovery`, `DependencyGraphBuilder`, `WorkspaceBoundaryGuard` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 26+)
+## 2. Active & Upcoming Issues (Phases 27+)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-026-01** | Phase 26 | Monorepo Boundaries | Support multi-package dependency graphs across pnpm/cargo/uv workspaces | Phase 26 | Open |
 | **ISS-027-01** | Phase 27 | TUI / Dashboard | Session token expiry handling for Starlette local server | Phase 27 | Open |
 | **ISS-028-01** | Phase 28 | Trust Store | SHA-256 trust verification for third-party agent skills | Phase 28 | Open |
+| **ISS-029-01** | Phase 29 | AI Patch Sandbox | Git worktree isolation and circuit breaker for patch loop | Phase 29 | Open |
+
