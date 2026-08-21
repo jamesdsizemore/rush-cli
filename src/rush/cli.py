@@ -1259,8 +1259,42 @@ def ci_init_cmd() -> None:
     click.echo(f"Generated hardened GitHub Actions workflow at {ci_file}")
 
 
+@cli.group(name="guard")
+def guard_group() -> None:
+    """Autonomous AI coding agent safety firewall and command interceptor."""
+
+
+@guard_group.command(name="check-cmd")
+@click.argument("command_str")
+def guard_check_cmd(command_str: str) -> None:
+    """Inspect shell command and block destructive operations."""
+    from rush.safety.interceptor import DangerousCommandInterceptor
+
+    safe, reason = DangerousCommandInterceptor.inspect_command(command_str)
+    if safe:
+        click.echo("[SAFE] Command authorized for agent execution.")
+    else:
+        click.echo(f"[BLOCKED] {reason}", err=True)
+        sys.exit(1)
+
+
+@guard_group.command(name="check-path")
+@click.argument("file_path", type=click.Path())
+def guard_check_path(file_path: str) -> None:
+    """Validate target path against protected governance file rules."""
+    from rush.safety.guard import AgentSafetyGuard
+
+    guard = AgentSafetyGuard(Path.cwd())
+    if guard.is_file_protected(file_path):
+        click.echo(f"[PROTECTED] Target path '{file_path}' is an immutable governance file.", err=True)
+        sys.exit(1)
+    else:
+        click.echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 

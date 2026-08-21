@@ -24,7 +24,7 @@
 | **Phase 28** | Trust-Gated Plugins & Agent Skills | `rush trust`, `rush plugin`, SHA-256 trust store, `SKILL.md` generator | Complete | ADR-0015, 0020 |
 | **Phase 29** | Isolated AI Patch Remediation | `rush patch`, Git worktree sandbox, circuit breaker, SQLite memory | Complete | ADR-0018, 0021 |
 | **Phase 30** | Packaging, Versioning & Hardened CI | `rush release`, `rush ci`, SemVer validator, 40-char SHA GitHub Actions | Complete | ADR-0024 |
-| **Phase 31** | Agent Safety & Worktree Sandboxing | `rush guard`, command interceptor, Shannon entropy secret redactor | Ready | ADR-0020, 0021, 0024 |
+| **Phase 31** | Agent Safety & Worktree Sandboxing | `rush guard`, command interceptor, Shannon entropy secret redactor | Complete | ADR-0020, 0021, 0024 |
 | **Phase 32** | Token Economy & Context Optimization | `rush token count`, `outline`, BPE tokenizer, AST outline compressor | Ready | ADR-0019, 0022 |
 | **Phase 33** | Full-Stack Sync & Type Safety Gates | `rush sync openapi`, `orm`, `zod`, FastAPI static AST route extractor | Ready | ADR-0003, 0024 |
 | **Phase 34** | Codebase Hygiene & Merge Resolution | `rush hygiene dead-code`, `rush conflict solve`, 3-way AST merger | Ready | ADR-0019, 0021, 0024 |
