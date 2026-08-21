@@ -14,22 +14,82 @@ from rush.logging import get_logger, log_subsystem
 
 logger = get_logger("watcher")
 
-DEFAULT_IGNORE_DIRS = frozenset(
-    {
-        ".git",
-        ".rush",
-        ".venv",
-        "node_modules",
-        "__pycache__",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".mypy_cache",
-        "dist",
-        "build",
-        ".turbo",
-        ".next",
-    }
-)
+import fnmatch
+from dataclasses import dataclass, field
+
+DEFAULT_IGNORES = [
+    "*/.git/*",
+    "*/.git",
+    "*/.venv/*",
+    "*/.venv",
+    "*/node_modules/*",
+    "*/node_modules",
+    "*/.rush/*",
+    "*/.rush",
+    "*/__pycache__/*",
+    "*/__pycache__",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    "*.tmp",
+    "*.swp",
+    "*.swo",
+    "*~",
+    "*/build/*",
+    "*/dist/*",
+    "*/target/*",
+    "*/coverage/*",
+    "*.egg-info/*",
+    "*.egg-info",
+]
+
+EXTENSION_TOOL_MAP: dict[str, list[str]] = {
+    ".py": ["ruff", "mypy", "pytest", "aislop", "tach", "bandit"],
+    ".pyi": ["ruff", "mypy"],
+    ".ts": ["biome", "eslint", "prettier", "tsc"],
+    ".tsx": ["biome", "eslint", "prettier", "tsc"],
+    ".js": ["biome", "eslint", "prettier"],
+    ".jsx": ["biome", "eslint", "prettier"],
+    ".rs": ["clippy", "rustfmt"],
+    ".go": ["golangci-lint", "govulncheck", "gofmt"],
+    ".toml": ["ruff"],
+    ".json": ["biome", "prettier"],
+    ".md": ["markdownlint", "rumdl"],
+    ".css": ["prettier", "biome"],
+}
+
+
+class PathFilter:
+    """Evaluates paths against default and custom ignore patterns."""
+
+    def __init__(
+        self,
+        repo_root: Path | None = None,
+        custom_ignores: list[str] | None = None,
+    ) -> None:
+        self.repo_root = (repo_root or Path.cwd()).resolve()
+        self.patterns = list(DEFAULT_IGNORES) + (custom_ignores or [])
+
+    def is_ignored(self, path: Path) -> bool:
+        path_str = path.as_posix()
+        for pattern in self.patterns:
+            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
+                return True
+        return False
+
+
+class ToolRouter:
+    """Maps modified filesystem paths to the exact subset of required quality tools."""
+
+    @staticmethod
+    def get_tools_for_paths(paths: list[Path]) -> list[str]:
+        tools: set[str] = set()
+        for p in paths:
+            ext = p.suffix.lower()
+            if ext in EXTENSION_TOOL_MAP:
+                tools.update(EXTENSION_TOOL_MAP[ext])
+        return sorted(tools)
+
 
 
 class FileWatcher:

@@ -66,3 +66,16 @@ def test_file_watcher_callback(tmp_path: Path) -> None:
     watcher.step()
     assert len(events) == 1
     assert events[0] == test_file
+
+
+def test_path_filter_and_router() -> None:
+    from rush.watcher import PathFilter, ToolRouter
+
+    filter_engine = PathFilter()
+    assert filter_engine.is_ignored(Path(".git/config")) is True
+    assert filter_engine.is_ignored(Path("src/app.py")) is False
+
+    tools = ToolRouter.get_tools_for_paths([Path("src/app.py")])
+    assert "ruff" in tools
+    assert "mypy" in tools
+
