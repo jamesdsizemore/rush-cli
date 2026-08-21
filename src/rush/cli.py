@@ -1292,8 +1292,45 @@ def guard_check_path(file_path: str) -> None:
         click.echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
 
 
+@cli.group(name="token")
+def token_group() -> None:
+    """Token counting and prompt cost optimization."""
+
+
+@token_group.command(name="count")
+@click.argument("target_path", type=click.Path(exists=True, path_type=Path))
+def token_count_cmd(target_path: Path) -> None:
+    """Count estimated BPE tokens in target file or directory."""
+    from rush.token_economy.counter import FastBPETokenCounter
+
+    if target_path.is_file():
+        count = FastBPETokenCounter.count_file_tokens(target_path)
+        click.echo(f"{target_path}: {count} tokens")
+    else:
+        total = 0
+        for p in target_path.rglob("*"):
+            if p.is_file() and p.suffix in (".py", ".ts", ".js", ".rs", ".go", ".md"):
+                total += FastBPETokenCounter.count_file_tokens(p)
+        click.echo(f"{target_path} (recursive): {total} tokens")
+
+
+@cli.command(name="outline")
+@click.argument("file_path", type=click.Path(exists=True, path_type=Path))
+def outline_cmd(file_path: Path) -> None:
+    """Generate high-density AST skeleton outline for context compression."""
+    from rush.token_economy.compressor import PythonAstOutlineCompressor
+
+    source = file_path.read_text(encoding="utf-8", errors="replace")
+    if file_path.suffix == ".py":
+        compressed = PythonAstOutlineCompressor.compress_source(source)
+        click.echo(compressed)
+    else:
+        click.echo(source)
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
