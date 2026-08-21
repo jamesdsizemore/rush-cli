@@ -27,16 +27,18 @@
 | **ISS-032-01** | Phase 32 | Token Economy | BPE tokenizer and AST code outline compression | Implemented `FastBPETokenCounter`, `PythonAstOutlineCompressor`, `PromptCompressor` | **Closed** |
 | **ISS-033-01** | Phase 33 | Full-Stack Sync | Static AST route extraction and schema type safety | Implemented `OpenApiContractChecker`, `TypeScriptContractGenerator`, `FastApiAstExtractor` | **Closed** |
 | **ISS-034-01** | Phase 34 | Codebase Hygiene | Dead code detection and 3-way AST merge solver | Implemented `PolyglotDeadCodeDetector`, `AstImportMerger`, `ASTConflictMerger` | **Closed** |
+| **ISS-035-01** | Phase 35 | Polyglot AST Slicing | Tree-Sitter based code property graph slicing | Implemented `CodeGraphStore`, `PythonCodeGraphBuilder`, `VerbatimAstSlicer` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 35+)
+## 2. Active & Upcoming Issues (Phases 36+)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-035-01** | Phase 35 | Polyglot AST Slicing | Tree-Sitter based code property graph slicing | Phase 35 | Open |
 | **ISS-036-01** | Phase 36 | Asset Optimization | Bundle budget checking and dead asset auditing | Phase 36 | Open |
 | **ISS-037-01** | Phase 37 | Git Hotspots | Code velocity, churn, and bus-factor analysis | Phase 37 | Open |
+| **ISS-038-01** | Phase 38 | Agent Governance | Centralized AGENTS.md compiler and repo scaffolding | Phase 38 | Open |
+
 
 
 

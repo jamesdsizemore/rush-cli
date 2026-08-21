@@ -1388,8 +1388,28 @@ def conflict_solve_cmd(file_a: Path, file_b: Path) -> None:
         sys.exit(1)
 
 
+@cli.group(name="codegraph")
+def codegraph_group() -> None:
+    """Polyglot AST code property graph exploration and verbatim slicing."""
+
+
+@codegraph_group.command(name="slice")
+@click.argument("symbol_name")
+def codegraph_slice_cmd(symbol_name: str) -> None:
+    """Extract verbatim source code slice for target symbol."""
+    from rush.codegraph.slicer import VerbatimAstSlicer
+    from rush.codegraph.store import CodeGraphStore
+
+    store = CodeGraphStore(Path.cwd() / ".codegraph" / "graph.db")
+    slicer = VerbatimAstSlicer(store)
+    slices = slicer.slice_symbol(symbol_name)
+    for s in slices:
+        click.echo(s)
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
