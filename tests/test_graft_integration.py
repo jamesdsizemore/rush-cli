@@ -44,3 +44,13 @@ def test_review_without_opt_in_preserves_heuristic_only_output(tmp_path: Path) -
 
     assert not any(finding["rule"] == "graft-context" for finding in result["findings"])
     assert result["review_kind"] == "heuristic"
+
+
+def test_local_graft_context_provider_fallback(tmp_path: Path) -> None:
+    from rush.integrations.graft import LocalGraftContext
+
+    provider = LocalGraftContext()
+    # Directory without .hermes/graft
+    assert provider.available(tmp_path) is False
+    assert provider.context_for(tmp_path / "app.py") == []
+
