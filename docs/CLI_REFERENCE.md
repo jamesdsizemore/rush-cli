@@ -111,6 +111,27 @@ The following explicit permission flags are available across tools:
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
 
+## Advanced Autonomous Agent, Hygiene & Governance Commands (Phases 29–40)
+
+| Command | Purpose | Key Flags & Arguments | Modification |
+|---|---|---|---|
+| `patch apply PATH` | Apply AI-generated remediation patches in isolated Git worktree sandbox. | `--dry-run`, `--circuit-breaker` | Applies patch in isolated worktree |
+| `guard check-cmd CMD` | Intercept destructive/harmful shell commands before execution. | none | none |
+| `guard check-path PATH` | Enforce repository boundary path confinement. | none | none |
+| `token count PATH` | Fast byte-pair encoding (BPE) token counting for LLM context windows. | none | none |
+| `outline PATH` | AST code outline compression (stripping docstrings/bodies for context optimization). | none | none |
+| `sync openapi PATH` | Verify OpenAPI spec against backend implementation and generate TypeScript types. | `--output-ts <PATH>` | Writes TS interface if output specified |
+| `hygiene dead-code` | Scan project for unreferenced polyglot symbols and dead exports. | none | none |
+| `conflict solve FILE_A FILE_B` | 3-way AST merge resolver reconciling conflicting source files. | none | Outputs resolved source |
+| `codegraph slice SYMBOL` | Extract verbatim symbol source slice with line numbers from CPG database. | none | none |
+| `bundle analyze DIST_DIR` | Measure build chunk transfer sizes (raw, gzip, brotli) and evaluate budget gates. | none | none |
+| `hotspots analyze` | Compute composite defect risk scores combining commit churn and McCabe complexity. | none | none |
+| `governance sync` | Compile canonical `AGENTS.md` into multi-IDE rule files (`.cursorrules`, `.clinerules`, etc.). | none | Writes IDE rule files |
+| `scaffold init` | Initialize repository with canonical `AGENTS.md` and `rush.toml` templates. | none | Writes scaffold templates |
+| `hook run` | Sub-second pre-commit intelligence suite across staged files (AST lint, Trojan Source, conflict markers). | none | none |
+| `score compute` | Calculate deterministic 0–100% 6-pillar repository health score and letter grade. | `--type-safety`, `--test-coverage`, `--code-health`, `--security`, `--token-economy`, `--governance` | none |
+| `consensus reconcile` | Reconcile multi-model AI code review findings with weighted agreement voting. | none | none |
+
 ## Advanced Scoping, Caching & Monorepo Options
 
 The following flags are supported across evaluation commands:
@@ -140,3 +161,4 @@ The following flags are supported across evaluation commands:
 ## Result and exit behavior
 
 `ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](reference/result-reference.md).
+

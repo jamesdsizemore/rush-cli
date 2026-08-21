@@ -92,6 +92,14 @@ See [Advanced checks](user-guide/advanced-checks.md) and [Permissions](safety/pe
 
 MCP lets a compatible assistant ask the local Rush process to inspect your project. Configure `rush mcp serve` as a stdio command, then ask: “Review the files I changed,” “Run relevant tests,” or “Tell me which checker is missing.” See [Working with AI agents](user-guide/working-with-ai-agents.md).
 
+## Autonomous Agent Safety, CodeGraph & Quality Scorecards (Phases 29–40)
+
+- **Agent Safety & Sandboxing**: `rush guard check-cmd` and `rush guard check-path` intercept destructive shell executions and sandbox AI file operations in isolated Git worktrees.
+- **Context Economy & BPE Tokenizer**: `rush token count` and `rush outline` provide microsecond AST outline compression to eliminate token waste in LLM prompt contexts.
+- **Polyglot CodeGraph Exploration**: `rush codegraph slice` uses a SQLite-backed Code Property Graph to extract verbatim symbols, functions, and cross-file call paths.
+- **Git Hotspots & Defect Risk**: `rush hotspots analyze` correlates commit churn with McCabe cyclomatic complexity to pinpoint high-risk defect areas.
+- **Multi-Model Consensus & PR Quality Scorecard**: `rush score compute` calculates deterministic 0–100% 6-pillar quality scores with SVG badges and SARIF 2.1.0 GitHub Code Scanning exports.
+
 ## Configure Rush for my project
 
 A `rush.toml` file stores a small set of project settings. Rush finds the nearest file while walking upward from the target and stops at the Git root. Current fields are documented in [Configuration reference](reference/configuration-reference.md). Only `review.max_file_lines`, `review.use_graft`, and direct lint engine arguments have verified consumers; other parsed fields are forward-facing and should not be presented as enforced policy.
@@ -99,3 +107,4 @@ A `rush.toml` file stores a small set of project settings. Rush finds the neares
 ## When something goes wrong
 
 Use [Troubleshooting](user-guide/troubleshooting.md) for symptom → reason → exact fix, and [FAQ](user-guide/faq.md) for common decisions.
+
