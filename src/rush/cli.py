@@ -1441,8 +1441,42 @@ def hotspots_analyze_cmd() -> None:
         click.echo(f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} (Churn: {s.churn_score}, Complexity: {s.complexity_score})")
 
 
+@cli.group(name="governance")
+def governance_group() -> None:
+    """Agent governance and multi-IDE rule synchronization."""
+
+
+@governance_group.command(name="sync")
+def governance_sync_cmd() -> None:
+    """Compile canonical AGENTS.md to .cursorrules, .clinerules, etc."""
+    from rush.governance.synchronizer import AgentsMdSynchronizer
+
+    syncer = AgentsMdSynchronizer(Path.cwd())
+    results = syncer.sync_all()
+    click.echo(f"Synchronized Governance Files ({len(results)}):")
+    for r in results:
+        click.echo(f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})")
+
+
+@cli.group(name="scaffold")
+def scaffold_group() -> None:
+    """Repository governance and configuration scaffolding."""
+
+
+@scaffold_group.command(name="init")
+def scaffold_init_cmd() -> None:
+    """Initialize repository with AGENTS.md and rush.toml templates."""
+    from rush.governance.scaffolder import RepoScaffolder
+
+    created = RepoScaffolder.init_repository(Path.cwd())
+    click.echo(f"Scaffolded Files ({len(created)}):")
+    for c in created:
+        click.echo(f"  - {c.name}")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
