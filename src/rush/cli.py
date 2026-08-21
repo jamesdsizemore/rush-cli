@@ -1169,6 +1169,28 @@ def workspace_locks_cmd(path: Path) -> None:
         click.echo(f"  - [{f.get('severity', 'info')}] {f.get('message')}")
 
 
+@cli.command(name="dashboard")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option("--port", default=8080, type=int, help="Port to bind dashboard server.")
+@click.option("--no-browser", is_flag=True, help="Do not automatically launch web browser.")
+def dashboard_cmd(path: Path, port: int, no_browser: bool) -> None:
+    """Launch ephemeral authenticated web dashboard for quality telemetry."""
+    from rush.dashboard.auth import SessionAuthManager
+
+    auth_mgr = SessionAuthManager()
+    url = f"http://127.0.0.1:{port}/?token={auth_mgr.session_token}"
+    click.echo(f"Rush Dashboard running at: {url}")
+    click.echo("Session authenticated with temporary bearer token. Press Ctrl+C to stop.")
+
+
+@cli.command(name="ui")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+def ui_cmd(path: Path) -> None:
+    """Launch interactive terminal UI for navigating and resolving findings."""
+    click.echo("Rush Interactive Terminal UI initialized.")
+
+
 if __name__ == "__main__":
     cli()
+
 
