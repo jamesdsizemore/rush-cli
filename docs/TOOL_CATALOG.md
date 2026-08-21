@@ -41,6 +41,17 @@ The catalog contains 37 user-visible tools. **Maturity matters:** a listed tool 
 | `tdd` | workflow | real adapter | TDD Guard Red-Green-Refactor cycle enforcement and automated test discovery |
 | `fix` | quality | real adapter | automated safe multi-engine code remediation and formatting (Ruff, Biome, ESLint, Prettier, ast-grep) |
 | `doctor` | workflow | real adapter | environment health, PATH precedence, virtual environment, and toolchain integrity diagnostics |
+| `guard` | security | real adapter | destructive command interceptor, repository path boundary confinement, and secret redactor |
+| `token` | quality | real adapter | fast BPE token counter, Python AST outline compressor |
+| `sync` | quality | real adapter | OpenAPI contract validator, TypeScript interface generator |
+| `hygiene` | quality | real adapter | polyglot dead code detector, 3-way AST merge conflict resolver |
+| `codegraph` | quality | real adapter | polyglot CPG symbol slicer, SQLite index store, call path tracer |
+| `bundle` | quality | real adapter | chunk calculator, raw/gzip/brotli transfer size measurement, performance budget gate |
+| `hotspots` | quality | real adapter | Git commit churn analyzer, McCabe cyclomatic complexity risk matrix, bus factor calculator |
+| `governance` | workflow | real adapter | canonical AGENTS.md compiler to multi-IDE rules, repo scaffolder, subagent guard |
+| `hook` | workflow | real adapter | sub-second staged AST linter, Trojan Source detector, hook tamper guard |
+| `score` | workflow | real adapter | 6-pillar composite quality scorecard, SARIF 2.1.0 exporter, SVG badge generator, multi-model consensus reconciler |
 
 Generated help is authoritative for options. See [CLI reference](reference/cli-reference.md), [Engine directory](reference/engine-directory.md), and [Permissions](safety/permissions.md).
+
 

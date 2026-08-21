@@ -43,14 +43,21 @@ rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
 rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
 rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
 rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
-rush_get_patch, rush_apply_fix, rush_session_context
+rush_get_patch, rush_apply_fix, rush_session_context,
+rush_guard, rush_token, rush_sync, rush_hygiene, rush_codegraph,
+rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score
 ```
 
-## AI Agent Remediation & Session Tools (Phase 29)
+## AI Agent Remediation & Safety Tools (Phases 29–40)
 
 - `rush_get_patch`: Returns unified diff for a finding.
 - `rush_apply_fix`: Safely applies validated unified diffs with path containment and protected file shielding (Control 7).
 - `rush_session_context`: Retrieves multi-turn evaluation history framed in `<rush_session_memory>` XML tags.
+- `rush_guard`: Validates shell command safety and confines path traversal.
+- `rush_token`: Fast BPE token counting and AST outline compression.
+- `rush_codegraph`: Explores polyglot Code Property Graph and extracts verbatim symbol slices.
+- `rush_score`: Computes 6-pillar composite quality scores and generates SARIF/SVG artifacts.
+
 
 ## Protocol guarantees
 

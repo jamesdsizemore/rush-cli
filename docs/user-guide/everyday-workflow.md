@@ -80,8 +80,11 @@ rush lint . --json
 1. Verify TDD compliance with `rush tdd .`.
 2. Review the actual changed scope with `rush review . --changed-file <file>`.
 3. Check for AI hallucinations with `rush slop .`.
-4. Run repository-level tests and security scans.
+4. Run sub-second staged hook checks with `rush hook run`.
+5. Compute composite PR quality scorecard with `rush score compute`.
+6. Run repository-level tests and security scans.
 
 ## Good stopping condition
 
-Required checks are `ok`; intentional advisory findings are understood; no required check is merely `skipped`; and the Git diff contains only expected changes. Teams decide which optional engines are required. See [CI overview](../integrations/ci-overview.md).
+Required checks are `ok`; intentional advisory findings are understood; no required check is merely `skipped`; quality scorecard score is >= 85%; and the Git diff contains only expected changes. Teams decide which optional engines are required. See [CI overview](../integrations/ci-overview.md).
+

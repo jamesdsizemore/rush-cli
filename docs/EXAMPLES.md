@@ -115,4 +115,39 @@ rush security . --export-sarif artifacts/security.sarif
 rush mcp serve
 ```
 
+---
+
+## 8. Autonomous Agent Governance, Safety & Quality Scorecards (Phases 31–40)
+
+```bash
+# 1. Check command safety and confine path boundaries
+rush guard check-cmd "rm -rf /"
+rush guard check-path "src/rush/main.py"
+
+# 2. Count tokens and compress AST outlines for prompt economy
+rush token count src/rush/cli.py
+rush outline src/rush/cli.py
+
+# 3. Explore polyglot code symbols in Code Property Graph
+rush codegraph slice "CompositeScorecardCalculator"
+
+# 4. Measure frontend bundle chunk transfer sizes and budget gates
+rush bundle analyze ./dist
+
+# 5. Analyze Git commit churn and defect risk hotspots
+rush hotspots analyze
+
+# 6. Synchronize AGENTS.md rules across IDEs and scaffold new repos
+rush governance sync
+rush scaffold init
+
+# 7. Execute sub-second staged hook checks
+rush hook run
+
+# 8. Compute 6-pillar composite quality score and reconcile multi-model reviews
+rush score compute
+rush consensus reconcile
+```
+
 See [Recipe Book](RECIPE_BOOK.md) and [Tutorials](TUTORIALS.md).
+

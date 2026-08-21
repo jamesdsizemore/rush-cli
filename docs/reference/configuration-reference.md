@@ -77,8 +77,44 @@ host = "127.0.0.1"
 
 Configures default binding port and parameters for the local in-memory web dashboard.
 
+## `[bundle]` (Phase 36)
+
+```toml
+[bundle]
+max_gzip_bytes = 153600
+forbidden_barrels = ["@mui/material", "lodash", "rxjs"]
+```
+
+Enforces frontend JavaScript chunk transfer budgets and blocks unoptimized barrel file imports.
+
+## `[score.weights]` (Phase 40)
+
+```toml
+[score.weights]
+type_safety = 0.20
+test_coverage = 0.25
+code_health = 0.20
+security = 0.15
+token_economy = 0.10
+governance = 0.10
+```
+
+Customizes the relative weighting for the 6-pillar composite quality scorecard.
+
+## `[guard]` (Phase 31)
+
+```toml
+[guard]
+block_destructive_commands = true
+max_subagent_depth = 3
+confine_workspace_paths = true
+```
+
+Configures agent safety boundaries, destructive command interception, and tree depth constraints.
+
 ## Validation behavior
 
 Malformed TOML, unknown log levels, wrong value types, and unknown tool names fail configuration loading. Rush does not merge multiple files: nearest discovered file wins. Validate anytime with `rush config check .`.
 
 See [Configuration cookbook](configuration-cookbook.md) and [developer configuration guide](../developer/configuration-development.md).
+

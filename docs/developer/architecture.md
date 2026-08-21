@@ -51,8 +51,29 @@ flowchart TB
 - **Standalone Binary Packaging & CI Hardening (Phase 30)**:
   - Standalone multi-platform compilation manifests for Homebrew, Scoop, and Winget (`packaging/`).
   - GitHub Actions release pipeline with SHA-pinned actions (`.github/workflows/release.yml`).
+- **Autonomous Agent Safety & Worktree Sandboxing (Phase 31)**:
+  - Destructive command interceptor (`src/rush/safety/`) and ephemeral Git worktree sandboxing.
+- **Token Economy & Context Optimization (Phase 32)**:
+  - Fast BPE token counter and AST outline compressor (`src/rush/token_economy/`).
+- **Full-Stack Static Sync & Type-Safety Gates (Phase 33)**:
+  - Bidirectional OpenAPI JSON verifier and TypeScript interface generator (`src/rush/sync/`).
+- **Codebase Hygiene & 3-Way AST Conflict Resolution (Phase 34)**:
+  - Polyglot dead code scanner and 3-way AST merge solver (`src/rush/hygiene/`).
+- **Polyglot CodeGraph & Verbatim AST Slicing (Phase 35)**:
+  - SQLite-backed Code Property Graph index store and verbatim symbol slicer (`src/rush/codegraph/`).
+- **Frontend Asset & Bundle Optimization (Phase 36)**:
+  - Raw, Gzip, and Brotli chunk size calculator and budget gates (`src/rush/bundle/`).
+- **Git Hotspots & Defect Risk Analytics (Phase 37)**:
+  - Commit churn velocity and McCabe cyclomatic complexity correlation matrix (`src/rush/hotspots/`).
+- **Multi-IDE Agent Governance & Repo Scaffolding (Phase 38)**:
+  - Canonical `AGENTS.md` instruction compiler emitting IDE rule files (`src/rush/governance/`).
+- **Git Pre-Commit Intelligence & Hook Guard (Phase 39)**:
+  - Sub-second staged AST parser, Trojan Source Unicode detector, and cryptographic hook tamper guard (`src/rush/hook/`).
+- **Multi-Model Consensus & Composite Quality Scorecard (Phase 40)**:
+  - 6-pillar repository health scoring engine (`src/rush/score/`), SARIF 2.1.0 exporter, SVG badge generator, and multi-model consensus reconciliation.
 
 ## Configuration flow
+
 
 ```mermaid
 flowchart LR
