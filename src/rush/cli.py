@@ -1349,8 +1349,48 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
         click.echo(ts_code)
 
 
+@cli.group(name="hygiene")
+def hygiene_group() -> None:
+    """Polyglot codebase hygiene and dead code elimination."""
+
+
+@hygiene_group.command(name="dead-code")
+def hygiene_dead_code_cmd() -> None:
+    """Scan project for unreferenced symbols and dead exports."""
+    from rush.hygiene.dead_code import PolyglotDeadCodeDetector
+
+    detector = PolyglotDeadCodeDetector(Path.cwd())
+    findings = detector.scan_python()
+    click.echo(f"Dead Code Findings ({len(findings)}):")
+    for f in findings:
+        click.echo(f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}")
+
+
+@cli.group(name="conflict")
+def conflict_group() -> None:
+    """AST-aware Git merge conflict resolver."""
+
+
+@conflict_group.command(name="solve")
+@click.argument("file_a", type=click.Path(exists=True, path_type=Path))
+@click.argument("file_b", type=click.Path(exists=True, path_type=Path))
+def conflict_solve_cmd(file_a: Path, file_b: Path) -> None:
+    """Reconcile conflicting source files using semantic AST merging."""
+    from rush.hygiene.ast_merger import ASTConflictMerger
+
+    source_a = file_a.read_text(encoding="utf-8")
+    source_b = file_b.read_text(encoding="utf-8")
+    ok, result = ASTConflictMerger.merge_source_files("", source_a, source_b)
+    if ok:
+        click.echo(result)
+    else:
+        click.echo(f"[MERGE FAILED] {result}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 

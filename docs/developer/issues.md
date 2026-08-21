@@ -26,16 +26,18 @@
 | **ISS-031-01** | Phase 31 | Worktree Sandboxing | Isolated git worktree environment for autonomous agents | Implemented `AgentSafetyGuard`, `DangerousCommandInterceptor`, `SecretRedactor` | **Closed** |
 | **ISS-032-01** | Phase 32 | Token Economy | BPE tokenizer and AST code outline compression | Implemented `FastBPETokenCounter`, `PythonAstOutlineCompressor`, `PromptCompressor` | **Closed** |
 | **ISS-033-01** | Phase 33 | Full-Stack Sync | Static AST route extraction and schema type safety | Implemented `OpenApiContractChecker`, `TypeScriptContractGenerator`, `FastApiAstExtractor` | **Closed** |
+| **ISS-034-01** | Phase 34 | Codebase Hygiene | Dead code detection and 3-way AST merge solver | Implemented `PolyglotDeadCodeDetector`, `AstImportMerger`, `ASTConflictMerger` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 34+)
+## 2. Active & Upcoming Issues (Phases 35+)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-034-01** | Phase 34 | Codebase Hygiene | Dead code detection and 3-way AST merge solver | Phase 34 | Open |
 | **ISS-035-01** | Phase 35 | Polyglot AST Slicing | Tree-Sitter based code property graph slicing | Phase 35 | Open |
 | **ISS-036-01** | Phase 36 | Asset Optimization | Bundle budget checking and dead asset auditing | Phase 36 | Open |
+| **ISS-037-01** | Phase 37 | Git Hotspots | Code velocity, churn, and bus-factor analysis | Phase 37 | Open |
+
 
 
 
