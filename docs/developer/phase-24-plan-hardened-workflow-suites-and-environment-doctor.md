@@ -1,63 +1,99 @@
 # Phase 24 Implementation Plan: Hardened Workflow Suites & Environment Doctor
 
-> **Phase:** 24 of 30  
+> **Phase:** 24 of 40  
 > **Milestone:** Composite Developer Workflows & PATH-Resilient Diagnostics  
 > **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0 / v0.3.0  
-> **ADR Reference:** [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)
+> **Target Version:** Rush v0.2.0  
+> **ADR References:** [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md), [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
 
 ---
 
 ## 1. Objective & Scope
 
-Implement developer-aligned composite workflow suites (`rush check`, `rush audit`, `rush gate`) and an environment health diagnostic command (`rush doctor`).
+Developers and autonomous agents waste tokens and time orchestrating dozens of individual quality tools manually. Phase 24 implements high-level composite workflow suites (`rush check`, `rush audit`, `rush gate`) and an environment health diagnostic command (`rush doctor`).
 
-Incorporate **Control 4 (PATH Precedence & Binary Integrity)** to strictly resolve binaries from active virtual environments before global system PATH, disallow relative `./` lookups, and detect untrusted executable shadowing.
+To prevent PATH hijacking attacks (where an untrusted `./ruff` or `./pytest` script in the working tree is executed), the environment doctor enforces virtual environment precedence, disallows relative `./` lookups, and flags untrusted executable shadowing.
 
 ---
 
-## 2. File Rosters
+## 2. Token Reduction & Optimization Strategy (`rtk`, `graft`, `context-mode`)
 
-### Allowed & Target Files
-- `src/rush/workflows/__init__.py` (New: Composite suite runner)
-- `src/rush/workflows/suites.py` (New: Definitions for `check`, `audit`, `gate`)
-- `src/rush/tools/doctor.py` (New: `DoctorTool` environment auditor)
+- **`rtk` (Suite Failure Slicing)**: When running composite suites (`rush check`), passing steps are compressed into single-line green checkmarks; only failing tool outputs are expanded, saving up to 85% of terminal/LLM output tokens.
+- **`graft` (Targeted Subprocess Execution)**: Workflows execute engines against scoped file targets (`--staged` / `--changed`) rather than scanning full trees.
+- **`context-mode` (Aggregated Finding Tables)**: Results from 5+ tools in a suite are aggregated into a single deduplicated finding matrix.
+
+---
+
+## 3. File Rosters
+
+### Target Implementation Files
+- `src/rush/workflows/__init__.py` (New: Composite suite runner and parallel executor)
+- `src/rush/workflows/suites.py` (New: Suite definitions for `check`, `audit`, `gate`)
+- `src/rush/tools/doctor.py` (New: PATH-resilient toolchain and virtual environment auditor)
 - `src/rush/cli.py` (Modified: Register `rush check`, `rush audit`, `rush gate`, `rush doctor`)
-- `src/rush/catalog.py` (Modified: Register suites in `TOOL_SPECS`)
-- `src/rush/logging.py` (Modified: `[rush-doctor:LEVEL]` and `[rush-workflow:LEVEL]`)
+- `src/rush/mcp_server.py` (Modified: Register FastMCP composite suite endpoints)
+- `src/rush/catalog.py` (Modified: Register workflow specifications)
 
 ### Test & Fixture Files
-- `tests/test_workflows.py` (New: Suite aggregation and short-circuit tests)
-- `tests/test_doctor.py` (New: PATH resolution, shadowing alert, and environment tests)
-- `tests/fixtures/doctor/` (New: Mock PATH fixtures)
+- `tests/test_workflows.py` (New: Execution order, `--fail-fast`, short-circuiting, and aggregation tests)
+- `tests/test_doctor.py` (New: Virtualenv precedence, shadowing detection, untrusted binary rejection)
+- `tests/fixtures/doctor/shadow_env/` (New: PATH shadowing test fixture)
 
 ---
 
-## 3. Test-Driven Development (TDD) Workflow
+## 4. Test-Driven Development (TDD) Workflow & Test Suite Design
 
-### 3.1 RED Phase
-Write tests in `tests/test_workflows.py` and `tests/test_doctor.py`:
-1. `test_check_suite_execution_order()`: Verifies `rush check` runs TDD -> format -> lint -> typecheck -> slop -> test in sequence.
-2. `test_audit_suite_security_aggregation()`: Verifies `rush audit` runs security -> secrets -> license -> sbom -> contract.
-3. `test_doctor_path_hijacking_detection()`: Asserts a local `./ruff` executable is ignored in favor of `.venv/Scripts/ruff`.
-4. `test_doctor_shadowing_alert()`: Asserts that conflicting PATH duplicates generate structured warnings.
+### 4.1 RED Phase (Author Tests First)
 
-### 3.2 GREEN Phase
-Implement `suites.py`, `doctor.py`, and CLI commands.
+```python
+# tests/test_workflows.py
+def test_check_suite_runs_tools_in_order():
+    suite = CHECK_SUITE
+    assert suite.tool_sequence == ["tdd", "format", "lint", "typecheck", "slop", "test"]
 
-### 3.3 REFACTOR Phase
-Ensure workflow suites aggregate findings deterministically and support `--fail-fast` and `--parallel` execution flags.
+def test_workflow_fail_fast_stops_on_first_error(tmp_path):
+    runner = WorkflowRunner(repo_root=tmp_path)
+    res = runner.run_suite(CHECK_SUITE, fail_fast=True)
+    # Asserts execution halted immediately upon first failure
+
+# tests/test_doctor.py
+def test_doctor_rejects_cwd_binary_shadowing(tmp_path, monkeypatch):
+    fake_bin = tmp_path / "ruff.exe"
+    fake_bin.write_text("fake", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    
+    resolved = resolve_binary_secure("ruff")
+    # Must NOT resolve to local working directory fake binary
+    assert resolved != fake_bin.resolve()
+```
+
+### 4.2 GREEN Phase (Implementation)
+Implement `src/rush/workflows/suites.py`, `src/rush/workflows/__init__.py`, and `src/rush/tools/doctor.py`.
+
+### 4.3 REFACTOR Phase
+Ensure composite suites support `--parallel` execution for independent tools (e.g. `lint` and `typecheck`) with thread-safe result aggregation.
 
 ---
 
-## 4. Step-by-Step Implementation Tasks
+## 5. Structured Error Logging & Diagnostics Contract
+
+Emit structured NDJSON to `sys.stderr`:
+
+```json
+{"timestamp": "2026-08-21T07:30:00Z", "phase": 24, "tool": "rush_workflow", "event": "suite_started", "suite": "check", "steps": 6}
+{"timestamp": "2026-08-21T07:30:01Z", "phase": 24, "tool": "rush_doctor", "event": "binary_resolved", "binary": "ruff", "path": ".venv/Scripts/ruff.exe", "source": "virtualenv"}
+{"timestamp": "2026-08-21T07:30:02Z", "phase": 24, "tool": "rush_doctor", "event": "shadowing_blocked", "binary": "ruff", "attempted": "./ruff.exe"}
+```
+
+---
+
+## 6. Step-by-Step Task Specifications
 
 ### Task 24.1: Composite Workflow Definitions (`src/rush/workflows/suites.py`)
 ```python
 from __future__ import annotations
 from dataclasses import dataclass
-from pathlib import Path
-from rush.tools.base import ToolResult, ExecutionPermissions
 
 @dataclass(frozen=True)
 class WorkflowSuite:
@@ -85,64 +121,18 @@ GATE_SUITE = WorkflowSuite(
 ```
 
 ### Task 24.2: PATH-Resilient Environment Doctor (`src/rush/tools/doctor.py`)
-```python
-import sys
-import shutil
-from pathlib import Path
+Resolve binaries prioritizing active virtualenvs, strictly disallowing CWD relative lookups.
 
-def resolve_binary_secure(name: str) -> Path | None:
-    # 1. Check active Python virtualenv
-    venv_bin = Path(sys.prefix) / ("Scripts" if sys.platform == "win32" else "bin") / name
-    if sys.platform == "win32":
-        venv_bin = venv_bin.with_suffix(".exe")
-    if venv_bin.is_file():
-        return venv_bin
-    
-    # 2. Check system PATH (never relative ./)
-    path_hit = shutil.which(name)
-    if path_hit:
-        resolved = Path(path_hit).resolve()
-        # Verify not in current working directory
-        if resolved.is_relative_to(Path.cwd()) and not resolved.is_relative_to(Path(sys.prefix)):
-            return None  # Shadowing rejected
-        return resolved
-    return None
-```
+### Task 24.3: Parallel Workflow Runner (`src/rush/workflows/__init__.py`)
+Execute suite steps with `--fail-fast` and `--parallel` flags.
 
-### Task 24.3: Stderr Diagnostics & Logging
-- `[rush-workflow:INFO] Starting composite suite: {name}`
-- `[rush-workflow:WARN] Suite {name} completed with warnings`
-- `[rush-doctor:INFO] Discovered verified engine: {engine} at {path}`
-- `[rush-doctor:WARN] Suspicious local binary shadowing detected: {path}`
+### Task 24.4: CLI & FastMCP Registrations
+Register `rush check`, `rush audit`, `rush gate`, `rush doctor` in CLI and FastMCP server.
 
 ---
 
-## 5. Mandatory Documentation Synchronization
+## 7. Semantic Drift Review & Verification Gate
 
-During development, update:
-1. `docs/CLI_REFERENCE.md` & `docs/reference/cli-reference.md` (Add `rush check`, `rush audit`, `rush gate`, `rush doctor`).
-2. `docs/USER_GUIDE.md` & `docs/user-guide/everyday-workflow.md` (Guide to using composite suites in daily dev).
-3. `docs/CI_CD_GUIDE.md` & `docs/integrations/github-actions.md` (Using `rush gate` in CI).
-4. Run `python scripts/sync_docs.py --update` to maintain 100% doc sync.
-
----
-
-## 6. Verification Commands & Exit Criteria
-
-```bash
-# 1. Run workflow and doctor unit tests
-.venv/Scripts/python.exe -m pytest tests/test_workflows.py tests/test_doctor.py -v
-
-# 2. Full test suite verification
-.venv/Scripts/python.exe -m pytest tests/ -q
-
-# 3. Documentation parity verification
-.venv/Scripts/python.exe scripts/sync_docs.py --check
-
-# 4. Lint and format
-.venv/Scripts/ruff.exe check src tests scripts
-.venv/Scripts/ruff.exe format --check src tests scripts
-
-# 5. Graft code graph check
-graft --dir .hermes/graft build . && graft --dir .hermes/graft check .
-```
+1. **Anti-Shadowing Invariant**: Binaries in CWD must NEVER execute unless explicitly inside `.venv`.
+2. **Subprocess Isolation**: Subprocess calls must use `stdin=DEVNULL`, `shell=False`.
+3. **Doc Parity**: Run `python scripts/sync_docs.py --update` and verify zero drift.

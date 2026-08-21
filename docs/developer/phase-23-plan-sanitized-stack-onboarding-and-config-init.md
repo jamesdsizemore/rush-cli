@@ -1,57 +1,95 @@
 # Phase 23 Implementation Plan: Sanitized Stack Onboarding & Config Init
 
-> **Phase:** 23 of 30  
-> **Milestone:** Zero-Friction Onboarding & Toolchain Initializer  
+> **Phase:** 23 of 40  
+> **Milestone:** Zero-Friction Onboarding & Sanitized Toolchain Initializer  
 > **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0 / v0.3.0  
-> **ADR Reference:** [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> **Target Version:** Rush v0.2.0  
+> **ADR References:** [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md), [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
 
 ---
 
 ## 1. Objective & Scope
 
-Deliver an intelligent repository onboarding wizard (`rush setup`) and configuration initializer (`rush init`, `rush config check`) that automatically detects polyglot stacks, recommends quality tools, installs toolchains via system package managers without shell injection vulnerabilities, and generates valid `rush.toml` configs.
+Autonomous coding agents and developers setting up a new repository often struggle with manual configuration generation and missing toolchain dependencies. Phase 23 delivers an intelligent onboarding wizard (`rush setup`) and configuration initializer (`rush init`, `rush config check`) that automatically detects polyglot stacks, recommends quality tools, installs toolchains via system package managers without shell injection vulnerabilities, and generates valid `rush.toml` configs.
 
-Incorporate **Control 3 (Shell Injection Elimination)** to ensure package names are regex-sanitized and executed as typed argument lists (`list[str]`) with `shell=False`.
+Package names and arguments are strictly regex-sanitized (`^[a-zA-Z0-9@_./-]+$`) and passed as typed argument lists (`list[str]`) with `shell=False` and `stdin=DEVNULL`.
 
 ---
 
-## 2. File Rosters
+## 2. Token Reduction & Optimization Strategy (`rtk`, `graft`, `context-mode`)
 
-### Allowed & Target Files
-- `src/rush/discovery/stack.py` (New: Multi-language project stack detector)
-- `src/rush/tools/setup_wizard.py` (New: Toolchain installer)
-- `src/rush/tools/init_config.py` (New: `rush.toml` generator)
-- `src/rush/config.py` (Modified: Configuration validation and diagnostics)
-- `src/rush/cli.py` (Modified: Add `rush setup`, `rush init`, `rush config check`)
-- `src/rush/logging.py` (Modified: `[rush-setup:LEVEL]` and `[rush-init:LEVEL]`)
+- **`rtk` (Concise Stack Summaries)**: `rush setup` analyzes root manifests (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) without dumping deep dependency trees, emitting a concise 5-line stack summary.
+- **`graft` (Manifest AST Extraction)**: Uses Tree-Sitter / TOML / JSON parsers to extract only the dependency tables and scripts, skipping lockfiles and build outputs.
+- **`context-mode` (Interactive TTY Degradation)**: Automatically falls back to non-interactive structured JSON mode (`--json` or non-TTY) when invoked by an AI agent.
+
+---
+
+## 3. File Rosters
+
+### Target Implementation Files
+- `src/rush/discovery/stack.py` (New: Polyglot project stack and framework detector)
+- `src/rush/tools/setup_wizard.py` (New: Sanitized toolchain installer supporting uv, npm, brew, cargo, winget)
+- `src/rush/tools/init_config.py` (New: Tailored `rush.toml` generator)
+- `src/rush/config.py` (Modified: Configuration validation and diagnostics in `rush config check`)
+- `src/rush/cli.py` (Modified: Register `rush setup`, `rush init`, `rush config check`)
+- `src/rush/mcp_server.py` (Modified: FastMCP endpoints for stack detection)
+- `src/rush/catalog.py` (Modified: Tool specifications)
 
 ### Test & Fixture Files
-- `tests/test_stack_discovery.py` (New: Stack detection fixtures)
+- `tests/test_stack_discovery.py` (New: Stack detection fixtures across Python, TypeScript, Rust, Go)
 - `tests/test_setup_and_init.py` (New: Config generation and command injection prevention tests)
-- `tests/fixtures/stacks/` (New: Sample `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` fixtures)
+- `tests/fixtures/stacks/pyproject.toml` (New: Python fixture)
+- `tests/fixtures/stacks/package.json` (New: Node fixture)
 
 ---
 
-## 3. Test-Driven Development (TDD) Workflow
+## 4. Test-Driven Development (TDD) Workflow & Test Suite Design
 
-### 3.1 RED Phase
-Write tests in `tests/test_stack_discovery.py` and `tests/test_setup_and_init.py`:
-1. `test_detect_python_uv_stack()`: Detects Python + uv from `pyproject.toml`.
-2. `test_detect_node_typescript_stack()`: Detects Node + TS from `package.json` and `tsconfig.json`.
-3. `test_setup_command_injection_sanitization()`: Verifies package specs containing `; rm -rf /` or `& calc.exe` are rejected.
-4. `test_setup_argument_list_structure()`: Verifies `run_subprocess()` receives a pure list of strings.
-5. `test_init_config_generation()`: Verifies generated `rush.toml` parses cleanly with `rush.config.load_config()`.
+### 4.1 RED Phase (Author Tests First)
 
-### 3.2 GREEN Phase
-Implement `stack.py`, `setup_wizard.py`, `init_config.py`, and CLI commands.
+```python
+# tests/test_setup_and_init.py
+def test_setup_command_injection_sanitization():
+    hostile_pkg = "requests; rm -rf /"
+    with pytest.raises(ValueError, match="Invalid or hostile package name"):
+        install_engine_package("uv", hostile_pkg, cwd=Path("."))
 
-### 3.3 REFACTOR Phase
+def test_init_config_generation_produces_valid_toml(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    generated_path = generate_initial_config(tmp_path)
+    assert generated_path.exists()
+    loaded = load_config(generated_path)
+    assert "tools" in loaded
+
+# tests/test_stack_discovery.py
+def test_detect_python_uv_stack(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    stacks = detect_project_stack(tmp_path)
+    assert any(s.language == "python" for s in stacks)
+```
+
+### 4.2 GREEN Phase (Implementation)
+Implement `src/rush/discovery/stack.py`, `src/rush/tools/setup_wizard.py`, and `src/rush/tools/init_config.py`.
+
+### 4.3 REFACTOR Phase
 Ensure interactive prompts degrade gracefully to non-interactive mode when `--yes` / `--non-interactive` is passed or stdout is non-TTY.
 
 ---
 
-## 4. Step-by-Step Implementation Tasks
+## 5. Structured Error Logging & Diagnostics Contract
+
+Emit structured NDJSON to `sys.stderr`:
+
+```json
+{"timestamp": "2026-08-21T07:25:00Z", "phase": 23, "tool": "rush_setup", "event": "stacks_detected", "languages": ["python", "typescript"], "frameworks": ["fastapi", "react"]}
+{"timestamp": "2026-08-21T07:25:01Z", "phase": 23, "tool": "rush_setup", "event": "engine_installed", "engine": "ruff", "package_manager": "uv", "status": "success"}
+{"timestamp": "2026-08-21T07:25:02Z", "phase": 23, "tool": "rush_init", "event": "config_generated", "file": "rush.toml", "tools_enabled": 14}
+```
+
+---
+
+## 6. Step-by-Step Task Specifications
 
 ### Task 23.1: Stack Discovery Engine (`src/rush/discovery/stack.py`)
 ```python
@@ -67,9 +105,8 @@ class DetectedStack:
     suggested_engines: list[str]
 
 def detect_project_stack(root: Path) -> list[DetectedStack]:
-    stacks: list[DetectedStack] = []
-    # Probe pyproject.toml, package.json, Cargo.toml, go.mod, pom.xml, Dockerfile, etc.
-    return stacks
+    """Inspect root manifests to identify languages, frameworks, and recommended engines."""
+    ...
 ```
 
 ### Task 23.2: Sanitized Toolchain Installer (`src/rush/tools/setup_wizard.py`)
@@ -81,61 +118,20 @@ from rush.tools.common import run_subprocess
 PACKAGE_NAME_REGEX = re.compile(r"^[a-zA-Z0-9@_./-]+$")
 
 def install_engine_package(package_manager: str, package_name: str, cwd: Path) -> bool:
-    if not PACKAGE_NAME_REGEX.match(package_name):
-        raise ValueError(f"Invalid or hostile package name: {package_name}")
-    
-    cmd_map = {
-        "uv": ["uv", "tool", "install", package_name],
-        "npm": ["npm", "install", "-g", package_name],
-        "brew": ["brew", "install", package_name],
-        "cargo": ["cargo", "install", package_name],
-        "winget": ["winget", "install", "--exact", package_name],
-    }
-    cmd = cmd_map.get(package_manager)
-    if not cmd:
-        return False
-    
-    code, stdout, stderr = run_subprocess(cmd, cwd=cwd)
-    return code == 0
+    """Execute typed, sanitized package manager installation commands."""
+    ...
 ```
 
 ### Task 23.3: Configuration Initializer (`src/rush/tools/init_config.py`)
 Generates a customized `rush.toml` based on detected stacks.
 
-### Task 23.4: Stderr Diagnostics
-- `[rush-setup:INFO] Detected project stacks: {stacks}`
-- `[rush-setup:INFO] Installing recommended engine: {engine} via {pm}`
-- `[rush-setup:ERROR] Invalid package specification: {pkg}`
-- `[rush-init:INFO] Wrote initial configuration to rush.toml`
+### Task 23.4: CLI & FastMCP Registrations
+Register `rush setup`, `rush init`, `rush config check` in CLI and FastMCP server.
 
 ---
 
-## 5. Mandatory Documentation Synchronization
+## 7. Semantic Drift Review & Verification Gate
 
-During development, update:
-1. `docs/GETTING_STARTED.md` & `docs/user-guide/quickstart.md` (Document `rush setup` and `rush init`).
-2. `docs/CLI_REFERENCE.md` & `docs/reference/cli-reference.md` (Document new commands and flags).
-3. `docs/CONFIG_SCHEMA.md` & `docs/reference/configuration-reference.md` (Document `rush config check`).
-4. Run `python scripts/sync_docs.py --update` to synchronize all 149+ docs.
-
----
-
-## 6. Verification Commands & Exit Criteria
-
-```bash
-# 1. Run stack discovery and setup tests
-.venv/Scripts/python.exe -m pytest tests/test_stack_discovery.py tests/test_setup_and_init.py -v
-
-# 2. Full test suite verification
-.venv/Scripts/python.exe -m pytest tests/ -q
-
-# 3. Documentation parity verification
-.venv/Scripts/python.exe scripts/sync_docs.py --check
-
-# 4. Lint and format
-.venv/Scripts/ruff.exe check src tests scripts
-.venv/Scripts/ruff.exe format --check src tests scripts
-
-# 5. Graft code graph check
-graft --dir .hermes/graft build . && graft --dir .hermes/graft check .
-```
+1. **Injection Guard**: Every package name must match `^[a-zA-Z0-9@_./-]+$`.
+2. **Subprocess Isolation**: Subprocess calls must use `stdin=DEVNULL`, `shell=False`.
+3. **Doc Parity**: Run `python scripts/sync_docs.py --update` and verify zero drift.
