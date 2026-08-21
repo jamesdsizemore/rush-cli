@@ -1407,8 +1407,26 @@ def codegraph_slice_cmd(symbol_name: str) -> None:
         click.echo(s)
 
 
+@cli.group(name="bundle")
+def bundle_group() -> None:
+    """Frontend asset and build bundle optimization."""
+
+
+@bundle_group.command(name="analyze")
+@click.argument("dist_dir", type=click.Path(exists=True, path_type=Path))
+def bundle_analyze_cmd(dist_dir: Path) -> None:
+    """Measure build chunk transfer sizes (raw, gzip, brotli)."""
+    from rush.bundle.chunk_calculator import BundleChunkCalculator
+
+    reports = BundleChunkCalculator.measure_directory(dist_dir)
+    click.echo(f"Analyzed Build Chunks ({len(reports)}):")
+    for r in reports:
+        click.echo(f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, brotli: ~{r.brotli_est_bytes} B)")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
