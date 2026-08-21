@@ -206,3 +206,18 @@ def test_cli_cache_commands() -> None:
     res_clean = runner.invoke(cli, ["cache", "clean"])
     assert res_clean.exit_code == 0
     assert "Purged" in res_clean.output
+
+
+def test_validate_git_ref() -> None:
+    from rush.discovery.git import validate_git_ref
+
+    assert validate_git_ref("main") == "main"
+    assert validate_git_ref("v1.0.0") == "v1.0.0"
+    assert validate_git_ref("HEAD~1") == "HEAD~1"
+
+    with pytest.raises(ValueError, match="Invalid Git reference"):
+        validate_git_ref("-bad-flag")
+
+    with pytest.raises(ValueError, match="Invalid Git reference"):
+        validate_git_ref("main; rm -rf /")
+

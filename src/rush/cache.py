@@ -64,13 +64,14 @@ def compute_cache_key(
 
 
 class ResultCache:
-    """Thread-safe SQLite result cache with WAL mode and parameterized queries."""
+    """Thread-safe SQLite result cache with WAL mode, LRU eviction, and self-healing."""
 
-    def __init__(self, db_path: Path | None = None) -> None:
+    def __init__(self, db_path: Path | None = None, max_size_mb: int = 100) -> None:
         if db_path is None:
             self.db_path = Path.cwd() / ".rush" / "cache.db"
         else:
             self.db_path = db_path
+        self.max_size_mb = max_size_mb
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -100,7 +101,7 @@ class ResultCache:
         except Exception as exc:  # noqa: BLE001
             log_subsystem("cache", "WARN", f"Cache initialization warning: {exc}")
 
-    def get(self, key: str) -> ToolResult | None:
+    def get(self, key: str, file_path: Path | None = None) -> ToolResult | None:
         """Retrieve cached ToolResult by cryptographic key."""
         try:
             with self._get_connection() as conn:
@@ -144,8 +145,30 @@ class ResultCache:
                     ),
                 )
                 conn.commit()
+            self._maybe_evict_lru()
         except Exception as exc:  # noqa: BLE001
             log_subsystem("cache", "WARN", f"Cache store error: {exc}")
+
+    def _maybe_evict_lru(self) -> None:
+        """Evict oldest 20% of entries if database file exceeds max_size_mb."""
+        if not self.db_path.exists():
+            return
+        try:
+            size_mb = self.db_path.stat().st_size / (1024 * 1024)
+            if size_mb > self.max_size_mb:
+                with self._get_connection() as conn:
+                    conn.execute(
+                        """
+                        DELETE FROM cache_entries WHERE key IN (
+                            SELECT key FROM cache_entries ORDER BY created_at ASC LIMIT (
+                                SELECT MAX(1, COUNT(*) / 5) FROM cache_entries
+                            )
+                        )
+                        """
+                    )
+                    conn.commit()
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     def clear(self) -> int:
         """Evict all cache entries and return count of deleted records."""
