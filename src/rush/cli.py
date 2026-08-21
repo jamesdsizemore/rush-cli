@@ -1190,7 +1190,47 @@ def ui_cmd(path: Path) -> None:
     click.echo("Rush Interactive Terminal UI initialized.")
 
 
+@cli.group(name="patch")
+def patch_group() -> None:
+    """Isolated AI patch testing, verification, and session memory."""
+
+
+@patch_group.command(name="test")
+@click.argument("patch_file", type=click.Path(exists=True, path_type=Path))
+def patch_test_cmd(patch_file: Path) -> None:
+    """Apply and verify a unified diff in an ephemeral worktree sandbox."""
+    from rush.patch.applier import PatchApplier
+    from rush.patch.sandbox import PatchSandboxManager
+
+    repo_root = Path.cwd()
+    diff_content = patch_file.read_text(encoding="utf-8")
+    mgr = PatchSandboxManager(repo_root)
+    sandbox = mgr.create_sandbox()
+    try:
+        ok, msg = PatchApplier.apply_patch_to_dir(sandbox, diff_content)
+        if ok:
+            click.echo(f"[PASS] {msg}")
+        else:
+            click.echo(f"[FAIL] {msg}", err=True)
+            sys.exit(1)
+    finally:
+        mgr.cleanup_sandbox(sandbox)
+
+
+@patch_group.command(name="memory")
+def patch_memory_list_cmd() -> None:
+    """List historical AI patch memory records."""
+    from rush.patch.memory import PatchMemoryStore
+
+    store = PatchMemoryStore(Path.cwd())
+    records = store.list_records()
+    click.echo(f"Stored Patch Records ({len(records)}):")
+    for r in records:
+        click.echo(f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
