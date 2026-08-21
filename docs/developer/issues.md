@@ -22,16 +22,18 @@
 | **ISS-027-01** | Phase 27 | TUI / Dashboard | Session token expiry handling for Starlette local server | Implemented `SessionAuthManager` with CSPRNG bearer token validation | **Closed** |
 | **ISS-028-01** | Phase 28 | Trust Store | SHA-256 trust verification for third-party agent skills | Implemented `PluginTrustStore` and `PreExecutionHashVerifier` | **Closed** |
 | **ISS-029-01** | Phase 29 | AI Patch Sandbox | Git worktree isolation and circuit breaker for patch loop | Implemented `PatchSandboxManager`, `PatchApplier`, `PatchMemoryStore` | **Closed** |
+| **ISS-030-01** | Phase 30 | Packaging & Release | SemVer and SHA-pinned GitHub Actions packaging validation | Implemented `SemVerValidator`, `CIWorkflowGenerator`, `ArtifactProvenanceVerifier` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 30+)
+## 2. Active & Upcoming Issues (Phases 31+)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-030-01** | Phase 30 | Packaging & Release | SemVer and SHA-pinned GitHub Actions packaging validation | Phase 30 | Open |
 | **ISS-031-01** | Phase 31 | Worktree Sandboxing | Isolated git worktree environment for autonomous agents | Phase 31 | Open |
 | **ISS-032-01** | Phase 32 | Token Economy | BPE tokenizer and AST code outline compression | Phase 32 | Open |
+| **ISS-033-01** | Phase 33 | Full-Stack Sync | Static AST route extraction and schema type safety | Phase 33 | Open |
+
 
 
 

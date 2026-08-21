@@ -1229,8 +1229,39 @@ def patch_memory_list_cmd() -> None:
         click.echo(f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})")
 
 
+@cli.group(name="release")
+def release_group() -> None:
+    """Packaging, versioning, and release artifact generation."""
+
+
+@release_group.command(name="check")
+def release_check_cmd() -> None:
+    """Check version parity across manifests."""
+    from rush.release.semver import SemVerValidator
+
+    versions = SemVerValidator.check_manifest_parity(Path.cwd())
+    click.echo("Discovered Manifest Versions:")
+    for manifest, ver in versions.items():
+        click.echo(f"  - {manifest}: {ver}")
+
+
+@cli.group(name="ci")
+def ci_group() -> None:
+    """Hardened CI/CD workflow generator."""
+
+
+@ci_group.command(name="init")
+def ci_init_cmd() -> None:
+    """Generate hardened SHA-pinned GitHub Actions workflow."""
+    from rush.release.ci_generator import CIWorkflowGenerator
+
+    ci_file = CIWorkflowGenerator.generate_ci_workflow(Path.cwd())
+    click.echo(f"Generated hardened GitHub Actions workflow at {ci_file}")
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
