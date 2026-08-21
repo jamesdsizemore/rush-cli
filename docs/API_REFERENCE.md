@@ -164,4 +164,90 @@ class ExecutionPermissions:
     allow_browser: bool = False
 ```
 
+---
+
+## 7. Agent Safety & Worktree Sandboxing (`src/rush/safety/`)
+
+```python
+class AgentSafetyGuard:
+    """Intercepts destructive shell commands and validates repository boundary paths."""
+    def inspect_command(self, cmd: str) -> tuple[bool, str | None]: ...
+    def inspect_path(self, path: Path) -> tuple[bool, str | None]: ...
+
+class SecretRedactor:
+    """Shannon-entropy and regex secret scrubber for logs and stdout streams."""
+    def redact_text(self, text: str) -> str: ...
+```
+
+---
+
+## 8. Token Economy & CodeGraph Slicing (`src/rush/token_economy/`, `src/rush/codegraph/`)
+
+```python
+class FastBPETokenCounter:
+    """Calculates exact Byte-Pair Encoding token counts for model context windows."""
+    def count_tokens(self, text: str) -> int: ...
+
+class PythonAstOutlineCompressor:
+    """Compresses Python AST by preserving signatures while stripping function bodies."""
+    def compress_source(self, source_code: str) -> str: ...
+
+class CodeGraphStore:
+    """SQLite-backed Code Property Graph index store for symbols and call paths."""
+    def insert_node(self, node: GraphNode) -> None: ...
+    def find_nodes_by_symbol(self, symbol_name: str) -> list[GraphNode]: ...
+```
+
+---
+
+## 9. Full-Stack Static Sync & Codebase Hygiene (`src/rush/sync/`, `src/rush/hygiene/`)
+
+```python
+class TypeScriptContractGenerator:
+    """Transpiles OpenAPI JSON schemas into typed TypeScript interface declarations."""
+    @staticmethod
+    def generate_interfaces(openapi_json: str) -> str: ...
+
+class ASTConflictMerger:
+    """Reconciles conflicting Python ASTs across 3-way Git merge branches."""
+    @staticmethod
+    def merge_source_files(base: str, branch_a: str, branch_b: str) -> tuple[bool, str]: ...
+```
+
+---
+
+## 10. Bundle Budgets & Git Hotspots Analytics (`src/rush/bundle/`, `src/rush/hotspots/`)
+
+```python
+class BundleChunkCalculator:
+    """Measures raw, Gzip, and Brotli chunk transfer sizes across build dist directories."""
+    @staticmethod
+    def measure_directory(dist_dir: Path) -> list[ChunkSizeReport]: ...
+
+class RiskMatrixCalculator:
+    """Computes composite defect risk scores by combining commit churn and McCabe cyclomatic complexity."""
+    def analyze_hotspots(self) -> list[HotspotRiskScore]: ...
+```
+
+---
+
+## 11. Agent Governance, Pre-Commit Hooks & Quality Scorecard (`src/rush/governance/`, `src/rush/hook/`, `src/rush/score/`)
+
+```python
+class AgentsMdSynchronizer:
+    """Compiles canonical AGENTS.md instructions to .cursorrules, .clinerules, etc."""
+    def sync_all(self) -> list[SyncResult]: ...
+
+class FastIncrementalAstLinter:
+    """Sub-millisecond AST parser for Git staged Python source files."""
+    @staticmethod
+    def lint_staged_python(file_paths: list[Path]) -> list[str]: ...
+
+class CompositeScorecardCalculator:
+    """Computes deterministic 0–100% 6-pillar quality scores and letter grades."""
+    @classmethod
+    def compute_scorecard(cls, pillars: PillarScores) -> ScorecardReport: ...
+```
+
 For guidelines on creating new tools or engines, see the [Developer Guide](DEVELOPER_GUIDE.md), [Tool Development Guide](developer/tool-development.md), and [Engine Development Guide](developer/engine-development.md).
+

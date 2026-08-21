@@ -42,10 +42,13 @@ rush_containerfile, rush_iac, rush_secrets, rush_sbom,
 rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
 rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
 rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
-rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor
+rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
+rush_guard, rush_token, rush_sync, rush_hygiene, rush_codegraph,
+rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score
 ```
 
 ## Protocol guarantees
+
 
 - stdio only; no HTTP/SSE listener.
 - stdout is JSON-RPC only.

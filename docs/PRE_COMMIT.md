@@ -60,4 +60,23 @@ repos:
 - **Avoid Heavy/Slow Checks in Hooks**: Run heavy checks (mutation tests, browser E2E, load tests) in CI rather than pre-commit hooks to avoid slowing down developer commit loops.
 - **Inspect `status: skipped`**: If a required linter skips locally due to a missing engine, install the engine in your local development virtual environment.
 
+---
+
+## 4. Built-in Pre-Commit Intelligence & Tamper Guard (`rush hook run`)
+
+Rush provides an ultra-fast staged execution engine specifically designed for pre-commit hooks:
+
+```bash
+# Execute sub-second staged checks directly
+rush hook run
+```
+
+### Checks Performed by `rush hook run`:
+1. **Branch Protection**: Prohibits direct commits to `main`, `master`, and `release`.
+2. **Staged Python AST Linting**: Validates syntax in microseconds without running slow external processes.
+3. **Trojan Source Unicode Guard**: Detects invisible or reversing bidirectional override characters (`U+202E`, `U+2066`, etc.).
+4. **Merge Conflict Marker Guard**: Blocks staged files containing unresolved `<<<<<<<`, `=======`, or `>>>>>>>` markers.
+5. **Cryptographic Tamper Detection**: Verifies SHA-256 signatures of `.git/hooks/` against `.rush/hook_signatures.json`.
+
 See [Everyday Workflow](user-guide/everyday-workflow.md) and [Scripts & Automation](integrations/scripts-and-automation.md).
+

@@ -10,16 +10,21 @@ Rush is designed to make the safe action the default.
 - **Explicit execution permissions.** Browser, slow, network, download, build, and artifact-write operations require explicit permission flags (`--allow-*`) and report structured `metadata.execution`.
 - **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` makes no provider call.
 - **No secrets in normalized logs/results.** Obvious secret assignments are redacted, but raw external tool behavior still deserves care.
+- **Autonomous Agent Safety & Worktree Sandboxing.** Dangerous shell commands (`rm -rf`, `drop table`, `reset --hard`) are intercepted via `rush guard check-cmd`; filesystem writes are strictly confined to workspace boundaries via `rush guard check-path`; AI remediation patches run in isolated Git worktree sandboxes with circuit breakers.
+- **Subagent Acyclic Invocations.** Hierarchical agent execution trees are validated to guarantee bounded call depth and acyclic DAG topology.
 
 ```mermaid
 flowchart TD
-  A[Request] --> B{Ordinary local check?}
-  B -- yes --> C[Run applicable installed engine]
-  B -- no --> D{Explicit granted permission?}
-  D -- no --> E[Return skipped / refuse]
-  D -- yes --> F[Run bounded capability]
-  C --> G[Normalize and redact result]
-  F --> G
+  A[Request / Agent Command] --> B{Safe Command & In-Bounds Path?}
+  B -- no --> C[Intercept & Block Execution]
+  B -- yes --> D{Ordinary local check?}
+  D -- yes --> E[Run applicable installed engine]
+  D -- no --> F{Explicit granted permission?}
+  F -- no --> G[Return skipped / refuse]
+  F -- yes --> H[Run bounded capability in Worktree Sandbox]
+  E --> I[Normalize and redact result]
+  H --> I
 ```
 
 Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-handling.md), and [Security model](safety/security-model.md).
+

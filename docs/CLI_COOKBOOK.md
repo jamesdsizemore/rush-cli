@@ -231,3 +231,104 @@ rush plugin list .
 rush plugin run custom-ast-linter .
 ```
 
+---
+
+## 9. Autonomous Agent Safety & Sandboxing (Phases 29, 31)
+
+### Intercept Destructive Shell Commands & Verify Boundary Paths
+```bash
+# Intercept dangerous rm/drop/reset commands before agent execution
+rush guard check-cmd "rm -rf /"
+
+# Enforce repository boundary path confinement
+rush guard check-path "src/rush/main.py"
+```
+
+### Apply AI Remediation Patches in Isolated Git Worktrees
+```bash
+# Preview patch application in isolated worktree sandbox
+rush patch apply patch.diff --dry-run
+
+# Apply patch with circuit breaker
+rush patch apply patch.diff --circuit-breaker
+```
+
+---
+
+## 10. Token Economy & Polyglot CodeGraph (Phases 32, 35)
+
+### Fast BPE Token Counting & AST Outline Compression
+```bash
+# Count BPE tokens for target source file
+rush token count src/rush/cli.py
+
+# Generate compressed AST outline (stripping bodies to save LLM tokens)
+rush outline src/rush/cli.py
+```
+
+### Extract Verbatim CodeGraph Slices with Line Numbers
+```bash
+# Extract verbatim source slice and call paths from CPG database
+rush codegraph slice "CompositeScorecardCalculator"
+```
+
+---
+
+## 11. Full-Stack Static Sync & 3-Way AST Merge Resolution (Phases 33, 34)
+
+### Verify OpenAPI Contracts & Generate TypeScript Interfaces
+```bash
+# Verify contract and generate TypeScript interfaces
+rush sync openapi api/spec.json --output-ts types/api.ts
+```
+
+### Detect Dead Code & Resolve 3-Way AST Git Conflicts
+```bash
+# Scan for dead exports and unreferenced polyglot symbols
+rush hygiene dead-code
+
+# Semantically reconcile conflicting AST source files
+rush conflict solve branch_a.py branch_b.py
+```
+
+---
+
+## 12. Bundle Budgets, Hotspots, Pre-Commit & Quality Scorecards (Phases 36–40)
+
+### Analyze Frontend Bundle Transfer Sizes & Budget Gates
+```bash
+# Measure build chunk transfer sizes (raw, gzip, brotli)
+rush bundle analyze ./dist
+```
+
+### Compute Git Commit Churn & Defect Risk Matrix
+```bash
+# Calculate composite defect risk combining churn and cyclomatic complexity
+rush hotspots analyze
+```
+
+### Synchronize Multi-IDE Agent Governance & Scaffold Projects
+```bash
+# Compile canonical AGENTS.md to .cursorrules, .clinerules, etc.
+rush governance sync
+
+# Initialize new repository with canonical AI governance templates
+rush scaffold init
+```
+
+### Execute Staged Pre-Commit Intelligence
+```bash
+# Run microsecond AST linting, Trojan Source detection, and conflict marker checks
+rush hook run
+```
+
+### Calculate 6-Pillar Composite Quality Scorecard & Consensus
+```bash
+# Compute deterministic 0-100% score and letter grade
+rush score compute --type-safety 95 --test-coverage 90 --security 100
+
+# Reconcile multi-model AI code review findings with weighted consensus
+rush consensus reconcile
+```
+
+
