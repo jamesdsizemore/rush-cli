@@ -100,3 +100,37 @@ def test_fix_dry_run_preview(temp_git_repo: Path) -> None:
         )
         assert res["status"] == "ok"
         assert "dry run" in res["summary"]
+
+
+def test_snapshot_journal_rollback(tmp_path: Path) -> None:
+    from rush.tools.fix import SnapshotJournal
+
+    f = tmp_path / "code.py"
+    f.write_text("orig = 1\n", encoding="utf-8")
+
+    journal = SnapshotJournal()
+    journal.capture([f])
+
+    f.write_text("mutated = 2\n", encoding="utf-8")
+    assert journal.has_changes(f) is True
+
+    journal.rollback_all()
+    assert f.read_text(encoding="utf-8") == "orig = 1\n"
+    assert journal.has_changes(f) is False
+
+
+def test_validate_ast_detection(tmp_path: Path) -> None:
+    tool = FixTool()
+
+    good_py = tmp_path / "good.py"
+    good_py.write_text("def ok(): pass\n", encoding="utf-8")
+    valid, err = tool.validate_ast(good_py)
+    assert valid is True
+    assert err is None
+
+    bad_py = tmp_path / "bad.py"
+    bad_py.write_text("def broken(: pass\n", encoding="utf-8")
+    valid, err = tool.validate_ast(bad_py)
+    assert valid is False
+    assert "SyntaxError" in (err or "")
+
