@@ -22,3 +22,8 @@ class VerbatimAstSlicer:
             header = f"// File: {node.file_path} (Lines {node.start_line}-{node.end_line}) [{node.kind}]\n"
             slices.append(header + node.content)
         return slices
+
+
+# Graft Semantic Slicing Engine alias (ADR-0019)
+GraftSemanticSlicer = VerbatimAstSlicer
+
