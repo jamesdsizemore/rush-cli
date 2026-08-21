@@ -32,16 +32,17 @@
 | **ISS-037-01** | Phase 37 | Git Hotspots | Code velocity, churn, and bus-factor analysis | Implemented `GitChurnExtractor`, `CyclomaticComplexityCalculator`, `RiskMatrixCalculator` | **Closed** |
 | **ISS-038-01** | Phase 38 | Agent Governance | Centralized AGENTS.md compiler and repo scaffolding | Implemented `AgentsMdSynchronizer`, `RuleParityChecker`, `SubagentHierarchyValidator` | **Closed** |
 | **ISS-039-01** | Phase 39 | Hook Intelligence | Pre-commit intelligence and hook guard verification | Implemented `StagedFileScanner`, `FastIncrementalAstLinter`, `HookTamperDetector` | **Closed** |
+| **ISS-040-01** | Phase 40 | Consensus & Scorecard | Multi-model consensus reconciliation and 6-pillar score | Implemented `CompositeScorecardCalculator`, `MultiModelConsensusReconciler`, `SarifExporter` | **Closed** |
 
 ---
 
-## 2. Active & Upcoming Issues (Phases 40+)
+## 2. Active & Upcoming Issues (VibeCoder)
 
 | Issue ID | Phase | Component | Summary | Target Milestone | Status |
 |---|---|---|---|---|---|
-| **ISS-040-01** | Phase 40 | Consensus & Scorecard | Multi-model consensus reconciliation and 6-pillar score | Phase 40 | Open |
 | **ISS-041-01** | VibeCoder | Unified 22-Tool Suite | Real-time orchestrator, loop starvation detector | VibeCoder | Open |
 | **ISS-042-01** | VibeCoder | MCP Transport Safety | Stdout/stderr safety in extreme concurrency loop | VibeCoder | Open |
+
 
 
 
