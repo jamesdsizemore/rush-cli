@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | **00–08** | Core Platform Baseline | ToolResult shape, subprocess isolation, FastMCP stdio server | Complete | ADR-0001 to 0004 |
 | **09–19** | Core Quality Tools | Lint, format, typecheck, security, license, sbom, dead-code | Complete | ADR-0005 to 0009 |
-| **Phase 20** | AI Anti-Slop & Modular Boundaries | `rush slop`, `rush tdd`, AST anti-slop heuristics, Tach boundaries | Ready | ADR-0011 to 0013 |
+| **Phase 20** | AI Anti-Slop & Modular Boundaries | `rush slop`, `rush tdd`, AST anti-slop heuristics, Tach boundaries | Complete | ADR-0011 to 0013 |
 | **Phase 21** | Incremental Merkle Cache & Git Scoping | `rush cache`, SQLite WAL cache, SHA-256 flag salting, `--staged`/`--changed` | Ready | ADR-0014 |
 | **Phase 22** | Unified Automated Remediation | `rush fix`, multi-engine auto-fixing, dry-run diff preview, rollback journal | Ready | ADR-0010 |
 | **Phase 23** | Stack Onboarding & Config Init | `rush init`, `rush setup`, `rush config check`, 10+ stack heuristics | Ready | ADR-0003 |
