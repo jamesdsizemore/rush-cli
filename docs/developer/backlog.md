@@ -26,7 +26,7 @@
 | **Phase 30** | Packaging, Versioning & Hardened CI | `rush release`, `rush ci`, SemVer validator, 40-char SHA GitHub Actions | Complete | ADR-0024 |
 | **Phase 31** | Agent Safety & Worktree Sandboxing | `rush guard`, command interceptor, Shannon entropy secret redactor | Complete | ADR-0020, 0021, 0024 |
 | **Phase 32** | Token Economy & Context Optimization | `rush token count`, `outline`, BPE tokenizer, AST outline compressor | Complete | ADR-0019, 0022 |
-| **Phase 33** | Full-Stack Sync & Type Safety Gates | `rush sync openapi`, `orm`, `zod`, FastAPI static AST route extractor | Ready | ADR-0003, 0024 |
+| **Phase 33** | Full-Stack Sync & Type Safety Gates | `rush sync openapi`, `orm`, `zod`, FastAPI static AST route extractor | Complete | ADR-0003, 0024 |
 | **Phase 34** | Codebase Hygiene & Merge Resolution | `rush hygiene dead-code`, `rush conflict solve`, 3-way AST merger | Ready | ADR-0019, 0021, 0024 |
 | **Phase 35** | Polyglot AST Slicing & CodeGraph | `rush codegraph explore`, `slice`, Tree-Sitter polyglot, CPG store | Ready | ADR-0019, 0024 |
 | **Phase 36** | Frontend Asset & Bundle Optimization | `rush bundle analyze`, `budget`, `dead-assets`, barrel auditor | Ready | ADR-0003, 0024 |

@@ -1328,8 +1328,30 @@ def outline_cmd(file_path: Path) -> None:
         click.echo(source)
 
 
+@cli.group(name="sync")
+def sync_group() -> None:
+    """Full-stack API contract and environment schema synchronization."""
+
+
+@sync_group.command(name="openapi")
+@click.argument("openapi_file", type=click.Path(exists=True, path_type=Path))
+@click.option("--output-ts", type=click.Path(path_type=Path), help="Path to output generated TypeScript interfaces.")
+def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
+    """Verify OpenAPI contract and optionally generate TypeScript types."""
+    from rush.sync.ts_generator import TypeScriptContractGenerator
+
+    json_text = openapi_file.read_text(encoding="utf-8")
+    ts_code = TypeScriptContractGenerator.generate_interfaces(json_text)
+    if output_ts:
+        output_ts.write_text(ts_code, encoding="utf-8")
+        click.echo(f"Wrote generated TypeScript interfaces to {output_ts}")
+    else:
+        click.echo(ts_code)
+
+
 if __name__ == "__main__":
     cli()
+
 
 
 
