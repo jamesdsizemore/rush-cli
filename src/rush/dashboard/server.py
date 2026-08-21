@@ -10,9 +10,15 @@ from rush.dashboard.static_assets import DASHBOARD_HTML_TEMPLATE
 from rush.tools.base import ToolResult
 
 
-def init_in_memory_assets() -> None:
+_IN_MEMORY_ASSETS: dict[str, bytes] = {}
+
+
+def init_in_memory_assets() -> dict[str, bytes]:
     """Initialize in-memory cached assets."""
-    pass
+    global _IN_MEMORY_ASSETS
+    _IN_MEMORY_ASSETS["index.html"] = DASHBOARD_HTML_TEMPLATE.encode("utf-8")
+    return _IN_MEMORY_ASSETS
+
 
 
 class AuthenticatedDashboardHandler(BaseHTTPRequestHandler):

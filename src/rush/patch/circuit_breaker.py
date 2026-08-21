@@ -10,12 +10,10 @@ class RemediationCircuitBreaker:
         self.max_attempts = max_attempts
         self.current_attempts = 0
 
-    def record_attempt() -> bool:
-        pass
-
     def record_attempt(self) -> bool:
         self.current_attempts += 1
         return self.current_attempts <= self.max_attempts
+
 
     def is_tripped(self) -> bool:
         return self.current_attempts >= self.max_attempts
