@@ -1,9 +1,8 @@
-import shutil
 from pathlib import Path
 from typing import Protocol
 
 from ..tools.base import Finding
-from ..tools.common import run_subprocess
+from ..tools.common import resolve_binary, run_subprocess
 
 
 class GraftContextProvider(Protocol):
@@ -15,7 +14,7 @@ class LocalGraftContext:
     """Invokes local Graft CLI to extract dependency and architectural graph context."""
 
     def available(self, project_root: Path) -> bool:
-        return shutil.which("graft") is not None and (
+        return resolve_binary("graft") is not None and (
             (project_root / ".hermes/graft").exists()
             or (project_root / ".graft").exists()
         )

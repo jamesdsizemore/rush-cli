@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from http.server import BaseHTTPRequestHandler
+import secrets
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
@@ -81,3 +82,20 @@ class AuthenticatedDashboardHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+
+def launch_dashboard(
+    results: list[ToolResult], port: int = 0, host: str = "127.0.0.1"
+) -> tuple[HTTPServer, str]:
+    """Initialize assets, generate ephemeral token, and start HTTP server bound to IPv4 loopback."""
+    init_in_memory_assets()
+    token = secrets.token_urlsafe(32)
+
+    handler = AuthenticatedDashboardHandler
+    handler.auth_token = token
+    handler.cached_results = results
+
+    server = HTTPServer((host, port), handler)
+    actual_port = server.server_address[1]
+    url = f"http://{host}:{actual_port}/?token={token}"
+    return server, url

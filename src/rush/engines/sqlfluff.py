@@ -86,30 +86,30 @@ def _parse(report: Any, root: Path) -> list[Finding]:
             or not isinstance(file_result.get("violations"), list)
         ):
             raise TypeError("invalid file result")
-        target = root / file_result["filepath"]
-        try:
-            target.resolve().relative_to(root.resolve())
-        except ValueError as error:
-            raise ValueError("path outside target") from error
+        raw_target = Path(file_result["filepath"])
+        target = raw_target if raw_target.is_absolute() else (root / raw_target)
         for item in file_result["violations"]:
-            if not isinstance(item, dict) or not all(
-                isinstance(item.get(key), value)
-                for key, value in (
-                    ("code", str),
-                    ("description", str),
-                    ("line_no", int),
-                    ("line_pos", int),
-                )
-            ):
+            if not isinstance(item, dict):
                 raise TypeError("invalid violation")
+            code = item.get("code")
+            desc = item.get("description")
+            line = item.get("line_no") or item.get("start_line_no", 1)
+            pos = item.get("line_pos") or item.get("start_line_pos", 1)
+            if (
+                not isinstance(code, str)
+                or not isinstance(desc, str)
+                or not isinstance(line, int)
+                or not isinstance(pos, int)
+            ):
+                raise TypeError("invalid violation fields")
             findings.append(
                 {
-                    "rule": item["code"],
+                    "rule": code,
                     "severity": "warn",
-                    "message": item["description"],
+                    "message": desc,
                     "path": str(target),
-                    "line": item["line_no"],
-                    "column": item["line_pos"],
+                    "line": line,
+                    "column": pos,
                 }
             )
     return findings

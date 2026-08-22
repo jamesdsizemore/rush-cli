@@ -99,7 +99,14 @@ def run_subprocess(
     if not argv or any(not isinstance(arg, str) for arg in argv):
         raise ValueError("argv must be a non-empty list of strings")
     resolved_cmd = resolve_binary(argv[0]) or argv[0]
-    exec_argv = [resolved_cmd, *argv[1:]]
+    if os.name == "nt":
+        which_cmd = shutil.which(resolved_cmd) or resolved_cmd
+        if which_cmd.lower().endswith((".cmd", ".bat")):
+            exec_argv = ["cmd.exe", "/c", which_cmd, *argv[1:]]
+        else:
+            exec_argv = [which_cmd, *argv[1:]]
+    else:
+        exec_argv = [resolved_cmd, *argv[1:]]
     result = subprocess.run(
         exec_argv,
         cwd=str(cwd) if cwd is not None else None,
@@ -107,10 +114,13 @@ def run_subprocess(
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         check=False,
         shell=False,
     )
+
     return subprocess.CompletedProcess(
         result.args,
         result.returncode,

@@ -16,10 +16,15 @@ class MypyEngine(Engine):
 
     def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
         proc = run_subprocess(
-            [resolve_binary(self.binary) or self.binary, "--hide-error-context", *args],
+            [
+                resolve_binary(self.binary) or self.binary,
+                "--hide-error-context",
+                *args,
+            ],
             cwd=cwd,
             timeout=120,
         )
+
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
         )
@@ -27,12 +32,15 @@ class MypyEngine(Engine):
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
         from ..tools.base import ToolResult
 
-        pattern = re.compile(
+        pattern_line = re.compile(
             r"^(?P<path>.+?):(?P<line>\d+): error: (?P<message>.*?)(?:  \[(?P<rule>[^]]+)\])?$"
+        )
+        pattern_file = re.compile(
+            r"^(?P<path>.+?): error: (?P<message>.*?)(?:  \[(?P<rule>[^]]+)\])?$"
         )
         findings = []
         for line in raw.get("stdout", "").splitlines():
-            match = pattern.match(line)
+            match = pattern_line.match(line)
             if match:
                 findings.append(
                     {
@@ -41,6 +49,18 @@ class MypyEngine(Engine):
                         "rule": match["rule"] or "mypy",
                         "severity": "error",
                         "message": match["message"],
+                    }
+                )
+                continue
+            match_file = pattern_file.match(line)
+            if match_file:
+                findings.append(
+                    {
+                        "path": match_file["path"],
+                        "line": 1,
+                        "rule": match_file["rule"] or "mypy",
+                        "severity": "error",
+                        "message": match_file["message"],
                     }
                 )
         code = raw.get("exit_code", 0)

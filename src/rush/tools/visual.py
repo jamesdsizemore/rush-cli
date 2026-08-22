@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from .base import ToolResult
-from .common import elapsed_ms, now_ms, run_subprocess, skipped_result
+from .common import elapsed_ms, now_ms, resolve_binary, run_subprocess, skipped_result
 from .quality import GuardedQualityTool
 
 
@@ -53,7 +52,7 @@ class VisualTool(GuardedQualityTool):
                 },
             )
 
-        visual_bin = shutil.which("lost-pixel") or shutil.which("backstop")
+        visual_bin = resolve_binary("lost-pixel") or resolve_binary("backstop")
         if not visual_bin:
             return skipped_result(
                 self.name,

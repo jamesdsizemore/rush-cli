@@ -38,12 +38,15 @@ def test_run_subprocess_uses_a_bounded_redacted_no_shell_process(
                 "stdin": subprocess.DEVNULL,
                 "capture_output": True,
                 "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
                 "env": None,
                 "check": False,
                 "shell": False,
             },
         )
     ]
+
     assert result.stdout.endswith("[TRUNCATED]")
     assert "super-secret" not in result.stdout
     assert "hunter2" not in result.stderr

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-from rush.tools.common import run_subprocess
+from rush.tools.common import resolve_binary, run_subprocess
 
 
 class PatchVerifier:
@@ -19,7 +18,7 @@ class PatchVerifier:
         if (
             (self.sandbox_dir / "pytest.ini").exists()
             or (self.sandbox_dir / "tests").exists()
-        ) and shutil.which("pytest"):
+        ) and resolve_binary("pytest"):
             proc = run_subprocess(
                 ["pytest", "-q", "--tb=short"],
                 cwd=self.sandbox_dir,
@@ -31,7 +30,7 @@ class PatchVerifier:
                 )
 
         # 2. Node / Vitest / Jest verification
-        if (self.sandbox_dir / "package.json").exists() and shutil.which("npm"):
+        if (self.sandbox_dir / "package.json").exists() and resolve_binary("npm"):
             proc = run_subprocess(
                 ["npm", "test", "--", "--run"],
                 cwd=self.sandbox_dir,
@@ -43,11 +42,12 @@ class PatchVerifier:
                 )
 
         # 3. Rust Cargo verification
-        if (self.sandbox_dir / "Cargo.toml").exists() and shutil.which("cargo"):
+        if (self.sandbox_dir / "Cargo.toml").exists() and resolve_binary("cargo"):
             proc = run_subprocess(
                 ["cargo", "test", "--quiet"],
                 cwd=self.sandbox_dir,
             )
+
             if proc.returncode != 0:
                 return (
                     False,

@@ -2,14 +2,37 @@
 
 All notable changes to Rush are documented here.
 
-## Unreleased — 0.2.0
+## [0.2.0] - 2026-08-21
 
 ### Added
 
+- Phase 20–40 Comprehensive Architecture:
+  - Phase 20: AI anti-slop detection (`rush slop`), modular boundaries (`TachEngine`), and AST-level continuous sensors.
+  - Phase 21: Incremental cache with TTL, content hash validation, and Git scoping (`rush cache`).
+  - Phase 22: Unified automated remediation framework (`rush fix`).
+  - Phase 23: Sanitized stack onboarding, interactive wizard, and config generation (`rush init`, `rush stack`).
+  - Phase 24: Hardened workflow suites (`rush check`, `rush ci`) and environment diagnostics (`rush doctor`, `rush capabilities`).
+  - Phase 25: Real-time multi-threaded file system watcher with debounce (`rush watch`).
+  - Phase 26: Monorepo, workspace boundary detection, and affected-package graphs (`rush workspace`).
+  - Phase 27: Authenticated in-memory CSRF/DNS-rebinding hardened dashboard (`rush dashboard`) and terminal UI (`rush tui`).
+  - Phase 28: Trust-gated plugin system, SHA-256 integrity verification, and agent skills (`rush plugins`, `rush skills`).
+  - Phase 29: Isolated AI patch remediation with sandbox rollbacks and session memory (`rush patch`, `rush memory`).
+  - Phase 30: Standalone packaging, semver calculation, changelog generation, and CI scaffolding (`rush release`).
+  - Phase 31: Agent safety interceptor and isolated worktree sandboxing (`rush safety`).
+  - Phase 32: Token economy counter, prompt compressor, outline diet, and cache advisor (`rush token`).
+  - Phase 33: Full-stack type synchronization for ORM models, OpenAPI schemas, and environment parity (`rush sync`).
+  - Phase 34: Codebase hygiene, dead code removal, unused import cleanup, and AST merge resolution (`rush hygiene`).
+  - Phase 35: Polyglot AST slicing and semantic codegraph exploration (`rush codegraph`).
+  - Phase 36: Frontend bundle size, dead asset detection, and barrel file optimization (`rush bundle`).
+  - Phase 37: Git churn hotspots, bus-factor calculation, and structural coupling metrics (`rush hotspots`).
+  - Phase 38: Multi-agent governance, rule compiler, and scaffold generator (`rush governance`).
+  - Phase 39: Sub-second Git pre-commit intelligence, trojan source scanner, and hook guard (`rush hook`).
+  - Phase 40: Multi-model consensus reconciliation (`rush consensus`) and unified quality scorecard (`rush score`).
 - A complete audience-separated documentation system covering installation,
   first run, user workflows, tutorials, command/result/configuration/engine/MCP
   references, integrations, safety/privacy, contributor development, maintainer
-  runbooks, ADRs, examples, troubleshooting, and release operations.
+  runbooks, ADRs, examples, troubleshooting, and release operations across 188 documentation files.
+
 - Explicit capability-maturity documentation for all 33 commands and 27 engine
   entries, including guarded placeholders and incomplete CLI permission/input
   surfaces.

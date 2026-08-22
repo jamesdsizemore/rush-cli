@@ -8,6 +8,7 @@ from typing import TypedDict
 
 from .catalog import ENGINE_SPECS, TOOL_SPECS
 from .config import RushConfig, load_config
+from .tools.common import resolve_binary
 from .tools.routing import detect_project_languages
 
 _REPORTS: tuple[tuple[str, str], ...] = (
@@ -99,8 +100,12 @@ def inspect_capabilities(path: Path, *, config: RushConfig | None = None) -> dic
                 ENGINE_SPECS[engine_name].binary
                 for engine_name in spec.engine_names
                 if engine_name in ENGINE_SPECS
-                and shutil.which(ENGINE_SPECS[engine_name].binary)
+                and (
+                    shutil.which(ENGINE_SPECS[engine_name].binary)
+                    or resolve_binary(ENGINE_SPECS[engine_name].binary)
+                )
             )
+
             if installed:
                 tools[name] = {
                     "maturity": spec.maturity,

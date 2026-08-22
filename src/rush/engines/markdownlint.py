@@ -22,27 +22,31 @@ class MarkdownlintEngine(Engine):
     file_extensions = ("md", "mdx")
 
     def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
-        del cwd
+        cmd_args = [
+            resolve_binary(self.binary) or self.binary,
+            "--config",
+            str(DEFAULT_CONFIG),
+            "--ignore-path",
+            str(DEFAULT_IGNORE),
+            "--json",
+            *args,
+        ]
+
         proc = run_subprocess(
-            [
-                resolve_binary(self.binary) or self.binary,
-                "--config",
-                str(DEFAULT_CONFIG),
-                "--ignore-path",
-                str(DEFAULT_IGNORE),
-                "--json",
-                *args,
-            ],
-            cwd=path,
+            cmd_args,
+            cwd=cwd or (path.parent if path.is_file() else path),
             timeout=120,
         )
+
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         try:
-            findings = _parse_report(json.loads(raw.get("stdout", "")), path)
+            raw_json = raw.get("stdout", "").strip() or raw.get("stderr", "").strip()
+            findings = _parse_report(json.loads(raw_json) if raw_json else [], path)
+
         except (json.JSONDecodeError, TypeError, ValueError):
             return error_result(
                 tool_name,

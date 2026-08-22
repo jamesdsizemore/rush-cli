@@ -37,8 +37,9 @@ class ContentTool(ToolFn):
         result = run_engine(
             ENGINES[self.engine_name],
             path,
-            [str(file) for file in files],
+            [str(file.resolve()) for file in files],
             tool_name=self.name,
         )
+
         result["duration_ms"] = elapsed_ms(start)
         return result

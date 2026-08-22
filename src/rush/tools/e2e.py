@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from .base import ToolResult
-from .common import elapsed_ms, now_ms, run_subprocess, skipped_result
+from .common import elapsed_ms, now_ms, resolve_binary, run_subprocess, skipped_result
 from .quality import GuardedQualityTool
 
 
@@ -56,7 +55,7 @@ class E2eTool(GuardedQualityTool):
                 },
             )
 
-        playwright_bin = shutil.which("playwright")
+        playwright_bin = resolve_binary("playwright")
         if not playwright_bin:
             return skipped_result(
                 self.name,
