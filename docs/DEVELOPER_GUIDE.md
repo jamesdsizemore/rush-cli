@@ -59,3 +59,9 @@ For the completed Phases 01–30 implementations, read:
 - [ ] User docs describe outcomes; developer docs describe internals.
 - [ ] Ruff, format, tests, link validation, whitespace, and graph checks pass.
 - [ ] No commit, tag, publish, or push without authorization.
+
+## Developing Context Intelligence & Ship Tools (Phases 41–43)
+* Token Economy modules reside in `src/rush/token_economy/` (`router.py`, `ast_skeletonizer.py`, `ccr_store.py`, `distillers/`, `toon/`).
+* Memory & Invariants reside in `src/rush/memory/` (`preference_store.py`, `checkpoint_journal.py`, `merkle_invalidator.py`, `invariant_graph.py`, `failure_ledger.py`, `mistake_miner.py`).
+* Release vectors reside in `src/rush/tools/ship/` (`cleaner.py`, `env_linter.py`, `docs_linter.py`, `migration_linter.py`, `semver_linter.py`, `package_linter.py`, `cockpit.py`).
+* Grounding verification resides in `src/rush/codegraph/grounding_verifier.py` and `src/rush/tools/hallu_guard.py`.

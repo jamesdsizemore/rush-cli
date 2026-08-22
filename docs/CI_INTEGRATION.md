@@ -103,3 +103,14 @@ For advanced quality verification (coverage, mutation, contracts, AI eval), use 
 - **Execution Mode**: Pass explicit permission flags in designated long-running or nightly CI workflows (`rush ai-eval . --allow-slow --json`, `rush load load.js --allow-network --json`).
 
 See the [CI Overview](integrations/ci-overview.md), [GitHub Actions Guide](integrations/github-actions.md), and [Scripts Guide](integrations/scripts-and-automation.md).
+
+## CI Pre-Flight Gate Integration (Phases 41–43)
+
+Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
+
+```yaml
+- name: Rush Grounding & Ship Gate
+  run: |
+    rush hallu-guard
+    rush ship gate
+```

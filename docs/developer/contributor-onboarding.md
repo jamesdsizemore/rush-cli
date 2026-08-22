@@ -33,3 +33,11 @@ unset VIRTUAL_ENV PYTHONPATH
 ## First change
 
 Choose one bounded issue, write or update the narrow failing test, make the minimum change, run focused tests, then full gates. Never install every optional external engine to make fixture tests pass; installed-engine tests are marked and bounded.
+
+## Contributor Guide for Context & Ship Subsystems (Phases 41–43)
+When contributing to Rush:
+* Place context compression and token economy code in `src/rush/token_economy/`.
+* Place memory, session, and invariant code in `src/rush/memory/`.
+* Place release validation vectors in `src/rush/tools/ship/`.
+* Place grounding verifiers in `src/rush/codegraph/`.
+* Register subcommands in `src/rush/cli.py` and FastMCP tools in `src/rush/mcp.py`.

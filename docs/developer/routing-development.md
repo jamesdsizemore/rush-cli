@@ -26,3 +26,6 @@ To add a language:
 7. Update checking-code, compatibility, engine, and tool references.
 
 Never treat a `Path.glob()` generator itself as truthy; use `any()` over matches. Keep aggregation independent from filesystem iteration order.
+
+## Content Routing Architecture (Phase 41)
+`ContentRouter` (`src/rush/token_economy/router.py`) handles automated detection of payload types and calculates exact BPE token budgets via `tiktoken`.

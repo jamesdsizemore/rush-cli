@@ -66,3 +66,9 @@ rush watch .
 
 ### 3. Open your favorite AI IDE (Cursor / Cline / Claude) and start vibing!
 Rush will quietly watch your files, auto-format on save, alert your AI to any broken tests, and keep your project spotless while you build.
+
+## Vibecoding with Context Intelligence (Phases 41–43)
+* **Instant Outlines**: Use `rush token outline` to understand complex files in seconds.
+* **Zero Phantom Imports**: `rush hallu-guard` protects against hallucinated pip packages.
+* **Never Repeat Bugs**: `rush context mistakes` reminds you and your agent of past reverted mistakes.
+* **One-Command Ship Confidence**: `rush ship gate` runs all checks before shipping.

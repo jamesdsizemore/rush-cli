@@ -28,3 +28,8 @@ flowchart TD
 
 Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-handling.md), and [Security model](safety/security-model.md).
 
+
+## Context Safety, Grounding & Secret Redaction (Phases 41–43)
+* **Secret Redaction**: `PackageLinter` and all Rush transports redact keys as `[REDACTED]`.
+* **Phantom Package Defense**: `GroundingVerifier` parses AST imports against `sys.stdlib_module_names` and `importlib.metadata.distributions()` to block supply-chain typosquatting and hallucinated libraries.
+* **Failure Ledger**: `FailureLedger` records failed patch AST fingerprints in `.rush/memory/failures.db` to prevent repetitive error loops.

@@ -40,3 +40,14 @@ rush review . --verbose
 ```
 
 See [Troubleshooting Matrix](TROUBLESHOOTING_MATRIX.md) and [User Guide Troubleshooting](user-guide/troubleshooting.md).
+
+## Troubleshooting Context & Ship Errors (Phases 41–43)
+
+### `rush hallu-guard` reports phantom imports
+Ensure that the imported package is listed in `pyproject.toml` dependencies and installed in your active virtual environment.
+
+### `rush ship env` reports missing declarations
+Add the missing environment variable keys referenced by `os.getenv` into `.env.example`.
+
+### `rush context retrieve` returns chunk not found
+Chunks are stored in `.rush/cache/ccr.db`. Ensure the hash is correct and that the cache has not been manually deleted.

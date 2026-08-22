@@ -332,3 +332,46 @@ rush consensus reconcile
 ```
 
 
+
+## Context & Ship Recipes (Phases 41–43)
+
+### Saving and Restoring Work Sessions
+```bash
+# Save active session snapshot
+rush session save refactor-auth -f src/auth.py -f tests/test_auth.py
+
+# List sessions
+rush session list
+
+# Restore session
+rush session restore refactor-auth
+```
+
+### Pre-Flight Ship Gate Cockpit
+```bash
+# Run all 7 release vectors in parallel
+rush ship gate
+
+# Run individual ship vectors
+rush ship clean --dry-run
+rush ship env
+rush ship docs
+rush ship migration
+rush ship semver src/old_api.py src/new_api.py
+rush ship pack
+```
+
+### Hallucination & Token Management
+```bash
+# Verify all imports exist in stdlib or active environment
+rush hallu-guard
+
+# Compress module to AST skeleton
+rush token outline src/rush/cli.py --focus-symbol run_stdio
+
+# Retrieve uncompressed CCR chunk
+rush context retrieve <HASH>
+
+# View mined mistake guardrails
+rush context mistakes
+```

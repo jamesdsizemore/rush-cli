@@ -68,3 +68,7 @@ All `ToolFn` executions support unified artifact generation:
   - Stdio messages strictly use `stdout` for JSON-RPC frames while diagnostics write to `stderr`.
 
 See [Engine Development](engine-development.md) and [Coding Standards](coding-standards.md).
+
+## Developing Ship Vectors and Distillers (Phases 41–43)
+* Implement distillers by extending `BaseDistiller` in `src/rush/token_economy/distillers/base.py`.
+* Implement ship vectors by creating modular linters in `src/rush/tools/ship/` and adding them to `ShipCockpit.evaluate_gate()`.

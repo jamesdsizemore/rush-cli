@@ -57,3 +57,9 @@
 
 
 
+
+## Resolved Implementation Milestones (Phases 41–43)
+* [x] **Phase 41**: BPE token accounting, command distillers (pytest/cargo/ruff/vitest), session checkpoint journal, base ship linters.
+* [x] **Phase 42**: TOON v4.1 serializer, AST skeletonizer, Merkle invalidator, 7-vector Ship Gate Cockpit.
+* [x] **Phase 43**: CCR chunk store, GroundingVerifier / HalluGuard, InvariantGraph, FailureLedger, MistakeMiner.
+* [ ] **Phase 44**: Context pack and prompt cache alignment (Planned).

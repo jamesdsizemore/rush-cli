@@ -41,3 +41,12 @@ This document defines the release workflow, semantic versioning rules, and pre-p
    - Publishing is executed through trusted CI pipelines using PyPI Trusted Publishing.
 
 See [Release Process Guide](developer/release-process.md) and [Versioning Policy](maintainers/versioning-and-compatibility.md).
+
+## Release Checklist with Ship Cockpit (Phases 41–43)
+
+1. Run `rush ship clean` to remove scratch directories and build debris.
+2. Run `rush ship env` to verify environment variable parity.
+3. Run `rush ship migration` to verify database DDL locks.
+4. Run `rush ship semver` to ensure no accidental breaking public API changes.
+5. Run `rush ship pack` to ensure zero secret leaks in distributions.
+6. Run `rush ship gate` for final 7-vector release readiness authorization.

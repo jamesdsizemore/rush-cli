@@ -20,3 +20,6 @@ Rush follows [Semantic Versioning 2.0.0](https://semver.org/) (`MAJOR.MINOR.PATC
 - **Major Releases (`1.0.0+`)**: Breaking changes to CLI options, MCP parameter signatures, or core `ToolResult` dictionary keys.
 
 See [Versioning and Compatibility Guide](maintainers/versioning-and-compatibility.md) and [Release Process](developer/release-process.md).
+
+## SemVer API Compatibility & Linter (Phases 41–43)
+Rush provides `rush ship semver <old_file> <new_file>` to statically diff AST function and class signatures between Git revisions, detecting breaking parameter removals, signature alterations, and public API drift.

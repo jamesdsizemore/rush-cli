@@ -99,3 +99,11 @@ Rush automatically updates `.cursorrules`, `.clinerules`, `.windsurfrules`, and 
 
 - Explore the complete [Agentic Rush Knowledge Base](../AGENTIC_RUSH.md).
 - Learn about unit testing and coverage in [Testing with Confidence](testing-confidence.md).
+
+## FastMCP Tools for Coding Agents (Phases 41–43)
+Ensure your agent is configured to use:
+* `rush_token_outline`: Compact AST symbol skeletonization.
+* `rush_hallu_guard`: Real-time import verification.
+* `rush_context_retrieve`: Lossless CCR payload recovery.
+* `rush_context_mistakes_check`: Git revert mistake guardrails.
+* `rush_ship_gate`: 7-vector release readiness cockpit.

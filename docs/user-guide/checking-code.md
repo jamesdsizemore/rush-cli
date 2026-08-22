@@ -106,3 +106,7 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 
 - Learn how to interpret Rush results in [Understanding Rush Results](understanding-results.md).
 - Discover how to check Markdown, SQL, and Dockerfiles in [Checking Project Files](checking-project-files.md).
+
+## Code Grounding & Outline Checks (Phases 41–43)
+* **AST Grounding**: Run `rush hallu-guard` to verify all imported modules are installed.
+* **AST Outlining**: Run `rush token outline <path>` for compact symbol signatures.

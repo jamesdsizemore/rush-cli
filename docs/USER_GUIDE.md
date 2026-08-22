@@ -121,3 +121,12 @@ Explore our focused, beginner-friendly guides for specific topics:
 - [Understanding Results](user-guide/understanding-results.md): A detailed breakdown of severities, rules, and exit codes.
 - [Troubleshooting Guide](user-guide/troubleshooting.md): Quick solutions for common questions and errors.
 - [Subsystem Architecture Diagrams](BUNDLE_DIAGRAMS.md): High-level visual maps of all 9 Rush bundles.
+
+## Context Intelligence & Ship Gates (Phases 41–43)
+Rush v0.2.0 introduces context optimization, AI token reduction, and release readiness cockpits:
+* `rush session save <name>`: Persist current session workspace context to `.rush/sessions/`.
+* `rush token outline <path>`: Generate AST skeletons eliding method bodies to conserve 85%+ prompt tokens.
+* `rush context retrieve <hash>`: Restore full uncompressed payloads from the SQLite CCR store.
+* `rush context mistakes`: Audit historical Git revert post-mortems to avoid known regressions.
+* `rush hallu-guard`: Scan codebase AST imports to detect hallucinated or uninstalled packages.
+* `rush ship gate`: Execute the 7-vector pre-flight release readiness cockpit.

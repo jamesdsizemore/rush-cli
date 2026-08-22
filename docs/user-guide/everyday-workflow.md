@@ -122,3 +122,8 @@ Now you can submit your pull request knowing that every test passes, every file 
 
 - Learn more about linters and typecheckers in [Checking Your Code](checking-code.md).
 - Discover how to pair safely with AI assistants in [Pair Programming with AI Agents](working-with-ai-agents.md).
+
+## Everyday Workflow with Session & Ship Tools (Phases 41–43)
+1. Start task: `rush session restore <name>` (or initialize with `rush session save <name>`).
+2. Verify grounding during development: `rush hallu-guard`.
+3. Check release gate before shipping: `rush ship gate`.

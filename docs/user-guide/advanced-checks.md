@@ -76,3 +76,8 @@ rush bundle analyze dist/
 
 - Explore the complete [Bundle Diagrams](../BUNDLE_DIAGRAMS.md).
 - Discover solutions to common questions in [Troubleshooting Guide](troubleshooting.md).
+
+## Advanced Ship Vectors (Phases 41–43)
+* `rush ship migration`: Checks SQL files for table locks (`ALTER TABLE ... ADD COLUMN NOT NULL`).
+* `rush ship semver`: Compares AST public interfaces between versions.
+* `rush ship pack`: Scans repository trees for secret keys, credentials, and `.env` leaks.

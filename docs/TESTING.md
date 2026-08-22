@@ -42,3 +42,11 @@ tests/
 3. **Transport Isolation**: FastMCP stdio tests must verify that stdin/stdout frames remain pure.
 
 See [Testing Guide](developer/testing-guide.md).
+
+## Testing Context Intelligence & Distillers (Phases 41–43)
+* Unit tests for distillers and token routing: `tests/test_phase41_router_distillers.py`.
+* Unit tests for session memory and ship linting: `tests/test_phase41_memory_ship.py`.
+* Unit tests for TOON serialization and AST outlines: `tests/test_phase42_toon_skeleton.py`.
+* Unit tests for 7-vector Ship Cockpit: `tests/test_phase42_ship_cockpit.py`.
+* Unit tests for CCR store and GroundingVerifier: `tests/test_phase43_ccr_grounding.py`.
+* Unit tests for InvariantGraph, FailureLedger, and MistakeMiner: `tests/test_phase43_mistake_memory.py`.

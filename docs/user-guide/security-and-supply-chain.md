@@ -69,3 +69,6 @@ Rush coordinates `Promptfoo`, `Garak`, and `DeepEval` to test that your AI syste
 
 - Learn about monorepos and advanced checks in [Advanced Checks & Monorepos](advanced-checks.md).
 - Discover solutions to common issues in [Troubleshooting Guide](troubleshooting.md).
+
+## Phantom Package Defense (Phase 43)
+`rush hallu-guard` validates all import statements in your project against Python's standard library and installed distribution metadata, blocking supply-chain risks from unvetted AI hallucinations.

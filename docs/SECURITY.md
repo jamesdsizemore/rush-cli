@@ -36,3 +36,9 @@ If you discover a security vulnerability in Rush CLI:
 4. Never include real production secrets, API keys, or private code in vulnerability reports.
 
 See [Security Model](safety/security-model.md), [Incident & Security Runbook](maintainers/incident-and-security.md), and [Permissions](safety/permissions.md).
+
+## Supply Chain & Import Security (Phases 41–43)
+`rush hallu-guard` and `rush ship pack` provide static defense against:
+1. Typosquatted dependencies and hallucinated package imports.
+2. Accidental inclusion of sensitive keys, `.env` files, or certificates in package builds.
+3. Risky table-locking SQL migrations in production deployments.

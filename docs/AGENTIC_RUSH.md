@@ -92,3 +92,10 @@ Give your AI agent superpowers in two minutes:
    ```
 3. **Prompt your agent**:
    > *"Before writing code, use `rush_codegraph_slice` to inspect the target function. After editing, verify your changes with `rush_check` and `rush_tdd`."*
+
+## Context Diet & Grounding Protocols for Agents (Phases 41–43)
+1. **Token Diet**: Use `rush_token_outline` to read AST signatures before loading full files.
+2. **Reversible Caching**: Large outputs are returned as `<!-- ccr:chunk:HASH -->`. Query `rush_context_retrieve(chunk_hash)` only when verbatim logs are needed.
+3. **Hallucination Defense**: Run `rush_hallu_guard` to verify generated code contains zero phantom packages.
+4. **Pre-Mortem Invariants**: Call `rush_context_mistakes_check` before starting work to avoid repeating reverted patterns.
+5. **Ship Cockpit**: Call `rush_ship_gate` before submitting pull requests or ending turns.
