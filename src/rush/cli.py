@@ -1991,6 +1991,36 @@ def context_mistakes_cmd() -> None:
         click.echo(f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}")
 
 
+@context_group.command(name="pack")
+@click.option("--path", "-p", required=True, help="Target file path to pack.")
+@click.option("--symbol", "-s", default="", help="Focus symbol to keep verbatim.")
+@click.option("--budget", "-b", default=4000, type=int, help="Maximum token budget.")
+def context_pack_cmd(path: str, symbol: str, budget: int) -> None:
+    """Pack graph-pruned context envelope under a strict token budget."""
+    from rush.codegraph.context_packer import ContextPacker
+
+    packer = ContextPacker()
+    res = packer.pack(Path(path), target_symbol=symbol, max_tokens=budget)
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    click.echo(f"# Context Packed ({res['tokens']} tokens / max {res['max_tokens']})")
+    click.echo(res["packed_text"])
+
+
+@context_group.command(name="align-prompt")
+@click.option("--system", "-s", required=True, help="System prompt to align.")
+def context_align_prompt_cmd(system: str) -> None:
+    """Align prompt prefix above provider cache boundary (>=1024 tokens)."""
+    from rush.token_economy.cache_aligner import CacheAligner
+
+    aligner = CacheAligner()
+    aligned = aligner.align_prompt(system)
+    click.echo(
+        f"Aligned tokens: {aligned['system']['aligned_tokens']} (Padded: {aligned['system']['padded']})"
+    )
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

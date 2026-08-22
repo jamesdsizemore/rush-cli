@@ -208,3 +208,13 @@ Display historical Git-revert mistake guardrails.
 
 ### `rush hallu-guard`
 Audit codebase for hallucinated or phantom package imports.
+
+### `rush context pack`
+Pack graph-pruned context envelope under a strict token budget.
+* `--path, -p`: Target file path to pack (required).
+* `--symbol, -s`: Focus symbol to keep verbatim.
+* `--budget, -b`: Maximum token budget (default: 4000).
+
+### `rush context align-prompt`
+Align prompt prefix above provider cache boundary (>=1024 tokens).
+* `--system, -s`: System prompt string to align.

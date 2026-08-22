@@ -68,3 +68,5 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_context_retrieve(chunk_hash)`**: Retrieve uncompressed content from CCR chunk store by hash.
 * **`rush_hallu_guard(path="")`**: Audit code imports against installed packages and stdlib.
 * **`rush_context_mistakes_check()`**: Check git revert history for past mistakes and anti-patterns.
+
+* **`rush_context_pack(path, symbol="", budget=4000)`**: Pack graph-pruned context outline under a strict token budget.

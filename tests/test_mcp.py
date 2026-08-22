@@ -30,6 +30,7 @@ EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
     "rush_context_retrieve",
     "rush_hallu_guard",
     "rush_context_mistakes_check",
+    "rush_context_pack",
 }
 
 

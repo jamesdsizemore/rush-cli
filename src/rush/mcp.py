@@ -171,6 +171,22 @@ def _register_tools(server) -> None:
         description="Check git revert history for past mistakes and anti-patterns",
     )
 
+    # Phase 44 Tools
+    def mcp_rush_context_pack(path: str, symbol: str = "", budget: int = 4000) -> str:
+        from rush.codegraph.context_packer import ContextPacker
+
+        packer = ContextPacker()
+        res = packer.pack(Path(path), target_symbol=symbol, max_tokens=budget)
+        if "error" in res:
+            return f"Error: {res['error']}"
+        return res["packed_text"]
+
+    server.add_tool(
+        fn=mcp_rush_context_pack,
+        name="rush_context_pack",
+        description="Pack graph-pruned context outline under a strict token budget",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""
