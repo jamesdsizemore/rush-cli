@@ -1,7 +1,7 @@
 # Rush Integrations & Deep Repository Research Report
 
 **Document Title**: Comprehensive Architectural Review, Scoring & Integration Blueprint for Rush  
-**Source Manifest**: `C:\Users\james\developer\rush-cli\rushtoolsurls.txt` (73 Repositories)  
+**Source Manifest**: `C:\Users\james\developer\headcleaner-cli\headrushtoolsurls.txt` (73 Repositories Evaluated)  
 **Date**: August 2026  
 **Status**: Completed Deep Research & Phased Integration Blueprint  
 
