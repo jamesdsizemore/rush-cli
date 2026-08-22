@@ -251,6 +251,9 @@ sequenceDiagram
 ---
 
 ## 29. Worktree Workflow
+
+> [!IMPORTANT]
+> **NO AUTOMATIC MERGE POLICY**: All implementation, tests, and documentation must be completed and committed exclusively on the dedicated feature branch inside the worktree. **DO NOT MERGE TO `main`**. Merging to `main` is strictly prohibited unless explicitly requested and approved by the user.
 * **Worktree Path**: `.rush/worktrees/phase-43-ccr-grounding`
 * **Branch**: `feat/phase-43-ccr-grounding-mistakes`
 * **Creation Command**:
@@ -261,6 +264,9 @@ sequenceDiagram
 ---
 
 ## 30. Commit Requirements
+
+> [!IMPORTANT]
+> **COMMIT-ONLY MANDATE**: Commit all code, test suites, and the comprehensive 5-tier documentation matrix atomically to the feature branch. **DO NOT execute `git merge` or fast-forward `main`**. Stop after committing to the feature branch and present deliverables for user review and approval.
 * **Commit Message**: `feat(phase-43): implement CCR reversible chunk store, grounding verifier, and mistake memory`
 
 ---
