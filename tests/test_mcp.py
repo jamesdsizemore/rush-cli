@@ -27,6 +27,9 @@ EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
     "rush_ship_env",
     "rush_ship_gate",
     "rush_token_outline",
+    "rush_context_retrieve",
+    "rush_hallu_guard",
+    "rush_context_mistakes_check",
 }
 
 
@@ -54,7 +57,11 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
             # MCP treats this as the complete child environment. Preserve the
             # Windows runtime values (SystemRoot, TEMP, PATH, ...) and alter
             # only Rush's log level.
-            env={**os.environ, "RUSH_LOG_LEVEL": "debug", "PYTHONPATH": str(PROJECT_ROOT / "src")},
+            env={
+                **os.environ,
+                "RUSH_LOG_LEVEL": "debug",
+                "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            },
         )
         # stdio_client gives this handle directly to CreateProcess on Windows,
         # so capture stderr in a real file rather than io.StringIO (no fileno).

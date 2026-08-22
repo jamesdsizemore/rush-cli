@@ -81,6 +81,7 @@ def _register_tools(server) -> None:
             return "All environment variables declared in .env.example."
         return f"Missing declarations in .env.example: {', '.join(res['missing_in_example'])}"
 
+    # Phase 42 Tools
     def mcp_rush_ship_gate() -> str:
         from rush.tools.ship.cockpit import ShipCockpit
 
@@ -97,6 +98,37 @@ def _register_tools(server) -> None:
             return f"Error: {path} not found"
         code = p.read_text(encoding="utf-8", errors="ignore")
         return skeletonizer.skeletonize(code, focus_symbol=focus_symbol or None)
+
+    # Phase 43 Tools
+    def mcp_rush_context_retrieve(chunk_hash: str) -> str:
+        from rush.token_economy.ccr_store import CCRStore
+
+        store = CCRStore()
+        content = store.retrieve_chunk(chunk_hash)
+        return content or f"Error: Chunk {chunk_hash} not found"
+
+    def mcp_rush_hallu_guard(path: str = "") -> str:
+        from rush.tools.hallu_guard import HalluGuard
+
+        guard = HalluGuard()
+        if path:
+            violations = guard.check_file(Path(path))
+            return (
+                "Grounded" if not violations else f"Violations: {', '.join(violations)}"
+            )
+        res = guard.audit_codebase()
+        return (
+            "All imports grounded"
+            if res["passed"]
+            else f"Found {res['findings_count']} ungrounded imports"
+        )
+
+    def mcp_rush_context_mistakes_check() -> str:
+        from rush.memory.mistake_miner import MistakeMiner
+
+        miner = MistakeMiner()
+        mistakes = miner.mine_mistakes()
+        return f"Loaded {len(mistakes)} mistake guardrails"
 
     server.add_tool(
         fn=mcp_rush_session_save,
@@ -122,6 +154,21 @@ def _register_tools(server) -> None:
         fn=mcp_rush_token_outline,
         name="rush_token_outline",
         description="Generate token-efficient AST skeleton outline of a code file",
+    )
+    server.add_tool(
+        fn=mcp_rush_context_retrieve,
+        name="rush_context_retrieve",
+        description="Retrieve uncompressed content from CCR chunk store by hash",
+    )
+    server.add_tool(
+        fn=mcp_rush_hallu_guard,
+        name="rush_hallu_guard",
+        description="Audit code imports against installed packages and stdlib",
+    )
+    server.add_tool(
+        fn=mcp_rush_context_mistakes_check,
+        name="rush_context_mistakes_check",
+        description="Check git revert history for past mistakes and anti-patterns",
     )
 
 

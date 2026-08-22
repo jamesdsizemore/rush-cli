@@ -1950,5 +1950,67 @@ def ship_pack_cmd() -> None:
         sys.exit(1)
 
 
+# -----------------------------------------------------------------------------
+# Phase 43: CCR, Grounding & Mistake Memory
+# -----------------------------------------------------------------------------
+
+
+@cli.group(name="context")
+def context_group() -> None:
+    """Context optimization, CCR retrieval, and mistake memory."""
+
+
+@context_group.command(name="retrieve")
+@click.argument("chunk_hash")
+def context_retrieve_cmd(chunk_hash: str) -> None:
+    """Retrieve raw content from CCR SQLite chunk store by hash."""
+    from rush.token_economy.ccr_store import CCRStore
+
+    store = CCRStore()
+    content = store.retrieve_chunk(chunk_hash)
+    if content is None:
+        click.echo(
+            f"Error: Chunk hash '{chunk_hash}' not found in CCR store.", err=True
+        )
+        sys.exit(1)
+    click.echo(content)
+
+
+@context_group.command(name="mistakes")
+def context_mistakes_cmd() -> None:
+    """List historical Git-revert mistake guardrails."""
+    from rush.memory.mistake_miner import MistakeMiner
+
+    miner = MistakeMiner()
+    mistakes = miner.mine_mistakes()
+    if not mistakes:
+        click.echo("No historical mistake patterns found in git revert history.")
+        return
+    click.echo(f"Mistake Guardrails ({len(mistakes)}):")
+    for m in mistakes:
+        click.echo(f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}")
+
+
+@cli.command(name="hallu-guard")
+def hallu_guard_cmd() -> None:
+    """Audit codebase for hallucinated or phantom package imports."""
+    from rush.tools.hallu_guard import HalluGuard
+
+    guard = HalluGuard()
+    res = guard.audit_codebase()
+    if res["passed"]:
+        click.echo(
+            "HalluGuard: All AST imports grounded in installed packages or stdlib."
+        )
+    else:
+        click.echo(
+            f"HalluGuard: FAIL - {res['findings_count']} hallucinated import findings:",
+            err=True,
+        )
+        for f in res["findings"]:
+            click.echo(f"  {f['file']}: {', '.join(f['violations'])}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()
