@@ -80,13 +80,14 @@ Whenever Rush finishes checking your project, it assigns a clear **Status** to t
 
 If you use AI coding assistants, Rush is your new best friend. AI models are lightning fast, but they can occasionally write repetitive code ("AI slop"), forget to write tests, or propose dangerous commands.
 
-Rush includes an entire dedicated suite called **[Agentic Rush](AGENTIC_RUSH.md)** that protects your codebase:
+Rush includes dedicated guides for both [Agentic Rush](AGENTIC_RUSH.md) and [Vibecoding with Rush](VIBECODING.md) that protect your codebase:
 - **`rush slop .`**: Catches AI hallucinations, repetitive boilerplate, and useless comments.
 - **`rush tdd .`**: Verifies that your AI wrote tests for every new feature.
 - **`rush safety check-cmd "<cmd>"`**: Intercepts destructive commands before they harm your filesystem.
 - **`rush codegraph slice "<symbol>"`**: Slices exact function implementations to save 90% of prompt tokens.
 
-👉 Check out the [Working with AI Agents Guide](user-guide/working-with-ai-agents.md) and the [Agentic Rush Knowledge Base](AGENTIC_RUSH.md) to learn more.
+👉 Check out the [Vibecoding Master Portal](VIBECODING.md), the [Working with AI Agents Guide](user-guide/working-with-ai-agents.md), and the [Agentic Rush Knowledge Base](AGENTIC_RUSH.md) to learn more.
+
 
 ---
 

@@ -14,6 +14,7 @@ The [User guide](user-guide/index.md) explains the everyday workflow, results, c
 
 - [Subsystem & Bundle Architecture Diagrams](BUNDLE_DIAGRAMS.md)
 - [Agentic Rush Knowledge Base](AGENTIC_RUSH.md)
+- [Vibecoding with Rush Guide](VIBECODING.md)
 
 Guided lessons:
 
@@ -25,6 +26,18 @@ Guided lessons:
 - [CI integration](tutorials/ci-integration.md)
 - [AI coding assistant](tutorials/ai-coding-assistant.md)
 - [Team adoption](tutorials/team-adoption.md)
+
+## Vibecoding with Rush
+
+- [Vibecoding Master Portal](VIBECODING.md)
+- [What is Vibecoding with Rush?](vibecoding/what-is-vibecoding-with-rush.md)
+- [The Vibecoder Workflow](vibecoding/the-vibecoder-workflow.md)
+- [Setting Up Your AI Agent](vibecoding/setting-up-your-agent.md)
+- [Slop-Busting & Hallucination Defense](vibecoding/slop-busting-and-hallucination-defense.md)
+- [Instant Fix & Auto-Remediation](vibecoding/instant-fix-and-auto-remediation.md)
+- [Token Diet for Vibecoders](vibecoding/token-diet-for-vibecoders.md)
+- [Shipping with Swagger](vibecoding/shipping-with-swagger.md)
+- [Vibecoder Cheat Sheet & Golden Prompts](vibecoding/cheat-sheet.md)
 
 ## Agentic Rush (AI Copilot & Guardrails)
 
@@ -40,6 +53,7 @@ Guided lessons:
 - [Plugins & Agent Skills](agentic-rush/plugins-and-agent-skills.md)
 
 ## I need an exact answer
+
 
 
 - [CLI reference](reference/cli-reference.md)

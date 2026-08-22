@@ -38,3 +38,6 @@ Welcome to the **Rush User Guide**! Whether you are writing your first line of c
   *Complete visual architecture diagrams for all 9 Rush bundles.*
 - [Agentic Rush Knowledge Base](../AGENTIC_RUSH.md)  
   *The dedicated portal for AI agent safety, memory, sandboxing, and token economy.*
+- [Vibecoding with Rush](../VIBECODING.md)  
+  *The ultimate prompt-driven coding workflow guide for modern builders.*
+
