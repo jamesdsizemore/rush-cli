@@ -248,8 +248,12 @@ sequenceDiagram
 ## 30. Commit Requirements
 
 > [!IMPORTANT]
-> **COMMIT-ONLY MANDATE**: Commit all code, test suites, and the comprehensive 5-tier documentation matrix atomically to the feature branch. **DO NOT execute `git merge` or fast-forward `main`**. Stop after committing to the feature branch and present deliverables for user review and approval.
-* **Commit Message**: `feat(phase-47): implement autonomous flaky test healer and public API breaking change detector`
+> **COMMIT-ONLY & FULL-CORPUS DOCS MANDATE**:
+> 1. **Mandatory Docs Sweep**: Execute the full-corpus documentation sweep updating 20+ files across all 5 tiers before committing.
+> 2. **Pre-Commit Staging Audit**: Check `git status --short` to verify that `docs/` changes span all 5 tiers alongside `src/` and `tests/`.
+> 3. **Atomic Commit**: Commit code, tests, and all documentation updates together in a single commit on the feature branch.
+> 4. **No Merging**: DO NOT merge or fast-forward to `main` without explicit user approval.
+* * **Commit Message**: `feat(phase-47): implement autonomous flaky test healer and public API breaking change detector`
 
 ---
 
