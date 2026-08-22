@@ -55,3 +55,9 @@ The catalog contains 37 user-visible tools. **Maturity matters:** a listed tool 
 Generated help is authoritative for options. See [CLI reference](reference/cli-reference.md), [Engine directory](reference/engine-directory.md), and [Permissions](safety/permissions.md).
 
 
+
+### Wire Format Options
+* `--format json`: Standard JSON ToolResult payload (default).
+* `--format toon`: Ultra-compact Token-Oriented Object Notation pipe-table formatting.
+* `--format yaml`: YAML formatted findings.
+* `--format ndjson`: Newline-delimited JSON stream.

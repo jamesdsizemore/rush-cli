@@ -1,0 +1,19 @@
+# Workflow: Bi-Temporal Git Revert Mistake Pre-Mortem
+
+## 1. Overview
+The Mistake Miner extracts anti-patterns from repository Git revert history (`git log --grep="[Rr]evert"`). It structures historical regressions into proactive guardrails, preventing AI agents from repeating known failure loops.
+
+## 2. Mistake Triplet Architecture
+Every mined revert is indexed as a structured triplet:
+1. **Believed** (Reverted feature or change description)
+2. **Found False** (Rationale or regression reported in commit body)
+3. **Truth Now** (Active guardrail preventing repeat regressions)
+
+## 3. CLI and FastMCP Usage
+```bash
+# Query active mistake guardrails
+rush context mistakes
+
+# FastMCP query
+rush_context_mistakes_check()
+```

@@ -57,3 +57,14 @@ rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score
 - the client-provided process environment must preserve required Windows/runtime variables.
 
 See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](developer/mcp-development.md).
+
+## Phase 41–43 FastMCP Tool Additions
+
+* **`rush_session_save(name, files)`**: Save developer context snapshot to `.rush/sessions/`.
+* **`rush_ship_clean(dry_run=False)`**: Clean scratch directories and build caches before release.
+* **`rush_ship_env()`**: Audit codebase environment variable usage against `.env.example`.
+* **`rush_ship_gate()`**: Run 7-vector pre-flight release readiness cockpit.
+* **`rush_token_outline(path, focus_symbol="")`**: Generate token-efficient AST skeleton outline of a code file.
+* **`rush_context_retrieve(chunk_hash)`**: Retrieve uncompressed content from CCR chunk store by hash.
+* **`rush_hallu_guard(path="")`**: Audit code imports against installed packages and stdlib.
+* **`rush_context_mistakes_check()`**: Check git revert history for past mistakes and anti-patterns.

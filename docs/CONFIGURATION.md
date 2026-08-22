@@ -45,3 +45,25 @@ check = true
 - [Configuration Reference](reference/configuration-reference.md): Full field-by-field specification and type constraints.
 - [Configuration Cookbook](reference/configuration-cookbook.md): Production configurations for Python, TypeScript, polyglot, and cloud-native repositories.
 - [Configuration Schema](CONFIG_SCHEMA.md): Schema validation rules.
+
+## Context Intelligence & Preferences Configuration (Phases 41–43)
+
+```toml
+[context_intel]
+default_encoding = "cl100k_base"
+enable_distillers = true
+max_distilled_lines = 100
+
+[context_intel.distillers]
+pytest = true
+cargo = true
+ruff = true
+vitest = true
+
+[memory]
+preferences_path = ".rush/preferences.json"
+sessions_path = ".rush/sessions"
+ccr_cache_path = ".rush/cache/ccr.db"
+failures_db_path = ".rush/memory/failures.db"
+invariants_path = ".rush/memory/invariants.json"
+```

@@ -162,3 +162,49 @@ The following flags are supported across evaluation commands:
 
 `ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](reference/result-reference.md).
 
+
+## Context Intelligence & Ship Commands (Phases 41–43)
+
+### `rush session save <name>`
+Save a developer session checkpoint snapshot to `.rush/sessions/`.
+* `--file, -f`: Specify active files to include.
+
+### `rush session list`
+List all saved session checkpoints in `.rush/sessions/`.
+
+### `rush session restore <name>`
+Restore a saved session checkpoint by name.
+
+### `rush ship clean`
+Purge temporary scratch directories, caches, and build artifacts.
+* `--dry-run`: Preview files to be removed without deleting.
+
+### `rush ship env`
+Lint codebase environment variable usage against `.env.example`.
+
+### `rush ship docs`
+Audit documentation links and CLI reference parity across `docs/`.
+
+### `rush ship gate`
+Run the unified 7-vector pre-flight release readiness cockpit concurrently.
+
+### `rush ship migration`
+Audit SQL migration files for table-locking hazards via `sqlglot`.
+
+### `rush ship semver <old_file> <new_file>`
+Check for breaking public API signature changes.
+
+### `rush ship pack`
+Audit source tree for accidental secret leaks before packaging.
+
+### `rush token outline <path>`
+Generate a token-efficient AST skeleton outline of a code file.
+
+### `rush context retrieve <chunk_hash>`
+Retrieve raw uncompressed content from the CCR chunk database.
+
+### `rush context mistakes`
+Display historical Git-revert mistake guardrails.
+
+### `rush hallu-guard`
+Audit codebase for hallucinated or phantom package imports.
