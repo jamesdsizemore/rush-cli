@@ -1672,8 +1672,8 @@ def score_compute_cmd(
 ) -> None:
     """Calculate deterministic 0-100% composite score and grade."""
     from rush.score.calculator import CompositeScorecardCalculator, PillarScores
-    from rush.score.html_report import ScorecardHtmlReportGenerator
-    from rush.score.svg_badge import ScoreSvgBadgeGenerator
+    from rush.score.html_report import HtmlReportGenerator
+    from rush.score.svg_badge import SvgBadgeGenerator
 
     pillars = PillarScores(
         type_safety=type_safety,
@@ -1687,14 +1687,14 @@ def score_compute_cmd(
     click.echo(report.summary)
 
     if export_svg:
-        svg = ScoreSvgBadgeGenerator.generate_badge_svg(
+        svg = SvgBadgeGenerator.generate_badge_svg(
             report.composite_score, report.letter_grade
         )
         export_svg.write_text(svg, encoding="utf-8")
         click.echo(f"Wrote SVG badge to {export_svg}")
 
     if export_html:
-        html = ScorecardHtmlReportGenerator.generate_html_report(report)
+        html = HtmlReportGenerator.generate_html_report(report)
         export_html.write_text(html, encoding="utf-8")
         click.echo(f"Wrote HTML report to {export_html}")
 

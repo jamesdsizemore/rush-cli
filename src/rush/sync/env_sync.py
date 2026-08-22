@@ -37,3 +37,13 @@ class EnvSchemaSynchronizer:
     ) -> tuple[bool, set[str]]:
         missing_in_example = settings_keys - example_keys
         return len(missing_in_example) == 0, missing_in_example
+
+    @classmethod
+    def find_missing_keys(cls, example_file: Path, actual_file: Path) -> set[str]:
+        """Find environment keys defined in example file that are missing in actual file."""
+        example_keys = cls.extract_env_keys_from_file(example_file)
+        actual_keys = cls.extract_env_keys_from_file(actual_file)
+        return example_keys - actual_keys
+
+
+EnvironmentVariableSynchronizer = EnvSchemaSynchronizer
