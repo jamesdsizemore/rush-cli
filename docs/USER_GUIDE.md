@@ -1,110 +1,122 @@
-# Rush user guide
+# The Friendly Rush User Guide
 
-Rush checks a project with relevant quality tools already available in your environment and reports one consistent result. This guide is the complete beginner manual; focused chapters live under [`user-guide/`](user-guide/index.md).
+Welcome to Rush! If you are new to code quality tools, static analysis, or pair-programming with AI coding assistants, you are in the right place. This guide is written in plain, human language to help you get up and running in minutes without getting lost in technical jargon.
 
-## Welcome to Rush
+---
 
-Use Rush before a pull request, after an AI-assisted coding session, while introducing CI, or while cleaning up an unfamiliar repository. It helps answer: Is the code obviously unfinished? Does it lint and format? Do tests pass? Are dependency or secret findings present? Are project files and workflows healthy?
+## What is Rush?
 
-Rush is not a replacement for specialized tools. It is the safe front door to them.
+Imagine you are building a house. Before handing the keys over to the owner, you want an experienced building inspector to walk through the rooms:
+- Is the foundation solid, or are there hidden structural cracks?
+- Did someone leave exposed electrical wiring (like leaked API keys or secrets)?
+- Are the doors built to standard dimensions so they open smoothly (linting and formatting)?
+- Did the builder leave behind unfinished scaffolding or empty closets (dead code and empty stubs)?
 
-## Before you begin
+**Rush is your automated code inspector and AI copilot safety harness.**
 
-Install Python 3.12 and uv, then follow [Installation](getting-started/installation.md). Optional checkers are installed separately. Missing helpers produce `skipped`; Rush never installs them for you.
+Instead of forcing you to manually configure 15 different complicated command-line tools—each with its own arcane flags, strange output formats, and steep learning curve—Rush gives you a single, unified, friendly front door. You run one simple command, and Rush orchestrates the best tools for your project, presenting clear, actionable feedback.
 
-## Your first Rush check
+---
+
+## 1. Getting Started in 30 Seconds
+
+### Step 1: Run your first review
+Open your terminal in any project folder and type:
 
 ```bash
-uv run rush review .
+rush review .
 ```
 
-`review` is local and deterministic. A line such as `review: 2 heuristic finding(s)` means two rules matched. Use the path and line to inspect the source. `info` is context; `warn` deserves review; `error` represents a strong finding or execution problem depending on status.
+### What happens behind the scenes:
+Rush instantly inspects your files using lightweight, deterministic rules. It checks for common code smells, unfinished `TODO` markers, bloated functions, and missing docstrings.
 
-## The everyday workflow
+If everything looks great, Rush prints a cheerful confirmation. If it spots something worth your attention, it gives you the exact file name and line number, along with a helpful hint explaining why it flagged the line.
 
-Run workflow suites tailored to your development phase:
+---
 
-```bash
-# 1. Fast inner-loop checks (lint, format --check, typecheck)
-rush check .
+## 2. The Everyday Workflow (A Day in the Life with Rush)
 
-# 2. Live watcher mode with auto-re-evaluation
-rush watch .
+Here is how thousands of developers and AI agents use Rush throughout their daily coding routine:
 
-# 3. Safe automated code remediation
-rush fix . --dry-run
-rush fix .
-
-# 4. Interactive exploration
-rush ui .           # Rich Terminal UI
-rush dashboard .    # Authenticated Web Dashboard on 127.0.0.1
-
-# 5. Deep security & supply chain audit
-rush audit .
-
-# 6. Strict pre-merge gate
-rush gate . --fail-fast
+```mermaid
+flowchart LR
+    A["1. Code & Edit"] --> B["2. rush check . (Fast feedback in ms)"]
+    B --> C{"Any issues?"}
+    C -- Yes --> D["3. rush fix . (Auto-clean formatting)"]
+    D --> B
+    C -- No --> E["4. rush test . (Verify tests pass)"]
+    E --> F["5. rush hook run (Pre-commit check)"]
+    F --> G["6. Git Commit & Push with confidence!"]
 ```
 
-- `check`: runs fast syntax, format, and static typing checks in milliseconds.
-- `watch`: monitors repository files in real-time and triggers check suites upon change with debouncing.
-- `fix`: applies safe automated fixes across engines (Ruff, ESLint, Prettier, Biome) with path containment.
-- `ui` & `dashboard`: provides visual finding exploration via terminal TUI or authenticated local web dashboard.
-- `audit`: runs comprehensive security scans, dependency audits, and secret detection.
-- `gate`: verifies all quality gates (lint, format, typecheck, test, security) with fail-fast options.
+### The 4 Routine Commands:
 
-See [Everyday workflow](user-guide/everyday-workflow.md) for the full story.
+1. **`rush check .`** (The Quick Health Check):
+   - Run this while you are actively writing code. It runs your linters, format checkers, and type checkers together in milliseconds.
+2. **`rush fix .`** (The Automatic Broom):
+   - Spot some messy indentation, inconsistent quotes, or unused imports? Run `rush fix .` and let Rush safely clean it up for you. (Tip: Use `rush fix . --dry-run` to preview the changes first!)
+3. **`rush test .`** (The Safety Net):
+   - Runs your unit and integration tests to guarantee that your changes didn't accidentally break existing behavior.
+4. **`rush gate .`** (The Pre-Merge Guard):
+   - Before opening a Pull Request or merging your branch into `main`, run `rush gate .` to run a comprehensive quality check across all standards.
 
-## Understanding results
+---
 
-- `ok`: the command completed and found no blocking issue.
-- `warn`: completed with advisory findings.
-- `fail`: completed and found a failed check.
-- `error`: Rush or an engine could not complete correctly.
-- `skipped`: nothing applicable, required evidence absent, permission absent, or an optional engine missing.
+## 3. How to Read Rush Results Without Feeling Overwhelmed
 
-A missing engine is not the same as a passing check. Decide whether your policy requires that engine. See [Understanding results](user-guide/understanding-results.md).
+Whenever Rush finishes checking your project, it assigns a clear **Status** to the result:
 
-## Exporting Reports & Visual Artifacts
+| Status | What it Means | What You Should Do |
+|---|---|---|
+| **`OK`** (Green) | Everything looks fantastic! | Celebrate and keep coding. |
+| **`WARN`** (Yellow) | Advisory feedback or minor suggestions. | Take a quick look. It won’t break your build, but fixing it will keep your code clean. |
+| **`FAIL`** (Red) | A definite issue was found (a broken test, type error, or syntax flaw). | Open the indicated file and line to resolve the error. |
+| **`SKIPPED`** (Gray) | An optional tool is not installed on your machine. | Don't worry! Rush skips tools gracefully without crashing. If you want that check, install the tool; otherwise, feel free to ignore it. |
+| **`ERROR`** (Red) | Something unexpected happened (like a malformed configuration file). | Check the error message for hints or run `rush doctor .` to diagnose your setup. |
 
-Rush provides built-in multi-format export flags across all 35 catalog tools:
-- `--json`: Machine-readable raw ToolResult JSON output.
-- `--export-sarif <path>`: Standard SARIF 2.1.0 report for GitHub Code Scanning and IDE viewers.
-- `--export-html <path>`: Single-file interactive HTML dashboard with metric cards, status badges, and suggested remediation.
+---
 
-## Use Rush for common jobs
+## 4. Coding with AI Assistants (Cursor, Claude, Cline & Friends)
 
-- Python, JS/TS, mixed repositories: [Checking code](user-guide/checking-code.md)
-- Markdown, YAML, SQL, Dockerfiles, Actions: [Checking project files](user-guide/checking-project-files.md)
-- Dependencies, secrets, SBOM: [Security and supply chain](user-guide/security-and-supply-chain.md)
-- Tests and evidence: [Testing confidence](user-guide/testing-confidence.md)
-- TDD & Architecture: [Quality and Architecture](user-guide/advanced-checks.md)
+If you use AI coding assistants, Rush is your new best friend. AI models are lightning fast, but they can occasionally write repetitive code ("AI slop"), forget to write tests, or propose dangerous commands.
 
-## Optional advanced checks
+Rush includes an entire dedicated suite called **[Agentic Rush](AGENTIC_RUSH.md)** that protects your codebase:
+- **`rush slop .`**: Catches AI hallucinations, repetitive boilerplate, and useless comments.
+- **`rush tdd .`**: Verifies that your AI wrote tests for every new feature.
+- **`rush safety check-cmd "<cmd>"`**: Intercepts destructive commands before they harm your filesystem.
+- **`rush codegraph slice "<symbol>"`**: Slices exact function implementations to save 90% of prompt tokens.
 
-Advanced checks are permission-sensitive. Rush supports dual modes across test confidence and quality verification:
-1. **Imported Mode**: Pass existing local report files (`coverage`, `mutation`, `fuzz`, `load`, `contract`, `snapshot`, `codeql`) for instant offline normalization.
-2. **Executed Mode**: Run native test engines under explicit permission flags (`--allow-slow`, `--allow-network`, `--allow-build`, `--allow-browser`, `--allow-artifact-write`).
+👉 Check out the [Working with AI Agents Guide](user-guide/working-with-ai-agents.md) and the [Agentic Rush Knowledge Base](AGENTIC_RUSH.md) to learn more.
 
-See [Advanced checks](user-guide/advanced-checks.md) and [Permissions](safety/permissions.md).
+---
 
-## Use Rush with an AI coding assistant
+## 5. Visual Dashboards & Terminal UI
 
-MCP lets a compatible assistant ask the local Rush process to inspect your project. Configure `rush mcp serve` as a stdio command, then ask: “Review the files I changed,” “Run relevant tests,” or “Tell me which checker is missing.” See [Working with AI agents](user-guide/working-with-ai-agents.md).
+Prefer visual interfaces over terminal text? Rush has you covered:
 
-## Autonomous Agent Safety, CodeGraph & Quality Scorecards (Phases 29–40)
+- **Interactive Terminal UI**:
+  ```bash
+  rush ui .
+  ```
+  Launches a keyboard-navigable terminal dashboard to browse findings file by file.
 
-- **Agent Safety & Sandboxing**: `rush guard check-cmd` and `rush guard check-path` intercept destructive shell executions and sandbox AI file operations in isolated Git worktrees.
-- **Context Economy & BPE Tokenizer**: `rush token count` and `rush outline` provide microsecond AST outline compression to eliminate token waste in LLM prompt contexts.
-- **Polyglot CodeGraph Exploration**: `rush codegraph slice` uses a SQLite-backed Code Property Graph to extract verbatim symbols, functions, and cross-file call paths.
-- **Git Hotspots & Defect Risk**: `rush hotspots analyze` correlates commit churn with McCabe cyclomatic complexity to pinpoint high-risk defect areas.
-- **Multi-Model Consensus & PR Quality Scorecard**: `rush score compute` calculates deterministic 0–100% 6-pillar quality scores with SVG badges and SARIF 2.1.0 GitHub Code Scanning exports.
+- **Local Web Dashboard**:
+  ```bash
+  rush dashboard .
+  ```
+  Opens an authenticated, private web dashboard in your browser (`http://127.0.0.1`) complete with metric charts, vulnerability summaries, and remediation tips.
 
-## Configure Rush for my project
+---
 
-A `rush.toml` file stores a small set of project settings. Rush finds the nearest file while walking upward from the target and stops at the Git root. Current fields are documented in [Configuration reference](reference/configuration-reference.md). Only `review.max_file_lines`, `review.use_graft`, and direct lint engine arguments have verified consumers; other parsed fields are forward-facing and should not be presented as enforced policy.
+## 6. Deep Dive Chapters
 
-## When something goes wrong
+Explore our focused, beginner-friendly guides for specific topics:
 
-Use [Troubleshooting](user-guide/troubleshooting.md) for symptom → reason → exact fix, and [FAQ](user-guide/faq.md) for common decisions.
-
+- [Everyday Workflow](user-guide/everyday-workflow.md): Step-by-step walkthrough of writing and shipping code with Rush.
+- [Checking Code](user-guide/checking-code.md): Everything you need to know about linting, formatting, and typechecking.
+- [Checking Project Files](user-guide/checking-project-files.md): Keeping Markdown, YAML, SQL, and Dockerfiles spotless.
+- [Testing Confidence](user-guide/testing-confidence.md): Understanding unit tests, code coverage, and test reliability.
+- [Security & Supply Chain](user-guide/security-and-supply-chain.md): Keeping secrets safe and dependencies free of vulnerabilities.
+- [Understanding Results](user-guide/understanding-results.md): A detailed breakdown of severities, rules, and exit codes.
+- [Troubleshooting Guide](user-guide/troubleshooting.md): Quick solutions for common questions and errors.
+- [Subsystem Architecture Diagrams](BUNDLE_DIAGRAMS.md): High-level visual maps of all 9 Rush bundles.

@@ -1,67 +1,78 @@
-# Advanced Quality, Security & Verification Checks
+# Advanced Checks & Monorepos
 
-Rush exposes advanced verification capabilities so their safety boundaries, resource requirements, and execution modes are explicit and transparent.
+As software repositories grow into multi-package monorepos with hundreds of thousands of lines of code, managing performance, scoping checks, and tracking defect risk becomes critical.
 
----
-
-## 1. Advanced Check Capabilities & Permission Matrix
-
-These tools operate in **dual modes**: importing local structured reports or executing live engines under explicit permissions:
-
-| Command | Category | Required Permissions | Supported Engines & Dual-Mode Behavior |
-|---|---|---|---|
-| `ai-eval` | Security & AI Safety | `--allow-slow` | Evaluates prompt safety, LLM security, and guardrails via **Promptfoo**, **Garak**, **DeepEval**, and **NeMo Guardrails**. |
-| `coverage` | Test Confidence | `--allow-slow` | Imports local `coverage.py` JSON, LCOV, or Cobertura XML, or executes pytest coverage / **Diff-Cover** / **Undercover** under `--allow-slow`. |
-| `mutation` | Test Confidence | `--allow-slow` | Imports mutation reports, or executes polyglot mutation engines: **Stryker** (JS/TS/C#), **Cosmic Ray** (Python), **Infection** (PHP), **Pitest** (JVM), **Cargo-mutants** (Rust), or **mutmut**. |
-| `contract` | Test Confidence | `--allow-slow` | Imports Pact reports, or executes property-based API contract fuzzing with **Schemathesis**, **Zally**, or pact-verifier. |
-| `e2e` | Browser Runtime | `--allow-browser` | Executes headless browser end-to-end tests via **Playwright** with **Wait-On** readiness polling. |
-| `visual` | UI/UX & Visual | `--allow-browser` & `--allow-slow` | Runs visual regression audits via **Lost Pixel**, **BackstopJS**, **Lighthouse**, or **PageSpeed** (`--accept` requires `--allow-artifact-write`). |
-| `semantic-drift`| Browser Runtime | `--allow-browser` & `--allow-slow` | Runs DOM and accessibility drift verification using **Playwright** and **axe-core**. |
-| `pbt` | Test Confidence | `--allow-slow` | Imports property-based test reports, or executes **Hypothesis** under `--allow-slow`. |
-| `flaky` | Test Confidence | `--allow-slow` | Imports duplicate JUnit test reports, or executes pytest-rerun under `--allow-slow`. |
-| `snapshot` | Test Confidence | `--allow-slow` | Imports snapshot reports, or runs pytest-snapshot (`--accept` requires `--allow-artifact-write`). |
-| `fuzz` | Test Confidence | `--allow-slow` | Imports seeded fuzzing reports, or runs Atheris under `--allow-slow`. |
-| `load` | Performance | `--allow-network` | Imports load test summaries, or executes **k6** load generation under `--allow-network`. |
-| `codeql` | Security & SAST | `--allow-build` | Imports CodeQL SARIF 2.1.0 reports, or executes local CodeQL database analysis under `--allow-build`. |
-| `sbom` | Supply Chain | `--allow-artifact-write` | Generates CycloneDX SBOMs via **cdxgen**, **ScanCode**, **GUAC**, or **pip-licenses** (writing `-o` requires `--allow-artifact-write`). |
-| `tdd` | Test Confidence | None (Offline) | Enforces Red-Green-Refactor cycles and verifies test existence for newly introduced code files. |
-| `slop` | Code Quality & AST | None (Offline) | Scans for AI hallucinations, repetitive stubs, and empty boilerplates via **aislop**, **sloppylint**, and **Markdown-Unfluff**. |
-| `complexity` | Architecture & Maintainability | None (Offline) | Evaluates modular boundaries (**Tach**), code decay (**Sentrux**), token density (**Clines**), and cyclomatic metrics (**Radon**). |
-| `release` | Supply Chain & Attestation | None (Offline) | Verifies offline cryptographic trust certificates via **Cejel** and version increments via **Semantic-Release**. |
+Rush includes advanced architectural capabilities designed specifically for large-scale codebases.
 
 ---
 
-## 2. Using Dual-Mode Tools
+## 1. Multi-Package Monorepo Scoping (`rush workspace`)
 
-### Mode A: Report Import Mode
-When a report file already exists (from an earlier build step or CI job), pass the report path directly:
-```bash
-rush coverage coverage.json --json
-rush codeql results.sarif --json
-rush contract pact-summary.json --json
-```
+If your repository contains multiple packages (e.g. `apps/web`, `apps/api`, `packages/shared-ui`), running checks across the entire repository every time you change one file is slow and wasteful.
 
-### Mode B: Live Execution Mode
-When running the engine live from Rush, supply the explicit permission flag:
+Rush automatically discovers workspace topologies across **pnpm, npm, yarn, Cargo, and Turborepo**:
+
 ```bash
-rush mutation src/ --allow-slow --json
-rush e2e e2e/ --allow-browser --json
-rush ai-eval prompts/ --allow-slow --json
-rush load load-test.js --allow-network --json
+# List all discovered workspace packages in topological order
+rush workspace list
+
+# Find only the packages affected by your recent Git changes
+rush workspace affected
+
+# Run checks on a specific package
+rush check . -w packages/shared-ui
 ```
 
 ---
 
-## 3. Generating Standalone HTML & SARIF Reports
+## 2. Flag-Salted Result Caching (`rush cache`)
 
-Rush allows exporting rich visual and machine-readable artifacts from any check:
+Rush includes an embedded, high-performance SQLite result cache (`.rush/cache.db`). When a file hasn't changed and the tool configuration remains identical, Rush returns the cached result in **0 milliseconds**.
 
 ```bash
-# Export interactive HTML inspection report
-rush review . --export-html artifacts/review.html
+# Inspect the local result cache
+rush cache inspect
 
-# Export SARIF 2.1.0 report for GitHub Security or IDEs
-rush security . --export-sarif artifacts/security.sarif
+# Clear cached results before a fresh run
+rush cache clear
 ```
 
-See [Permissions Specification](../safety/permissions.md) and [Result Reference](../reference/result-reference.md).
+The cache uses cryptographic SHA-256 content hashing combined with command-line flags to guarantee you never receive stale or incorrect results.
+
+---
+
+## 3. Git Hotspots & Defect Risk Matrix (`rush hotspots`)
+
+Where are bugs most likely to hide in your repository?
+
+Research across software engineering shows that defects concentrate where **high commit churn** (files that are constantly being edited) intersects with **high cyclomatic complexity** (files with deeply nested `if/else` logic).
+
+```bash
+rush hotspots analyze
+```
+
+### What Rush Computes:
+- **Commit Churn**: How many times a file has been modified over the past 90 days.
+- **McCabe Cyclomatic Complexity**: How many decision paths exist in the code.
+- **Composite Defect Risk Score**: Pinpoints the top 5 highest-risk files in your repository so you know exactly where to write extra unit tests or schedule refactoring.
+
+---
+
+## 4. Web Asset & Bundle Budgeting (`rush bundle`)
+
+If you build frontend web applications, shipping massive JavaScript bundles to users slows down page load times and harms SEO rankings.
+
+```bash
+rush bundle analyze dist/
+```
+
+- Calculates raw, Gzip, and Brotli chunk transfer sizes.
+- Identifies barrel file imports (`import { a } from './components'`) that prevent effective tree-shaking.
+- Detects duplicate CSS rules and uncompressed images.
+
+---
+
+## Next Steps
+
+- Explore the complete [Bundle Diagrams](../BUNDLE_DIAGRAMS.md).
+- Discover solutions to common questions in [Troubleshooting Guide](troubleshooting.md).

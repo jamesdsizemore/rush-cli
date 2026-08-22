@@ -1,44 +1,101 @@
-# Work with an AI coding assistant
+# Pair Programming with AI Agents
 
-A compatible assistant can launch Rush locally and ask it to inspect a project. MCP is the protocol used for that conversation; you do not need to operate a server or open a port.
+AI coding assistants like **Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
 
-## Setup
+However, working with AI models without guardrails introduces common frustrations:
+1. **Hallucinations**: The AI invents non-existent APIs or writes placeholder stubs that do nothing.
+2. **Context Bloat**: Feeding large files into prompts burns tokens and causes the AI to "forget" earlier instructions.
+3. **Broken Tests & Silent Regressions**: The AI changes code without verifying that existing unit tests still pass.
+4. **Dangerous Commands**: The AI suggests shell commands that could wipe uncommitted work.
 
-Configure a generic stdio process:
+Rush was designed from the ground up to be the ultimate companion and quality gate for AI coding workflows.
 
-```text
-command: uv
-args: run --directory /absolute/path/to/rush-cli rush mcp serve
+---
+
+## 1. Connecting Rush to Your AI Assistant via FastMCP
+
+Rush includes a built-in, local Model Context Protocol (MCP) server that exposes all Rush quality tools directly to your AI assistant:
+
+```bash
+# Test the MCP server locally (stdio transport)
+rush mcp serve
 ```
 
-Client configuration formats differ. Use [MCP client setup](../integrations/mcp-client-setup.md) and your client's current documentation.
+### Adding Rush to Cursor, Claude Code, or Cline:
+Add Rush to your assistant's MCP configuration (`settings.json` or `claude_desktop_config.json`):
 
-## Closed-Loop Remediation & Session Memory (Phase 29)
+```json
+{
+  "mcpServers": {
+    "rush": {
+      "command": "rush",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
 
-Agents can autonomously query findings, inspect proposed unified diff patches, and apply safe fixes with path confinement (Control 7):
+Now, your AI assistant can run `rush_check`, `rush_tdd`, and `rush_codegraph_slice` directly as native tools!
 
-- **`rush_get_patch`**: Retrieve the unified diff patch associated with a specific finding.
-- **`rush_apply_fix`**: Atomically apply a validated unified diff to workspace files with traversal protection and sensitive path shielding (`.git/`, `.env`, `.rush/cache.db`).
-- **`rush_session_context`**: Query multi-turn evaluation history from `.rush/session_memory.json`. Context is framed in strict XML tags (`<rush_session_memory>`) with XML escaping to prevent prompt injection and context hijacking.
-- **`rush_guard`**: Intercept destructive shell commands and enforce path boundary confinement.
-- **`rush_token`**: Count exact BPE tokens and compress Python AST outlines to save prompt context tokens.
-- **`rush_codegraph`**: Explore polyglot code symbols and retrieve verbatim symbol slices with line numbers.
-- **`rush_score`**: Compute 6-pillar composite quality scores and generate SARIF 2.1.0 reports.
+---
 
-## Useful requests
+## 2. The 3-Step AI Workflow Loop
 
-- “Run `rush_check` for a fast inner-loop validation pass.”
-- “Run `rush_tdd` to verify that my new features include test coverage before opening a PR.”
-- “Run `rush_slop` to detect AI boilerplate, empty stubs, or redundant docstrings.”
-- “Run `rush_complexity` to check for modular architecture violations with Tach.”
-- “Use `rush_codegraph` to explore symbol definitions and call hierarchies before refactoring.”
-- “Use `rush_token` to compress the AST outline of large files before passing them into LLM context.”
-- “Use `rush_review` on the files I changed. Export the report to `artifacts/review.html`.”
-- “Check this repository for dependency findings, agent hook vulnerabilities with Medusa, and unredacted secrets.”
-- “Retrieve and apply the suggested patch for the lint finding on line 42.”
-- “Compute the PR quality scorecard with `rush_score`.”
+Whenever you ask your AI assistant to implement a feature, follow this simple 3-step loop:
 
-## Boundaries & Safety
+```mermaid
+flowchart LR
+    A["1. Context: Give Lean Symbols"] --> B["2. AI Writes Code & Tests"]
+    B --> C["3. Verify with Rush Check & TDD"]
+    C -- Errors Found --> D["Self-Correct with Rush Feedback"]
+    D --> B
+    C -- 100% Green --> E["Merge with Confidence!"]
+```
 
-The assistant receives Rush's structured local results via FastMCP. Rush opens no external network port and runs standard JSON-RPC over stdio. External engines run as contained local subprocesses with `stdin=DEVNULL`. Do not grant browser, network, slow, fuzz, baseline, release, or publication authority implicitly. Untrusted repository plugins are strictly gated behind `rush trust` (Control 6).
+### Step 1: Give Your AI Lean Context with CodeGraph
+Instead of pasting an entire 1,500-line file into your prompt, extract just the function you want to edit:
+```bash
+rush codegraph slice "AuthService.generate_token"
+```
+Paste the 20-line verbatim slice into your prompt. This saves up to 90% of your token budget and keeps the AI laser-focused.
 
+### Step 2: Prompt for Test-Driven Development (TDD)
+Ask your AI to write both the implementation and the unit test:
+> *"Implement the new token expiration logic and add a test case in `tests/test_auth.py`."*
+
+### Step 3: Verify the Changes Instantly
+After the AI generates the code, tell the assistant to run:
+```bash
+rush check .
+rush tdd .
+```
+- `rush check .` verifies that there are zero syntax errors, formatting issues, or type mismatches.
+- `rush tdd .` guarantees that tests exist for the newly modified code.
+
+---
+
+## 3. Detecting AI Slop with `rush slop`
+
+AI models often add excessive boilerplate comments or hollow placeholders. Run:
+```bash
+rush slop .
+```
+Rush will flag useless comment repetitions (like `# This function adds two numbers: def add(a, b):`) and empty stub methods so your codebase stays clean and professional.
+
+---
+
+## 4. Keeping Agent Rules Synchronized with `rush governance`
+
+If your team uses multiple AI tools across different developers (Cursor, Cline, Windsurf), you can declare your project rules once in `AGENTS.md` and compile them across all IDE formats in one keystroke:
+
+```bash
+rush governance sync
+```
+Rush automatically updates `.cursorrules`, `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
+
+---
+
+## Next Steps
+
+- Explore the complete [Agentic Rush Knowledge Base](../AGENTIC_RUSH.md).
+- Learn about unit testing and coverage in [Testing with Confidence](testing-confidence.md).

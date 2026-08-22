@@ -1,45 +1,71 @@
-# Security and supply chain
+# Security & Supply Chain Protection
 
-Rush separates three jobs so their evidence is clear.
+Security shouldn't be an afterthought that only happens once a year during an external audit. In high-velocity development, security checks need to happen continuously as code is written.
 
-## Dependency and SAST security
+Rush provides defense-in-depth across code privacy, secret detection, dependency vulnerabilities, and open-source license compliance.
 
-```bash
-rush security . --json --export-html artifacts/security.html
-```
+---
 
-Rush routes dependency scanning to pip-audit, npm audit, OSV-Scanner, Trivy, and Grype. Static analysis and privacy scanning run via Semgrep, Bearer, and Horusec. Agent hook security and prompt injection audits route to **Medusa**. Web standards and accessibility audits route to Pa11y, OWASP ZAP, Deadfinder, and A11yWatch. Container layer benchmarks run via Dockle.
+## 1. Catching Leaked Secrets & API Keys (`rush secrets`)
 
-## Secret scanning
+Accidentally committing an AWS secret access key, Stripe token, or database password to a public repository can lead to immediate compromise.
 
 ```bash
-rush secrets . --json
+rush secrets .
 ```
 
-Rush scans for secrets and sensitive keys via Gitleaks, TruffleHog, Secretlint, detect-secrets, and Safe-Env. Secret values are redacted as `[REDACTED]` from normalized messages. Rotate real exposed credentials immediately.
+### What Rush Checks:
+- High-entropy API tokens (OpenAI, GitHub, AWS, Stripe, Anthropic).
+- Hardcoded passwords and private certificates (`.pem`, `.key`).
+- Unredacted credentials in staged git changes.
 
-## AI and LLM Evaluation
+### Automatic Output Redaction:
+Whenever Rush encounters a secret in any log, finding, or terminal output, it automatically redacts the sensitive value as `[REDACTED]` to prevent secondary exposure in log collectors or AI prompt transcripts.
+
+---
+
+## 2. Auditing Vulnerable Dependencies (`rush security`)
+
+Most modern applications rely on hundreds of third-party open-source packages. When a known vulnerability (CVE) is discovered in a package you use, you need to know immediately.
 
 ```bash
-rush ai-eval . --json
+rush security .
 ```
 
-Evaluates LLM prompts, jailbreaks, agent workflows, and safety guardrails using Promptfoo, Garak, DeepEval, and NeMo Guardrails.
+### What Rush Invokes:
+- **Python**: Coordinates `pip-audit` to check packages against the PyPA advisory database.
+- **Node.js**: Coordinates `npm audit` to check `package-lock.json`.
+- **Containers**: Coordinates `Trivy` and `Grype` to scan base container images.
+- **Static Security (SAST)**: Coordinates `Semgrep` and `Bearer` to find SQL injection, Cross-Site Scripting (XSS), and unauthenticated API endpoints.
 
-## CodeQL evidence & SARIF Export
+---
+
+## 3. Generating Software Bills of Materials & License Checks (`rush sbom`)
+
+When shipping software to enterprise customers or open-source communities, you often need to prove which libraries you use and ensure you aren't accidentally violating restrictive copyleft licenses (like AGPL in proprietary commercial software).
 
 ```bash
-rush codeql path/to/codeql.sarif --json
-rush security . --export-sarif artifacts/security.sarif
+# Generate a CycloneDX SBOM
+rush sbom . -o bom.json --allow-artifact-write
 ```
 
-Imports existing CodeQL SARIF 2.1.0 reports for offline normalization, or runs the local CodeQL CLI under `--allow-build`. Supports direct SARIF 2.1.0 generation via `--export-sarif`.
+Rush coordinates `cdxgen` and `ScanCode` to audit dependencies, scan license terms, and generate standard CycloneDX and SPDX documents.
 
-## Software bill of materials (SBOM) & Offline Trust Attestation
+---
+
+## 4. Evaluating AI & LLM Safety (`rush ai-eval`)
+
+If your project builds with LLM prompts, agent workflows, or RAG systems, you need to test against prompt injection and jailbreaks:
 
 ```bash
-rush sbom . --json
-rush release . --json
+rush ai-eval .
 ```
 
-Generates SBOM and audits license copyleft risk using cdxgen, ScanCode, GUAC, and pip-licenses. Verifies offline cryptographic quality and security certificates via **Cejel** and automated semantic releases. Overwriting existing artifacts requires `--allow-artifact-write`. See [Safety](../safety/safety-overview.md).
+Rush coordinates `Promptfoo`, `Garak`, and `DeepEval` to test that your AI system follows safety policies and refuses malicious prompts.
+
+---
+
+## Next Steps
+
+- Learn about monorepos and advanced checks in [Advanced Checks & Monorepos](advanced-checks.md).
+- Discover solutions to common issues in [Troubleshooting Guide](troubleshooting.md).

@@ -12,6 +12,9 @@ Welcome. Choose the path that matches what you want to accomplish.
 
 The [User guide](user-guide/index.md) explains the everyday workflow, results, code and project-file checks, security, test confidence, advanced checks, coding-assistant use, troubleshooting, and FAQs.
 
+- [Subsystem & Bundle Architecture Diagrams](BUNDLE_DIAGRAMS.md)
+- [Agentic Rush Knowledge Base](AGENTIC_RUSH.md)
+
 Guided lessons:
 
 - [First 10 minutes](tutorials/first-10-minutes.md)
@@ -23,7 +26,21 @@ Guided lessons:
 - [AI coding assistant](tutorials/ai-coding-assistant.md)
 - [Team adoption](tutorials/team-adoption.md)
 
+## Agentic Rush (AI Copilot & Guardrails)
+
+- [Agentic Rush Overview](AGENTIC_RUSH.md)
+- [AI Safety & Worktree Sandboxing](agentic-rush/ai-safety-and-sandboxing.md)
+- [Patch Remediation & Session Memory](agentic-rush/patch-remediation-and-memory.md)
+- [Token Economy & Context Optimization](agentic-rush/token-economy-and-context.md)
+- [CodeGraph & Semantic Slicing](agentic-rush/codegraph-and-semantic-slicing.md)
+- [Codebase Hygiene & AST Merges](agentic-rush/codebase-hygiene-and-ast-merging.md)
+- [Governance & Multi-IDE Rules](agentic-rush/governance-and-multi-ide-rules.md)
+- [Pre-Commit Intelligence](agentic-rush/pre-commit-intelligence.md)
+- [Multi-Model Consensus & Scorecards](agentic-rush/multi-model-consensus-and-scoring.md)
+- [Plugins & Agent Skills](agentic-rush/plugins-and-agent-skills.md)
+
 ## I need an exact answer
+
 
 - [CLI reference](reference/cli-reference.md)
 - [Result and exit-code reference](reference/result-reference.md)

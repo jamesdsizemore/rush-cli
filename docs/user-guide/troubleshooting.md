@@ -1,15 +1,70 @@
-# Troubleshooting
+# Troubleshooting Guide & FAQs
 
-| Symptom | Likely reason | Exact fix |
-|---|---|---|
-| `rush: command not found` | Rush is not installed on `PATH`. | From the checkout run `uv run rush --help`, or install a wheel with `uv tool install`. |
-| `rush capabilities` says `missing` | The relevant report, configuration, or engine binary is absent. | Read the state reason; create/import only the documented local report, add an allowed `[tools.NAME]` table, or install the named engine yourself. The command never installs or runs it. |
-| `rush capabilities` says `blocked` | The item is browser/runtime or feasibility-gated. | Do not work around it with undocumented flags; choose a completed non-browser tool or wait for the explicit implementation phase. |
-| A command is `skipped` | No applicable files/evidence, optional engine absent, or permission absent. | Read `summary`; confirm project markers, install the named engine if required, or accept that the capability is not executable yet. |
-| ESLint or Prettier skips | JS tool/config is absent in this environment. | Install it in the project and verify the engine directly in the same shell. |
-| Wrong Python/packages on Windows | Global `PYTHONPATH` or an active environment contaminates execution. | Use `uv run`; contributors should clear `VIRTUAL_ENV` and `PYTHONPATH` before project-venv tests. |
-| MCP tool execution returns skipped | Permission flag was false by default. | Explicitly supply `"allow_slow": true`, `"allow_network": true`, `"allow_browser": true`, or `"allow_build": true` in the tool call arguments. |
-| `fail` in CI | A check found a policy failure. | Read normalized findings and run the underlying engine locally if deeper output is needed. |
-| `error` in CI | Engine invocation/report parsing/environment failed. | Use `--json` and `--log-level debug`; fix the environment and rerun. |
+When a tool fails, an engine warning appears, or an unexpected result occurs, this guide will help you understand what happened and how to fix it in seconds.
 
-For engine-specific recovery, see the [Engine directory](../reference/engine-directory.md) and [Troubleshooting matrix](../TROUBLESHOOTING_MATRIX.md).
+---
+
+## Common Questions & Solutions
+
+### 1. "Why did a tool say `[SKIPPED]`?"
+**Explanation**: Rush discovers quality engines installed in your environment (on `PATH` or in `.venv/Scripts`). If an optional external tool (like `sqlfluff`, `actionlint`, or `djlint`) is not installed, Rush gracefully marks it as `[SKIPPED]` rather than crashing.
+
+**Solution**:
+- If you don't use that technology (e.g. you don't have SQL files in your project), you can safely ignore the skipped status.
+- If you want to enable that check, install the engine into your environment:
+  ```bash
+  # Install Python engines
+  uv pip install sqlfluff djlint detect-secrets
+
+  # Install Node / CLI engines
+  npm install -g markdownlint-cli typescript @stoplight/spectral-cli
+  ```
+
+---
+
+### 2. "Why does my test fail with `Uncommitted changes detected` when running `rush fix`?"
+**Explanation**: `rush fix` modifies source files to auto-format code and clean unused imports. To protect you from accidental data loss, Rush requires a clean Git working directory before applying automated edits.
+
+**Solution**:
+- Commit or stash your current changes first:
+  ```bash
+  git commit -am "wip: save work before auto-fix"
+  rush fix .
+  ```
+- Or pass `--force` to bypass the uncommitted changes check:
+  ```bash
+  rush fix . --force
+  ```
+
+---
+
+### 3. "How do I diagnose environment health and PATH precedence?"
+**Solution**: Run the built-in diagnostic doctor:
+```bash
+rush doctor .
+```
+Rush will check:
+- Which Python interpreter and virtual environment is active.
+- Which quality engines are installed and their exact versions.
+- Whether any conflicting binaries are shadowing your project's local tools.
+
+---
+
+### 4. "Why did an advanced check return `SKIPPED (Requires permission: --allow-slow)`?"
+**Explanation**: To prevent surprise slowdowns or unauthorized network access, long-running operations (like browser end-to-end tests or mutation testing) require explicit permission flags.
+
+**Solution**:
+- Pass the required permission flag explicitly:
+  ```bash
+  rush e2e . --allow-browser
+  rush mutation . --allow-slow
+  rush load . --allow-network
+  ```
+
+---
+
+## Getting More Help
+
+- Explore the complete [Everyday Workflow](everyday-workflow.md).
+- Dive into the [Agentic Rush Knowledge Base](../AGENTIC_RUSH.md).
+- Check the [Subsystem & Bundle Architecture Diagrams](../BUNDLE_DIAGRAMS.md).

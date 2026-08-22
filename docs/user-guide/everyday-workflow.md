@@ -1,90 +1,124 @@
-# The everyday workflow
+# The Everyday Developer Workflow
 
-## When to use it
+How does Rush fit into your actual day-to-day coding routine?
 
-## Workflow Suites & Pre-PR Routines
+Whether you are sipping your morning coffee while fixing a small typo or pairing with an autonomous AI assistant to build a massive new subsystem, Rush is designed to give you continuous, lightning-fast feedback without breaking your flow.
 
-### 1. Fast Inner-Loop Checks (`rush check`)
-Run in-development checks (lint, format verification, type checking) concurrently in milliseconds:
+Here is the narrative of a typical, productive day using Rush.
+
+---
+
+## 1. Starting Your Day: Checking the Ground Beneath You
+
+Before you begin editing code on a new branch, it is always a good idea to ensure that your environment is clean and that the repository's baseline is healthy.
+
 ```bash
 rush check .
 ```
 
-### 2. Live File Watching (`rush watch`)
-Keep Rush running in the background to automatically re-evaluate your project whenever source files change:
-```bash
-# Watch files with default 300ms debounce
-rush watch .
+### What happens:
+In less than a second, Rush runs a rapid health check across your project:
+- **Linting**: Did anyone leave syntax mistakes or unused imports behind?
+- **Formatting**: Is all the code consistently formatted?
+- **Type Checking**: Do all function signatures and data types match up?
 
-# Watch files and trigger specific tool or suite
-rush watch . --tool lint --debounce 500
+If everything passes, you get a clean green bill of health and know that you are starting from a rock-solid foundation.
+
+---
+
+## 2. While You Code: Real-Time Feedback with Live Watcher
+
+As you write functions, rename variables, or add new files, running commands manually every two minutes can get tiring. Instead, let Rush watch your back automatically:
+
+```bash
+rush watch .
 ```
 
-### 3. Automated Safe Fixes (`rush fix`)
+### What this feels like:
+Whenever you press `Ctrl+S` (or `Cmd+S`) in your editor, Rush instantly detects the saved file, waits 300 milliseconds so your editor finishes writing, and re-evaluates only the files you touched. 
+
+If you make a typo or break a type signature, you’ll see the warning in your terminal before you even switch windows.
+
+---
+
+## 3. Cleaning Up the Mess: Automated Formatting with `rush fix`
+
+We’ve all been there: you just finished writing a complex algorithm, but your indentation is messy, your quote styles are inconsistent, and you have four unused imports at the top of the file.
+
+Instead of spending 15 minutes manually formatting your code line by line, let Rush handle it:
+
 ```bash
-# Preview automated fixes without modifying disk
+# Preview the cleanups without touching disk
 rush fix . --dry-run
 
-# Apply safe formatting and linter fixes
+# Apply the safe fixes automatically
 rush fix .
 ```
 
-### 4. Deep Security & Supply Chain Audit (`rush audit`)
-```bash
-rush audit .
-```
+Rush safely coordinates Ruff, Prettier, ESLint, and Biome to format your files, clean unused imports, and tidy up whitespace—strictly confined within your repository boundary.
 
-### 5. Strict Pre-Merge Gate (`rush gate`)
-Run the full gate suite (lint, format, typecheck, test, security) before merging:
-```bash
-rush gate . --fail-fast
-```
+---
 
-### 6. Granular Inspection & Planning
-Before deciding which checks are mandatory for this repository, inspect rather than guess:
+## 4. Testing Your Changes: Verifying Behavior
+
+Code that looks clean must also work correctly. Rush makes running tests straightforward:
 
 ```bash
-rush capabilities . --json
-rush plan . --profile nonbrowser --json
+rush test .
 ```
 
-These commands do not run checks. They explain whether a local report is ready, a tool is configured, an engine is merely discoverable on `PATH`, a prerequisite is missing, or a capability is intentionally blocked. Treat `installed` as available to run—not proof that it has run or passed.
+- If you work in Python, Rush invokes `pytest`.
+- If you work in TypeScript or JavaScript, Rush invokes `Vitest` or `Jest`.
+- If your tests pass, you get a clear summary of how many tests ran and how fast they completed.
+- If a test fails, Rush isolates the exact assertion error and stack trace so you can jump straight to the fix.
 
-After an edit with a known file list, you can keep the local review focused without granting Git access or asking Rush to infer change history:
+---
+
+## 5. Before You Commit: The Pre-Commit Intelligence Guard
+
+When you are ready to stage and commit your code, Rush provides a sub-second pre-commit check that catches common traps:
 
 ```bash
-rush review . --changed-file src/example.py --json
+rush hook run
 ```
 
-Repeat `--changed-file` for each intended file. Paths outside the target are rejected; an omitted flag reviews the whole target as before.
+### What this catches in <300ms:
+- Leftover merge conflict markers (`<<<<<<< HEAD`).
+- Accidental secret leaks (API keys or passwords in staged files).
+- Trojan Source Unicode vulnerabilities (invisible characters that look harmless in editors but execute maliciously).
 
-## What each step tells you
+---
 
-1. **TDD Guard (`rush tdd`)** verifies that tests exist and define contracts for newly added or modified source modules.
-2. **Review (`rush review`)** reads source code and reports deterministic maintainability signals. Generates interactive HTML dashboards via `--export-html` and SARIF via `--export-sarif`.
-3. **Lint (`rush lint`)** asks applicable installed linters (Ruff, ESLint, Globstar, ast-grep) about source correctness and AST patterns.
-4. **Format check (`rush format --check`)** detects files that would be reformatted without changing them.
-5. **Complexity (`rush complexity`)** enforces modular boundaries (Tach), monitors code decay (Sentrux), and evaluates token density (Clines).
-6. **AI Anti-Slop (`rush slop`)** scans for hallucinated code, repetitive comments, and empty boilerplate (aislop, sloppylint).
-7. **Test (`rush test`)** invokes applicable installed test runners (pytest, Vitest, Newman).
-8. **Security (`rush security`)** checks dependencies (pip-audit, npm-audit, Trivy), SAST (Semgrep, Bearer), and agent hooks (Medusa).
+## 6. Ready for Review: Generating Pull Request Artifacts
 
-Use `--json` when a script or CI job needs stable fields:
+Before opening a pull request, you can calculate an objective quality scorecard to include in your PR description:
 
 ```bash
-rush lint . --json
+# Compute repository health grade (A+ to F)
+rush score compute
+
+# Generate an interactive visual dashboard you can inspect locally
+rush dashboard .
 ```
 
-## After an AI coding session
+Now you can submit your pull request knowing that every test passes, every file is formatted, and your code meets the highest quality standards.
 
-1. Verify TDD compliance with `rush tdd .`.
-2. Review the actual changed scope with `rush review . --changed-file <file>`.
-3. Check for AI hallucinations with `rush slop .`.
-4. Run sub-second staged hook checks with `rush hook run`.
-5. Compute composite PR quality scorecard with `rush score compute`.
-6. Run repository-level tests and security scans.
+---
 
-## Good stopping condition
+## Summary of Everyday Commands
 
-Required checks are `ok`; intentional advisory findings are understood; no required check is merely `skipped`; quality scorecard score is >= 85%; and the Git diff contains only expected changes. Teams decide which optional engines are required. See [CI overview](../integrations/ci-overview.md).
+| When You Want To... | Run This Command | Why It's Great |
+|---|---|---|
+| Run a fast 1-second sanity check | `rush check .` | Instant feedback on linting, formatting, and types. |
+| Auto-check code as you save | `rush watch .` | Zero-effort live background monitoring. |
+| Auto-clean formatting and imports | `rush fix .` | Fixes formatting headaches in one keystroke. |
+| Run all unit and integration tests | `rush test .` | Confirms that your logic works as expected. |
+| Run pre-commit safety checks | `rush hook run` | Prevents bad commits from ever reaching Git history. |
+| Open an interactive web dashboard | `rush dashboard .` | Visual report with charts and finding breakdowns. |
 
+---
+
+## Next Steps
+
+- Learn more about linters and typecheckers in [Checking Your Code](checking-code.md).
+- Discover how to pair safely with AI assistants in [Pair Programming with AI Agents](working-with-ai-agents.md).
