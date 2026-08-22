@@ -103,3 +103,8 @@ Decomposing 200-line monolithic functions with `rush simplify` reduces the conte
 ## Swarm Merge Token Diet
 Instead of feeding full merge conflicts into LLMs, `rush swarm-merge` reconciles non-overlapping edits deterministically with zero token overhead.
 
+
+
+## Dead Asset Diet
+Pruning unused images and dead fonts with `rush dead-asset` reduces repository size and keeps AI indexing clean and fast.
+

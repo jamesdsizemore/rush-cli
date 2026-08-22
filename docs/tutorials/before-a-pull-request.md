@@ -54,3 +54,8 @@ Run `rush db-drift` and `rush simplify` to guarantee clean migrations and modula
 ## Step 9: Verify Traceability and Local CI
 Run `rush trace` to ensure 100% requirement coverage and `rush simulate-ci` to verify CI pass status.
 
+
+
+## Step 10: Generate PR Card and Build Attestation
+Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.
+

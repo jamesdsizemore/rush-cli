@@ -153,3 +153,11 @@ Now you can submit your pull request knowing that every test passes, every file 
 2. Reconcile branches: `rush swarm-merge`
 3. Simulate CI: `rush simulate-ci`
 
+
+
+## Security & Release Workflow
+1. Check licenses: `rush license-matrix`
+2. Clean dead assets: `rush dead-asset`
+3. Generate PR card: `rush pr-synthesize`
+4. Attest build: `rush attest`
+

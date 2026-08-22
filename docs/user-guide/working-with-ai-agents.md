@@ -134,3 +134,12 @@ Ensure your agent is configured to use:
 * `rush_mesh_acquire_lock` / `release`: Mutex locking.
 * `rush_swarm_merge`: AST 3-way conflict resolution.
 
+
+
+## Phase 50 FastMCP Tools
+* `rush_attest_generate`: Create SLSA Level 3 provenance.
+* `rush_license_matrix`: Audit dependency licenses.
+* `rush_iam_audit`: Generate least-privilege IAM policies.
+* `rush_dead_asset`: Find unreferenced media.
+* `rush_pr_synthesize`: Build semantic PR descriptions.
+

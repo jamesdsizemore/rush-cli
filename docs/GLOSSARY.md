@@ -77,3 +77,11 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **SwarmMergeSolver**: AST-level reconciler merging non-overlapping class and function edits.
 * **TraceScanner**: Requirement matrix scanner validating spec IDs against AST source nodes.
 
+
+
+### SLSA Attestation & Security Terms (Phase 50)
+* **DeadAssetScanner**: Tool scanning for unreferenced fonts and images to reduce build weight.
+* **IamPolicySynthesizer**: Static analyzer generating least-privilege IAM policies from SDK calls.
+* **LicenseMatrixScanner**: Compliance tool classifying dependencies into permissive vs. copyleft.
+* **SLSAAttestationGenerator**: Subsystem generating cryptographic SLSA Level 3 build provenance.
+

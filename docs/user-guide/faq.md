@@ -69,3 +69,10 @@ Follow [Security reporting](../maintainers/incident-and-security.md); do not pos
 * **`rush swarm-merge`**: 3-way AST merge.
 * **`rush flight-recorder`**: Session replaying.
 
+
+
+## Security & Release FAQ
+* **`rush attest`**: SLSA Level 3 provenance.
+* **`rush license-matrix`**: Copyleft compliance.
+* **`rush iam-audit`**: Least-privilege IAM.
+

@@ -129,3 +129,8 @@ Run `rush db-drift` before deploying any database schema change.
 ## Local CI Simulation
 Run `rush simulate-ci` before pushing to verify all GitHub Actions steps pass on your local machine.
 
+
+
+## Semantic PR Generation
+Use `rush pr-synthesize` to generate perfect, professional PR descriptions in 1 second.
+

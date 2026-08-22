@@ -31,3 +31,10 @@ Execute `rush db-drift` to guarantee zero unmigrated schema changes before taggi
 ## Pre-Release Traceability Verification
 Run `rush trace` and `rush simulate-ci` to verify full specification compliance prior to tagging releases.
 
+
+
+## Flagship v0.3.0 Release Checklist
+1. Execute `rush license-matrix` and `rush iam-audit`.
+2. Run `rush attest --out release.intoto.jsonl`.
+3. Verify all 42 FastMCP tools and CLI commands pass test suites.
+

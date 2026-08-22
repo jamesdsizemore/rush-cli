@@ -60,3 +60,8 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 ## Multi-Agent Concurrency & Auditability (Phase 49)
 `MeshLockManager` prevents split-brain race conditions when multiple agent processes work in parallel, while `FlightRecorder` provides immutable audit logs of all tool calls and state transitions.
 
+
+
+## SLSA Level 3 Supply Chain Security (Phase 50)
+Rush produces verifiable in-toto SLSA Level 3 build provenance statements for all distributed binaries, ensuring complete protection against build-time supply chain tampering.
+

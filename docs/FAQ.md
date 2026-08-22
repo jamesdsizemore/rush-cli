@@ -98,3 +98,12 @@ By parsing both versions into ASTs, it identifies distinct function/class additi
 ### What does `rush trace` verify?
 It links every requirement tag (e.g. `[REQ-042]`) in `docs/` to its corresponding function in `src/` and unit test in `tests/`.
 
+
+
+## SLSA Attestation & Security (Phase 50)
+### What is an in-toto SLSA attestation?
+It is a cryptographically verifiable JSON document that proves exactly which git commit, build environment, and tool produced a release binary.
+
+### How does `rush iam-audit` protect cloud deployments?
+It parses all AWS SDK calls (e.g. `s3.get_object`) and generates an IAM policy containing only the exact permissions used by the code.
+

@@ -92,3 +92,8 @@ When AI generates massive functions or adds model fields without migrations, `ru
 ## Multi-Agent Swarms for Vibecoders (Phase 49)
 Run multiple subagents without fear of corrupted files: Rush manages file locks and uses `rush swarm-merge` to combine their changes automatically.
 
+
+
+## Supply Chain Safety for Vibecoders (Phase 50)
+Even when vibe-coding at high speed, `rush license-matrix` and `rush iam-audit` ensure you never accidentally introduce viral licenses or overly permissive cloud credentials.
+

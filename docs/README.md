@@ -127,3 +127,12 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush swarm-merge`: 3-way AST merge conflict solver.
 * `rush simulate-ci`: Zero-cloud GitHub Actions workflow emulator.
 
+
+
+## SLSA Attestation, Security Suite & Flagship Release (Phase 50)
+* `rush attest`: SLSA Level 3 cryptographic build provenance generator.
+* `rush license-matrix`: Open-source copyleft dependency risk auditor.
+* `rush iam-audit`: Least-privilege AWS/GCP IAM policy synthesizer.
+* `rush dead-asset`: Unreferenced asset and dead media pruner.
+* `rush pr-synthesize`: Structured semantic GitHub PR card generator.
+

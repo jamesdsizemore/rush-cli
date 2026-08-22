@@ -43,6 +43,11 @@ EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
     "rush_mesh_acquire_lock",
     "rush_mesh_release_lock",
     "rush_swarm_merge",
+    "rush_attest_generate",
+    "rush_license_matrix",
+    "rush_iam_audit",
+    "rush_dead_asset",
+    "rush_pr_synthesize",
 }
 
 

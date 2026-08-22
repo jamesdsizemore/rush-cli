@@ -87,3 +87,9 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_mesh_acquire_lock(path, agent_id)`**: Acquire non-blocking multi-agent file lock.
 * **`rush_mesh_release_lock(path, agent_id)`**: Release multi-agent file lock.
 * **`rush_swarm_merge(base_code, ours_code, theirs_code)`**: Execute 3-way AST merge conflict resolution.
+
+* **`rush_attest_generate(artifact_path="")`**: Generate in-toto SLSA Level 3 provenance statement.
+* **`rush_license_matrix()`**: Audit open-source dependencies for license risks.
+* **`rush_iam_audit()`**: Synthesize least-privilege cloud IAM policy.
+* **`rush_dead_asset()`**: Scan for unreferenced assets and dead media.
+* **`rush_pr_synthesize(base_branch="main")`**: Synthesize structured semantic pull request card.

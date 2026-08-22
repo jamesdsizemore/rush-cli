@@ -175,3 +175,12 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 * `SwarmMergeSolver` (`src/rush/tools/swarm_merge.py`): Semantic 3-way AST merge solver.
 * `MeshLockManager` (`src/rush/mcp_mesh/lock_manager.py`): Domain-socket/file lock manager for swarm concurrency.
 
+
+
+## 19. SLSA Attestation, Security & Release Subsystems (Phase 50)
+* `SLSAAttestationGenerator` (`src/rush/tools/attest.py`): In-toto SLSA Level 3 builder.
+* `LicenseMatrixScanner` (`src/rush/tools/license_matrix.py`): Dependency license risk classifier.
+* `IamPolicySynthesizer` (`src/rush/tools/iam_audit.py`): Static SDK call policy synthesizer.
+* `DeadAssetScanner` (`src/rush/tools/dead_asset.py`): Media asset reference scanner.
+* `PrSynthesizer` (`src/rush/tools/pr_synthesize.py`): Semantic PR markdown generator.
+

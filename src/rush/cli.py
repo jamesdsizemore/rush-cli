@@ -2303,6 +2303,82 @@ def simulate_ci_cmd(workflow: str) -> None:
         sys.exit(1)
 
 
+@cli.command(name="attest")
+@click.option(
+    "--out", "-o", default=None, help="Output file path for SLSA JSON provenance."
+)
+def attest_cmd(out: str | None) -> None:
+    """Generate in-toto SLSA Level 3 cryptographic build provenance statement."""
+    import json
+
+    from rush.tools.attest import SLSAAttestationGenerator
+
+    generator = SLSAAttestationGenerator()
+    stmt = generator.generate_attestation()
+    if out:
+        Path(out).write_text(json.dumps(stmt, indent=2), encoding="utf-8")
+        click.echo(f"Attestation: SLSA Level 3 provenance written to '{out}'.")
+    else:
+        click.echo(json.dumps(stmt, indent=2))
+
+
+@cli.command(name="license-matrix")
+def license_matrix_cmd() -> None:
+    """Audit project dependencies for copyleft and license risks."""
+    from rush.tools.license_matrix import LicenseMatrixScanner
+
+    scanner = LicenseMatrixScanner()
+    res = scanner.scan_licenses()
+    click.echo(
+        f"License Matrix: Scanned {res['total_packages']} packages (Copyleft violations: {res['copyleft_violations_count']}):"
+    )
+    for p in res["packages"]:
+        click.echo(
+            f"  {p['package']}: {p['license']} [{p['category']}] (Risk: {p['risk']})"
+        )
+
+
+@cli.command(name="iam-audit")
+def iam_audit_cmd() -> None:
+    """Synthesize least-privilege cloud IAM JSON policy from static SDK usage."""
+    import json
+
+    from rush.tools.iam_audit import IamPolicySynthesizer
+
+    synth = IamPolicySynthesizer()
+    policy = synth.synthesize_policy()
+    click.echo("IAM Policy Synthesizer: Synthesized least-privilege AWS/GCP policy:")
+    click.echo(json.dumps(policy, indent=2))
+
+
+@cli.command(name="dead-asset")
+def dead_asset_cmd() -> None:
+    """Scan for unreferenced media, font, and image files in the repository."""
+    from rush.tools.dead_asset import DeadAssetScanner
+
+    scanner = DeadAssetScanner()
+    res = scanner.scan_dead_assets()
+    if res["dead_assets_count"] == 0:
+        click.echo(
+            f"DeadAsset: Clean - all {res['total_assets']} assets are referenced."
+        )
+    else:
+        click.echo(f"DeadAsset: Found {res['dead_assets_count']} unreferenced assets:")
+        for a in res["dead_assets"]:
+            click.echo(f"  {a}")
+
+
+@cli.command(name="pr-synthesize")
+@click.option("--base", "-b", default="main", help="Base branch to diff against.")
+def pr_synthesize_cmd(base: str) -> None:
+    """Synthesize structured semantic pull request markdown card."""
+    from rush.tools.pr_synthesize import PrSynthesizer
+
+    synth = PrSynthesizer()
+    card = synth.synthesize_pr_card(base_branch=base)
+    click.echo(card)
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

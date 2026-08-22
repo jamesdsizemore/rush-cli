@@ -125,3 +125,11 @@ Give your AI agent superpowers in two minutes:
 2. **Conflict Resolution**: Call `rush_swarm_merge(base, ours, theirs)` to reconcile concurrent edits.
 3. **Traceability**: Call `rush_trace()` to verify you have covered all required spec tags.
 
+
+
+## Agent Protocols for Security & Release (Phase 50)
+1. **Provenance**: Call `rush_attest_generate()` to produce SLSA build provenance.
+2. **Compliance**: Call `rush_license_matrix()` to ensure no viral licenses are added.
+3. **IAM Safety**: Call `rush_iam_audit()` to synthesize minimal cloud permissions.
+4. **PR Cards**: Call `rush_pr_synthesize()` to generate release notes.
+

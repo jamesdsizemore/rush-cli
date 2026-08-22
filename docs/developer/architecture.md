@@ -158,3 +158,12 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/mcp_mesh/`: Mesh lock daemon & client.
 * `src/rush/tools/simulate_ci.py`: Workflow emulator.
 
+
+
+## SLSA Attestation & Security Architecture (Phase 50)
+* `src/rush/tools/attest.py`: SLSA provenance attestation generator.
+* `src/rush/tools/license_matrix.py`: License risk matrix.
+* `src/rush/tools/iam_audit.py`: Cloud IAM policy synthesizer.
+* `src/rush/tools/dead_asset.py`: Dead asset pruner.
+* `src/rush/tools/pr_synthesize.py`: PR card generator.
+

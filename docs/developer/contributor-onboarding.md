@@ -65,3 +65,9 @@ When contributing to Rush:
 * Place multi-agent mesh lock components in `src/rush/mcp_mesh/`.
 * Place traceability and flight recorder tools in `src/rush/tools/`.
 
+
+
+## Contributing to Security and Release Suite
+* Place cryptographic attestation tools in `src/rush/tools/attest.py`.
+* Place compliance tools in `src/rush/tools/license_matrix.py`.
+

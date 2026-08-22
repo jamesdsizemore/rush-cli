@@ -105,3 +105,10 @@ rush bundle analyze dist/
 * `rush trace`: Spec-to-code traceability.
 * `rush simulate-ci`: Local GitHub Actions emulation.
 
+
+
+## SLSA Attestation & Security
+* `rush attest`: Cryptographic build provenance.
+* `rush license-matrix`: Dependency compliance audit.
+* `rush iam-audit`: Cloud IAM policy synthesis.
+

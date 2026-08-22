@@ -446,3 +446,21 @@ rush swarm-merge --base file.py --ours file_a.py --theirs file_b.py
 rush simulate-ci --workflow test.yml
 ```
 
+
+
+## SLSA Attestation & Security Recipes (Phase 50)
+### Generating Cryptographic Build Provenance
+```bash
+rush attest --out release.intoto.jsonl
+```
+
+### Auditing Dependencies for Copyleft Risks
+```bash
+rush license-matrix
+```
+
+### Synthesizing AWS S3 Least-Privilege Policy
+```bash
+rush iam-audit
+```
+

@@ -132,3 +132,9 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 * `rush trace`: Requirement compliance.
 * `rush flight-recorder`: Replay session events.
 
+
+
+## License & IAM Auditing
+* `rush license-matrix`: Classify dependency licenses.
+* `rush iam-audit`: Generate cloud access policies.
+

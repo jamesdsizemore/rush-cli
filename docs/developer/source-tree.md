@@ -104,3 +104,15 @@ src/rush/
     └── simulate_ci.py     # Local GHA workflow emulator
 ```
 
+
+
+## SLSA Attestation & Security Modules
+```
+src/rush/tools/
+├── attest.py         # SLSA Level 3 provenance generator
+├── license_matrix.py # Copyleft license scanner
+├── iam_audit.py      # Cloud IAM policy synthesizer
+├── dead_asset.py     # Unreferenced asset pruner
+└── pr_synthesize.py  # Semantic PR card synthesizer
+```
+

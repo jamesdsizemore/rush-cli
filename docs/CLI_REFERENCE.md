@@ -271,3 +271,20 @@ Execute 3-way AST merge conflict resolution across concurrent agent changes.
 ### `rush simulate-ci`
 Emulate local GitHub Actions CI workflow execution.
 * `--workflow, -w`: GitHub Actions workflow file to emulate (default: ci.yml).
+
+### `rush attest`
+Generate in-toto SLSA Level 3 cryptographic build provenance statement.
+* `--out, -o`: Output file path for SLSA JSON provenance.
+
+### `rush license-matrix`
+Audit project dependencies for copyleft and license risks.
+
+### `rush iam-audit`
+Synthesize least-privilege cloud IAM JSON policy from static SDK usage.
+
+### `rush dead-asset`
+Scan for unreferenced media, font, and image files in the repository.
+
+### `rush pr-synthesize`
+Synthesize structured semantic pull request markdown card.
+* `--base, -b`: Base branch to diff against (default: main).

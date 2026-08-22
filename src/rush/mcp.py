@@ -358,6 +358,76 @@ def _register_tools(server) -> None:
         description="Execute 3-way AST merge conflict resolution",
     )
 
+    # Phase 50 Tools
+    def mcp_rush_attest_generate(artifact_path: str = "") -> str:
+        import json
+
+        from rush.tools.attest import SLSAAttestationGenerator
+
+        gen = SLSAAttestationGenerator()
+        p = Path(artifact_path) if artifact_path else None
+        res = gen.generate_attestation(p)
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_license_matrix() -> str:
+        import json
+
+        from rush.tools.license_matrix import LicenseMatrixScanner
+
+        scanner = LicenseMatrixScanner()
+        res = scanner.scan_licenses()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_iam_audit() -> str:
+        import json
+
+        from rush.tools.iam_audit import IamPolicySynthesizer
+
+        synth = IamPolicySynthesizer()
+        res = synth.synthesize_policy()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_dead_asset() -> str:
+        import json
+
+        from rush.tools.dead_asset import DeadAssetScanner
+
+        scanner = DeadAssetScanner()
+        res = scanner.scan_dead_assets()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_pr_synthesize(base_branch: str = "main") -> str:
+        from rush.tools.pr_synthesize import PrSynthesizer
+
+        synth = PrSynthesizer()
+        return synth.synthesize_pr_card(base_branch=base_branch)
+
+    server.add_tool(
+        fn=mcp_rush_attest_generate,
+        name="rush_attest_generate",
+        description="Generate in-toto SLSA Level 3 provenance statement",
+    )
+    server.add_tool(
+        fn=mcp_rush_license_matrix,
+        name="rush_license_matrix",
+        description="Audit open-source dependencies for license risks",
+    )
+    server.add_tool(
+        fn=mcp_rush_iam_audit,
+        name="rush_iam_audit",
+        description="Synthesize least-privilege cloud IAM policy",
+    )
+    server.add_tool(
+        fn=mcp_rush_dead_asset,
+        name="rush_dead_asset",
+        description="Scan for unreferenced assets and dead media",
+    )
+    server.add_tool(
+        fn=mcp_rush_pr_synthesize,
+        name="rush_pr_synthesize",
+        description="Synthesize structured semantic pull request card",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

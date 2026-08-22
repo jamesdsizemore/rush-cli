@@ -55,3 +55,10 @@
 * **Flight Recorder**: Session replayer.
 * **Swarm Merge**: 3-way AST conflict solver.
 
+
+
+### Phase 50 Terms
+* **SLSA Attestation**: Cryptographic build provenance statement.
+* **License Matrix**: Dependency license scanner.
+* **IAM Audit**: Least-privilege cloud policy generator.
+
