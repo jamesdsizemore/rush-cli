@@ -18,18 +18,9 @@ project interpreter:
 ```bash
 unset VIRTUAL_ENV PYTHONPATH
 .venv/Scripts/python.exe -m pytest tests/ -q
-.venv/Scripts/python.exe scripts/sync_docs.py --update
-.venv/Scripts/python.exe scripts/sync_docs.py --check
 .venv/Scripts/ruff.exe check src tests scripts
 .venv/Scripts/ruff.exe format --check src tests scripts
 ```
-
-## Mandatory Pre-Commit Documentation Synchronization
-Documentation synchronization is enforced automatically via `.git/hooks/pre-commit` before every `git commit`. Every commit automatically executes `scripts/sync_docs.py --update` and `scripts/sync_docs.py --check` across all 187 documentation files in `/docs`. The test `tests/test_docs_parity_and_sync.py` will fail if any document drifts.
-
-Use `run_subprocess()` for external engine commands. It captures output and
-passes `stdin=DEVNULL`, preventing a child engine from consuming the MCP
-transport.
 
 ## Scope and safety
 
