@@ -21,7 +21,13 @@ from mcp.client.stdio import stdio_client
 from rush.tools import ALL_TOOLS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS}
+EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
+    "rush_session_save",
+    "rush_ship_clean",
+    "rush_ship_env",
+    "rush_ship_gate",
+    "rush_token_outline",
+}
 
 
 def _run(coro):
@@ -48,7 +54,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
             # MCP treats this as the complete child environment. Preserve the
             # Windows runtime values (SystemRoot, TEMP, PATH, ...) and alter
             # only Rush's log level.
-            env={**os.environ, "RUSH_LOG_LEVEL": "debug"},
+            env={**os.environ, "RUSH_LOG_LEVEL": "debug", "PYTHONPATH": str(PROJECT_ROOT / "src")},
         )
         # stdio_client gives this handle directly to CreateProcess on Windows,
         # so capture stderr in a real file rather than io.StringIO (no fileno).
@@ -93,9 +99,11 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
 
     assert protocol
     assert names == EXPECTED_TOOLS
-    for schema in schemas.values():
-        assert "path" in schema["properties"]
-        assert "config" not in schema["properties"]
+    catalog_tool_names = {f"rush_{tool.name}" for tool in ALL_TOOLS}
+    for name, schema in schemas.items():
+        if name in catalog_tool_names:
+            assert "path" in schema["properties"]
+            assert "config" not in schema["properties"]
 
     assert payload["tool"] == "review"
     assert payload["status"] in {"ok", "warn"}

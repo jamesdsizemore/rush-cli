@@ -1874,5 +1874,81 @@ def ship_docs_cmd() -> None:
         sys.exit(1)
 
 
+@ship_group.command(name="gate")
+def ship_gate_cmd() -> None:
+    """Evaluate 7-vector pre-flight release readiness gate."""
+    from rush.tools.ship.cockpit import ShipCockpit
+
+    cockpit = ShipCockpit()
+    verdict = cockpit.evaluate_gate()
+    status_str = "PASSED" if verdict.all_passed else "FAILED"
+    click.echo(f"Ship Gate Verdict: {status_str} ({verdict.score_pct}% score)")
+    for v in verdict.vectors:
+        mark = "[OK]" if v.passed else "[FAIL]"
+        click.echo(f"  {mark} {v.name.upper()}: {v.details} ({v.duration_ms}ms)")
+    if not verdict.all_passed:
+        sys.exit(1)
+
+
+@ship_group.command(name="migration")
+def ship_migration_cmd() -> None:
+    """Lint database migrations for table-locking hazards."""
+    from rush.tools.ship.migration_linter import MigrationLinter
+
+    linter = MigrationLinter()
+    res = linter.lint_migrations()
+    if res["passed"]:
+        click.echo("Ship Migration: No dangerous table locks detected.")
+    else:
+        click.echo(
+            f"Ship Migration: FAIL - {res['findings_count']} migration hazards:",
+            err=True,
+        )
+        for item in res["findings"]:
+            click.echo(f"  {item['file']}: {', '.join(item['hazards'])}", err=True)
+        sys.exit(1)
+
+
+@ship_group.command(name="semver")
+@click.argument("old_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("new_file", type=click.Path(exists=True, path_type=Path))
+def ship_semver_cmd(old_file: Path, new_file: Path) -> None:
+    """Check for breaking API signature changes between file versions."""
+    from rush.tools.ship.semver_linter import SemverLinter
+
+    linter = SemverLinter()
+    old_code = old_file.read_text(encoding="utf-8", errors="ignore")
+    new_code = new_file.read_text(encoding="utf-8", errors="ignore")
+    breaking = linter.diff_apis(old_code, new_code)
+    if not breaking:
+        click.echo(
+            f"Ship SemVer: Public API signatures compatible ({old_file.name} -> {new_file.name})."
+        )
+    else:
+        click.echo(f"Ship SemVer: FAIL - {len(breaking)} breaking changes:", err=True)
+        for b in breaking:
+            click.echo(f"  - {b}", err=True)
+        sys.exit(1)
+
+
+@ship_group.command(name="pack")
+def ship_pack_cmd() -> None:
+    """Audit source tree for secret leaks before packaging."""
+    from rush.tools.ship.package_linter import PackageLinter
+
+    linter = PackageLinter()
+    res = linter.lint()
+    if res["passed"]:
+        click.echo("Ship Pack: Source package clean of sensitive keys and env files.")
+    else:
+        click.echo(
+            f"Ship Pack: FAIL - {res['leaks_count']} sensitive files detected:",
+            err=True,
+        )
+        for leak in res["leaks"]:
+            click.echo(f"  - {leak}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()

@@ -8,6 +8,8 @@ avoids collisions with other MCP servers in multi-server agent sessions).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .catalog import TOOL_SPECS
 from .logging import get_logger
 from .tools import ALL_TOOLS
@@ -79,6 +81,23 @@ def _register_tools(server) -> None:
             return "All environment variables declared in .env.example."
         return f"Missing declarations in .env.example: {', '.join(res['missing_in_example'])}"
 
+    def mcp_rush_ship_gate() -> str:
+        from rush.tools.ship.cockpit import ShipCockpit
+
+        cockpit = ShipCockpit()
+        verdict = cockpit.evaluate_gate()
+        return f"Ship Gate {'PASSED' if verdict.all_passed else 'FAILED'} ({verdict.score_pct}%)"
+
+    def mcp_rush_token_outline(path: str, focus_symbol: str = "") -> str:
+        from rush.token_economy.ast_skeletonizer import AstSkeletonizer
+
+        skeletonizer = AstSkeletonizer()
+        p = Path(path)
+        if not p.exists():
+            return f"Error: {path} not found"
+        code = p.read_text(encoding="utf-8", errors="ignore")
+        return skeletonizer.skeletonize(code, focus_symbol=focus_symbol or None)
+
     server.add_tool(
         fn=mcp_rush_session_save,
         name="rush_session_save",
@@ -93,6 +112,16 @@ def _register_tools(server) -> None:
         fn=mcp_rush_ship_env,
         name="rush_ship_env",
         description="Audit codebase environment variable usage against .env.example",
+    )
+    server.add_tool(
+        fn=mcp_rush_ship_gate,
+        name="rush_ship_gate",
+        description="Run 7-vector pre-flight release readiness cockpit",
+    )
+    server.add_tool(
+        fn=mcp_rush_token_outline,
+        name="rush_token_outline",
+        description="Generate token-efficient AST skeleton outline of a code file",
     )
 
 
