@@ -187,6 +187,21 @@ def _register_tools(server) -> None:
         description="Pack graph-pruned context outline under a strict token budget",
     )
 
+    # Phase 45 Tools
+    def mcp_rush_context_gain_stats() -> str:
+        import json
+
+        from rush.token_economy.telemetry import TelemetryStore
+
+        store = TelemetryStore()
+        return json.dumps(store.get_summary(), indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_context_gain_stats,
+        name="rush_context_gain_stats",
+        description="Get real-time token economy savings and cost metrics",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

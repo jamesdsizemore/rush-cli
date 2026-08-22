@@ -2021,6 +2021,35 @@ def context_align_prompt_cmd(system: str) -> None:
     )
 
 
+@context_group.command(name="gain")
+def context_gain_cmd() -> None:
+    """Launch the Rich terminal HUD displaying token compression and dollar savings."""
+    from rush.token_economy.tui_gain import render_gain_dashboard
+
+    render_gain_dashboard()
+
+
+@context_group.command(name="persona")
+@click.option(
+    "--set",
+    "set_persona",
+    type=click.Choice(["terse", "default"]),
+    default=None,
+    help="Set agent response persona style.",
+)
+def context_persona_cmd(set_persona: str | None) -> None:
+    """View or configure agent terse response persona style."""
+    from rush.memory.preference_store import PreferenceStore
+
+    prefs = PreferenceStore()
+    if set_persona:
+        prefs.set_preference("persona_style", set_persona)
+        click.echo(f"Persona style set to: {set_persona}")
+    else:
+        current = prefs.get_preference("persona_style", "terse")
+        click.echo(f"Current persona style: {current}")
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

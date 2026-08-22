@@ -70,3 +70,5 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_context_mistakes_check()`**: Check git revert history for past mistakes and anti-patterns.
 
 * **`rush_context_pack(path, symbol="", budget=4000)`**: Pack graph-pruned context outline under a strict token budget.
+
+* **`rush_context_gain_stats()`**: Return real-time token economy savings, compression ratios, and dollar metrics as JSON.

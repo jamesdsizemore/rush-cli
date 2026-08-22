@@ -218,3 +218,10 @@ Pack graph-pruned context envelope under a strict token budget.
 ### `rush context align-prompt`
 Align prompt prefix above provider cache boundary (>=1024 tokens).
 * `--system, -s`: System prompt string to align.
+
+### `rush context gain`
+Launch the interactive Rich terminal HUD displaying token compression and dollar savings.
+
+### `rush context persona`
+View or configure agent terse response persona style.
+* `--set`: Set persona style (`terse` | `default`).
