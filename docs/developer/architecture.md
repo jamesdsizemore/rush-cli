@@ -135,3 +135,10 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/token_economy/tui_gain.py`: Rich TUI gain dashboard.
 * `src/rush/tools/blast_radius.py`: `BlastRadiusAnalyzer` and `BlastRadiusReport`.
 * `src/rush/tools/arch_guard.py`: `ArchGuard` layer validator.
+
+
+## Test Healing & API Differ Architecture (Phase 47)
+* `src/rush/core/git_sandbox.py`: Sandbox worktree isolation.
+* `src/rush/tools/test_heal.py`: Flaky test healer.
+* `src/rush/tools/api_diff.py`: Public API contract differ.
+

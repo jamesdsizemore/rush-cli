@@ -75,3 +75,6 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 
 * **`rush_blast_radius(path, depth=5)`**: Calculate downstream transitive blast radius for a changed file.
 * **`rush_arch_guard()`**: Validate codebase against clean architecture layer boundaries.
+
+* **`rush_test_heal(target, runs=5)`**: Diagnose flaky test race conditions in isolated sandbox and propose fixes.
+* **`rush_api_diff(base="main")`**: Detect breaking public API contract changes against base Git ref.

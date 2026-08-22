@@ -133,3 +133,9 @@ Now you can submit your pull request knowing that every test passes, every file 
 2. Monitor savings: `rush context gain`
 3. Verify architecture: `rush arch-guard`
 
+
+
+## Testing & API Validation
+1. Heal flaky tests: `rush test-heal --target tests/test_api.py`
+2. Verify contracts: `rush api-diff --base main`
+

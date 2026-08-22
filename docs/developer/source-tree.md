@@ -66,3 +66,15 @@ src/rush/
     └── arch_guard.py       # Architectural layer boundary guard
 ```
 
+
+
+## Test Healing & API Diff Modules
+```
+src/rush/
+├── core/
+│   └── git_sandbox.py     # Ephemeral worktree sandbox manager
+└── tools/
+    ├── test_heal.py       # Autonomous flaky test healer
+    └── api_diff.py        # Public API signature differ
+```
+

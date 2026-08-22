@@ -39,3 +39,8 @@ If any vector fails, inspect the diagnostic output and remediate before opening 
 ## Step 6: Check Blast Radius and Architecture Boundaries
 Run `rush blast-radius --path <file>` and `rush arch-guard` to verify no downstream routes are broken and layer boundaries are clean.
 
+
+
+## Step 7: Check API Contract Parity
+Run `rush api-diff --base main` to guarantee backward compatibility before opening a PR.
+

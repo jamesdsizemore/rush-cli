@@ -49,3 +49,9 @@ Follow [Security reporting](../maintainers/incident-and-security.md); do not pos
 * **`rush context gain`**: View live token and dollar savings.
 * **`rush blast-radius`**: Analyze downstream change impact.
 * **`rush arch-guard`**: Validate layer boundary rules.
+
+
+## Test Healing FAQ
+* **`rush test-heal`**: Diagnose flaky tests.
+* **`rush api-diff`**: Check API breaking changes.
+

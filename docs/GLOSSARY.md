@@ -55,3 +55,10 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **Stale Read Sweeper**: Optimizer that collapses older conversation turns' file contents into 1-line signatures.
 * **Telemetry Ledger**: SQLite database (`.rush/telemetry/tokens.db`) tracking token savings and estimated dollar reductions.
 * **Terse Persona**: Agent response shaper stripping conversational fluff and filler words for concise output.
+
+
+### Test Healing & API Diff Terms (Phase 47)
+* **ApiDiffer**: AST semantic diffing engine flagging removed exports or altered signatures.
+* **GitSandbox**: Ephemeral throwaway worktree context manager ensuring clean isolation.
+* **TestHealer**: Autonomous engine executing perturbation stress runs to stabilize flaky tests.
+

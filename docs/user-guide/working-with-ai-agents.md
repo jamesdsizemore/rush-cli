@@ -114,3 +114,9 @@ Ensure your agent is configured to use:
 * `rush_blast_radius`: Downstream impact analysis.
 * `rush_arch_guard`: Layer boundary validation.
 
+
+
+## Phase 47 FastMCP Tools
+* `rush_test_heal`: Diagnose and stabilize test suites.
+* `rush_api_diff`: Verify API contract backward-compatibility.
+

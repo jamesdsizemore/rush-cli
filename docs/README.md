@@ -106,3 +106,9 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * **Terse Persona Output Shaper (`rush context persona --set terse`)**: Strips conversational preamble and fluff words, cutting agent output tokens by 40–60%.
 * **Transitive Blast Radius Analyzer (`rush blast-radius --path <FILE>`)**: Calculates downstream reachability depth, affected API routes, and recommended test suites before making edits.
 * **Declarative Architecture Layer Guard (`rush arch-guard`)**: Enforces clean architecture directional layer matrices (e.g. Domain -> Application -> Infrastructure).
+
+
+## Test Healing & API Contract Differ (Phase 47)
+* `rush test-heal`: Autonomous flaky test stress diagnosis in isolated worktree sandboxes.
+* `rush api-diff`: Zero-server public API breaking change detection against base Git branches.
+

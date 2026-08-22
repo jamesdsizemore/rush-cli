@@ -47,3 +47,9 @@ When contributing to Rush:
 * Place token economy and telemetry modules in `src/rush/token_economy/`.
 * Place architectural guards in `src/rush/tools/`.
 
+
+
+## Contributing to Test Healing and API Differ
+* Place sandbox isolation logic in `src/rush/core/`.
+* Place test healing and API diff tools in `src/rush/tools/`.
+

@@ -90,3 +90,8 @@ You can invoke Rush's fast pre-flight vectors directly in git workflows:
 
 ### Architecture Boundary Pre-Commit Hook
 * `rush arch-guard`: Prevent unauthorized cross-layer imports from entering git history.
+
+
+### API Compatibility Pre-Commit Gate
+* `rush api-diff`: Ensure no unintended breaking API changes are committed.
+

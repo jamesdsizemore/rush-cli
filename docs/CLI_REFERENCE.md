@@ -233,3 +233,12 @@ Analyze downstream transitive blast radius and affected tests.
 
 ### `rush arch-guard`
 Evaluate codebase against declarative architectural layer boundary rules.
+
+### `rush test-heal`
+Diagnose flaky test race conditions and suggest stabilization fixes.
+* `--target, -t`: Target test file path (required).
+* `--runs, -r`: Number of perturbation runs (default: 5).
+
+### `rush api-diff`
+Detect breaking public API signature changes against base Git ref.
+* `--base, -b`: Base Git ref to compare against (default: main).

@@ -71,3 +71,12 @@ AI providers (Anthropic, OpenAI, Gemini) offer up to 85%+ discounts on prompt to
 
 ### How does `rush arch-guard` enforce clean architecture?
 `rush arch-guard` checks all module imports against layer definitions (e.g. Domain, Application, Infrastructure). If a Domain entity attempts to import from Infrastructure or Presentation, `rush arch-guard` blocks the violation with a non-zero exit code.
+
+
+## Test Healing & API Contracts (Phase 47)
+### How does `rush test-heal` work?
+It executes multiple perturbation runs in a sandboxed git worktree, diagnosing non-deterministic timing issues and suggesting fixes.
+
+### What does `rush api-diff` protect against?
+It prevents breaking SDK/API changes by verifying that public function/class signatures have not removed arguments or symbols compared to the base branch.
+

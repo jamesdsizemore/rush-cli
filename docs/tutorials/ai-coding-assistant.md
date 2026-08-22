@@ -62,3 +62,8 @@ When configuring your AI coding agent with Rush's FastMCP server:
 ## Context Packing & Telemetry Instructions
 Instruct your agent to call `rush_context_pack` to minimize prompt token usage and `rush_blast_radius` before large refactors.
 
+
+
+## Test Healing Agent Protocol
+Instruct agents to run `rush_test_heal` to diagnose intermittent test failures.
+

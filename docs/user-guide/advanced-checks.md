@@ -86,3 +86,9 @@ rush bundle analyze dist/
 * `rush blast-radius`: Downstream reachability.
 * `rush arch-guard`: Layer boundary verification.
 
+
+
+## Flaky Test Healing & API Diff
+* `rush test-heal`: Diagnose intermittent test failures.
+* `rush api-diff`: Ensure public signature parity.
+

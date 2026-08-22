@@ -88,3 +88,8 @@ Rush now provides native token reduction tools directly in the CLI and FastMCP s
 * StaleSweeper: Prunes old turns to single-line summaries.
 * `rush context persona --set terse`: Trims filler words from outputs.
 
+
+
+## Flaky Test Diet
+Stop re-running test suites 10 times in AI context—use `rush test-heal` to diagnose non-determinism in one step.
+

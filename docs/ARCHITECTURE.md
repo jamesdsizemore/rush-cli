@@ -153,3 +153,10 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 ### 15.3 Transitive Blast Radius & Architecture Guard (Phase 46)
 * `BlastRadiusAnalyzer` (`src/rush/tools/blast_radius.py`): Computes transitive downstream impact across files, API routes, and tests.
 * `ArchGuard` (`src/rush/tools/arch_guard.py`): Validates imports against `[architecture.layers]` declarative boundaries to prevent illegal reverse dependencies.
+
+
+## 16. Autonomous Test Healing & API Differ Subsystems (Phase 47)
+* `GitSandbox` (`src/rush/core/git_sandbox.py`): Ephemeral worktree lifecycle manager.
+* `TestHealer` (`src/rush/tools/test_heal.py`): Perturbation and race-condition diagnosis.
+* `ApiDiffer` (`src/rush/tools/api_diff.py`): AST-based breaking change differ.
+

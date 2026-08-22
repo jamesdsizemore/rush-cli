@@ -6,3 +6,8 @@ Maintain project architectural rules in `.rush/memory/invariants.json` using `In
 ## Architectural Layer Matrix Governance (Phase 46)
 Define and maintain layer matrices in `rush.toml` under `[architecture.layers]` and enforce via `rush arch-guard` in CI.
 
+
+
+## API Versioning & Breaking Change Gates
+Enforce zero breaking changes on minor releases via `rush api-diff` in CI.
+

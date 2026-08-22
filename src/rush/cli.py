@@ -2093,6 +2093,51 @@ def arch_guard_cmd() -> None:
         sys.exit(1)
 
 
+@cli.command(name="test-heal")
+@click.option("--target", "-t", required=True, help="Target test path to diagnose.")
+@click.option("--runs", "-r", default=5, type=int, help="Number of perturbation runs.")
+def test_heal_cmd(target: str, runs: int) -> None:
+    """Diagnose flaky test race conditions and suggest stabilization fixes."""
+    from rush.tools.test_heal import TestHealer
+
+    healer = TestHealer()
+    res = healer.diagnose_and_heal(target, runs=runs)
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    click.echo(f"Test Heal Diagnostic: {res['test_path']}")
+    click.echo(
+        f"  Runs: {res['runs']} (Passes: {res['passes']}, Failures: {res['failures']})"
+    )
+    click.echo(
+        f"  Status: {'FLAKY' if res['is_flaky'] else 'DETERMINISTIC'} - {res['diagnosis']}"
+    )
+    if res["suggested_fix"]:
+        click.echo(f"  Fix:\n{res['suggested_fix']}")
+
+
+@cli.command(name="api-diff")
+@click.option("--base", "-b", default="main", help="Base Git ref to compare against.")
+def api_diff_cmd(base: str) -> None:
+    """Detect breaking public API signature changes against base Git ref."""
+    from rush.tools.api_diff import ApiDiffer
+
+    differ = ApiDiffer()
+    res = differ.diff_public_api(base_ref=base)
+    if res["passed"]:
+        click.echo(
+            f"ApiDiff: No breaking public API changes detected against '{base}'."
+        )
+    else:
+        click.echo(
+            f"ApiDiff: FAIL - {res['breaking_changes_count']} breaking API changes against '{base}':",
+            err=True,
+        )
+        for b in res["breaking_changes"]:
+            click.echo(f"  {b['file']}: [{b['type']}] {b['details']}", err=True)
+        sys.exit(1)
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

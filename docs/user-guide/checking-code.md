@@ -115,3 +115,8 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 * `rush context pack`: Assemble token-bounded prompts.
 * `rush blast-radius`: Check affected routes and tests.
 
+
+
+## API Diffing
+* `rush api-diff`: Compare AST signatures against base branches.
+

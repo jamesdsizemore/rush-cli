@@ -16,3 +16,8 @@ rush ship gate
 1. Run `rush arch-guard` to ensure clean architectural boundaries.
 2. Run `rush blast-radius` across all modified core modules.
 
+
+
+## Pre-Release API Diff Verification
+Verify public API contract compatibility using `rush api-diff --base main`.
+

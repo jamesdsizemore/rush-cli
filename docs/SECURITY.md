@@ -45,3 +45,8 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 
 ## Architectural Layer Isolation (Phase 46)
 `rush arch-guard` prevents sensitive infrastructure code (database clients, crypto keys) from being imported into untrusted presentation or domain layers.
+
+
+## Safe Ephemeral Sandboxing (Phase 47)
+`GitSandbox` guarantees that test perturbation and self-healing fixes execute strictly in throwaway worktrees, preventing any corruption of working trees or developer secrets.
+

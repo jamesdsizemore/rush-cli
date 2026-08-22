@@ -120,3 +120,11 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
 - name: Architecture Boundary Check
   run: rush arch-guard
 ```
+
+
+### API Breaking Change CI Gate
+```yaml
+- name: API Breaking Change Check
+  run: rush api-diff --base origin/main
+```
+

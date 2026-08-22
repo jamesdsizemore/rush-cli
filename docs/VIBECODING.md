@@ -77,3 +77,8 @@ Rush will quietly watch your files, auto-format on save, alert your AI to any br
 * **`rush context gain`**: Watch your token and dollar savings in real-time.
 * **`rush blast-radius`**: Instantly see what parts of your app your refactor touches.
 * **`rush context pack`**: Pack huge repos into tight AI context windows.
+
+
+## Test Healing for Vibecoders (Phase 47)
+When AI code generates flaky async tests, run `rush test-heal` to let Rush isolate the timing bug and suggest the fix automatically.
+

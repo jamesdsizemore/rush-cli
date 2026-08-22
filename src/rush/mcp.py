@@ -232,6 +232,36 @@ def _register_tools(server) -> None:
         description="Validate codebase against clean architecture layer boundaries",
     )
 
+    # Phase 47 Tools
+    def mcp_rush_test_heal(target: str, runs: int = 5) -> str:
+        import json
+
+        from rush.tools.test_heal import TestHealer
+
+        healer = TestHealer()
+        res = healer.diagnose_and_heal(target, runs=runs)
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_api_diff(base: str = "main") -> str:
+        import json
+
+        from rush.tools.api_diff import ApiDiffer
+
+        differ = ApiDiffer()
+        res = differ.diff_public_api(base_ref=base)
+        return json.dumps(res, indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_test_heal,
+        name="rush_test_heal",
+        description="Diagnose flaky test race conditions and suggest fixes",
+    )
+    server.add_tool(
+        fn=mcp_rush_api_diff,
+        name="rush_api_diff",
+        description="Detect breaking public API changes against base Git ref",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

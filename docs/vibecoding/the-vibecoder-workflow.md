@@ -114,3 +114,8 @@ rush ship gate
 ## Blast Radius in Vibecoding Workflow (Phase 46)
 Before refactoring a core function, run `rush blast-radius --path <file>` to verify all affected tests and routes.
 
+
+
+## Flaky Test Self-Healing
+Run `rush test-heal` whenever async tests fail intermittently.
+

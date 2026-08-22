@@ -397,3 +397,16 @@ rush blast-radius --path src/rush/tools/common.py --depth 4
 ```bash
 rush arch-guard
 ```
+
+
+## Test Healing & API Recipes (Phase 47)
+### Diagnosing Flaky Tests
+```bash
+rush test-heal --target tests/test_concurrency.py --runs 10
+```
+
+### Checking API Compatibility
+```bash
+rush api-diff --base main
+```
+

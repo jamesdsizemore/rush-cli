@@ -35,3 +35,9 @@
 * **ArchGuard**: Architectural boundary layer linter.
 * **Context Packer**: Token-budgeted context assembler.
 * **Gain HUD**: Real-time token savings terminal dashboard.
+
+
+### Phase 47 Terms
+* **Test Healer**: Autonomous flaky test repair tool.
+* **API Differ**: Public signature breaking change detector.
+

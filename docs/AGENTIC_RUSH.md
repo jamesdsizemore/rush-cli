@@ -105,3 +105,9 @@ Give your AI agent superpowers in two minutes:
 2. **Savings Telemetry**: Call `rush_context_gain_stats()` to inspect session token savings and cost efficiency.
 3. **Blast Radius Analysis**: Call `rush_blast_radius(path)` before refactoring to know which downstream routes and tests are impacted.
 4. **Architecture Governance**: Call `rush_arch_guard()` to verify you have not introduced unauthorized cross-layer imports.
+
+
+## Agent Protocols for Test Healing & API Contracts (Phase 47)
+1. **Flaky Test Repair**: Call `rush_test_heal(target)` when encountering intermittent test failures.
+2. **API Guard**: Call `rush_api_diff(base='main')` to verify that your refactor maintains backward compatibility.
+

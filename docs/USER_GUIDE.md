@@ -138,3 +138,9 @@ Rush v0.2.0 introduces context optimization, AI token reduction, and release rea
 * **`rush context persona --set terse`**: Enable terse agent output mode.
 * **`rush blast-radius --path <file>`**: Compute downstream file and route impact.
 * **`rush arch-guard`**: Audit codebase for architectural layer boundary violations.
+
+
+## Test Healing & API Contracts (Phase 47)
+* `rush test-heal --target <test>`: Stabilize flaky test suites.
+* `rush api-diff --base main`: Check for breaking API changes before submitting a PR.
+

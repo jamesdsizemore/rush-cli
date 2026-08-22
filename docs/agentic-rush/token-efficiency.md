@@ -11,3 +11,8 @@
 * `StaleSweeper`: 60–80% savings in multi-turn sessions by pruning stale file reads.
 * `CacheAligner`: $\ge 85\%$ KV prompt cache hit rate.
 
+
+
+## Test Healing Efficiency
+`TestHealer` avoids dumping dozens of failed test tracebacks into agent context by isolating and summarizing root causes.
+
