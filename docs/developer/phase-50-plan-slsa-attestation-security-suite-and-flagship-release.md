@@ -259,13 +259,40 @@ sequenceDiagram
 ---
 
 ## 28. Documentation Updates
-* Update `docs/CLI_REFERENCE.md` and `docs/MCP_REFERENCE.md` with all Phase 10 tools.
-* Create `docs/security/slsa_attestation.md`.
-* Create `docs/security/license_compliance.md`.
-* Create `docs/RELEASE_NOTES_v0.3.0.md`.
-* Run `scripts/sync_docs.py --update` and verify parity across all documentation files.
 
----
+Every implementation of this phase MUST update the entire documentation matrix across all categories before committing:
+
+### 1. Root & Reference Documentation
+* docs/README.md: Add phase feature highlights and overview.
+* docs/ARCHITECTURE.md: Document new subsystem architecture and data flow.
+* docs/CLI_REFERENCE.md: Full syntax, arguments, flags, and exit codes for all new subcommands.
+* docs/CLI_COOKBOOK.md: Real-world command workflows and recipe examples.
+* docs/MCP_REFERENCE.md: Schemas and descriptions for all newly registered FastMCP tools.
+* docs/CONFIGURATION.md: TOML configuration tables and environment variables.
+* docs/TOOL_CATALOG.md: Catalog entries, tool maturity flags, and format options.
+* docs/GLOSSARY.md & docs/getting-started/glossary.md: Define all new domain terms.
+* docs/FAQ.md & docs/user-guide/faq.md: User and agent Q&A.
+
+### 2. User & Agent Guides
+* docs/USER_GUIDE.md: Core user walkthrough of new features.
+* docs/AGENTIC_RUSH.md: Agent interaction protocols and tool call guidelines.
+* docs/user-guide/advanced-checks.md & docs/user-guide/checking-code.md: Specific checking procedures.
+* docs/user-guide/everyday-workflow.md & docs/user-guide/working-with-ai-agents.md: Day-to-day patterns.
+
+### 3. Specifications & Workflows
+* docs/specs/<feature>-spec.md: Formal wire and data architecture specifications.
+* docs/workflows/<feature>-workflow.md: Step-by-step developer and agent workflows.
+
+### 4. Vibecoding & Tutorials
+* docs/VIBECODING.md & docs/vibecoding/*.md: Instant-feedback and token-diet patterns.
+* docs/tutorials/*.md: Step-by-step project onboarding and PR preparation guides.
+
+### 5. Developer, Maintainers & Safety
+* docs/developer/architecture.md & docs/developer/source-tree.md: Directory map updates.
+* docs/developer/tool-development.md & docs/developer/contributor-onboarding.md: Extensibility instructions.
+* docs/developer/backlog.md & docs/developer/issues.md: Milestone progress status updates.
+* docs/maintainers/*.md: Release playbooks and maintenance checklists.
+* docs/SAFETY.md, docs/SECURITY.md, docs/CI_INTEGRATION.md, docs/RELEASE.md: Safety and pipeline guides.
 
 ## 29. Worktree Workflow
 * **Worktree Path**: `.rush/worktrees/phase-50-flagship`
