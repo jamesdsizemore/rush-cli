@@ -288,3 +288,21 @@ Scan for unreferenced media, font, and image files in the repository.
 ### `rush pr-synthesize`
 Synthesize structured semantic pull request markdown card.
 * `--base, -b`: Base branch to diff against (default: main).
+
+
+### `rush toon-inspect`
+Inspect Token-Optimized Object Notation (TOON) v4.1 wire serialization for AST nodes.
+
+### `rush skeletonize`
+Extract compressed Abstract Syntax Tree outline skeletons stripping internal function bodies.
+* `--path, -p`: Path to Python source file.
+
+### `rush context-cache`
+Inspect and manage Content-Addressable Merkle DAG CCR cache blocks.
+
+### `rush ccr-retrieve`
+Retrieve relevant codebase chunks using multi-vector embeddings and semantic CCR store.
+* `--query, -q`: Natural language or symbol query.
+
+### `rush context-mistakes`
+Query and record past codebase anti-patterns in Mistake Memory.

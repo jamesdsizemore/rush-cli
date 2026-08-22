@@ -93,3 +93,6 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_iam_audit()`**: Synthesize least-privilege cloud IAM policy.
 * **`rush_dead_asset()`**: Scan for unreferenced assets and dead media.
 * **`rush_pr_synthesize(base_branch="main")`**: Synthesize structured semantic pull request card.
+
+* **`rush_context_skeletonize(path)`**: Extract compressed AST outline skeletons for a target source file.
+* **`rush_context_cache_manifest()`**: Retrieve Merkle DAG content-addressable cache block manifests.
