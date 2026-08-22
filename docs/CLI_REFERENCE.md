@@ -225,3 +225,11 @@ Launch the interactive Rich terminal HUD displaying token compression and dollar
 ### `rush context persona`
 View or configure agent terse response persona style.
 * `--set`: Set persona style (`terse` | `default`).
+
+### `rush blast-radius`
+Analyze downstream transitive blast radius and affected tests.
+* `--path, -p`: Changed file path to analyze (required).
+* `--depth, -d`: Maximum traversal depth (default: 5).
+
+### `rush arch-guard`
+Evaluate codebase against declarative architectural layer boundary rules.

@@ -202,6 +202,36 @@ def _register_tools(server) -> None:
         description="Get real-time token economy savings and cost metrics",
     )
 
+    # Phase 46 Tools
+    def mcp_rush_blast_radius(path: str, depth: int = 5) -> str:
+        from rush.tools.blast_radius import BlastRadiusAnalyzer
+
+        analyzer = BlastRadiusAnalyzer()
+        report = analyzer.analyze([Path(path)], max_depth=depth)
+        return report.model_dump_json(indent=2)
+
+    def mcp_rush_arch_guard() -> str:
+        from rush.tools.arch_guard import ArchGuard
+
+        guard = ArchGuard()
+        res = guard.evaluate_boundaries()
+        return (
+            "All boundaries respected"
+            if res["passed"]
+            else f"Found {res['violations_count']} layer violations"
+        )
+
+    server.add_tool(
+        fn=mcp_rush_blast_radius,
+        name="rush_blast_radius",
+        description="Calculate downstream transitive blast radius for a changed file",
+    )
+    server.add_tool(
+        fn=mcp_rush_arch_guard,
+        name="rush_arch_guard",
+        description="Validate codebase against clean architecture layer boundaries",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

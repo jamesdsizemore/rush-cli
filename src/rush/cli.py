@@ -2050,6 +2050,49 @@ def context_persona_cmd(set_persona: str | None) -> None:
         click.echo(f"Current persona style: {current}")
 
 
+@cli.command(name="blast-radius")
+@click.option("--path", "-p", required=True, help="Changed file path to analyze.")
+@click.option("--depth", "-d", default=5, type=int, help="Maximum traversal depth.")
+def blast_radius_cmd(path: str, depth: int) -> None:
+    """Analyze downstream transitive blast radius and affected tests."""
+    from rush.tools.blast_radius import BlastRadiusAnalyzer
+
+    analyzer = BlastRadiusAnalyzer()
+    report = analyzer.analyze([Path(path)], max_depth=depth)
+    click.echo(f"Blast Radius Impact: Risk={report.risk_score}")
+    click.echo(
+        f"  Affected Files ({len(report.affected_files)}): {', '.join(report.affected_files) or 'None'}"
+    )
+    click.echo(
+        f"  Affected Routes ({len(report.affected_routes)}): {', '.join(report.affected_routes) or 'None'}"
+    )
+    click.echo(
+        f"  Recommended Tests ({len(report.recommended_tests)}): {', '.join(report.recommended_tests) or 'None'}"
+    )
+
+
+@cli.command(name="arch-guard")
+def arch_guard_cmd() -> None:
+    """Evaluate codebase against architectural layer boundary rules."""
+    from rush.tools.arch_guard import ArchGuard
+
+    guard = ArchGuard()
+    res = guard.evaluate_boundaries()
+    if res["passed"]:
+        click.echo("ArchGuard: All layer boundaries respected.")
+    else:
+        click.echo(
+            f"ArchGuard: FAIL - {res['violations_count']} architectural boundary violations:",
+            err=True,
+        )
+        for v in res["violations"]:
+            click.echo(
+                f"  {v['source_file']} ({v['source_layer']}) imports illegal layer {v['illegal_target_layer']}",
+                err=True,
+            )
+        sys.exit(1)
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""
