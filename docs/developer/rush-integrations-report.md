@@ -1,7 +1,7 @@
-# HeadRush Integrations & Deep Repository Research Report
+# Rush Integrations & Deep Repository Research Report
 
-**Document Title**: Comprehensive Architectural Review, Scoring & Integration Blueprint for HeadRush / Rush  
-**Source Manifest**: `C:\Users\james\developer\headcleaner-cli\headrushtoolsurls.txt` (73 Repositories)  
+**Document Title**: Comprehensive Architectural Review, Scoring & Integration Blueprint for Rush  
+**Source Manifest**: `C:\Users\james\developer\rush-cli\rushtoolsurls.txt` (73 Repositories)  
 **Date**: August 2026  
 **Status**: Completed Deep Research & Phased Integration Blueprint  
 
@@ -11,11 +11,11 @@
 
 As AI-assisted pair programming and autonomous coding agents (Claude Code, Cursor, Codex, OpenClaw, Windsurf, Hermes) become the standard software development interface, development teams face an urgent challenge: **how to maintain architectural integrity, avoid AI-generated "slop" (hollow boilerplate, type erasure, band-aid fixes), enforce strict ship-readiness gates, and manage agent memory across long-running sessions.**
 
-This report delivers a deep code-level exploration of **all 73 open-source repositories** identified in `headrushtoolsurls.txt`. Rather than merely scanning `README` files, we explored the internal mechanics, AST parsers, database schemas, and protocol adapters across each project.
+This report delivers a deep code-level exploration of **all 73 open-source repositories** identified in `rushtoolsurls.txt`. Rather than merely scanning `README` files, we explored the internal mechanics, AST parsers, database schemas, and protocol adapters across each project.
 
 ```mermaid
 flowchart TD
-    subgraph HeadRush["HeadRush / Rush Unified Architecture"]
+    subgraph Rush["Rush Unified Architecture"]
         M[Domain 1: AI Memory & Context Roaming]
         Q[Domain 2: Anti-Slop, Code Quality & Heuristics]
         S[Domain 3: Ship-Readiness & Release Pre-Flight]
@@ -40,11 +40,11 @@ flowchart TD
 The repositories are evaluated across three criteria:
 - **Score (1.0–10.0)**: Technical depth, architectural elegance, and implementation quality.
 - **Tier Classification**:
-  - **Tier 1 (Score 8.5–10.0)**: *Must-Integrate / Crown Jewels* — Core capabilities and algorithms directly matching HeadRush's mission.
+  - **Tier 1 (Score 8.5–10.0)**: *Must-Integrate / Crown Jewels* — Core capabilities and algorithms directly matching Rush's mission.
   - **Tier 2 (Score 6.0–8.4)**: *High-Value Ideas to Borrow* — Valuable patterns, heuristics, AST rules, or secondary adapters.
   - **Tier 3 (Score 1.0–5.9)**: *Low Value / Skip* — Minimal technical depth, out-of-scope, or deprecated.
 
-| # | Repository | Domain / Focus | Score | Tier | Target HeadRush Subsystem |
+| # | Repository | Domain / Focus | Score | Tier | Target Rush Subsystem |
 |---|---|---|:---:|:---:|---|
 | 1 | **flamehaven01/AI-SLOP-Detector** | Code Substance & LDR Metrics | **9.5** | **Tier 1** | `src/rush/tools/slop.py` (LDR & Inflation) |
 | 2 | **rsionnach/sloppylint** | Python AST Slop & Import Linter | **9.5** | **Tier 1** | `src/rush/engines/sloppylint.py` |
@@ -140,7 +140,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 
 ## Comparative Matrix & Tier Classification
 
-| # | Repository | Tech Stack | Score | Tier | Primary Architectural Concept | Rush / HeadRush Target Subsystem |
+| # | Repository | Tech Stack | Score | Tier | Primary Architectural Concept | Rush / Rush Target Subsystem |
 |---|------------|------------|:-----:|:----:|-------------------------------|----------------------------------|
 | 1 | **buildingjoshbetter/TrueMemory** | Python, SQLite, MCP | **9.0/10** | **Tier 1** | Retrieval-centered memory, Encoding Gate, Trait Claims | `src/rush/session_memory.py` |
 | 2 | **MemTensor/memmy-agent** | TypeScript, Fastify, SQLite | **8.5/10** | **Tier 1** | 4-layer memory hierarchy (Trace, Policy, World Model, Skill) | `src/rush/session_memory.py`, multi-agent context |
@@ -376,7 +376,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 
 ---
 
-## Architectural Synthesis & Integration Roadmap for Rush / HeadRush
+## Architectural Synthesis & Integration Roadmap for Rush / Rush
 
 To elevate Rush into an industry-leading AI memory, context, and code intelligence platform, the best ideas from Domain 1 can be synthesized into five concrete architectural upgrades:
 
@@ -417,7 +417,7 @@ To elevate Rush into an industry-leading AI memory, context, and code intelligen
 # Research Report: Domain 2 — Anti-Slop, Code Quality & Heuristics
 
 **Author:** Research Subagent  
-**Scope:** In-depth architectural analysis of 14 repositories in Domain 2 (Anti-Slop, Code Quality, AST Heuristics & Benchmarks) for Rush / HeadRush integration.
+**Scope:** In-depth architectural analysis of 14 repositories in Domain 2 (Anti-Slop, Code Quality, AST Heuristics & Benchmarks) for Rush / Rush integration.
 
 ---
 
@@ -454,8 +454,8 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
   - Features file tree navigation, fuzzy file search, and line-level commenting on original, modified, or whole-file scopes.
   - **Agent IPC Mechanism:** When the user clicks "Submit Review", feedback is written to a structured temporary JSON file (`src/prompt.js`). The agent reads this file via an MCP/CLI tool call and resolves each comment item-by-item.
 * **Score & Tier:** **8.0 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
-  - HeadRush can bundle an interactive visual diff review window (`rush review diff` or MCP tool `rush_diff_review`). Human reviewers can inspect agent modifications in Monaco, annotate specific AST violations, and emit structured JSON feedback directly back into the agent context loop.
+* **Rush / Rush Integration:**
+  - Rush can bundle an interactive visual diff review window (`rush review diff` or MCP tool `rush_diff_review`). Human reviewers can inspect agent modifications in Monaco, annotate specific AST violations, and emit structured JSON feedback directly back into the agent context loop.
 
 ---
 
@@ -465,7 +465,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
   - Evaluates text using statistical variance in sentence lengths (detecting the "metronomic" uniform cadence characteristic of LLMs).
   - Flags markdown hygiene issues: decorative horizontal rule spam (`---`), repetitive bold-header bullet lists, and excessive conversational preamble.
 * **Score & Tier:** **5.5 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Borrow the prose cadence and markdown hygiene rules into Rush's documentation verification pipeline (`rush doc check` / `scripts/sync_docs.py`) to prevent coding agents from polluting documentation with AI boilerplate.
 
 ---
@@ -481,7 +481,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     - `no-runtime-typeof`: Flags defensive `typeof x === 'string'` checks when the TypeScript type is already statically known and guaranteed.
     - `no-module-mocking`, `no-object-parameters`, `no-reflect-apply`, `no-reflect-get`.
 * **Score & Tier:** **9.0 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - First-class tool integration under Rush (`[tools.oxlint]` or `rush check ts --anti-slop`).
   - Port these exact AST visitor patterns to Rush's internal AST analysis to flag type-cast bypasses and defensive hallucinations before code is committed.
 
@@ -496,8 +496,8 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     - **Contributor Signals:** Account age (`min-account-age`), historical merge ratio, repository member/collaborator exemptions.
   - Supports configurable failure thresholds (`max-failures`) and soft enforcement (labeling with "AI slop" vs. auto-closing).
 * **Score & Tier:** **7.5 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
-  - Borrow the 31-rule heuristic engine into HeadRush's CI/CD workflow and PR triage tool (`rush pr triage`). Evaluates pull requests created by coding agents or external contributors to ensure patches meet quality thresholds before merging.
+* **Rush / Rush Integration:**
+  - Borrow the 31-rule heuristic engine into Rush's CI/CD workflow and PR triage tool (`rush pr triage`). Evaluates pull requests created by coding agents or external contributors to ensure patches meet quality thresholds before merging.
 
 ---
 
@@ -512,7 +512,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     - *Vacuous closers:* Formulaic summaries ("In conclusion, by following these best practices...").
     - *Punctuation tics:* Overuse of em-dashes (`—`) and colon-prefixed bullet lists.
 * **Score & Tier:** **8.0 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Integrate as a documentation quality engine (`rush check doc` or `rush doc-slop`). Ensures all generated `README.md`, `AGENTS.md`, and `/docs` files are clean, concise, and free of AI conversational fluff.
 
 ---
@@ -526,7 +526,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     - Statistical sentence length variance and token entropy.
   - Computes a deterministic **0 to 100 Slop Index** mapped to quality bands (*Clean [90-100], Light, Moderate, Heavy, Saturated [<40]*).
 * **Score & Tier:** **8.0 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Register as a lightweight quality tool in `rush.toml` (`[tools.slop_guard]`). Rush can score PR descriptions, git commit messages, and markdown docs, rejecting commits with a Slop Index below a configured threshold (e.g., `< 80`).
 
 ---
@@ -541,8 +541,8 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
   - Runs in isolated Docker containers with Python 3.12 / `uv`.
   - Measures agent non-convergence, path dependence, dead code accumulation, and defensive over-engineering across turns.
 * **Score & Tier:** **8.5 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
-  - Integrate into HeadRush's agent evaluation suite (`rush bench agent`). Allows benchmarking Rush-assisted coding agents against raw models on multi-step refactoring workflows to quantify architectural degradation.
+* **Rush / Rush Integration:**
+  - Integrate into Rush's agent evaluation suite (`rush bench agent`). Allows benchmarking Rush-assisted coding agents against raw models on multi-step refactoring workflows to quantify architectural degradation.
 
 ---
 
@@ -557,7 +557,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     - *AI Anti-patterns:* Mutable default arguments (`def func(items=[])`), bare `except:`, redundant type conversions (`str(str_val)`).
   - Scores code across 4 dimensions: **Noise, Lies, Soul, Structure**.
 * **Score & Tier:** **9.5 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Direct integration candidate for Rush tool catalog (`[tools.sloppylint]`). Because Rush is a Python 3.12 package, `sloppylint`'s AST visitors can also be integrated directly as native in-process heuristics to immediately fail hallucinated agent edits before executing tests.
 
 ---
@@ -572,7 +572,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
   - **Placeholder Variable Naming:** Flags semantic vacancy (e.g., `param1`, `param2`, `varA`, `varB`).
   - **Geometric Quality Gate (GQG):** Computes a 0–100 Deficit Score via the geometric mean of sub-metrics.
 * **Score & Tier:** **9.5 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - **Core Metric Formulation for Rush:** Implement LDR, Inflation Index, and DDC directly in Rush (`rush analyze --metric=ldr` or `rush check slop`). Rejects agent-generated files that have inflated docstrings but near-zero executable density.
 
 ---
@@ -587,7 +587,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
   - Applies weighted penalties to high-risk AST nodes (e.g., `eval`, dynamic `send`, deep block nesting).
   - Reports overall pain, average pain per method, and lists the "top tortured methods".
 * **Score & Tier:** **7.5 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Borrow the ABC Pain Metric formula for Rush's universal complexity analyzer across Python, TypeScript, and Go. Coding agents can be directed specifically to refactor methods with the highest pain scores.
 
 ---
@@ -600,7 +600,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     2. *Maintainability:* Source lines of code (SLOC) vs selector specificity distribution.
     3. *Complexity:* Selector nesting depth and specificity outliers.
 * **Score & Tier:** **7.0 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Incorporate into Rush's frontend toolchain (`[tools.css_quality]`). Borrow the transparent penalty-deduction scoring model for Rush's composite code health reports.
 
 ---
@@ -615,7 +615,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     4. *Accessibility (a11y):* Audits DOM nodes for ARIA compliance and contrast.
     5. *Idiomatic Best Practices:* Verifies framework conventions (e.g., Signals over legacy patterns, standalone components, zoneless compatibility).
 * **Score & Tier:** **8.5 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Adopt this 5-stage verification architecture for Rush's agent task completion gate (`rush verify --full`). Before an agent marks a coding task complete, Rush runs: Compile $\rightarrow$ Test $\rightarrow$ Security $\rightarrow$ A11y $\rightarrow$ Idiomatic AST check.
 
 ---
@@ -627,7 +627,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
   - Extracts symbols, interfaces, type aliases, function signatures, exported declarations, and import dependencies into token-efficient JSON.
   - Avoids sending massive raw file contents to LLMs by providing compact structural skeletons.
 * **Score & Tier:** **8.5 / 10** | **Tier 1 (High Value / Direct Integration)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Integrate as an engine for fast structural codebase mapping. When agents need context on large TypeScript/JavaScript files, Rush can provide token-compact AST skeletons extracted via `ts-code-scan`/`oxc` instead of raw source dumps.
 
 ---
@@ -640,14 +640,14 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
     - Secret leakage and credential exposure in parameters.
     - Hallucinated file mutations outside project workspaces.
 * **Score & Tier:** **6.5 / 10** | **Tier 2 (Feature/Idea to Borrow)**
-* **Rush / HeadRush Integration:**
+* **Rush / Rush Integration:**
   - Reinforces Rush's built-in tool safety contracts:
     - Pre-execution tool call validation (sanitizing subprocess parameters, enforcing read-only modes, DEVNULL stdin protection for stdio-only MCP servers).
     - Automatic secret redaction as `[REDACTED]`.
 
 ---
 
-## 3. Synthesis: Key Recommendations for Rush / HeadRush
+## 3. Synthesis: Key Recommendations for Rush / Rush
 
 1. **Immediate Tier 1 Tool Catalog Additions:**
    - `[tools.sloppylint]`: Native Python AST slop and cross-language leakage detection.
@@ -672,7 +672,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
 **To:** Parent Agent (`0fc849c8-6ace-4da9-b378-3847f2b0b2d3`)  
 **From:** Research Subagent (`073530f7-b2af-4b14-ba9c-9186933af868`)  
 **Domain:** Domain 3 — Ship Readiness, Pre-Flight, Release & Changelog Gates  
-**Subject:** In-depth code-level analysis, scoring, categorization, and integration roadmap for Rush / HeadRush.
+**Subject:** In-depth code-level analysis, scoring, categorization, and integration roadmap for Rush / Rush.
 
 ---
 
@@ -921,7 +921,7 @@ The 17 surveyed repositories span from specialized agentic merge gates (`ThreeMo
   * Uses declarative YAML configuration per repository.
 * **Score:** 8.5 / 10 | **Tier:** **Tier 1** (High Value / Direct Integration)
 * **Borrow for Rush:**
-  * **Verification Gatekeeper Contract:** Rush can serve as the standardized verification engine inside agent harnesses (`shipyard`, HeadCleaner, Claude Code hooks). An agent runs `rush gate` as its acceptance test before submitting work.
+  * **Verification Gatekeeper Contract:** Rush can serve as the standardized verification engine inside agent harnesses (`shipyard`, Rush, Claude Code hooks). An agent runs `rush gate` as its acceptance test before submitting work.
 
 ---
 
@@ -943,7 +943,7 @@ The 17 surveyed repositories span from specialized agentic merge gates (`ThreeMo
 
 ---
 
-## 4. Strategic Integration Roadmap for Rush / HeadRush
+## 4. Strategic Integration Roadmap for Rush / Rush
 
 Based on Domain 3 research, here is the architectural blueprint for implementing **Ship Readiness, Pre-Flight, and Release Gates** in Rush:
 
@@ -1013,7 +1013,7 @@ Domain 4 investigates the emerging ecosystem of **Vibecoding Safety, Agent Sandb
 5. **Secrets & Context Leakage:** Credentials leaking into agent prompts, logs, or git commits.
 6. **Agent Changeset Bloat:** Difficulty for humans and supervisory agents to review high-velocity, multi-file agent diffs.
 
-Below is the deep-dive analysis of all 14 repositories, their internal mechanics, score, tier assignment, and specific architecture recommendations for **Rush** and **HeadRush**.
+Below is the deep-dive analysis of all 14 repositories, their internal mechanics, score, tier assignment, and specific architecture recommendations for **Rush** and **Rush**.
 
 ---
 
@@ -1229,7 +1229,7 @@ Tier Definitions:
 
 ---
 
-## Actionable Integration Roadmap for Rush & HeadRush
+## Actionable Integration Roadmap for Rush & Rush
 
 ### 1. Pre-Execution Guardrails (Inception Phase)
 * **Prompt Contract Verification (`mturac/promptguard`):** Add an offline pre-flight prompt contract checker to verify subagent task prompts have explicit boundaries, test requirements, and rollback criteria before dispatching.
@@ -1254,14 +1254,14 @@ Tier Definitions:
 
 # Domain 5 Research Report: Monorepo, MCP Adapters, Testing & Specialized Toolkits
 
-**Target Project:** Rush / HeadRush (`rush-cli`)  
+**Target Project:** Rush / Rush (`rush-cli`)  
 **Domain Scope:** Monorepo graph orchestration, MCP protocol adapters & testing harnesses, code intelligence & hybrid search, agent skill packaging, and specialized developer toolkits.
 
 ---
 
 ## Executive Summary & Score Matrix
 
-| # | Repository | Category / Core Focus | Score (1-10) | Tier | Rush / HeadRush Alignment |
+| # | Repository | Category / Core Focus | Score (1-10) | Tier | Rush / Rush Alignment |
 |---|------------|----------------------|--------------|------|---------------------------|
 | 1 | **nrwl/nx** | Monorepo Graph, Rust Daemon, Input Hashing, Computation Caching | **9.0 / 10** | **Tier 1** | Computation caching & `namedInputs` hashing for `rush.workspaces` |
 | 2 | **Flagsmith/flagsmith-js-client** | Feature Flag SDK, Multi-tier Cache Fallback, SSE Streaming | **6.5 / 10** | **Tier 2** | FlagSource fallback for beta quality engines & remote policy sync |
@@ -1303,7 +1303,7 @@ Tier Definitions:
 - **Score:** **6.5 / 10** | **Tier 2 (Feature/Idea to Borrow)**
 - **Rush Integration & Ideas to Borrow:**
   - **Tiered Feature Gating for Quality Engines:** Borrow Flagsmith's `FlagSource` tiered fallback pattern (Default -> `rush.toml` config -> local cache -> remote policy) to allow dynamic toggling of experimental quality engines, beta MCP tools, or strict governance rules without breaking local CLI workflows.
-  - **Live Configuration Updates:** For HeadRush team/enterprise dashboards, an SSE streaming channel can notify active Rush MCP servers of updated quality threshold policies or disallowed dependency rules without requiring an agent restart.
+  - **Live Configuration Updates:** For Rush team/enterprise dashboards, an SSE streaming channel can notify active Rush MCP servers of updated quality threshold policies or disallowed dependency rules without requiring an agent restart.
 
 ---
 
@@ -1422,7 +1422,7 @@ Tier Definitions:
   - **Embedded Database & Format Utilities:** Built-in clients for SQL, Redis, and MongoDB, alongside offline format converters (JSON/YAML/TOML/Protobuf).
 - **Score:** **6.5 / 10** | **Tier 2 (Feature/Idea to Borrow)**
 - **Rush Integration & Ideas to Borrow:**
-  - **OS-Native Keyring Integration:** Rush strictly redacts secrets (`[REDACTED]` in `src/rush/safety/`). We can borrow MyDevTools' approach to store HeadRush tokens and third-party API credentials in OS credential managers rather than plaintext configuration files.
+  - **OS-Native Keyring Integration:** Rush strictly redacts secrets (`[REDACTED]` in `src/rush/safety/`). We can borrow MyDevTools' approach to store Rush tokens and third-party API credentials in OS credential managers rather than plaintext configuration files.
   - **Zero-Dependency CLI Utilities:** Add common developer utility commands (SARIF converter, JSON-to-TOML converter, schema validator) as offline subcommands under `rush util ...`.
 
 ---
@@ -1436,7 +1436,7 @@ Tier Definitions:
 - **Score:** **7.0 / 10** | **Tier 2 (Feature/Idea to Borrow)**
 - **Rush Integration & Ideas to Borrow:**
   - **Agent Process Supervision in `rush.watcher`:** Borrow Ship Studio's PTY diagnostic and process monitoring architecture for `src/rush/watcher.py` and `src/rush/session_memory.py`, monitoring active agent tasks and detecting runaway processes or blocked stdio pipes.
-  - **HeadRush Desktop GUI Architecture:** Serves as a reference design if HeadRush develops a unified desktop dashboard hosting CLI agents alongside live MCP diagnostics and quality charts.
+  - **Rush Desktop GUI Architecture:** Serves as a reference design if Rush develops a unified desktop dashboard hosting CLI agents alongside live MCP diagnostics and quality charts.
 
 ---
 
@@ -1453,7 +1453,7 @@ Tier Definitions:
 
 ---
 
-## Strategic Action Items for Rush / HeadRush
+## Strategic Action Items for Rush / Rush
 
 1. **Immediate Tier 1 Integrations:**
    - **Quality Engine Catalog (`src/rush/catalog.py` & `src/rush/tools/`):** Add `Laith0003/ux-skill` as `rush_ux_lint` and `rush_ux_design` for deterministic UI/UX quality control.
