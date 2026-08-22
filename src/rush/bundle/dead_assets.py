@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-ASSET_EXTENSIONS = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".avif", ".woff", ".woff2", ".ttf"}
+ASSET_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".svg",
+    ".webp",
+    ".avif",
+    ".woff",
+    ".woff2",
+    ".ttf",
+}
 
 
 class OrphanedAssetScanner:
@@ -17,7 +26,12 @@ class OrphanedAssetScanner:
     def find_all_assets(self) -> list[Path]:
         assets = []
         for p in self.repo_root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in ASSET_EXTENSIONS and ".venv" not in p.parts and "node_modules" not in p.parts:
+            if (
+                p.is_file()
+                and p.suffix.lower() in ASSET_EXTENSIONS
+                and ".venv" not in p.parts
+                and "node_modules" not in p.parts
+            ):
                 assets.append(p)
         return assets
 
@@ -28,7 +42,16 @@ class OrphanedAssetScanner:
 
         source_text = []
         for p in self.repo_root.rglob("*"):
-            if p.is_file() and p.suffix in (".tsx", ".ts", ".jsx", ".js", ".vue", ".html", ".css", ".scss"):
+            if p.is_file() and p.suffix in (
+                ".tsx",
+                ".ts",
+                ".jsx",
+                ".js",
+                ".vue",
+                ".html",
+                ".css",
+                ".scss",
+            ):
                 source_text.append(p.read_text(encoding="utf-8", errors="replace"))
 
         combined_sources = "\n".join(source_text)

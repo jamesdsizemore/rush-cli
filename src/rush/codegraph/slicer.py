@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from rush.codegraph.store import CodeGraphStore, GraphNode
+from rush.codegraph.store import CodeGraphStore
 
 
 class VerbatimAstSlicer:
@@ -26,4 +25,3 @@ class VerbatimAstSlicer:
 
 # Graft Semantic Slicing Engine alias (ADR-0019)
 GraftSemanticSlicer = VerbatimAstSlicer
-

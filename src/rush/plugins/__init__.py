@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from .executor import HardenedPluginExecutor
 from .hash_verifier import PreExecutionHashVerifier
-from .loader import CustomPlugin, PluginLoader, PluginSpec, discover_plugins, execute_plugin
+from .loader import (
+    CustomPlugin,
+    PluginLoader,
+    PluginSpec,
+    discover_plugins,
+    execute_plugin,
+)
 from .manifest_schema import PluginManifestValidator
 from .sandboxed_env import SandboxedEnvironment
 from .skills_generator import AgentSkillGenerator
@@ -34,4 +40,3 @@ __all__ = [
     "trust_repo",
     "validate_plugin_output",
 ]
-

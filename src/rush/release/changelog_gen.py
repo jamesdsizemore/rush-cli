@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 CONVENTIONAL_REGEX = re.compile(
@@ -59,7 +60,7 @@ class SemanticChangelogGenerator:
         }
 
         for cat_key, header in type_headers.items():
-            if cat_key in categories and categories[cat_key]:
+            if categories.get(cat_key):
                 lines.append(f"{header}\n")
                 for item in categories[cat_key]:
                     lines.append(f"- {item}")

@@ -50,7 +50,15 @@ def detect_project_stacks(root: Path) -> list[DetectedStack]:
                 language="python",
                 package_manager=pm,
                 frameworks=["pytest"],
-                suggested_engines=["ruff", "mypy", "pytest", "pip-audit", "bandit", "aislop", "tach"],
+                suggested_engines=[
+                    "ruff",
+                    "mypy",
+                    "pytest",
+                    "pip-audit",
+                    "bandit",
+                    "aislop",
+                    "tach",
+                ],
             )
         )
 
@@ -129,4 +137,3 @@ def detect_project_stacks(root: Path) -> list[DetectedStack]:
         )
 
     return stacks
-

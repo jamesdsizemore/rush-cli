@@ -1,4 +1,3 @@
-import json
 import shutil
 from pathlib import Path
 from typing import Protocol
@@ -16,12 +15,9 @@ class LocalGraftContext:
     """Invokes local Graft CLI to extract dependency and architectural graph context."""
 
     def available(self, project_root: Path) -> bool:
-        return (
-            shutil.which("graft") is not None
-            and (
-                (project_root / ".hermes/graft").exists()
-                or (project_root / ".graft").exists()
-            )
+        return shutil.which("graft") is not None and (
+            (project_root / ".hermes/graft").exists()
+            or (project_root / ".graft").exists()
         )
 
     def context_for(self, path: Path) -> list[Finding]:
@@ -52,8 +48,6 @@ class LocalGraftContext:
                     "message": f"Graft call graph context: {summary}",
                 }
                 return [finding]
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError, ValueError, KeyError):
+            return []
         return []
-
-

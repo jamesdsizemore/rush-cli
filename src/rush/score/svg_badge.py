@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 
 class SvgBadgeGenerator:
     """Generates pure SVG badges representing repository quality score."""
 
-    GRADE_COLORS = {
+    GRADE_COLORS: ClassVar[dict[str, str]] = {
         "A+": "#4c1",
         "A": "#97ca00",
         "A-": "#a4a61d",

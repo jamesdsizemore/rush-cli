@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 
@@ -18,7 +17,13 @@ class CodeSplittingValidator:
 
         if "Routes" in text or "createBrowserRouter" in text:
             for line in text.splitlines():
-                if "import " in line and ("Page" in line or "View" in line) and "lazy" not in text:
-                    findings.append(f"{file_path.name}: Static page import detected without dynamic lazy() splitting: {line.strip()}")
+                if (
+                    "import " in line
+                    and ("Page" in line or "View" in line)
+                    and "lazy" not in text
+                ):
+                    findings.append(
+                        f"{file_path.name}: Static page import detected without dynamic lazy() splitting: {line.strip()}"
+                    )
 
         return findings

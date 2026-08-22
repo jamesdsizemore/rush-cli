@@ -23,12 +23,18 @@ class OpenApiContractChecker:
     def check_spec_exists(self) -> bool:
         return self.spec_path.exists()
 
-    def inspect_breaking_changes(self, old_spec_json: str, new_spec_json: str) -> list[ApiDriftFinding]:
+    def inspect_breaking_changes(
+        self, old_spec_json: str, new_spec_json: str
+    ) -> list[ApiDriftFinding]:
         try:
             old_data = json.loads(old_spec_json)
             new_data = json.loads(new_spec_json)
-        except Exception as e:
-            return [ApiDriftFinding(endpoint_path="*", method="*", issue=f"Invalid JSON: {e}")]
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            return [
+                ApiDriftFinding(
+                    endpoint_path="*", method="*", issue=f"Invalid JSON: {e}"
+                )
+            ]
 
         findings = []
         old_paths = old_data.get("paths", {})
@@ -36,7 +42,11 @@ class OpenApiContractChecker:
 
         for path, methods in old_paths.items():
             if path not in new_paths:
-                findings.append(ApiDriftFinding(endpoint_path=path, method="ALL", issue="Endpoint deleted."))
+                findings.append(
+                    ApiDriftFinding(
+                        endpoint_path=path, method="ALL", issue="Endpoint deleted."
+                    )
+                )
             else:
                 for method in methods:
                     if method not in new_paths[path]:

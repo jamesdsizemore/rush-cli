@@ -26,7 +26,9 @@ def test_semver_parsing_and_bumping() -> None:
 
 
 def test_manifest_parity_check(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.2.0"\n', encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nversion = "0.2.0"\n', encoding="utf-8"
+    )
     (tmp_path / "package.json").write_text('{"version": "0.2.0"}', encoding="utf-8")
 
     versions = SemVerValidator.check_manifest_parity(tmp_path)

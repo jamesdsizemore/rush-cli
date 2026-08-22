@@ -21,12 +21,14 @@ class ConflictMarkerGuard:
             return []
         try:
             text = file_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except OSError:
             return []
 
         findings = []
         for idx, line in enumerate(text.splitlines(), start=1):
             for pat in CONFLICT_MARKERS:
                 if pat.search(line):
-                    findings.append(f"{file_path.name}:{idx}: Unresolved merge conflict marker: '{line.strip()}'")
+                    findings.append(
+                        f"{file_path.name}:{idx}: Unresolved merge conflict marker: '{line.strip()}'"
+                    )
         return findings

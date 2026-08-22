@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from rush.codegraph.store import CodeGraphStore, GraphNode
 
 
@@ -44,7 +45,13 @@ class CallGraphTraverser:
                 )
                 for row in cur.fetchall():
                     callee_node = GraphNode(*row)
-                    paths.append(CallPathStep(caller=current_node, callee=callee_node, depth=current_depth + 1))
+                    paths.append(
+                        CallPathStep(
+                            caller=current_node,
+                            callee=callee_node,
+                            depth=current_depth + 1,
+                        )
+                    )
                     dfs(callee_node, current_depth + 1)
 
         for rn in root_nodes:
@@ -52,7 +59,9 @@ class CallGraphTraverser:
 
         return paths
 
-    def trace_callers(self, target_symbol: str, max_depth: int = 3) -> list[CallPathStep]:
+    def trace_callers(
+        self, target_symbol: str, max_depth: int = 3
+    ) -> list[CallPathStep]:
         target_nodes = self.store.find_nodes_by_symbol(target_symbol)
         if not target_nodes:
             return []
@@ -77,7 +86,13 @@ class CallGraphTraverser:
                 )
                 for row in cur.fetchall():
                     caller_node = GraphNode(*row)
-                    paths.append(CallPathStep(caller=caller_node, callee=current_node, depth=current_depth + 1))
+                    paths.append(
+                        CallPathStep(
+                            caller=caller_node,
+                            callee=current_node,
+                            depth=current_depth + 1,
+                        )
+                    )
                     dfs(caller_node, current_depth + 1)
 
         for tn in target_nodes:

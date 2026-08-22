@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from rush.patch.circuit_breaker import RemediationCircuitBreaker
 from rush.patch.diff_parser import UnifiedDiffParser

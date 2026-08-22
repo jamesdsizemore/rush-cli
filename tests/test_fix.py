@@ -133,4 +133,3 @@ def test_validate_ast_detection(tmp_path: Path) -> None:
     valid, err = tool.validate_ast(bad_py)
     assert valid is False
     assert "SyntaxError" in (err or "")
-

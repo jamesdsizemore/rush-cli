@@ -79,5 +79,7 @@ def test_token_chunk_paginator() -> None:
     assert len(chunk1.chunk_text.encode("utf-8")) == 50
     assert chunk1.has_more is True
 
-    chunk2 = TokenChunkPaginator.paginate(big_text, offset=chunk1.cursor_offset, limit_bytes=5000)
+    chunk2 = TokenChunkPaginator.paginate(
+        big_text, offset=chunk1.cursor_offset, limit_bytes=5000
+    )
     assert chunk2.has_more is False

@@ -63,21 +63,27 @@ class SemVerValidator:
         # 1. pyproject.toml
         pyproject = repo_root / "pyproject.toml"
         if pyproject.exists():
-            match = re.search(r'version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"))
+            match = re.search(
+                r'version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8")
+            )
             if match:
                 versions["pyproject.toml"] = match.group(1)
 
         # 2. package.json
         pkg_json = repo_root / "package.json"
         if pkg_json.exists():
-            match = re.search(r'"version"\s*:\s*"([^"]+)"', pkg_json.read_text(encoding="utf-8"))
+            match = re.search(
+                r'"version"\s*:\s*"([^"]+)"', pkg_json.read_text(encoding="utf-8")
+            )
             if match:
                 versions["package.json"] = match.group(1)
 
         # 3. Cargo.toml
         cargo = repo_root / "Cargo.toml"
         if cargo.exists():
-            match = re.search(r'version\s*=\s*"([^"]+)"', cargo.read_text(encoding="utf-8"))
+            match = re.search(
+                r'version\s*=\s*"([^"]+)"', cargo.read_text(encoding="utf-8")
+            )
             if match:
                 versions["Cargo.toml"] = match.group(1)
 

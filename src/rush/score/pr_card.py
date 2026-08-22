@@ -17,12 +17,12 @@ class PRCardGenerator:
 
 | Quality Pillar | Score | Target | Status |
 |---|---|---|---|
-| 🔒 Security | `{p.security}%` | `≥ 90%` | {'✅' if p.security >= 90 else '⚠️'} |
-| 🧪 Test Coverage | `{p.test_coverage}%` | `≥ 80%` | {'✅' if p.test_coverage >= 80 else '⚠️'} |
-| 🏷️ Type Safety | `{p.type_safety}%` | `≥ 85%` | {'✅' if p.type_safety >= 85 else '⚠️'} |
-| 🧹 Code Health | `{p.code_health}%` | `≥ 85%` | {'✅' if p.code_health >= 85 else '⚠️'} |
-| 🪙 Token Economy | `{p.token_economy}%` | `≥ 80%` | {'✅' if p.token_economy >= 80 else '⚠️'} |
-| 🏛️ Governance | `{p.governance}%` | `≥ 90%` | {'✅' if p.governance >= 90 else '⚠️'} |
+| 🔒 Security | `{p.security}%` | `≥ 90%` | {"✅" if p.security >= 90 else "⚠️"} |
+| 🧪 Test Coverage | `{p.test_coverage}%` | `≥ 80%` | {"✅" if p.test_coverage >= 80 else "⚠️"} |
+| 🏷️ Type Safety | `{p.type_safety}%` | `≥ 85%` | {"✅" if p.type_safety >= 85 else "⚠️"} |
+| 🧹 Code Health | `{p.code_health}%` | `≥ 85%` | {"✅" if p.code_health >= 85 else "⚠️"} |
+| 🪙 Token Economy | `{p.token_economy}%` | `≥ 80%` | {"✅" if p.token_economy >= 80 else "⚠️"} |
+| 🏛️ Governance | `{p.governance}%` | `≥ 90%` | {"✅" if p.governance >= 90 else "⚠️"} |
 
 > *Generated automatically by Rush Platform.*
 """

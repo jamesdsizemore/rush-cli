@@ -53,4 +53,3 @@ def test_local_graft_context_provider_fallback(tmp_path: Path) -> None:
     # Directory without .hermes/graft
     assert provider.available(tmp_path) is False
     assert provider.context_for(tmp_path / "app.py") == []
-

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from rush.tools.base import Finding, ToolResult
 
 
@@ -44,7 +45,11 @@ class DashboardMetricsAggregator:
         durations = [r.get("duration_ms", 0) for r in results]
         avg_dur = round(sum(durations) / len(durations), 1) if durations else 0.0
 
-        slowest = max(results, key=lambda r: r.get("duration_ms", 0)).get("tool") if results else None
+        slowest = (
+            max(results, key=lambda r: r.get("duration_ms", 0)).get("tool")
+            if results
+            else None
+        )
 
         return QualityMetrics(
             pass_rate_percentage=pass_rate,

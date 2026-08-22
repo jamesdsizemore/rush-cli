@@ -33,7 +33,9 @@ class MultiModelConsensusReconciler:
     def __init__(self, min_agreement_ratio: float = 0.5) -> None:
         self.min_agreement_ratio = min_agreement_ratio
 
-    def reconcile_findings(self, all_findings: list[ModelFinding], total_models: int) -> list[ConsensusFinding]:
+    def reconcile_findings(
+        self, all_findings: list[ModelFinding], total_models: int
+    ) -> list[ConsensusFinding]:
         if total_models <= 0 or not all_findings:
             return []
 
@@ -44,7 +46,7 @@ class MultiModelConsensusReconciler:
 
         consensus_list = []
         for (file_p, line_n, rule_id), items in grouped.items():
-            models = sorted(list({item.model_name for item in items}))
+            models = sorted({item.model_name for item in items})
             ratio = len(models) / total_models
 
             if ratio >= self.min_agreement_ratio:
@@ -64,4 +66,6 @@ class MultiModelConsensusReconciler:
                     )
                 )
 
-        return sorted(consensus_list, key=lambda c: (c.confidence, c.severity), reverse=True)
+        return sorted(
+            consensus_list, key=lambda c: (c.confidence, c.severity), reverse=True
+        )

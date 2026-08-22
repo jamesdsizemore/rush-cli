@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+
 from rush.governance.synchronizer import IDE_TARGETS
 
 
@@ -36,6 +37,10 @@ class RuleParityChecker:
             else:
                 content = p.read_text(encoding="utf-8")
                 if canonical_sha[:12] not in content:
-                    violations.append(ParityViolation(rel_target, "Rule file out of sync with AGENTS.md SHA."))
+                    violations.append(
+                        ParityViolation(
+                            rel_target, "Rule file out of sync with AGENTS.md SHA."
+                        )
+                    )
 
         return violations

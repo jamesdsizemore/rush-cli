@@ -70,4 +70,3 @@ def test_environment_doctor_anti_shadowing(tmp_path: Path) -> None:
     res = doc.check_python_anti_shadowing()
     assert res.name in {"python_runtime", "python_anti_shadowing"}
     assert res.status in {"ok", "warn", "fail"}
-

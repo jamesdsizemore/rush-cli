@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+
 from rush.plugins.loader import PluginSpec
-from rush.plugins.trust_store import PluginTrustStore
 from rush.plugins.sandboxed_env import SandboxedEnvironment
+from rush.plugins.trust_store import PluginTrustStore
 from rush.tools.base import Finding, ToolResult
 from rush.tools.common import run_subprocess
 
@@ -25,7 +26,9 @@ class HardenedPluginExecutor:
         paths: list[Path],
         allow_untrusted: bool = False,
     ) -> ToolResult:
-        if not allow_untrusted and not self.trust_store.is_trusted(plugin.name, plugin.executable_path):
+        if not allow_untrusted and not self.trust_store.is_trusted(
+            plugin.name, plugin.executable_path
+        ):
             finding: Finding = {
                 "path": str(plugin.executable_path),
                 "line": 1,
@@ -74,7 +77,7 @@ class HardenedPluginExecutor:
                 "summary": data.get("summary", f"Plugin {plugin.name} finished."),
                 "findings": findings,
             }
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return {
                 "tool": "plugin",
                 "engine": plugin.name,

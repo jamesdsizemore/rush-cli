@@ -25,5 +25,7 @@ class ArtifactProvenanceVerifier:
                         sha.update(chunk)
                 lines.append(f"{sha.hexdigest()}  {p.name}")
 
-        manifest_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        manifest_file.write_text(
+            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+        )
         return manifest_file

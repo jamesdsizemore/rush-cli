@@ -46,6 +46,8 @@ class AgentsMdSynchronizer:
 
             action = "updated" if out_p.exists() else "created"
             out_p.write_text(full_content, encoding="utf-8")
-            results.append(SyncResult(target_path=rel_target, action=action, sha256=canonical_sha))
+            results.append(
+                SyncResult(target_path=rel_target, action=action, sha256=canonical_sha)
+            )
 
         return results

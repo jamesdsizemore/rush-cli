@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rush.hotspots.complexity import CyclomaticComplexityCalculator
@@ -20,11 +20,11 @@ def test_secret_scrubber() -> None:
 
 def test_time_decay_calculator() -> None:
     calc = TimeDecayCalculator(half_life_days=90.0)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     weight_now = calc.calculate_weight(now, current_date=now)
     assert weight_now == 1.0
 
-    past = datetime.fromtimestamp(now.timestamp() - (90 * 86400), tz=timezone.utc)
+    past = datetime.fromtimestamp(now.timestamp() - (90 * 86400), tz=UTC)
     weight_past = calc.calculate_weight(past, current_date=now)
     assert round(weight_past, 2) == 0.50
 

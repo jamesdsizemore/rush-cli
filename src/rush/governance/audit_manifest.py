@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
 from rush.governance.synchronizer import IDE_TARGETS
 
 
@@ -28,7 +28,7 @@ class AuditManifestGenerator:
                 targets_sha[rel_p] = hashlib.sha256(f.read_bytes()).hexdigest()
 
         return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "canonical_agents_md_sha256": agents_sha,
             "synchronized_targets": targets_sha,
             "status": "VALID" if agents_sha else "MISSING_CANONICAL",

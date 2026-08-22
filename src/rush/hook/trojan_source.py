@@ -6,8 +6,17 @@ from pathlib import Path
 
 # Dangerous Trojan Source Unicode Bidirectional characters
 BIDI_CHARS = {
-    "\u202A", "\u202B", "\u202C", "\u202D", "\u202E",
-    "\u2066", "\u2067", "\u2068", "\u2069", "\u200E", "\u200F",
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
+    "\u2066",
+    "\u2067",
+    "\u2068",
+    "\u2069",
+    "\u200e",
+    "\u200f",
 }
 
 
@@ -20,7 +29,7 @@ class TrojanSourceDetector:
             return []
         try:
             text = file_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except OSError:
             return []
 
         findings = []

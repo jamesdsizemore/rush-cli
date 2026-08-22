@@ -21,9 +21,12 @@ class AstDictMerger:
                 values.append(v)
 
         for k, v in zip(dict_b.keys, dict_b.values):
-            if k is not None and isinstance(k, ast.Constant):
-                if k.value not in seen_keys:
-                    keys.append(k)
-                    values.append(v)
+            if (
+                k is not None
+                and isinstance(k, ast.Constant)
+                and k.value not in seen_keys
+            ):
+                keys.append(k)
+                values.append(v)
 
         return ast.Dict(keys=keys, values=values)

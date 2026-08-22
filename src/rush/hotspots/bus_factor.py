@@ -6,6 +6,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 
@@ -54,15 +55,17 @@ class BusFactorAssessor:
             if total_edits == 0:
                 continue
 
-            sorted_authors = sorted(authors_map.items(), key=lambda x: x[1], reverse=True)
+            sorted_authors = sorted(
+                authors_map.items(), key=lambda x: x[1], reverse=True
+            )
             primary_name, primary_count = sorted_authors[0]
             owner_pct = (primary_count / total_edits) * 100.0
 
             entropy = 0.0
-            for a_name, count in authors_map.items():
+            for count in authors_map.values():
                 p = count / total_edits
                 if p > 0:
-                    entropy += - p * math.log2(p)
+                    entropy += -p * math.log2(p)
 
             results.append(
                 FileKnowledgeOwnership(

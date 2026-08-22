@@ -78,4 +78,3 @@ def test_path_filter_and_router() -> None:
     tools = ToolRouter.get_tools_for_paths([Path("src/app.py")])
     assert "ruff" in tools
     assert "mypy" in tools
-

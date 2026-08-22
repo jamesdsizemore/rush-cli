@@ -40,7 +40,9 @@ def test_parses_review_source_policy_markers_and_exclusions(tmp_path) -> None:
 def test_detect_project_stacks_python(tmp_path) -> None:
     from rush.discovery.stack import detect_project_stacks
 
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='test'\n", encoding="utf-8"
+    )
     stacks = detect_project_stacks(tmp_path)
     assert any(s.language == "python" for s in stacks)
 
@@ -57,7 +59,9 @@ def test_detect_project_stacks_typescript(tmp_path) -> None:
 def test_generate_initial_config(tmp_path) -> None:
     from rush.tools.init_config import generate_initial_config
 
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='test'\n", encoding="utf-8"
+    )
     cfg = generate_initial_config(tmp_path)
     assert "[project]" in cfg
     assert "[cache]" in cfg
@@ -66,7 +70,9 @@ def test_generate_initial_config(tmp_path) -> None:
 def test_setup_wizard_non_interactive(tmp_path) -> None:
     from rush.tools.setup_wizard import run_setup_wizard
 
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='test'\n", encoding="utf-8"
+    )
     res = run_setup_wizard(tmp_path, non_interactive=True)
     assert "python" in res["stacks"]
     assert len(res["skipped"]) > 0
@@ -77,4 +83,3 @@ def test_install_engine_package_security_rejection() -> None:
 
     with pytest.raises(ValueError, match="Invalid or hostile package name"):
         install_engine_package("npm", "malicious; rm -rf /")
-

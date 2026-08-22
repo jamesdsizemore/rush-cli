@@ -30,11 +30,13 @@ class HookTamperDetector:
 
     def verify_signatures(self) -> tuple[bool, list[str]]:
         if not self.sig_file.exists():
-            return False, ["Hook signatures not recorded in .rush/hook_signatures.json."]
+            return False, [
+                "Hook signatures not recorded in .rush/hook_signatures.json."
+            ]
 
         try:
             expected = json.loads(self.sig_file.read_text(encoding="utf-8"))
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, ValueError) as e:
             return False, [f"Corrupt hook signature file: {e}"]
 
         tampered = []
@@ -45,6 +47,8 @@ class HookTamperDetector:
             else:
                 actual_sha = hashlib.sha256(p.read_bytes()).hexdigest()
                 if actual_sha != exp_sha:
-                    tampered.append(f"Hook '{name}' has been modified (tampered SHA: {actual_sha[:8]}).")
+                    tampered.append(
+                        f"Hook '{name}' has been modified (tampered SHA: {actual_sha[:8]})."
+                    )
 
         return len(tampered) == 0, tampered

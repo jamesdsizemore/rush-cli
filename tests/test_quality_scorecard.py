@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from rush.score.calculator import CompositeScorecardCalculator, PillarScores, WeightNormalizer
+from rush.score.calculator import (
+    CompositeScorecardCalculator,
+    PillarScores,
+    WeightNormalizer,
+)
 from rush.score.consensus import ModelFinding, MultiModelConsensusReconciler
 from rush.score.html_report import HtmlReportGenerator
 from rush.score.pr_card import PRCardGenerator
@@ -37,9 +41,13 @@ def test_composite_scorecard_calculator() -> None:
 def test_multi_model_consensus_reconciler() -> None:
     reconciler = MultiModelConsensusReconciler(min_agreement_ratio=0.5)
 
-    f1 = ModelFinding("claude", "src/auth.py", 42, "SEC001", "HIGH", "SQL Injection risk")
+    f1 = ModelFinding(
+        "claude", "src/auth.py", 42, "SEC001", "HIGH", "SQL Injection risk"
+    )
     f2 = ModelFinding("gpt4", "src/auth.py", 42, "SEC001", "HIGH", "SQL Injection risk")
-    f3 = ModelFinding("gemini", "src/auth.py", 10, "STYLE01", "LOW", "Missing docstring")
+    f3 = ModelFinding(
+        "gemini", "src/auth.py", 10, "STYLE01", "LOW", "Missing docstring"
+    )
 
     findings = reconciler.reconcile_findings([f1, f2, f3], total_models=3)
     assert len(findings) == 1
@@ -50,7 +58,9 @@ def test_multi_model_consensus_reconciler() -> None:
 
 def test_sarif_exporter() -> None:
     reconciler = MultiModelConsensusReconciler(min_agreement_ratio=0.5)
-    f1 = ModelFinding("claude", "src/auth.py", 42, "SEC001", "HIGH", "SQL Injection risk")
+    f1 = ModelFinding(
+        "claude", "src/auth.py", 42, "SEC001", "HIGH", "SQL Injection risk"
+    )
     findings = reconciler.reconcile_findings([f1], total_models=1)
 
     sarif_json = SarifExporter.export_sarif(findings)

@@ -11,9 +11,9 @@ from rush.sync.ts_generator import TypeScriptContractGenerator
 
 __all__ = [
     "ApiDriftFinding",
+    "DiscoveredEndpoint",
     "DjangoNinjaAstExtractor",
     "DjangoNinjaEndpoint",
-    "DiscoveredEndpoint",
     "EnvSchemaSynchronizer",
     "FastApiAstExtractor",
     "OpenApiContractChecker",

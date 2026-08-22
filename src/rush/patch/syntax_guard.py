@@ -20,8 +20,11 @@ class PatchSyntaxGuard:
                 ast.parse(source, filename=str(file_path))
                 return True, None
             except SyntaxError as e:
-                return False, f"Python syntax error at line {e.lineno}, col {e.offset}: {e.msg}"
-            except Exception as e:
+                return (
+                    False,
+                    f"Python syntax error at line {e.lineno}, col {e.offset}: {e.msg}",
+                )
+            except (ValueError, OSError) as e:
                 return False, f"AST parse failure: {e}"
 
         return True, None

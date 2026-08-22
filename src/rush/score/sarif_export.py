@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 from rush.score.consensus import ConsensusFinding
 
 

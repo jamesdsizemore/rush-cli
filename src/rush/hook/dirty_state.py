@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 
@@ -15,7 +16,15 @@ class DirtyStateStashSupervisor:
 
     def stash_unstaged(self) -> bool:
         proc = run_subprocess(
-            ["git", "stash", "push", "--keep-index", "-u", "-m", "rush-pre-commit-isolation"],
+            [
+                "git",
+                "stash",
+                "push",
+                "--keep-index",
+                "-u",
+                "-m",
+                "rush-pre-commit-isolation",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode == 0 and "No local changes to save" not in proc.stdout:

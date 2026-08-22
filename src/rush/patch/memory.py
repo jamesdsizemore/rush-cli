@@ -42,7 +42,9 @@ class PatchMemoryStore:
             )
             conn.commit()
 
-    def record_success(self, error_signature: str, target_file: str, diff_patch: str) -> None:
+    def record_success(
+        self, error_signature: str, target_file: str, diff_patch: str
+    ) -> None:
         sig_hash = hashlib.sha256(error_signature.encode("utf-8")).hexdigest()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(

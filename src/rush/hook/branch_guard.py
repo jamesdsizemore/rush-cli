@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 PROTECTED_BRANCHES = {"main", "master", "release"}
@@ -24,5 +25,8 @@ class BranchProtectionGuard:
 
         current = proc.stdout.strip()
         if current in PROTECTED_BRANCHES:
-            return False, f"Direct commits to protected branch '{current}' are prohibited. Please use a feature branch."
+            return (
+                False,
+                f"Direct commits to protected branch '{current}' are prohibited. Please use a feature branch.",
+            )
         return True, None

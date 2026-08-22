@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, ClassVar, TypedDict
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
@@ -43,6 +43,8 @@ class Engine(ABC):
         cwd: Path | None = None,
     ) -> EngineResult: ...
 
+    _cached_versions: ClassVar[dict[str, str]] = {}
+
     def version(self) -> str | None:
         """Capture the engine's version string. Return None if unavailable.
 
@@ -52,6 +54,9 @@ class Engine(ABC):
         binary_path = resolve_binary(self.binary)
         if binary_path is None:
             return None
+        if binary_path in Engine._cached_versions:
+            return Engine._cached_versions[binary_path]
+
         try:
             r = run_subprocess(
                 [binary_path, "--version"],
@@ -61,14 +66,20 @@ class Engine(ABC):
                 return None
             out = (r.stdout or r.stderr).strip()
             # First token that looks like a version, e.g. "ruff 0.6.9" or "v0.6.9"
+            ver = None
             for token in out.split():
                 if (
                     token
                     and (token[0].isdigit() or token.startswith("v"))
                     and any(c.isdigit() for c in token)
                 ):
-                    return token.lstrip("v")
-            return out.splitlines()[0] if out else None
+                    ver = token.lstrip("v")
+                    break
+            if ver is None and out:
+                ver = out.splitlines()[0]
+            if ver is not None:
+                Engine._cached_versions[binary_path] = ver
+            return ver
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return None
 

@@ -78,12 +78,19 @@ class OpenAIProvider(LLMProvider):
                 return LLMResponse(
                     provider=self.name,
                     model=data.get("model", self.default_model),
-                    content=text_content or f"[OpenAI GPT] Analyzed {n_findings} findings.",
+                    content=text_content
+                    or f"[OpenAI GPT] Analyzed {n_findings} findings.",
                 )
-        except Exception as err:
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+        ) as err:
             return LLMResponse(
                 provider=self.name,
                 model=self.default_model,
                 content=f"[OpenAI GPT Error] API request failed: {err}",
             )
-

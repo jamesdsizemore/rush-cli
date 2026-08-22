@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,6 @@ from rush.config import RushConfig
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolFn, ToolName, ToolResult
-
-from dataclasses import dataclass, field
 
 logger = get_logger("tools.doctor")
 
@@ -48,7 +47,10 @@ class EnvironmentDoctor:
                 status="warn",
                 message=f"No local .venv found at '{venv_path}'. Using global interpreter '{current_exe}'.",
                 remediation="Run 'uv venv' or 'python -m venv .venv' to create a project-isolated environment.",
-                details={"executable": str(current_exe), "expected_venv": str(venv_path)},
+                details={
+                    "executable": str(current_exe),
+                    "expected_venv": str(venv_path),
+                },
             )
 
         if not current_exe.is_relative_to(venv_path):
@@ -57,7 +59,10 @@ class EnvironmentDoctor:
                 status="fail",
                 message=f"Interpreter Shadowing Detected: Running from '{current_exe}', but project venv is at '{venv_path}'.",
                 remediation="Activate project virtual environment or invoke via '.venv/Scripts/python.exe' directly.",
-                details={"active_executable": str(current_exe), "project_venv": str(venv_path)},
+                details={
+                    "active_executable": str(current_exe),
+                    "project_venv": str(venv_path),
+                },
             )
 
         return HealthCheck(
@@ -69,7 +74,6 @@ class EnvironmentDoctor:
 
     def diagnose_all(self) -> list[HealthCheck]:
         return [self.check_python_anti_shadowing()]
-
 
 
 def resolve_binary_secure(name: str, cwd: Path | None = None) -> Path | None:

@@ -41,7 +41,6 @@ class CustomPlugin:
     file_extensions: tuple[str, ...] = ()
 
 
-
 def discover_plugins(root: Path) -> list[CustomPlugin]:
     """Discover plugins defined in rush.toml under [plugins.<name>]."""
     cfg_file = (root if root.is_dir() else root.parent) / "rush.toml"
@@ -129,4 +128,3 @@ class PluginLoader:
 
     def discover_plugins(self) -> list[CustomPlugin]:
         return discover_plugins(self.repo_root)
-

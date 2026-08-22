@@ -14,7 +14,6 @@ class RemediationCircuitBreaker:
         self.current_attempts += 1
         return self.current_attempts <= self.max_attempts
 
-
     def is_tripped(self) -> bool:
         return self.current_attempts >= self.max_attempts
 

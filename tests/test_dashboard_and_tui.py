@@ -52,7 +52,16 @@ def test_dashboard_metrics_aggregator() -> None:
         "status": "fail",
         "duration_ms": 30,
         "summary": "error",
-        "findings": [{"path": "a.py", "line": 1, "column": 1, "rule": "E1", "severity": "fail", "message": "fail"}],
+        "findings": [
+            {
+                "path": "a.py",
+                "line": 1,
+                "column": 1,
+                "rule": "E1",
+                "severity": "fail",
+                "message": "fail",
+            }
+        ],
     }
 
     metrics = DashboardMetricsAggregator.compute_metrics([res1, res2])

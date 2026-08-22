@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from rush.token_economy.cache_advisor import CacheBreakpointSuggestion, PromptCacheAdvisor
+from rush.token_economy.cache_advisor import (
+    CacheBreakpointSuggestion,
+    PromptCacheAdvisor,
+)
 from rush.token_economy.compressor import PythonAstOutlineCompressor
 from rush.token_economy.counter import FastBPETokenCounter
 from rush.token_economy.paginator import PaginatedChunk, TokenChunkPaginator

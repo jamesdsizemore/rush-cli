@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class TimeDecayCalculator:
@@ -13,7 +13,9 @@ class TimeDecayCalculator:
         self.half_life_days = half_life_days
         self.decay_constant = math.log(2.0) / self.half_life_days
 
-    def calculate_weight(self, commit_date: datetime, current_date: datetime | None = None) -> float:
-        now = current_date or datetime.now(timezone.utc)
+    def calculate_weight(
+        self, commit_date: datetime, current_date: datetime | None = None
+    ) -> float:
+        now = current_date or datetime.now(UTC)
         age_days = max(0.0, (now - commit_date).total_seconds() / 86400.0)
         return math.exp(-self.decay_constant * age_days)

@@ -12,7 +12,9 @@ from pathlib import Path
 class SecurityAuditLogger:
     """Maintains an append-only, cryptographically chained audit trail on sys.stderr and .rush/audit.log."""
 
-    def __init__(self, repo_root: Path, secret_key: str = "rush_internal_audit_secret") -> None:
+    def __init__(
+        self, repo_root: Path, secret_key: str = "rush_internal_audit_secret"
+    ) -> None:
         self.repo_root = repo_root.resolve()
         self.secret_key = secret_key.encode("utf-8")
         self.log_file = self.repo_root / ".rush" / "audit.log"
@@ -28,7 +30,9 @@ class SecurityAuditLogger:
             "prev_hash": self.last_hash,
         }
         record_bytes = json.dumps(record_body, sort_keys=True).encode("utf-8")
-        current_hash = hmac.new(self.secret_key, record_bytes, hashlib.sha256).hexdigest()
+        current_hash = hmac.new(
+            self.secret_key, record_bytes, hashlib.sha256
+        ).hexdigest()
         record_body["hmac_sha256"] = current_hash
         self.last_hash = current_hash
 

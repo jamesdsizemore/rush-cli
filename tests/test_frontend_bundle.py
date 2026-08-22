@@ -7,7 +7,6 @@ from pathlib import Path
 from rush.bundle.barrel_auditor import BarrelImportAuditor
 from rush.bundle.budget_gate import PerformanceBudgetGate
 from rush.bundle.chunk_calculator import BundleChunkCalculator
-from rush.bundle.code_splitting import CodeSplittingValidator
 from rush.bundle.css_duplication import CssDuplicationScanner
 from rush.bundle.dead_assets import OrphanedAssetScanner
 from rush.bundle.polyfill_auditor import PolyfillAuditor
@@ -40,7 +39,6 @@ def test_performance_budget_gate(tmp_path: Path) -> None:
     assert violations[0].file_name == "vendor.huge.js"
 
 
-
 def test_orphaned_asset_scanner(tmp_path: Path) -> None:
     assets = tmp_path / "public"
     assets.mkdir()
@@ -49,7 +47,9 @@ def test_orphaned_asset_scanner(tmp_path: Path) -> None:
 
     src = tmp_path / "src"
     src.mkdir()
-    (src / "App.tsx").write_text('<img src="/public/used_logo.png" />', encoding="utf-8")
+    (src / "App.tsx").write_text(
+        '<img src="/public/used_logo.png" />', encoding="utf-8"
+    )
 
     scanner = OrphanedAssetScanner(tmp_path)
     orphaned = scanner.find_orphaned_assets()
@@ -59,7 +59,9 @@ def test_orphaned_asset_scanner(tmp_path: Path) -> None:
 
 def test_barrel_import_auditor(tmp_path: Path) -> None:
     src_file = tmp_path / "Component.tsx"
-    src_file.write_text('import { Button, Dialog } from "@mui/material";', encoding="utf-8")
+    src_file.write_text(
+        'import { Button, Dialog } from "@mui/material";', encoding="utf-8"
+    )
 
     findings = BarrelImportAuditor.audit_source_file(src_file)
     assert len(findings) == 1
@@ -68,8 +70,12 @@ def test_barrel_import_auditor(tmp_path: Path) -> None:
 
 def test_css_duplication_scanner(tmp_path: Path) -> None:
     css_file = tmp_path / "styles.css"
-    dup_block = "display: flex; justify-content: center; align-items: center; padding: 20px;"
-    css_file.write_text(f".header {{ {dup_block} }}\n.footer {{ {dup_block} }}", encoding="utf-8")
+    dup_block = (
+        "display: flex; justify-content: center; align-items: center; padding: 20px;"
+    )
+    css_file.write_text(
+        f".header {{ {dup_block} }}\n.footer {{ {dup_block} }}", encoding="utf-8"
+    )
 
     duplicates = CssDuplicationScanner.scan_stylesheet(css_file)
     assert len(duplicates) == 1

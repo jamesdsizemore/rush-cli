@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 from rush.workspaces.models import WorkspacePackage
 
@@ -35,8 +35,12 @@ class WorkspaceDiscovery:
             for pattern in members:
                 for member_path in self.repo_root.glob(pattern):
                     if member_path.is_dir() and (member_path / "Cargo.toml").exists():
-                        pkg_data = tomllib.loads((member_path / "Cargo.toml").read_text(encoding="utf-8"))
-                        pkg_name = pkg_data.get("package", {}).get("name", member_path.name)
+                        pkg_data = tomllib.loads(
+                            (member_path / "Cargo.toml").read_text(encoding="utf-8")
+                        )
+                        pkg_name = pkg_data.get("package", {}).get(
+                            "name", member_path.name
+                        )
                         rel_path = member_path.relative_to(self.repo_root).as_posix()
                         packages.append(
                             WorkspacePackage(
@@ -46,8 +50,8 @@ class WorkspaceDiscovery:
                                 relative_path=rel_path,
                             )
                         )
-        except Exception:
-            pass
+        except (OSError, tomllib.TOMLDecodeError, KeyError, ValueError):
+            return packages
         return packages
 
     def _discover_pnpm_workspaces(self) -> list[WorkspacePackage]:
@@ -66,8 +70,8 @@ class WorkspaceDiscovery:
                             relative_path=rel_path,
                         )
                     )
-                except Exception:
-                    pass
+                except (OSError, json.JSONDecodeError, KeyError):
+                    continue
         return packages
 
     def _discover_python_workspaces(self) -> list[WorkspacePackage]:
@@ -86,8 +90,8 @@ class WorkspaceDiscovery:
                             relative_path=rel_path,
                         )
                     )
-                except Exception:
-                    pass
+                except (OSError, tomllib.TOMLDecodeError, KeyError):
+                    continue
         return packages
 
     def _discover_go_workspaces(self) -> list[WorkspacePackage]:
@@ -116,9 +120,11 @@ class WorkspaceDiscovery:
                                 name=mod_path.name,
                                 kind="go",
                                 root_path=mod_path,
-                                relative_path=mod_path.relative_to(self.repo_root).as_posix(),
+                                relative_path=mod_path.relative_to(
+                                    self.repo_root
+                                ).as_posix(),
                             )
                         )
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError):
+            return packages
         return packages

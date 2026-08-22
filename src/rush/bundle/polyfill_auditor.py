@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 LEGACY_POLYFILLS = {
@@ -24,5 +23,7 @@ class PolyfillAuditor:
         findings = []
         for poly in LEGACY_POLYFILLS:
             if poly in text:
-                findings.append(f"{file_path.name}: Redundant polyfill '{poly}' detected.")
+                findings.append(
+                    f"{file_path.name}: Redundant polyfill '{poly}' detected."
+                )
         return findings

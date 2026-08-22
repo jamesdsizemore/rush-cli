@@ -34,9 +34,11 @@ class E2eTool(GuardedQualityTool):
 
         start = now_ms()
         has_browser = False
-        if options.get("allow_browser"):
-            has_browser = True
-        elif permissions is not None and getattr(permissions, "browser", False):
+        if (
+            options.get("allow_browser")
+            or permissions is not None
+            and getattr(permissions, "browser", False)
+        ):
             has_browser = True
 
         if not has_browser:
@@ -69,7 +71,11 @@ class E2eTool(GuardedQualityTool):
                 },
             )
 
-        proc = run_subprocess(["playwright", "test"], cwd=path if path.is_dir() else path.parent, timeout=180.0)
+        proc = run_subprocess(
+            ["playwright", "test"],
+            cwd=path if path.is_dir() else path.parent,
+            timeout=180.0,
+        )
         status = "ok" if proc.returncode == 0 else "fail"
         return ToolResult(
             tool=self.name,
@@ -87,4 +93,3 @@ class E2eTool(GuardedQualityTool):
                 )
             },
         )
-

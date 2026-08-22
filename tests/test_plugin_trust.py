@@ -54,6 +54,7 @@ def test_plugin_trust_store_sha256(tmp_path: Path) -> None:
 
 def test_sandboxed_environment() -> None:
     import os
+
     from rush.plugins.sandboxed_env import SandboxedEnvironment
 
     os.environ["OPENAI_API_KEY"] = "sk-secret-123"
@@ -88,4 +89,3 @@ def test_agent_skill_generator() -> None:
     skill_md = AgentSkillGenerator.generate_skill_markdown(spec)
     assert "name: custom_scanner" in skill_md
     assert "rush plugin run custom_scanner" in skill_md
-

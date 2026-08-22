@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 
@@ -53,5 +54,5 @@ class PolyglotDeadCodeDetector:
     def scan_typescript(self) -> list[DeadCodeFinding]:
         if not (self.repo_root / "package.json").exists():
             return []
-        proc = run_subprocess(["npx", "knip", "--reporter", "json"], cwd=self.repo_root)
+        run_subprocess(["npx", "knip", "--reporter", "json"], cwd=self.repo_root)
         return []

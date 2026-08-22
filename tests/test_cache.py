@@ -220,4 +220,3 @@ def test_validate_git_ref() -> None:
 
     with pytest.raises(ValueError, match="Invalid Git reference"):
         validate_git_ref("main; rm -rf /")
-

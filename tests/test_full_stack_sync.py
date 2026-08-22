@@ -43,7 +43,9 @@ def test_openapi_breaking_changes(tmp_path: Path) -> None:
     new_spec = {"paths": {"/users": {"get": {}}}}
 
     checker = OpenApiContractChecker(tmp_path / "spec.json")
-    findings = checker.inspect_breaking_changes(json.dumps(old_spec), json.dumps(new_spec))
+    findings = checker.inspect_breaking_changes(
+        json.dumps(old_spec), json.dumps(new_spec)
+    )
     assert len(findings) == 2
     assert any(f.endpoint_path == "/items" for f in findings)
     assert any(f.endpoint_path == "/users" and f.method == "POST" for f in findings)
@@ -87,7 +89,9 @@ def list_items(request):
 
 def test_env_schema_synchronizer(tmp_path: Path) -> None:
     env_example = tmp_path / ".env.example"
-    env_example.write_text("DATABASE_URL=sqlite:///db.sqlite3\nREDIS_PORT=6379\n", encoding="utf-8")
+    env_example.write_text(
+        "DATABASE_URL=sqlite:///db.sqlite3\nREDIS_PORT=6379\n", encoding="utf-8"
+    )
 
     pydantic_settings = """
 class Settings(BaseSettings):
@@ -96,7 +100,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str
 """
     example_keys = EnvSchemaSynchronizer.extract_env_keys_from_file(env_example)
-    settings_keys = EnvSchemaSynchronizer.extract_settings_keys_from_pydantic(pydantic_settings)
+    settings_keys = EnvSchemaSynchronizer.extract_settings_keys_from_pydantic(
+        pydantic_settings
+    )
     ok, missing = EnvSchemaSynchronizer.verify_env_parity(example_keys, settings_keys)
     assert ok is False
     assert "SECRET_KEY" in missing

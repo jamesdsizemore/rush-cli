@@ -68,7 +68,11 @@ class VisualTool(GuardedQualityTool):
                 },
             )
 
-        proc = run_subprocess([visual_bin, "test"], cwd=path if path.is_dir() else path.parent, timeout=180.0)
+        proc = run_subprocess(
+            [visual_bin, "test"],
+            cwd=path if path.is_dir() else path.parent,
+            timeout=180.0,
+        )
         status = "ok" if proc.returncode == 0 else "fail"
         return ToolResult(
             tool=self.name,
@@ -86,4 +90,3 @@ class VisualTool(GuardedQualityTool):
                 )
             },
         )
-

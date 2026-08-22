@@ -14,8 +14,8 @@ __all__ = [
     "CIWorkflowGenerator",
     "DockerfileGenerator",
     "MultiArchCoordinator",
-    "SemanticChangelogGenerator",
     "SemVer",
     "SemVerValidator",
+    "SemanticChangelogGenerator",
     "TargetTripleConfig",
 ]

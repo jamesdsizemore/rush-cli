@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
 class PillarScores:
-    type_safety: float      # Weight: 20%
-    test_coverage: float    # Weight: 25%
-    code_health: float      # Weight: 20%
-    security: float         # Weight: 15%
-    token_economy: float    # Weight: 10%
-    governance: float       # Weight: 10%
+    type_safety: float  # Weight: 20%
+    test_coverage: float  # Weight: 25%
+    code_health: float  # Weight: 20%
+    security: float  # Weight: 15%
+    token_economy: float  # Weight: 10%
+    governance: float  # Weight: 10%
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class WeightNormalizer:
 class CompositeScorecardCalculator:
     """Calculates deterministic 0-100% repository health score and letter grade."""
 
-    WEIGHTS = {
+    WEIGHTS: ClassVar[dict[str, float]] = {
         "type_safety": 0.20,
         "test_coverage": 0.25,
         "code_health": 0.20,
@@ -76,4 +77,6 @@ class CompositeScorecardCalculator:
             grade = "F"
 
         summary = f"Composite Quality Score: {total}% (Grade: {grade})"
-        return ScorecardReport(composite_score=total, letter_grade=grade, pillars=pillars, summary=summary)
+        return ScorecardReport(
+            composite_score=total, letter_grade=grade, pillars=pillars, summary=summary
+        )

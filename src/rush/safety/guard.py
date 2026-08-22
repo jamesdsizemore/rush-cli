@@ -35,10 +35,7 @@ class AgentSafetyGuard:
         if path_str in PROTECTED_GOVERNANCE_FILES:
             return True
 
-        if path_str.startswith(".git/"):
-            return True
-
-        return False
+        return bool(path_str.startswith(".git/"))
 
     def validate_write_target(self, target_path: Path | str) -> None:
         if self.is_file_protected(target_path):

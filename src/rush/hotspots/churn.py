@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 
@@ -25,7 +26,14 @@ class GitChurnExtractor:
 
     def extract_churn(self, max_commits: int = 500) -> dict[str, FileChurnStats]:
         proc = run_subprocess(
-            ["git", "--no-pager", "log", f"-n{max_commits}", "--numstat", "--format=COMMIT|%an|%s"],
+            [
+                "git",
+                "--no-pager",
+                "log",
+                f"-n{max_commits}",
+                "--numstat",
+                "--format=COMMIT|%an|%s",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode != 0:
@@ -53,7 +61,12 @@ class GitChurnExtractor:
                     continue
 
                 if file_p not in file_data:
-                    file_data[file_p] = {"commits": 0, "ins": 0, "dels": 0, "authors": set()}
+                    file_data[file_p] = {
+                        "commits": 0,
+                        "ins": 0,
+                        "dels": 0,
+                        "authors": set(),
+                    }
 
                 file_data[file_p]["commits"] += 1
                 file_data[file_p]["ins"] += ins

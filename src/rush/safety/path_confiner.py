@@ -13,7 +13,9 @@ class WorkspacePathConfiner:
 
     def confine_path(self, target_path: Path | str) -> Path:
         p = Path(target_path)
-        resolved = (self.repo_root / p).resolve() if not p.is_absolute() else p.resolve()
+        resolved = (
+            (self.repo_root / p).resolve() if not p.is_absolute() else p.resolve()
+        )
 
         if not resolved.is_relative_to(self.repo_root):
             raise PermissionError(

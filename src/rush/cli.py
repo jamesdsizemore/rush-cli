@@ -1151,7 +1151,9 @@ def workspace_boundary_cmd(path: Path) -> None:
     result = guard.check_package_boundaries(packages)
     click.echo(result["summary"])
     for f in result.get("findings") or []:
-        click.echo(f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} {f.get('message')}")
+        click.echo(
+            f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} {f.get('message')}"
+        )
     if result["status"] == "fail":
         sys.exit(1)
 
@@ -1167,27 +1169,6 @@ def workspace_locks_cmd(path: Path) -> None:
     click.echo(result["summary"])
     for f in result.get("findings") or []:
         click.echo(f"  - [{f.get('severity', 'info')}] {f.get('message')}")
-
-
-@cli.command(name="dashboard")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-@click.option("--port", default=8080, type=int, help="Port to bind dashboard server.")
-@click.option("--no-browser", is_flag=True, help="Do not automatically launch web browser.")
-def dashboard_cmd(path: Path, port: int, no_browser: bool) -> None:
-    """Launch ephemeral authenticated web dashboard for quality telemetry."""
-    from rush.dashboard.auth import SessionAuthManager
-
-    auth_mgr = SessionAuthManager()
-    url = f"http://127.0.0.1:{port}/?token={auth_mgr.session_token}"
-    click.echo(f"Rush Dashboard running at: {url}")
-    click.echo("Session authenticated with temporary bearer token. Press Ctrl+C to stop.")
-
-
-@cli.command(name="ui")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def ui_cmd(path: Path) -> None:
-    """Launch interactive terminal UI for navigating and resolving findings."""
-    click.echo("Rush Interactive Terminal UI initialized.")
 
 
 @cli.group(name="patch")
@@ -1226,7 +1207,9 @@ def patch_memory_list_cmd() -> None:
     records = store.list_records()
     click.echo(f"Stored Patch Records ({len(records)}):")
     for r in records:
-        click.echo(f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})")
+        click.echo(
+            f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})"
+        )
 
 
 @cli.group(name="release")
@@ -1286,7 +1269,10 @@ def guard_check_path(file_path: str) -> None:
 
     guard = AgentSafetyGuard(Path.cwd())
     if guard.is_file_protected(file_path):
-        click.echo(f"[PROTECTED] Target path '{file_path}' is an immutable governance file.", err=True)
+        click.echo(
+            f"[PROTECTED] Target path '{file_path}' is an immutable governance file.",
+            err=True,
+        )
         sys.exit(1)
     else:
         click.echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
@@ -1314,6 +1300,33 @@ def token_count_cmd(target_path: Path) -> None:
         click.echo(f"{target_path} (recursive): {total} tokens")
 
 
+@token_group.command(name="outline")
+@click.argument("file_path", type=click.Path(exists=True, path_type=Path))
+def token_outline_cmd(file_path: Path) -> None:
+    """Generate high-density AST skeleton outline for context compression."""
+    from rush.token_economy.compressor import PythonAstOutlineCompressor
+
+    source = file_path.read_text(encoding="utf-8", errors="replace")
+    if file_path.suffix == ".py":
+        compressed = PythonAstOutlineCompressor.compress_source(source)
+        click.echo(compressed)
+    else:
+        click.echo(source)
+
+
+@token_group.command(name="cache-advisor")
+@click.argument("file_path", type=click.Path(exists=True, path_type=Path))
+def token_cache_advisor_cmd(file_path: Path) -> None:
+    """Analyze prompt prefix cache breakpoints."""
+    from rush.token_economy.cache_advisor import PromptCacheAdvisor
+
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    suggestion = PromptCacheAdvisor.analyze_prefix(text)
+    click.echo(
+        f"Cache Advisor Analysis: {suggestion.reason} (Est. Savings: {suggestion.estimated_cache_savings_percent}%)"
+    )
+
+
 @cli.command(name="outline")
 @click.argument("file_path", type=click.Path(exists=True, path_type=Path))
 def outline_cmd(file_path: Path) -> None:
@@ -1335,7 +1348,11 @@ def sync_group() -> None:
 
 @sync_group.command(name="openapi")
 @click.argument("openapi_file", type=click.Path(exists=True, path_type=Path))
-@click.option("--output-ts", type=click.Path(path_type=Path), help="Path to output generated TypeScript interfaces.")
+@click.option(
+    "--output-ts",
+    type=click.Path(path_type=Path),
+    help="Path to output generated TypeScript interfaces.",
+)
 def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
     """Verify OpenAPI contract and optionally generate TypeScript types."""
     from rush.sync.ts_generator import TypeScriptContractGenerator
@@ -1347,6 +1364,25 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
         click.echo(f"Wrote generated TypeScript interfaces to {output_ts}")
     else:
         click.echo(ts_code)
+
+
+@sync_group.command(name="env")
+@click.argument("env_example", default=".env.example", type=click.Path(path_type=Path))
+@click.argument("env_actual", default=".env", type=click.Path(path_type=Path))
+def sync_env_cmd(env_example: Path, env_actual: Path) -> None:
+    """Check environment variable synchronization between .env.example and .env."""
+    from rush.sync.env_sync import EnvironmentVariableSynchronizer
+
+    missing = EnvironmentVariableSynchronizer.find_missing_keys(env_example, env_actual)
+    if missing:
+        click.echo(f"Missing environment variables in {env_actual} ({len(missing)}):")
+        for k in missing:
+            click.echo(f"  - {k}")
+        sys.exit(1)
+    else:
+        click.echo(
+            f"All environment variables in {env_example} are present in {env_actual}."
+        )
 
 
 @cli.group(name="hygiene")
@@ -1364,6 +1400,20 @@ def hygiene_dead_code_cmd() -> None:
     click.echo(f"Dead Code Findings ({len(findings)}):")
     for f in findings:
         click.echo(f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}")
+
+
+@hygiene_group.command(name="clean-imports")
+@click.argument("target_file", type=click.Path(exists=True, path_type=Path))
+def hygiene_clean_imports_cmd(target_file: Path) -> None:
+    """Remove unused imports from target Python source file."""
+    from rush.hygiene.unused_import_cleaner import UnusedImportCleaner
+
+    cleaned, count = UnusedImportCleaner.clean_file(target_file)
+    if count > 0:
+        target_file.write_text(cleaned, encoding="utf-8")
+        click.echo(f"Cleaned {count} unused import(s) in {target_file}")
+    else:
+        click.echo(f"No unused imports found in {target_file}")
 
 
 @cli.group(name="conflict")
@@ -1407,6 +1457,23 @@ def codegraph_slice_cmd(symbol_name: str) -> None:
         click.echo(s)
 
 
+@codegraph_group.command(name="callers")
+@click.argument("symbol_name")
+def codegraph_callers_cmd(symbol_name: str) -> None:
+    """Trace all reverse callers of target symbol."""
+    from rush.codegraph.store import CodeGraphStore
+    from rush.codegraph.traverser import CallGraphTraverser
+
+    store = CodeGraphStore(Path.cwd() / ".codegraph" / "graph.db")
+    traverser = CallGraphTraverser(store)
+    steps = traverser.trace_callers(symbol_name)
+    click.echo(f"Callers of '{symbol_name}' ({len(steps)}):")
+    for s in steps:
+        click.echo(
+            f"  - [{s.caller.file_path}:{s.caller.start_line}] {s.caller.symbol_name} -> calls -> {s.callee.symbol_name} (depth: {s.depth})"
+        )
+
+
 @cli.group(name="bundle")
 def bundle_group() -> None:
     """Frontend asset and build bundle optimization."""
@@ -1421,7 +1488,21 @@ def bundle_analyze_cmd(dist_dir: Path) -> None:
     reports = BundleChunkCalculator.measure_directory(dist_dir)
     click.echo(f"Analyzed Build Chunks ({len(reports)}):")
     for r in reports:
-        click.echo(f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, brotli: ~{r.brotli_est_bytes} B)")
+        click.echo(
+            f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, brotli: ~{r.brotli_est_bytes} B)"
+        )
+
+
+@bundle_group.command(name="dead-assets")
+@click.argument("assets_dir", type=click.Path(exists=True, path_type=Path))
+def bundle_dead_assets_cmd(assets_dir: Path) -> None:
+    """Scan public/assets directories for unreferenced images and media."""
+    from rush.bundle.dead_assets import DeadAssetScanner
+
+    unused = DeadAssetScanner.scan_unused_assets(assets_dir, Path.cwd() / "src")
+    click.echo(f"Unreferenced Assets ({len(unused)}):")
+    for u in unused:
+        click.echo(f"  - {u}")
 
 
 @cli.group(name="hotspots")
@@ -1438,7 +1519,23 @@ def hotspots_analyze_cmd() -> None:
     scores = calculator.analyze_hotspots()
     click.echo(f"Analyzed Hotspots ({len(scores)}):")
     for s in scores[:10]:
-        click.echo(f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} (Churn: {s.churn_score}, Complexity: {s.complexity_score})")
+        click.echo(
+            f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} (Churn: {s.churn_score}, Complexity: {s.complexity_score})"
+        )
+
+
+@hotspots_group.command(name="bus-factor")
+def hotspots_bus_factor_cmd() -> None:
+    """Calculate module knowledge distribution and bus factor risks."""
+    from rush.hotspots.bus_factor import BusFactorCalculator
+
+    calc = BusFactorCalculator(Path.cwd())
+    reports = calc.compute_bus_factors()
+    click.echo(f"Bus Factor Analysis ({len(reports)} files):")
+    for r in reports[:10]:
+        click.echo(
+            f"  - {r.file_path}: Bus Factor {r.bus_factor} (Primary author: {r.primary_author} {int(r.authorship_share * 100)}%)"
+        )
 
 
 @cli.group(name="governance")
@@ -1456,6 +1553,25 @@ def governance_sync_cmd() -> None:
     click.echo(f"Synchronized Governance Files ({len(results)}):")
     for r in results:
         click.echo(f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})")
+
+
+@governance_group.command(name="check")
+def governance_check_cmd() -> None:
+    """Check that multi-IDE rule files are synchronized with AGENTS.md."""
+    from rush.governance.parity_checker import GovernanceParityChecker
+
+    checker = GovernanceParityChecker(Path.cwd())
+    in_sync, drifted = checker.check_parity()
+    if in_sync:
+        click.echo("[OK] All multi-IDE governance rule files match AGENTS.md.")
+    else:
+        click.echo(
+            f"[DRIFT DETECTED] Unsynchronized governance files ({len(drifted)}):",
+            err=True,
+        )
+        for d in drifted:
+            click.echo(f"  - {d}", err=True)
+        sys.exit(1)
 
 
 @cli.group(name="scaffold")
@@ -1529,11 +1645,21 @@ def score_group() -> None:
 
 @score_group.command(name="compute")
 @click.option("--type-safety", default=90.0, help="Type safety pillar score (0-100).")
-@click.option("--test-coverage", default=85.0, help="Test coverage pillar score (0-100).")
+@click.option(
+    "--test-coverage", default=85.0, help="Test coverage pillar score (0-100)."
+)
 @click.option("--code-health", default=92.0, help="Code health pillar score (0-100).")
 @click.option("--security", default=95.0, help="Security pillar score (0-100).")
-@click.option("--token-economy", default=88.0, help="Token economy pillar score (0-100).")
+@click.option(
+    "--token-economy", default=88.0, help="Token economy pillar score (0-100)."
+)
 @click.option("--governance", default=94.0, help="Governance pillar score (0-100).")
+@click.option(
+    "--export-svg", type=click.Path(path_type=Path), help="Path to write SVG badge."
+)
+@click.option(
+    "--export-html", type=click.Path(path_type=Path), help="Path to write HTML report."
+)
 def score_compute_cmd(
     type_safety: float,
     test_coverage: float,
@@ -1541,9 +1667,13 @@ def score_compute_cmd(
     security: float,
     token_economy: float,
     governance: float,
+    export_svg: Path | None,
+    export_html: Path | None,
 ) -> None:
     """Calculate deterministic 0-100% composite score and grade."""
     from rush.score.calculator import CompositeScorecardCalculator, PillarScores
+    from rush.score.html_report import ScorecardHtmlReportGenerator
+    from rush.score.svg_badge import ScoreSvgBadgeGenerator
 
     pillars = PillarScores(
         type_safety=type_safety,
@@ -1556,6 +1686,18 @@ def score_compute_cmd(
     report = CompositeScorecardCalculator.compute_scorecard(pillars)
     click.echo(report.summary)
 
+    if export_svg:
+        svg = ScoreSvgBadgeGenerator.generate_badge_svg(
+            report.composite_score, report.letter_grade
+        )
+        export_svg.write_text(svg, encoding="utf-8")
+        click.echo(f"Wrote SVG badge to {export_svg}")
+
+    if export_html:
+        html = ScorecardHtmlReportGenerator.generate_html_report(report)
+        export_html.write_text(html, encoding="utf-8")
+        click.echo(f"Wrote HTML report to {export_html}")
+
 
 @cli.group(name="consensus")
 def consensus_group() -> None:
@@ -1563,24 +1705,54 @@ def consensus_group() -> None:
 
 
 @consensus_group.command(name="reconcile")
-def consensus_reconcile_cmd() -> None:
+@click.argument(
+    "findings_files", nargs=-1, type=click.Path(exists=True, path_type=Path)
+)
+@click.option(
+    "--min-agreement", default=0.5, help="Minimum model agreement ratio (0.0 - 1.0)."
+)
+def consensus_reconcile_cmd(
+    findings_files: tuple[Path, ...], min_agreement: float
+) -> None:
     """Reconcile findings from multi-model reviews using weighted consensus."""
-    click.echo("Consensus engine initialized. Ready to reconcile multi-model review findings.")
+    import json
+
+    from rush.score.consensus import ModelFinding, MultiModelConsensusReconciler
+
+    reconciler = MultiModelConsensusReconciler(min_agreement_ratio=min_agreement)
+    all_findings: list[ModelFinding] = []
+    models: set[str] = set()
+
+    for f_path in findings_files:
+        try:
+            data = json.loads(f_path.read_text(encoding="utf-8"))
+            items = data if isinstance(data, list) else data.get("findings", [])
+            model_name = f_path.stem
+            models.add(model_name)
+            for item in items:
+                all_findings.append(
+                    ModelFinding(
+                        model_name=item.get("model", model_name),
+                        file_path=item.get("path", item.get("file_path", "")),
+                        line_number=item.get("line", item.get("line_number", 1)),
+                        rule_id=item.get("rule", item.get("rule_id", "ai-review")),
+                        severity=item.get("severity", "warn"),
+                        description=item.get("message", item.get("description", "")),
+                    )
+                )
+        except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError) as e:
+            click.echo(f"Warning: Could not parse '{f_path}': {e}", err=True)
+
+    total_models = max(len(models), 1)
+    consensus = reconciler.reconcile_findings(all_findings, total_models=total_models)
+    click.echo(
+        f"Consensus Findings ({len(consensus)} agreed by >={int(min_agreement * 100)}% of {total_models} models):"
+    )
+    for c in consensus:
+        click.echo(
+            f"  - [{c.severity.upper()}] {c.file_path}:{c.line_number} {c.rule_id} ({c.description}) [Confidence: {int(c.confidence * 100)}%, Models: {', '.join(c.agreeing_models)}]"
+        )
 
 
 if __name__ == "__main__":
     cli()
-
-
-
-
-
-
-
-
-
-
-
-
-
-

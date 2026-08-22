@@ -21,7 +21,9 @@ class TokenChunkPaginator:
         encoded = text.encode("utf-8")
         total = len(encoded)
         if offset >= total:
-            return PaginatedChunk(chunk_text="", cursor_offset=total, total_bytes=total, has_more=False)
+            return PaginatedChunk(
+                chunk_text="", cursor_offset=total, total_bytes=total, has_more=False
+            )
 
         end = min(offset + limit_bytes, total)
         chunk_bytes = encoded[offset:end]

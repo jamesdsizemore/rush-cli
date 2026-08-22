@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from rush.hotspots.churn import FileChurnStats, GitChurnExtractor
+
+from rush.hotspots.churn import GitChurnExtractor
 from rush.hotspots.complexity import CyclomaticComplexityCalculator
 
 

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from rush.codegraph.store import CodeGraphStore, GraphEdge, GraphNode
+
+from rush.codegraph.store import CodeGraphStore, GraphNode
 
 
 class PythonCodeGraphBuilder:
     """Builds nodes and edges from Python source files."""
 
     @staticmethod
-    def index_python_file(file_path: Path, source_code: str, store: CodeGraphStore) -> None:
+    def index_python_file(
+        file_path: Path, source_code: str, store: CodeGraphStore
+    ) -> None:
         try:
             tree = ast.parse(source_code)
         except SyntaxError:

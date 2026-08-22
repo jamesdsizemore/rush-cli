@@ -15,5 +15,5 @@ class WorkspaceBoundaryGuard:
         try:
             resolved = target_path.resolve()
             return resolved == self.repo_root or resolved.is_relative_to(self.repo_root)
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             return False

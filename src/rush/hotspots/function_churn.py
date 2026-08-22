@@ -19,7 +19,9 @@ class FunctionChurnMapper:
     """Maps git diff change lines to specific AST function definitions."""
 
     @staticmethod
-    def map_file_function_churn(file_path: Path, changed_lines: set[int]) -> list[FunctionChurnFinding]:
+    def map_file_function_churn(
+        file_path: Path, changed_lines: set[int]
+    ) -> list[FunctionChurnFinding]:
         if not file_path.exists() or file_path.suffix != ".py":
             return []
         try:

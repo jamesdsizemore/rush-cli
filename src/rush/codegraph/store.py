@@ -71,7 +71,15 @@ class CodeGraphStore:
                 INSERT OR REPLACE INTO nodes (id, file_path, symbol_name, kind, start_line, end_line, content)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (node.id, node.file_path, node.symbol_name, node.kind, node.start_line, node.end_line, node.content),
+                (
+                    node.id,
+                    node.file_path,
+                    node.symbol_name,
+                    node.kind,
+                    node.start_line,
+                    node.end_line,
+                    node.content,
+                ),
             )
 
     def insert_edge(self, edge: GraphEdge) -> None:

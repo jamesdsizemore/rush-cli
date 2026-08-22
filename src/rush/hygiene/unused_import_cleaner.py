@@ -17,14 +17,22 @@ class UnusedImportCleaner:
 
         class ImportCleaner(ast.NodeTransformer):
             def visit_Import(self, node: ast.Import) -> ast.AST | None:
-                new_names = [alias for alias in node.names if alias.asname or alias.name not in unused_names]
+                new_names = [
+                    alias
+                    for alias in node.names
+                    if alias.asname or alias.name not in unused_names
+                ]
                 if not new_names:
                     return None
                 node.names = new_names
                 return node
 
             def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.AST | None:
-                new_names = [alias for alias in node.names if alias.asname or alias.name not in unused_names]
+                new_names = [
+                    alias
+                    for alias in node.names
+                    if alias.asname or alias.name not in unused_names
+                ]
                 if not new_names:
                     return None
                 node.names = new_names

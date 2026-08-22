@@ -27,11 +27,15 @@ class DjangoNinjaAstExtractor:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for decorator in node.decorator_list:
-                    if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
+                    if isinstance(decorator, ast.Call) and isinstance(
+                        decorator.func, ast.Attribute
+                    ):
                         method = decorator.func.attr.lower()
                         if method in {"get", "post", "put", "delete", "patch"}:
                             route = "/"
-                            if decorator.args and isinstance(decorator.args[0], ast.Constant):
+                            if decorator.args and isinstance(
+                                decorator.args[0], ast.Constant
+                            ):
                                 route = str(decorator.args[0].value)
                             endpoints.append(
                                 DjangoNinjaEndpoint(

@@ -32,6 +32,8 @@ class EnvSchemaSynchronizer:
         return keys
 
     @staticmethod
-    def verify_env_parity(example_keys: set[str], settings_keys: set[str]) -> tuple[bool, set[str]]:
+    def verify_env_parity(
+        example_keys: set[str], settings_keys: set[str]
+    ) -> tuple[bool, set[str]]:
         missing_in_example = settings_keys - example_keys
         return len(missing_in_example) == 0, missing_in_example

@@ -73,8 +73,24 @@ def test_call_graph_traversal(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     store = CodeGraphStore(db)
 
-    caller = GraphNode("a.py:caller_fn:1", "a.py", "caller_fn", "function", 1, 3, "def caller_fn(): callee_fn()")
-    callee = GraphNode("b.py:callee_fn:1", "b.py", "callee_fn", "function", 1, 3, "def callee_fn(): pass")
+    caller = GraphNode(
+        "a.py:caller_fn:1",
+        "a.py",
+        "caller_fn",
+        "function",
+        1,
+        3,
+        "def caller_fn(): callee_fn()",
+    )
+    callee = GraphNode(
+        "b.py:callee_fn:1",
+        "b.py",
+        "callee_fn",
+        "function",
+        1,
+        3,
+        "def callee_fn(): pass",
+    )
     store.insert_node(caller)
     store.insert_node(callee)
     store.insert_edge(GraphEdge("a.py:caller_fn:1", "b.py:callee_fn:1", "CALLS"))
@@ -93,8 +109,12 @@ def test_polyglot_symbol_extractor(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     store = CodeGraphStore(db)
 
-    ts_source = "export function calculateTotal(items: number[]): number {\n  return 0;\n}"
-    PolyglotSymbolExtractor.extract_typescript_symbols(Path("calc.ts"), ts_source, store)
+    ts_source = (
+        "export function calculateTotal(items: number[]): number {\n  return 0;\n}"
+    )
+    PolyglotSymbolExtractor.extract_typescript_symbols(
+        Path("calc.ts"), ts_source, store
+    )
     ts_nodes = store.find_nodes_by_symbol("calculateTotal")
     assert len(ts_nodes) == 1
     assert ts_nodes[0].kind == "function"

@@ -21,8 +21,14 @@ def validate_git_ref(ref: str) -> str:
         ValueError: If reference contains hostile shell characters or starts with a dash.
     """
     ref_clean = ref.strip()
-    if not ref_clean or ref_clean.startswith("-") or not SAFE_GIT_REF_PATTERN.match(ref_clean):
-        raise ValueError(f"Security Error: Invalid Git reference specification: '{ref}'")
+    if (
+        not ref_clean
+        or ref_clean.startswith("-")
+        or not SAFE_GIT_REF_PATTERN.match(ref_clean)
+    ):
+        raise ValueError(
+            f"Security Error: Invalid Git reference specification: '{ref}'"
+        )
     return ref_clean
 
 

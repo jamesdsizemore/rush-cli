@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from rush.tools.base import Finding, ToolResult
 
 
@@ -16,7 +17,9 @@ class WorkspaceLockValidator:
         findings: list[Finding] = []
 
         # Check uv lock
-        if (self.repo_root / "pyproject.toml").exists() and not (self.repo_root / "uv.lock").exists():
+        if (self.repo_root / "pyproject.toml").exists() and not (
+            self.repo_root / "uv.lock"
+        ).exists():
             findings.append(
                 {
                     "path": "pyproject.toml",
@@ -29,7 +32,9 @@ class WorkspaceLockValidator:
             )
 
         # Check Cargo lock
-        if (self.repo_root / "Cargo.toml").exists() and not (self.repo_root / "Cargo.lock").exists():
+        if (self.repo_root / "Cargo.toml").exists() and not (
+            self.repo_root / "Cargo.lock"
+        ).exists():
             findings.append(
                 {
                     "path": "Cargo.toml",
@@ -42,7 +47,9 @@ class WorkspaceLockValidator:
             )
 
         # Check pnpm lock
-        if (self.repo_root / "pnpm-workspace.yaml").exists() and not (self.repo_root / "pnpm-lock.yaml").exists():
+        if (self.repo_root / "pnpm-workspace.yaml").exists() and not (
+            self.repo_root / "pnpm-lock.yaml"
+        ).exists():
             findings.append(
                 {
                     "path": "pnpm-workspace.yaml",

@@ -12,11 +12,11 @@ from rush.safety.path_confiner import WorkspacePathConfiner
 from rush.safety.redactor import SecretRedactor
 
 __all__ = [
+    "PROTECTED_GOVERNANCE_FILES",
     "AgentSafetyGuard",
     "DangerousCommandInterceptor",
     "EphemeralMountManager",
     "NetworkEgressGuard",
-    "PROTECTED_GOVERNANCE_FILES",
     "SecretRedactor",
     "SecurityAuditLogger",
     "WorkingTreeDirtyTracker",

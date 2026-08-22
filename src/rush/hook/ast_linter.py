@@ -17,5 +17,7 @@ class FastIncrementalAstLinter:
                 try:
                     ast.parse(p.read_text(encoding="utf-8", errors="replace"))
                 except SyntaxError as e:
-                    errors.append(f"{p.name}:{e.lineno}:{e.offset}: SyntaxError: {e.msg}")
+                    errors.append(
+                        f"{p.name}:{e.lineno}:{e.offset}: SyntaxError: {e.msg}"
+                    )
         return errors

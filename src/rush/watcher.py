@@ -15,7 +15,6 @@ from rush.logging import get_logger, log_subsystem
 logger = get_logger("watcher")
 
 import fnmatch
-from dataclasses import dataclass, field
 
 DEFAULT_IGNORES = [
     "*/.git/*",
@@ -42,17 +41,19 @@ DEFAULT_IGNORES = [
     "*.egg-info",
 ]
 
-DEFAULT_IGNORE_DIRS: frozenset[str] = frozenset({
-    ".git",
-    ".venv",
-    "node_modules",
-    ".rush",
-    "__pycache__",
-    "build",
-    "dist",
-    "target",
-    ".codegraph",
-})
+DEFAULT_IGNORE_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".venv",
+        "node_modules",
+        ".rush",
+        "__pycache__",
+        "build",
+        "dist",
+        "target",
+        ".codegraph",
+    }
+)
 
 EXTENSION_TOOL_MAP: dict[str, list[str]] = {
     ".py": ["ruff", "mypy", "pytest", "aislop", "tach", "bandit"],
@@ -97,7 +98,6 @@ class PathFilter:
         return False
 
 
-
 class ToolRouter:
     """Maps modified filesystem paths to the exact subset of required quality tools."""
 
@@ -109,7 +109,6 @@ class ToolRouter:
             if ext in EXTENSION_TOOL_MAP:
                 tools.update(EXTENSION_TOOL_MAP[ext])
         return sorted(tools)
-
 
 
 class FileWatcher:

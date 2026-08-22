@@ -47,7 +47,7 @@ class PluginTrustStore:
                     granted_by=item.get("granted_by", "local_user"),
                 )
             return records
-        except Exception:
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             return {}
 
     def is_trusted(self, plugin_name: str, executable_path: Path) -> bool:
@@ -60,7 +60,9 @@ class PluginTrustStore:
         current_hash = self._compute_sha256(executable_path)
         return record.sha256_hash == current_hash
 
-    def grant_trust(self, plugin_name: str, executable_path: Path) -> TrustedPluginRecord:
+    def grant_trust(
+        self, plugin_name: str, executable_path: Path
+    ) -> TrustedPluginRecord:
         self.trust_file.parent.mkdir(parents=True, exist_ok=True)
         store = self.load_trust_store()
         current_hash = self._compute_sha256(executable_path)

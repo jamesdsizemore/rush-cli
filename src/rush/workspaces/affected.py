@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from rush.workspaces.models import WorkspaceGraph, WorkspacePackage
+
+from rush.workspaces.models import WorkspaceGraph
 
 
 class AffectedCalculator:
@@ -17,7 +18,11 @@ class AffectedCalculator:
         direct_affected: set[str] = set()
 
         for f in changed_files:
-            rel = f.relative_to(self.repo_root).as_posix() if f.is_absolute() and f.is_relative_to(self.repo_root) else f.as_posix()
+            rel = (
+                f.relative_to(self.repo_root).as_posix()
+                if f.is_absolute() and f.is_relative_to(self.repo_root)
+                else f.as_posix()
+            )
             for name, pkg in self.graph.packages.items():
                 if rel.startswith(pkg.relative_path):
                     direct_affected.add(name)
@@ -28,9 +33,10 @@ class AffectedCalculator:
         while changed:
             changed = False
             for name, pkg in self.graph.packages.items():
-                if name not in all_affected:
-                    if any(dep in all_affected for dep in pkg.dependencies):
-                        all_affected.add(name)
-                        changed = True
+                if name not in all_affected and any(
+                    dep in all_affected for dep in pkg.dependencies
+                ):
+                    all_affected.add(name)
+                    changed = True
 
         return [name for name in self.graph.topological_order if name in all_affected]

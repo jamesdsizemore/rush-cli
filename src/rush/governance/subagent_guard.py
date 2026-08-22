@@ -17,7 +17,9 @@ class SubagentHierarchyValidator:
     def __init__(self, max_depth: int = 3) -> None:
         self.max_depth = max_depth
 
-    def validate_invocations(self, invocations: list[SubagentInvocation]) -> tuple[bool, str | None]:
+    def validate_invocations(
+        self, invocations: list[SubagentInvocation]
+    ) -> tuple[bool, str | None]:
         adj: dict[str, list[str]] = {}
         for inv in invocations:
             adj.setdefault(inv.parent_agent, []).append(inv.child_agent)
@@ -27,7 +29,10 @@ class SubagentHierarchyValidator:
 
         def dfs(node: str, depth: int) -> tuple[bool, str | None]:
             if depth > self.max_depth:
-                return False, f"Subagent call depth exceeded maximum allowed ({depth} > {self.max_depth})."
+                return (
+                    False,
+                    f"Subagent call depth exceeded maximum allowed ({depth} > {self.max_depth}).",
+                )
             visited.add(node)
             rec_stack.add(node)
 
@@ -37,7 +42,10 @@ class SubagentHierarchyValidator:
                     if not ok:
                         return False, err
                 elif neighbor in rec_stack:
-                    return False, f"Cyclic subagent invocation detected: '{node}' -> '{neighbor}'."
+                    return (
+                        False,
+                        f"Cyclic subagent invocation detected: '{node}' -> '{neighbor}'.",
+                    )
 
             rec_stack.remove(node)
             return True, None

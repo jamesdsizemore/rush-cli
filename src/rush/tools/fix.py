@@ -12,9 +12,10 @@ import json
 import subprocess
 import time
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from rush.config import RushConfig
 from rush.logging import get_logger, log_subsystem
@@ -72,8 +73,14 @@ class SnapshotJournal:
         if resolved not in self._snapshots or not resolved.is_file():
             return ""
 
-        original_lines = self._snapshots[resolved].decode("utf-8", errors="replace").splitlines(keepends=True)
-        current_lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        original_lines = (
+            self._snapshots[resolved]
+            .decode("utf-8", errors="replace")
+            .splitlines(keepends=True)
+        )
+        current_lines = resolved.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines(keepends=True)
 
         diff = difflib.unified_diff(
             original_lines,
@@ -149,13 +156,19 @@ class FixTool(ToolFn):
                 ast.parse(content, filename=str(path))
                 return True, None
             except SyntaxError as e:
-                return False, f"Python SyntaxError at line {e.lineno}, col {e.offset}: {e.msg}"
+                return (
+                    False,
+                    f"Python SyntaxError at line {e.lineno}, col {e.offset}: {e.msg}",
+                )
         elif path.suffix == ".json":
             try:
                 json.loads(content)
                 return True, None
             except json.JSONDecodeError as e:
-                return False, f"JSON syntax error at line {e.lineno}, col {e.colno}: {e.msg}"
+                return (
+                    False,
+                    f"JSON syntax error at line {e.lineno}, col {e.colno}: {e.msg}",
+                )
         elif path.suffix == ".toml":
             try:
                 tomllib.loads(content)
@@ -222,7 +235,9 @@ class FixTool(ToolFn):
 
         # 3. Snapshot journal capture
         journal = SnapshotJournal()
-        targets = [target_path] if target_path.is_file() else list(target_path.rglob("*.py"))
+        targets = (
+            [target_path] if target_path.is_file() else list(target_path.rglob("*.py"))
+        )
         journal.capture(targets)
 
         # 4. Dispatch engine fixes

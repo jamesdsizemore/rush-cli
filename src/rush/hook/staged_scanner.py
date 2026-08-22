@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from rush.tools.common import run_subprocess
 
 
@@ -14,7 +15,14 @@ class StagedFileScanner:
 
     def get_staged_files(self) -> list[Path]:
         proc = run_subprocess(
-            ["git", "--no-pager", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            [
+                "git",
+                "--no-pager",
+                "diff",
+                "--cached",
+                "--name-only",
+                "--diff-filter=ACMR",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode != 0:

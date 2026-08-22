@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 
 class PolyglotAstCompressor:
     """Extracts type signatures and function prototypes across multiple languages."""

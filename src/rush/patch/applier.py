@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from rush.patch.diff_parser import UnifiedDiffParser
 from rush.patch.syntax_guard import PatchSyntaxGuard
 from rush.tools.common import run_subprocess
@@ -18,14 +19,20 @@ class PatchApplier:
 
         try:
             parsed = UnifiedDiffParser.parse_patch(unified_diff, target_dir)
-        except Exception as e:
+        except (ValueError, PermissionError, OSError) as e:
             return False, f"Diff security validation failed: {e}"
 
         patch_file = target_dir / ".temp_patch.diff"
         try:
             patch_file.write_text(unified_diff, encoding="utf-8")
             proc = run_subprocess(
-                ["git", "apply", "--ignore-whitespace", "--whitespace=nowarn", str(patch_file)],
+                [
+                    "git",
+                    "apply",
+                    "--ignore-whitespace",
+                    "--whitespace=nowarn",
+                    str(patch_file),
+                ],
                 cwd=target_dir,
             )
             if proc.returncode != 0:
@@ -36,7 +43,10 @@ class PatchApplier:
                 f_path = target_dir / p_file.new_path
                 ok, err = PatchSyntaxGuard.validate_file_syntax(f_path)
                 if not ok:
-                    return False, f"Post-patch syntax check failed on {p_file.new_path}: {err}"
+                    return (
+                        False,
+                        f"Post-patch syntax check failed on {p_file.new_path}: {err}",
+                    )
 
             return True, "Patch applied cleanly with valid syntax."
         finally:

@@ -14,12 +14,24 @@ class KeybindingAction:
 
 DEFAULT_KEYBINDINGS = [
     KeybindingAction(key="q", action_name="quit", description="Exit Rush TUI"),
-    KeybindingAction(key="j", action_name="cursor_down", description="Navigate down one row"),
-    KeybindingAction(key="k", action_name="cursor_up", description="Navigate up one row"),
-    KeybindingAction(key="enter", action_name="select_row", description="Inspect selected finding"),
-    KeybindingAction(key="f", action_name="apply_fix", description="Trigger automated fix for selected finding"),
+    KeybindingAction(
+        key="j", action_name="cursor_down", description="Navigate down one row"
+    ),
+    KeybindingAction(
+        key="k", action_name="cursor_up", description="Navigate up one row"
+    ),
+    KeybindingAction(
+        key="enter", action_name="select_row", description="Inspect selected finding"
+    ),
+    KeybindingAction(
+        key="f",
+        action_name="apply_fix",
+        description="Trigger automated fix for selected finding",
+    ),
     KeybindingAction(key="r", action_name="refresh", description="Rerun quality suite"),
-    KeybindingAction(key="slash", action_name="focus_filter", description="Focus search filter input"),
+    KeybindingAction(
+        key="slash", action_name="focus_filter", description="Focus search filter input"
+    ),
 ]
 
 

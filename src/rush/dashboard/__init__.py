@@ -10,9 +10,9 @@ from rush.dashboard.state import DashboardState, InMemoryStateStore
 from rush.dashboard.static_assets import DASHBOARD_HTML_TEMPLATE
 
 __all__ = [
-    "AuthenticatedDashboardHandler",
     "DASHBOARD_HTML_TEMPLATE",
     "DEFAULT_KEYBINDINGS",
+    "AuthenticatedDashboardHandler",
     "DashboardMetricsAggregator",
     "DashboardState",
     "InMemoryStateStore",

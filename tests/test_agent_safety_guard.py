@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from rush.safety.audit_logger import SecurityAuditLogger
 from rush.safety.ephemeral_mount import EphemeralMountManager
@@ -25,11 +26,13 @@ def test_agent_safety_guard_protected_files(tmp_path: Path) -> None:
 
 
 def test_dangerous_command_interceptor() -> None:
-    safe, reason = DangerousCommandInterceptor.inspect_command("git reset --hard HEAD~1")
+    safe, reason = DangerousCommandInterceptor.inspect_command(
+        "git reset --hard HEAD~1"
+    )
     assert safe is False
     assert "git reset --hard" in (reason or "")
 
-    safe_rm, reason_rm = DangerousCommandInterceptor.inspect_command("rm -rf /")
+    safe_rm, _reason_rm = DangerousCommandInterceptor.inspect_command("rm -rf /")
     assert safe_rm is False
 
     safe_good, _ = DangerousCommandInterceptor.inspect_command("pytest tests/")

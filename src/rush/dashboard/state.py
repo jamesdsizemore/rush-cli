@@ -7,7 +7,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from rush.tools.base import Finding, ToolResult
+
+from rush.tools.base import ToolResult
 
 
 @dataclass
@@ -31,17 +32,21 @@ class InMemoryStateStore:
 
     def add_event(self, event_type: str, details: dict[str, Any]) -> None:
         with self._lock:
-            self._state.recent_events.append({
-                "timestamp": time.time(),
-                "type": event_type,
-                "details": details,
-            })
+            self._state.recent_events.append(
+                {
+                    "timestamp": time.time(),
+                    "type": event_type,
+                    "details": details,
+                }
+            )
             if len(self._state.recent_events) > 200:
                 self._state.recent_events = self._state.recent_events[-200:]
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
-            total_findings = sum(len(r.get("findings", [])) for r in self._state.results)
+            total_findings = sum(
+                len(r.get("findings", [])) for r in self._state.results
+            )
             return {
                 "repo_root": self._state.repo_root,
                 "started_at": self._state.started_at,

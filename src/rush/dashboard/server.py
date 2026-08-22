@@ -4,37 +4,34 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler
+from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from rush.dashboard.static_assets import DASHBOARD_HTML_TEMPLATE
 from rush.tools.base import ToolResult
-
 
 _IN_MEMORY_ASSETS: dict[str, bytes] = {}
 
 
 def init_in_memory_assets() -> dict[str, bytes]:
     """Initialize in-memory cached assets."""
-    global _IN_MEMORY_ASSETS
     _IN_MEMORY_ASSETS["index.html"] = DASHBOARD_HTML_TEMPLATE.encode("utf-8")
     return _IN_MEMORY_ASSETS
-
 
 
 class AuthenticatedDashboardHandler(BaseHTTPRequestHandler):
     """HTTP Request Handler for ephemeral authenticated dashboard."""
 
-    auth_token: str = ""
-    cached_results: list[ToolResult] = []
+    auth_token: ClassVar[str] = ""
+    cached_results: ClassVar[list[ToolResult]] = []
 
     def log_message(self, format: str, *args) -> None:
         """Suppress default stderr logging."""
-        pass
 
     def do_GET(self) -> None:
         # 1. DNS Rebinding check
         host = self.headers.get("Host", "")
-        if not (host.startswith("127.0.0.1") or host.startswith("localhost")):
+        if not (host.startswith(("127.0.0.1", "localhost"))):
             self.send_response(403)
             self.end_headers()
             self.wfile.write(b"Forbidden: Invalid Host header")
@@ -42,7 +39,7 @@ class AuthenticatedDashboardHandler(BaseHTTPRequestHandler):
 
         # 2. Origin / CSRF check
         origin = self.headers.get("Origin")
-        if origin and not (origin.startswith("http://127.0.0.1") or origin.startswith("http://localhost")):
+        if origin and not (origin.startswith(("http://127.0.0.1", "http://localhost"))):
             self.send_response(403)
             self.end_headers()
             self.wfile.write(b"Forbidden: Invalid Origin")

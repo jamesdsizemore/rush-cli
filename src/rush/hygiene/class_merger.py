@@ -10,8 +10,16 @@ class AstClassMerger:
 
     @staticmethod
     def merge_classes(class_a: ast.ClassDef, class_b: ast.ClassDef) -> ast.ClassDef:
-        methods_a = {n.name: n for n in class_a.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        methods_b = {n.name: n for n in class_b.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        methods_a = {
+            n.name: n
+            for n in class_a.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        methods_b = {
+            n.name: n
+            for n in class_b.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
 
         all_method_names = sorted(set(methods_a.keys()) | set(methods_b.keys()))
         merged_body: list[ast.AST] = []

@@ -61,9 +61,13 @@ class UnifiedDiffParser:
                 if target_path and target_path != "/dev/null":
                     resolved = (repo_root / target_path).resolve()
                     if not resolved.is_relative_to(repo_root.resolve()):
-                        raise ValueError(f"Path traversal detected in diff header: '{target_path}'")
+                        raise ValueError(
+                            f"Path traversal detected in diff header: '{target_path}'"
+                        )
                     if target_path in GOVERNANCE_BLOCKED_FILES:
-                        raise PermissionError(f"Modifying governance file '{target_path}' is strictly forbidden.")
+                        raise PermissionError(
+                            f"Modifying governance file '{target_path}' is strictly forbidden."
+                        )
 
             hunks: list[DiffHunk] = []
             hunk_blocks = re.split(r"(?=^@@ )", chunk, flags=re.MULTILINE)
@@ -87,6 +91,8 @@ class UnifiedDiffParser:
                         )
                     )
 
-            patches.append(ParsedFilePatch(old_path=old_file, new_path=new_file, hunks=hunks))
+            patches.append(
+                ParsedFilePatch(old_path=old_file, new_path=new_file, hunks=hunks)
+            )
 
         return patches
