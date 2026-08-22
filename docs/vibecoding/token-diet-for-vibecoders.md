@@ -82,3 +82,9 @@ Rush now provides native token reduction tools directly in the CLI and FastMCP s
 * **`--format toon`**: Formats findings and tables as compact pipe-tables instead of verbose JSON.
 * **Command Distillation**: Automatically filters pytest and cargo noise to send only failing assertions.
 * **CCR Caching**: Stores large outputs in SQLite (`.rush/cache/ccr.db`) and injects `<!-- ccr:chunk:HASH -->` tags.
+
+## Context Packing & Stale Read Sweeping (Phases 44–45)
+* `rush context pack`: Packs exact symbols under token budgets.
+* StaleSweeper: Prunes old turns to single-line summaries.
+* `rush context persona --set terse`: Trims filler words from outputs.
+

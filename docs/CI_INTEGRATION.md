@@ -114,3 +114,9 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
     rush hallu-guard
     rush ship gate
 ```
+
+### Architectural Boundary CI Gate
+```yaml
+- name: Architecture Boundary Check
+  run: rush arch-guard
+```

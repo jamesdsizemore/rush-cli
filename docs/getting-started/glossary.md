@@ -29,3 +29,9 @@
 * **CCR**: Context Compression & Restoration chunk storage.
 * **HalluGuard**: Static AST import grounding verifier.
 * **Ship Gate**: 7-vector pre-flight release readiness cockpit.
+
+### Phases 44–46 Terms
+* **Blast Radius**: Downstream impact analyzer.
+* **ArchGuard**: Architectural boundary layer linter.
+* **Context Packer**: Token-budgeted context assembler.
+* **Gain HUD**: Real-time token savings terminal dashboard.

@@ -5,3 +5,9 @@
 * **TOON v4.1 Serialization**: 40–65% reduction on tabular findings (`--format toon`).
 * **AST Skeletons**: 85%+ reduction on module reading (`rush token outline`).
 * **CCR Caching**: SQLite chunking with `<!-- ccr:chunk:HASH -->`.
+
+## Context Packing & Stale Sweeping Efficiency
+* `ContextPacker`: 70–85% token reduction via PageRank-prioritized skeletons.
+* `StaleSweeper`: 60–80% savings in multi-turn sessions by pruning stale file reads.
+* `CacheAligner`: $\ge 85\%$ KV prompt cache hit rate.
+

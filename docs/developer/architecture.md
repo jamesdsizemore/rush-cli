@@ -125,3 +125,13 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/memory/failure_ledger.py`: `FailureLedger` (`.rush/memory/failures.db`).
 * `src/rush/memory/mistake_miner.py`: `MistakeMiner`.
 * `src/rush/tools/ship/`: `ScratchCleaner`, `EnvParityLinter`, `DocsLinter`, `MigrationLinter`, `SemverLinter`, `PackageLinter`, `ShipCockpit`.
+
+## Context Packing, Telemetry & Blast Radius Architecture (Phases 44–46)
+* `src/rush/codegraph/context_packer.py`: `ContextPacker` for budget-constrained context assembly.
+* `src/rush/token_economy/stale_sweeper.py`: `StaleSweeper` for conversation history compression.
+* `src/rush/token_economy/cache_aligner.py`: `CacheAligner` for prompt cache boundary alignment.
+* `src/rush/token_economy/telemetry.py`: `TelemetryStore` logging to `.rush/telemetry/tokens.db`.
+* `src/rush/token_economy/output_shaper.py`: `OutputShaper` for terse persona formatting.
+* `src/rush/token_economy/tui_gain.py`: Rich TUI gain dashboard.
+* `src/rush/tools/blast_radius.py`: `BlastRadiusAnalyzer` and `BlastRadiusReport`.
+* `src/rush/tools/arch_guard.py`: `ArchGuard` layer validator.

@@ -110,3 +110,8 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 ## Code Grounding & Outline Checks (Phases 41–43)
 * **AST Grounding**: Run `rush hallu-guard` to verify all imported modules are installed.
 * **AST Outlining**: Run `rush token outline <path>` for compact symbol signatures.
+
+## Context Packing & Blast Radius
+* `rush context pack`: Assemble token-bounded prompts.
+* `rush blast-radius`: Check affected routes and tests.
+

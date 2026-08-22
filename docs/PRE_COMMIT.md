@@ -87,3 +87,6 @@ You can invoke Rush's fast pre-flight vectors directly in git workflows:
 * `rush hallu-guard`: Blocks commits with hallucinated dependencies.
 * `rush ship env`: Blocks commits missing `.env.example` declarations.
 * `rush ship pack`: Blocks commits with unredacted secret leaks.
+
+### Architecture Boundary Pre-Commit Hook
+* `rush arch-guard`: Prevent unauthorized cross-layer imports from entering git history.

@@ -110,3 +110,7 @@ rush ship docs
 # 4. Run the full 7-vector Ship Gate Cockpit
 rush ship gate
 ```
+
+## Blast Radius in Vibecoding Workflow (Phase 46)
+Before refactoring a core function, run `rush blast-radius --path <file>` to verify all affected tests and routes.
+

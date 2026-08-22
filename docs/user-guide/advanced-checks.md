@@ -81,3 +81,8 @@ rush bundle analyze dist/
 * `rush ship migration`: Checks SQL files for table locks (`ALTER TABLE ... ADD COLUMN NOT NULL`).
 * `rush ship semver`: Compares AST public interfaces between versions.
 * `rush ship pack`: Scans repository trees for secret keys, credentials, and `.env` leaks.
+
+## Blast Radius & Architecture Checks
+* `rush blast-radius`: Downstream reachability.
+* `rush arch-guard`: Layer boundary verification.
+

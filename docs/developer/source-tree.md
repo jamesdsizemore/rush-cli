@@ -49,3 +49,20 @@ src/rush/
     │   └── cockpit.py      # Unified 7-vector parallel Ship Cockpit
     └── hallu_guard.py      # Real-time AST grounding and phantom package guard
 ```
+
+## Context Packing & Blast Radius Modules
+```
+src/rush/
+├── codegraph/
+│   └── context_packer.py  # PageRank context packing
+├── token_economy/
+│   ├── stale_sweeper.py   # Multi-turn history sweeper
+│   ├── cache_aligner.py   # Prompt cache boundary aligner
+│   ├── telemetry.py       # SQLite token ledger (.rush/telemetry/tokens.db)
+│   ├── output_shaper.py   # Terse persona output filter
+│   └── tui_gain.py        # Rich terminal gain dashboard
+└── tools/
+    ├── blast_radius.py    # Downstream reachability analyzer
+    └── arch_guard.py       # Architectural layer boundary guard
+```
+

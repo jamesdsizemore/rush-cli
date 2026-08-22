@@ -11,3 +11,8 @@ rush ship semver
 rush ship pack
 rush ship gate
 ```
+
+## Pre-Release Architecture & Blast Radius Checks
+1. Run `rush arch-guard` to ensure clean architectural boundaries.
+2. Run `rush blast-radius` across all modified core modules.
+

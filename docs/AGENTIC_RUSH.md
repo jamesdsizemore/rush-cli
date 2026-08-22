@@ -99,3 +99,9 @@ Give your AI agent superpowers in two minutes:
 3. **Hallucination Defense**: Run `rush_hallu_guard` to verify generated code contains zero phantom packages.
 4. **Pre-Mortem Invariants**: Call `rush_context_mistakes_check` before starting work to avoid repeating reverted patterns.
 5. **Ship Cockpit**: Call `rush_ship_gate` before submitting pull requests or ending turns.
+
+## Agent Protocols for Context Packing & Blast Radius (Phases 44–46)
+1. **Context Packing**: Call `rush_context_pack(path, symbol, budget)` to retrieve focused AST context without blowing your token budget.
+2. **Savings Telemetry**: Call `rush_context_gain_stats()` to inspect session token savings and cost efficiency.
+3. **Blast Radius Analysis**: Call `rush_blast_radius(path)` before refactoring to know which downstream routes and tests are impacted.
+4. **Architecture Governance**: Call `rush_arch_guard()` to verify you have not introduced unauthorized cross-layer imports.

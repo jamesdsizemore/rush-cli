@@ -107,3 +107,10 @@ Ensure your agent is configured to use:
 * `rush_context_retrieve`: Lossless CCR payload recovery.
 * `rush_context_mistakes_check`: Git revert mistake guardrails.
 * `rush_ship_gate`: 7-vector release readiness cockpit.
+
+## Phase 44-46 FastMCP Tools
+* `rush_context_pack`: Budgeted context packing.
+* `rush_context_gain_stats`: Live savings metrics.
+* `rush_blast_radius`: Downstream impact analysis.
+* `rush_arch_guard`: Layer boundary validation.
+

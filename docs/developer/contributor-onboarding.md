@@ -41,3 +41,9 @@ When contributing to Rush:
 * Place release validation vectors in `src/rush/tools/ship/`.
 * Place grounding verifiers in `src/rush/codegraph/`.
 * Register subcommands in `src/rush/cli.py` and FastMCP tools in `src/rush/mcp.py`.
+
+## Contributing to Blast Radius and Telemetry
+* Place codegraph packing engines in `src/rush/codegraph/`.
+* Place token economy and telemetry modules in `src/rush/token_economy/`.
+* Place architectural guards in `src/rush/tools/`.
+

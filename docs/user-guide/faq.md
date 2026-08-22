@@ -42,3 +42,10 @@ Follow [Security reporting](../maintainers/incident-and-security.md); do not pos
 * **`rush hallu-guard`**: Detects hallucinated or uninstalled package imports.
 * **`rush token outline`**: Compresses file source code into AST outlines.
 * **`rush context retrieve`**: Restores full uncompressed content from CCR cache.
+
+## Context Packing & Blast Radius
+
+* **`rush context pack`**: Pack token-bounded context.
+* **`rush context gain`**: View live token and dollar savings.
+* **`rush blast-radius`**: Analyze downstream change impact.
+* **`rush arch-guard`**: Validate layer boundary rules.

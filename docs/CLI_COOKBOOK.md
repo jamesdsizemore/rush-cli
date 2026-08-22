@@ -375,3 +375,25 @@ rush context retrieve <HASH>
 # View mined mistake guardrails
 rush context mistakes
 ```
+
+## Context Packing, Telemetry & Architecture Recipes (Phases 44–46)
+
+### Context Packing for Focused Refactoring
+```bash
+rush context pack --path src/rush/cli.py --symbol run_stdio --budget 3000
+```
+
+### Monitoring Live Token Savings
+```bash
+rush context gain
+```
+
+### Analyzing Blast Radius Before Modifying Shared Modules
+```bash
+rush blast-radius --path src/rush/tools/common.py --depth 4
+```
+
+### Auditing Architectural Boundaries
+```bash
+rush arch-guard
+```

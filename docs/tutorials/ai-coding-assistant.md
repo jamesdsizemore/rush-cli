@@ -58,3 +58,7 @@ When configuring your AI coding agent with Rush's FastMCP server:
 * Call `rush_hallu_guard(path="...")` to verify all imports in generated code are grounded in installed packages.
 * Call `rush_context_retrieve(chunk_hash="...")` to decompress and inspect large tool logs stored in CCR.
 * Call `rush_context_mistakes_check()` to review past Git revert regressions and avoid repeat errors.
+
+## Context Packing & Telemetry Instructions
+Instruct your agent to call `rush_context_pack` to minimize prompt token usage and `rush_blast_radius` before large refactors.
+

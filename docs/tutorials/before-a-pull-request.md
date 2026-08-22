@@ -35,3 +35,7 @@ Run Rush's 7-vector release readiness cockpit to verify scratch cleanliness, env
 rush ship gate
 ```
 If any vector fails, inspect the diagnostic output and remediate before opening your pull request.
+
+## Step 6: Check Blast Radius and Architecture Boundaries
+Run `rush blast-radius --path <file>` and `rush arch-guard` to verify no downstream routes are broken and layer boundaries are clean.
+

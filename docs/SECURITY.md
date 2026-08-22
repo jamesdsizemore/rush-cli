@@ -42,3 +42,6 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 1. Typosquatted dependencies and hallucinated package imports.
 2. Accidental inclusion of sensitive keys, `.env` files, or certificates in package builds.
 3. Risky table-locking SQL migrations in production deployments.
+
+## Architectural Layer Isolation (Phase 46)
+`rush arch-guard` prevents sensitive infrastructure code (database clients, crypto keys) from being imported into untrusted presentation or domain layers.

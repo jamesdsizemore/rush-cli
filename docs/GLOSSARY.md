@@ -46,3 +46,12 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **Mistake Miner**: Bi-temporal Git revert analyzer extracting historical regression post-mortems into active guardrails.
 * **Ship Cockpit**: Parallel 7-vector release readiness evaluator checking scratch hygiene, environment parity, docs links, SQL table locks, API compatibility, package safety, and test confidence.
 * **TOON (Token-Oriented Object Notation)**: Compact pipe-delimited table serialization format cutting 40–65% of JSON token overhead in MCP tool responses.
+
+### Context Packing, Telemetry & Blast Radius Terms (Phases 44–46)
+* **ArchGuard**: Declarative architectural boundary validator enforcing directional dependency rules between software layers.
+* **Blast Radius**: The downstream set of modules, API routes, and test suites affected by modifying a target source file.
+* **Cache Aligner**: Pre-processor that pads invariant prompt prefixes above 1,024 tokens to maximize provider KV prompt cache hits.
+* **Context Packer**: Algorithm that extracts verbatim focus symbols while compressing peripheral code to meet strict token budgets.
+* **Stale Read Sweeper**: Optimizer that collapses older conversation turns' file contents into 1-line signatures.
+* **Telemetry Ledger**: SQLite database (`.rush/telemetry/tokens.db`) tracking token savings and estimated dollar reductions.
+* **Terse Persona**: Agent response shaper stripping conversational fluff and filler words for concise output.

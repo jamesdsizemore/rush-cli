@@ -72,3 +72,8 @@ Rush will quietly watch your files, auto-format on save, alert your AI to any br
 * **Zero Phantom Imports**: `rush hallu-guard` protects against hallucinated pip packages.
 * **Never Repeat Bugs**: `rush context mistakes` reminds you and your agent of past reverted mistakes.
 * **One-Command Ship Confidence**: `rush ship gate` runs all checks before shipping.
+
+## Live Telemetry & Blast Radius for Vibecoding (Phases 44–46)
+* **`rush context gain`**: Watch your token and dollar savings in real-time.
+* **`rush blast-radius`**: Instantly see what parts of your app your refactor touches.
+* **`rush context pack`**: Pack huge repos into tight AI context windows.

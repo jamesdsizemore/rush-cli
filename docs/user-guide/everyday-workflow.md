@@ -127,3 +127,9 @@ Now you can submit your pull request knowing that every test passes, every file 
 1. Start task: `rush session restore <name>` (or initialize with `rush session save <name>`).
 2. Verify grounding during development: `rush hallu-guard`.
 3. Check release gate before shipping: `rush ship gate`.
+
+## Daily Blast Radius & Gain Checks
+1. Check impact: `rush blast-radius --path <file>`
+2. Monitor savings: `rush context gain`
+3. Verify architecture: `rush arch-guard`
+

@@ -130,3 +130,11 @@ Rush v0.2.0 introduces context optimization, AI token reduction, and release rea
 * `rush context mistakes`: Audit historical Git revert post-mortems to avoid known regressions.
 * `rush hallu-guard`: Scan codebase AST imports to detect hallucinated or uninstalled packages.
 * `rush ship gate`: Execute the 7-vector pre-flight release readiness cockpit.
+
+## Context Packing, Telemetry & Blast Radius (Phases 44–46)
+* **`rush context pack --path <file> --symbol <symbol> --budget <int>`**: Construct graph-pruned context prompts.
+* **`rush context align-prompt --system "<prompt>"`**: Structure prompt prefix for KV cache hits.
+* **`rush context gain`**: Launch interactive token and dollar savings terminal HUD.
+* **`rush context persona --set terse`**: Enable terse agent output mode.
+* **`rush blast-radius --path <file>`**: Compute downstream file and route impact.
+* **`rush arch-guard`**: Audit codebase for architectural layer boundary violations.
