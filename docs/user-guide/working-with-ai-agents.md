@@ -120,3 +120,10 @@ Ensure your agent is configured to use:
 * `rush_test_heal`: Diagnose and stabilize test suites.
 * `rush_api_diff`: Verify API contract backward-compatibility.
 
+
+
+## Phase 48 FastMCP Tools
+* `rush_db_drift`: Detect unmigrated model attributes.
+* `rush_simplify`: Identify complex functions for refactoring.
+* `rush_strictify`: Generate defensive runtime type assertions.
+

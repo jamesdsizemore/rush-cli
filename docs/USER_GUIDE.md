@@ -144,3 +144,10 @@ Rush v0.2.0 introduces context optimization, AI token reduction, and release rea
 * `rush test-heal --target <test>`: Stabilize flaky test suites.
 * `rush api-diff --base main`: Check for breaking API changes before submitting a PR.
 
+
+
+## DB Drift & Simplification (Phase 48)
+* `rush db-drift`: Verify database migration synchronization.
+* `rush simplify --file <path>`: Identify overly complex functions.
+* `rush strictify --file <path>`: Add runtime type validations.
+

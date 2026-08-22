@@ -21,3 +21,8 @@ rush ship gate
 ## Pre-Release API Diff Verification
 Verify public API contract compatibility using `rush api-diff --base main`.
 
+
+
+## Pre-Release Database Audit
+Execute `rush db-drift` to guarantee zero unmigrated schema changes before tagging releases.
+

@@ -410,3 +410,21 @@ rush test-heal --target tests/test_concurrency.py --runs 10
 rush api-diff --base main
 ```
 
+
+
+## DB Drift & Simplification Recipes (Phase 48)
+### Auditing Database Schema Drift
+```bash
+rush db-drift
+```
+
+### Decomposing Monolithic Functions
+```bash
+rush simplify --file src/rush/cli.py --max-complexity 12
+```
+
+### Synthesizing Runtime Type Guards
+```bash
+rush strictify --file src/rush/tools/common.py
+```
+

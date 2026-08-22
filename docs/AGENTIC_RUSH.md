@@ -111,3 +111,10 @@ Give your AI agent superpowers in two minutes:
 1. **Flaky Test Repair**: Call `rush_test_heal(target)` when encountering intermittent test failures.
 2. **API Guard**: Call `rush_api_diff(base='main')` to verify that your refactor maintains backward compatibility.
 
+
+
+## Agent Protocols for DB Drift & Code Simplification (Phase 48)
+1. **Database Safety**: Call `rush_db_drift()` after modifying ORM data models to ensure migrations exist.
+2. **Code Simplification**: Call `rush_simplify(file)` before refactoring to target high-complexity hotspots.
+3. **Type Strictness**: Call `rush_strictify(file)` to add defensive runtime checks to untyped inputs.
+

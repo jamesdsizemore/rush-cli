@@ -95,3 +95,9 @@ You can invoke Rush's fast pre-flight vectors directly in git workflows:
 ### API Compatibility Pre-Commit Gate
 * `rush api-diff`: Ensure no unintended breaking API changes are committed.
 
+
+
+### Database Migration & Complexity Pre-Commit Gate
+* `rush db-drift`: Block commits with unmigrated ORM model fields.
+* `rush simplify`: Highlight functions exceeding maximum cognitive complexity.
+

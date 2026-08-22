@@ -41,3 +41,10 @@
 * **Test Healer**: Autonomous flaky test repair tool.
 * **API Differ**: Public signature breaking change detector.
 
+
+
+### Phase 48 Terms
+* **DB Drift Auditor**: Database schema drift linter.
+* **Complexity Decomposer**: Spaghetti function refactor engine.
+* **Type Synthesizer**: Runtime type guard generator.
+

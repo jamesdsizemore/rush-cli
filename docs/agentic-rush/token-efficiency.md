@@ -16,3 +16,8 @@
 ## Test Healing Efficiency
 `TestHealer` avoids dumping dozens of failed test tracebacks into agent context by isolating and summarizing root causes.
 
+
+
+## Simplified Function Context Efficiency
+Small, decomposed helper functions fit perfectly into subagent context windows without requiring entire module dumps.
+

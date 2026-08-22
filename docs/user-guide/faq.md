@@ -55,3 +55,10 @@ Follow [Security reporting](../maintainers/incident-and-security.md); do not pos
 * **`rush test-heal`**: Diagnose flaky tests.
 * **`rush api-diff`**: Check API breaking changes.
 
+
+
+## DB Drift & Simplification FAQ
+* **`rush db-drift`**: Check migration parity.
+* **`rush simplify`**: Analyze function complexity.
+* **`rush strictify`**: Synthesize runtime type guards.
+

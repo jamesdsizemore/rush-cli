@@ -262,6 +262,50 @@ def _register_tools(server) -> None:
         description="Detect breaking public API changes against base Git ref",
     )
 
+    # Phase 48 Tools
+    def mcp_rush_db_drift() -> str:
+        import json
+
+        from rush.tools.db_drift import DbDriftAuditor
+
+        auditor = DbDriftAuditor()
+        res = auditor.audit_drift()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_simplify(file: str, max_complexity: int = 10) -> str:
+        import json
+
+        from rush.tools.simplify import ComplexityDecomposer
+
+        decomposer = ComplexityDecomposer()
+        res = decomposer.decompose_file(Path(file), max_complexity=max_complexity)
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_strictify(file: str) -> str:
+        import json
+
+        from rush.tools.strictify import TypeSynthesizer
+
+        synth = TypeSynthesizer()
+        res = synth.audit_and_synthesize(Path(file))
+        return json.dumps(res, indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_db_drift,
+        name="rush_db_drift",
+        description="Audit ORM models against migrations to detect schema drift",
+    )
+    server.add_tool(
+        fn=mcp_rush_simplify,
+        name="rush_simplify",
+        description="Decompose high-complexity functions into modular helpers",
+    )
+    server.add_tool(
+        fn=mcp_rush_strictify,
+        name="rush_strictify",
+        description="Synthesize runtime type guards for unvalidated parameters",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

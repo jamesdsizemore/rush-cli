@@ -44,3 +44,8 @@ Run `rush blast-radius --path <file>` and `rush arch-guard` to verify no downstr
 ## Step 7: Check API Contract Parity
 Run `rush api-diff --base main` to guarantee backward compatibility before opening a PR.
 
+
+
+## Step 8: Check Database Drift and Complexity
+Run `rush db-drift` and `rush simplify` to guarantee clean migrations and modular architecture.
+

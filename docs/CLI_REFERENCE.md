@@ -242,3 +242,15 @@ Diagnose flaky test race conditions and suggest stabilization fixes.
 ### `rush api-diff`
 Detect breaking public API signature changes against base Git ref.
 * `--base, -b`: Base Git ref to compare against (default: main).
+
+### `rush db-drift`
+Audit ORM models against SQL migrations to detect unmigrated schema drift.
+
+### `rush simplify`
+Decompose high-complexity functions into clean helper sub-functions.
+* `--file, -f`: Target file path (required).
+* `--max-complexity, -m`: Maximum allowed cognitive complexity score (default: 10).
+
+### `rush strictify`
+Synthesize runtime type guards for unvalidated function arguments.
+* `--file, -f`: Target file path (required).

@@ -139,3 +139,10 @@ Now you can submit your pull request knowing that every test passes, every file 
 1. Heal flaky tests: `rush test-heal --target tests/test_api.py`
 2. Verify contracts: `rush api-diff --base main`
 
+
+
+## Database & Code Quality Checks
+1. Check database drift: `rush db-drift`
+2. Simplify complex code: `rush simplify --file src/app.py`
+3. Synthesize type guards: `rush strictify --file src/app.py`
+

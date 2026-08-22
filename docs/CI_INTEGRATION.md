@@ -128,3 +128,11 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
   run: rush api-diff --base origin/main
 ```
 
+
+
+### Database Drift CI Gate
+```yaml
+- name: DB Migration Drift Check
+  run: rush db-drift
+```
+

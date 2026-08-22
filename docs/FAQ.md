@@ -80,3 +80,12 @@ It executes multiple perturbation runs in a sandboxed git worktree, diagnosing n
 ### What does `rush api-diff` protect against?
 It prevents breaking SDK/API changes by verifying that public function/class signatures have not removed arguments or symbols compared to the base branch.
 
+
+
+## DB Drift & Code Simplification (Phase 48)
+### What does `rush db-drift` catch?
+It flags ORM fields added to models that have no corresponding `sa.Column` or SQL `ALTER TABLE` statement in migration files.
+
+### How does `rush simplify` assist developers?
+It identifies monolithic functions with cognitive complexity over threshold and outlines modular sub-function boundaries.
+

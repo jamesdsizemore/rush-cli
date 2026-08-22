@@ -112,3 +112,10 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush test-heal`: Autonomous flaky test stress diagnosis in isolated worktree sandboxes.
 * `rush api-diff`: Zero-server public API breaking change detection against base Git branches.
 
+
+
+## DB Drift, Simplify & Strictify (Phase 48)
+* `rush db-drift`: ORM-to-migration schema drift auditor.
+* `rush simplify`: Cognitive complexity analyzer and decomposer.
+* `rush strictify`: Runtime type guard synthesizer.
+

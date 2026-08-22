@@ -160,3 +160,10 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 * `TestHealer` (`src/rush/tools/test_heal.py`): Perturbation and race-condition diagnosis.
 * `ApiDiffer` (`src/rush/tools/api_diff.py`): AST-based breaking change differ.
 
+
+
+## 17. DB Drift, Complexity Decomposer & Type Guard Subsystems (Phase 48)
+* `DbDriftAuditor` (`src/rush/tools/db_drift.py`): Model vs. migration discrepancy detector.
+* `ComplexityDecomposer` (`src/rush/tools/simplify.py`): Cyclomatic/cognitive AST analyzer.
+* `TypeSynthesizer` (`src/rush/tools/strictify.py`): Untyped parameter guard generator.
+

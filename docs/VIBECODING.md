@@ -82,3 +82,8 @@ Rush will quietly watch your files, auto-format on save, alert your AI to any br
 ## Test Healing for Vibecoders (Phase 47)
 When AI code generates flaky async tests, run `rush test-heal` to let Rush isolate the timing bug and suggest the fix automatically.
 
+
+
+## DB Drift & Simplification for Vibecoders (Phase 48)
+When AI generates massive functions or adds model fields without migrations, `rush simplify` and `rush db-drift` catch them before you hit deploy.
+

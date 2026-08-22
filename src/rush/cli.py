@@ -2138,6 +2138,89 @@ def api_diff_cmd(base: str) -> None:
         sys.exit(1)
 
 
+@cli.command(name="db-drift")
+def db_drift_cmd() -> None:
+    """Audit ORM models against SQL migrations to detect unmigrated schema drift."""
+    from rush.tools.db_drift import DbDriftAuditor
+
+    auditor = DbDriftAuditor()
+    res = auditor.audit_drift()
+    if res["passed"]:
+        click.echo("DbDrift: All ORM models are synchronized with migrations.")
+    else:
+        click.echo(
+            f"DbDrift: FAIL - {res['drift_count']} schema drift hazards found:",
+            err=True,
+        )
+        for issue in res["drift_issues"]:
+            click.echo(f"  {issue['model']}: {issue['details']}", err=True)
+        sys.exit(1)
+
+
+@cli.command(name="simplify")
+@click.option(
+    "--file",
+    "-f",
+    "file_path",
+    required=True,
+    help="File path to analyze for cognitive complexity.",
+)
+@click.option(
+    "--max-complexity",
+    "-m",
+    default=10,
+    type=int,
+    help="Maximum allowed cognitive complexity score.",
+)
+def simplify_cmd(file_path: str, max_complexity: int) -> None:
+    """Decompose high-complexity functions into clean helper sub-functions."""
+    from rush.tools.simplify import ComplexityDecomposer
+
+    decomposer = ComplexityDecomposer()
+    res = decomposer.decompose_file(Path(file_path), max_complexity=max_complexity)
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    if not res["needs_simplification"]:
+        click.echo(
+            f"Simplify: File '{file_path}' has clean complexity (<= {max_complexity})."
+        )
+    else:
+        click.echo(
+            f"Simplify: {res['complex_functions_count']} functions exceed complexity threshold ({max_complexity}):"
+        )
+        for c in res["candidates"]:
+            click.echo(
+                f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): {c['recommendation']}"
+            )
+
+
+@cli.command(name="strictify")
+@click.option(
+    "--file",
+    "-f",
+    "file_path",
+    required=True,
+    help="File path to analyze for untyped parameters.",
+)
+def strictify_cmd(file_path: str) -> None:
+    """Synthesize runtime type guards for unvalidated function arguments."""
+    from rush.tools.strictify import TypeSynthesizer
+
+    synth = TypeSynthesizer()
+    res = synth.audit_and_synthesize(Path(file_path))
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    click.echo(
+        f"Strictify: Found {res['untyped_count']} untyped parameters in '{file_path}':"
+    )
+    for u in res["untyped_arguments"]:
+        click.echo(
+            f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' -> Guard: {u['suggested_guard']}"
+        )
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

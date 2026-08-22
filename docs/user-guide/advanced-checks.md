@@ -92,3 +92,10 @@ rush bundle analyze dist/
 * `rush test-heal`: Diagnose intermittent test failures.
 * `rush api-diff`: Ensure public signature parity.
 
+
+
+## DB Drift & Code Simplification
+* `rush db-drift`: Schema migration drift detection.
+* `rush simplify`: Function complexity decomposition.
+* `rush strictify`: Runtime type guard generation.
+

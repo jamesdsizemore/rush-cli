@@ -119,3 +119,8 @@ Before refactoring a core function, run `rush blast-radius --path <file>` to ver
 ## Flaky Test Self-Healing
 Run `rush test-heal` whenever async tests fail intermittently.
 
+
+
+## Database Drift Verification
+Run `rush db-drift` before deploying any database schema change.
+

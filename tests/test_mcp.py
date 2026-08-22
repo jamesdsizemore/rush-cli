@@ -36,6 +36,9 @@ EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
     "rush_arch_guard",
     "rush_test_heal",
     "rush_api_diff",
+    "rush_db_drift",
+    "rush_simplify",
+    "rush_strictify",
 }
 
 

@@ -53,3 +53,9 @@ When contributing to Rush:
 * Place sandbox isolation logic in `src/rush/core/`.
 * Place test healing and API diff tools in `src/rush/tools/`.
 
+
+
+## Contributing to DB Drift and Simplification
+* Place schema comparison algorithms in `src/rush/tools/db_drift.py`.
+* Place AST complexity calculations in `src/rush/tools/simplify.py`.
+

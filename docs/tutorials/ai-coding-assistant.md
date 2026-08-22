@@ -67,3 +67,8 @@ Instruct your agent to call `rush_context_pack` to minimize prompt token usage a
 ## Test Healing Agent Protocol
 Instruct agents to run `rush_test_heal` to diagnose intermittent test failures.
 
+
+
+## Schema Drift Agent Protocol
+Instruct agents to call `rush_db_drift` whenever altering SQLAlchemy or SQLModel entities.
+

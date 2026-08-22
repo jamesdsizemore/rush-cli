@@ -78,3 +78,7 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 
 * **`rush_test_heal(target, runs=5)`**: Diagnose flaky test race conditions in isolated sandbox and propose fixes.
 * **`rush_api_diff(base="main")`**: Detect breaking public API contract changes against base Git ref.
+
+* **`rush_db_drift()`**: Audit ORM models against migrations to detect schema drift.
+* **`rush_simplify(file, max_complexity=10)`**: Decompose high-complexity functions into modular helpers.
+* **`rush_strictify(file)`**: Synthesize runtime type guards for unvalidated parameters.

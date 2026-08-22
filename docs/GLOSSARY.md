@@ -62,3 +62,10 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **GitSandbox**: Ephemeral throwaway worktree context manager ensuring clean isolation.
 * **TestHealer**: Autonomous engine executing perturbation stress runs to stabilize flaky tests.
 
+
+
+### DB Drift & Code Simplification Terms (Phase 48)
+* **ComplexityDecomposer**: AST tool measuring cognitive branch depth and proposing helper abstractions.
+* **DbDriftAuditor**: Static linter checking ORM classes against SQL migration statements.
+* **TypeSynthesizer**: Generator creating defensive runtime type guards for untyped arguments.
+

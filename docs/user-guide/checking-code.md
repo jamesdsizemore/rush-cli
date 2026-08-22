@@ -120,3 +120,9 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 ## API Diffing
 * `rush api-diff`: Compare AST signatures against base branches.
 
+
+
+## Database & Complexity Auditing
+* `rush db-drift`: Verify model/migration alignment.
+* `rush simplify`: Score cognitive complexity.
+

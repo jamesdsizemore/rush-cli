@@ -142,3 +142,10 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/tools/test_heal.py`: Flaky test healer.
 * `src/rush/tools/api_diff.py`: Public API contract differ.
 
+
+
+## DB Drift & Simplification Architecture (Phase 48)
+* `src/rush/tools/db_drift.py`: Schema migration drift auditor.
+* `src/rush/tools/simplify.py`: Function complexity decomposer.
+* `src/rush/tools/strictify.py`: Runtime type guard synthesizer.
+

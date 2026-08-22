@@ -93,3 +93,8 @@ Rush now provides native token reduction tools directly in the CLI and FastMCP s
 ## Flaky Test Diet
 Stop re-running test suites 10 times in AI context—use `rush test-heal` to diagnose non-determinism in one step.
 
+
+
+## Complexity Diet
+Decomposing 200-line monolithic functions with `rush simplify` reduces the context tokens needed for subsequent code edits by up to 50%.
+

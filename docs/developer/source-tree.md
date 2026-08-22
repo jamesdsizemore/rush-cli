@@ -78,3 +78,13 @@ src/rush/
     └── api_diff.py        # Public API signature differ
 ```
 
+
+
+## DB Drift & Simplification Modules
+```
+src/rush/tools/
+├── db_drift.py    # ORM-to-migration schema drift auditor
+├── simplify.py    # Cognitive complexity refactoring decomposer
+└── strictify.py   # Runtime type guard synthesizer
+```
+

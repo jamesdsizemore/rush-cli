@@ -50,3 +50,8 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 ## Safe Ephemeral Sandboxing (Phase 47)
 `GitSandbox` guarantees that test perturbation and self-healing fixes execute strictly in throwaway worktrees, preventing any corruption of working trees or developer secrets.
 
+
+
+## Schema Integrity & Type Safety (Phase 48)
+`rush db-drift` and `rush strictify` protect runtime services against schema mismatch panics and unvalidated type injection payloads.
+

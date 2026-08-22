@@ -11,3 +11,8 @@ Define and maintain layer matrices in `rush.toml` under `[architecture.layers]` 
 ## API Versioning & Breaking Change Gates
 Enforce zero breaking changes on minor releases via `rush api-diff` in CI.
 
+
+
+## Migration Lifecycle Governance
+Enforce continuous schema parity using `rush db-drift` on all PRs that touch database models.
+
