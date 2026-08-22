@@ -34,6 +34,9 @@
 | **Phase 38** | Agent Governance & Repo Scaffolding | `rush governance sync`, `scaffold init`, AGENTS.md compiler | Complete | ADR-0003, 0010, 0020, 0024 |
 | **Phase 39** | Git Pre-Commit Intelligence & Hooks | `rush hook run`, `install`, `verify`, SHA-256 hook tamper detection | Complete | ADR-0003, 0010, 0024 |
 | **Phase 40** | Multi-Model Consensus & Scorecard | `rush score compute`, `consensus reconcile`, 0–100% 6-pillar score | Complete | ADR-0003, 0010, 0023, 0024 |
+| **Phase 41** | Foundations & Base Ship Vectors | `rush session save/restore`, `rush ship clean/env/docs`, ContentRouter, Command Distillers | Complete | ADR-0030, 0031, 0038, 0040 |
+| **Phase 42** | TOON, AST Skeletons & Ship Gate | `rush ship gate/migration/semver/pack`, TOON v4.1, Polyglot AST Skeletons, Merkle | In Progress | ADR-0031, 0037, 0039, 0046 |
+| **Phase 43** | CCR, Grounding & Mistake Memory | `rush context retrieve`, `rush hallu-guard`, `rush context mistakes`, FailureLedger | Planned | ADR-0030, 0033, 0038, 0041, 0042 |
 | **VibeCoder** | Unified Vibe-Coder 22-Tool Suite | `rush vibecoder run`, sub-second feedback loop, loop starvation check | Ready | ADR-0003, 0010, 0017, 0024 |
 
 ---

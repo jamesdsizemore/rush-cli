@@ -45,17 +45,55 @@ def build_server():
 
 
 def _register_tools(server) -> None:
-    """Register each tool function as an MCP tool.
-
-    Tool name = ``rush_<tool.name>``. Description from the tool's
-    ``mcp_description`` property (kept <200 chars per architecture §5.2).
-    """
+    """Register each tool function as an MCP tool."""
     for tool in ALL_TOOLS:
         server.add_tool(
             fn=tool.__call__,
             name=f"rush_{tool.name}",
             description=tool.mcp_description,
         )
+
+    # Phase 41 Tools
+    def mcp_rush_session_save(name: str, files: list[str]) -> str:
+        from rush.memory.checkpoint_journal import CheckpointJournal
+
+        journal = CheckpointJournal()
+        dest = journal.save_checkpoint(name, {}, files)
+        return f"Session saved: {dest}"
+
+    def mcp_rush_ship_clean(dry_run: bool = False) -> str:
+        from rush.tools.ship.cleaner import ScratchCleaner
+
+        cleaner = ScratchCleaner()
+        res = cleaner.clean(dry_run=dry_run)
+        return (
+            f"Cleaned {res['removed_count']} items ({res['bytes_freed']} bytes freed)."
+        )
+
+    def mcp_rush_ship_env() -> str:
+        from rush.tools.ship.env_linter import EnvParityLinter
+
+        linter = EnvParityLinter()
+        res = linter.lint()
+        if res["passed"]:
+            return "All environment variables declared in .env.example."
+        return f"Missing declarations in .env.example: {', '.join(res['missing_in_example'])}"
+
+    server.add_tool(
+        fn=mcp_rush_session_save,
+        name="rush_session_save",
+        description="Save developer context snapshot to .rush/sessions/",
+    )
+    server.add_tool(
+        fn=mcp_rush_ship_clean,
+        name="rush_ship_clean",
+        description="Clean scratch directories and build caches before release",
+    )
+    server.add_tool(
+        fn=mcp_rush_ship_env,
+        name="rush_ship_env",
+        description="Audit codebase environment variable usage against .env.example",
+    )
 
 
 async def run_stdio() -> None:

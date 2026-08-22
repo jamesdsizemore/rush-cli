@@ -1754,5 +1754,125 @@ def consensus_reconcile_cmd(
         )
 
 
+# -----------------------------------------------------------------------------
+# Phase 41: Foundations, Preferences, Sessions & Ship Vectors
+# -----------------------------------------------------------------------------
+
+
+@cli.group(name="session")
+def session_group() -> None:
+    """Developer session checkpoint management."""
+
+
+@session_group.command(name="save")
+@click.argument("name")
+@click.option(
+    "--file",
+    "-f",
+    "files",
+    multiple=True,
+    help="Active files to include in session snapshot.",
+)
+def session_save_cmd(name: str, files: tuple[str, ...]) -> None:
+    """Save an active session checkpoint to .rush/sessions/."""
+    from rush.memory.checkpoint_journal import CheckpointJournal
+
+    journal = CheckpointJournal()
+    path = journal.save_checkpoint(name, {"cwd": str(Path.cwd())}, list(files))
+    click.echo(f"Session checkpoint saved to {path}")
+
+
+@session_group.command(name="list")
+def session_list_cmd() -> None:
+    """List all saved session checkpoints."""
+    from rush.memory.checkpoint_journal import CheckpointJournal
+
+    journal = CheckpointJournal()
+    sessions = journal.list_checkpoints()
+    if not sessions:
+        click.echo("No saved session checkpoints found.")
+        return
+    click.echo(f"Saved Session Checkpoints ({len(sessions)}):")
+    for s in sessions:
+        click.echo(f"  - {s.get('name')} (files: {len(s.get('files', []))})")
+
+
+@session_group.command(name="restore")
+@click.argument("name")
+def session_restore_cmd(name: str) -> None:
+    """Restore a saved session checkpoint."""
+    from rush.memory.checkpoint_journal import CheckpointJournal
+
+    journal = CheckpointJournal()
+    data = journal.restore_checkpoint(name)
+    if not data:
+        click.echo(f"Error: Session checkpoint '{name}' not found.", err=True)
+        sys.exit(1)
+    click.echo(f"Session '{name}' restored. Files: {', '.join(data.get('files', []))}")
+
+
+@cli.group(name="ship")
+def ship_group() -> None:
+    """Pre-flight release validation and hygiene vectors."""
+
+
+@ship_group.command(name="clean")
+@click.option(
+    "--dry-run", is_flag=True, help="Preview files to be removed without deleting."
+)
+def ship_clean_cmd(dry_run: bool) -> None:
+    """Purge temporary scratch, tmp, and cache directories."""
+    from rush.tools.ship.cleaner import ScratchCleaner
+
+    cleaner = ScratchCleaner()
+    res = cleaner.clean(dry_run=dry_run)
+    mode = "DRY RUN: Would remove" if dry_run else "Removed"
+    click.echo(
+        f"Ship Clean: {mode} {res['removed_count']} items ({res['bytes_freed']} bytes freed)."
+    )
+
+
+@ship_group.command(name="env")
+def ship_env_cmd() -> None:
+    """Lint codebase environment variable usage against .env.example."""
+    from rush.tools.ship.env_linter import EnvParityLinter
+
+    linter = EnvParityLinter()
+    res = linter.lint()
+    if res["passed"]:
+        click.echo(
+            "Ship Env: All codebase environment variables declared in .env.example."
+        )
+    else:
+        click.echo(
+            f"Ship Env: FAIL - {len(res['missing_in_example'])} undeclared variables in .env.example:",
+            err=True,
+        )
+        for var in res["missing_in_example"]:
+            click.echo(f"  - {var}", err=True)
+        sys.exit(1)
+
+
+@ship_group.command(name="docs")
+def ship_docs_cmd() -> None:
+    """Audit documentation links and CLI reference parity."""
+    from rush.tools.ship.docs_linter import DocsLinter
+
+    linter = DocsLinter()
+    res = linter.lint()
+    if res["passed"]:
+        click.echo(
+            f"Ship Docs: Audited {res['checked_docs']} markdown docs. All links valid."
+        )
+    else:
+        click.echo(
+            f"Ship Docs: FAIL - {res['broken_links_count']} broken relative links found:",
+            err=True,
+        )
+        for link in res["broken_links"]:
+            click.echo(f"  - {link['file']} -> {link['target']}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()
