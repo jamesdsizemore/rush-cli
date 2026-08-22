@@ -3,7 +3,7 @@
 **Author**: Antigravity Deep Research Subsystem  
 **Target Repository**: `rush-cli`  
 **Date**: August 2026  
-**Status**: Proposal & Comprehensive Architectural Blueprint  
+**Status**: Proposal & Comprehensive Architectural Blueprint with Pinned Dependency Matrix  
 
 ---
 
@@ -17,7 +17,7 @@ Real-world release failures and embarrassing package launches happen across four
 3. **Repository Cruft & Development Pollution**: Leftover scratch scripts (`scratch.py`, `test_temp.ts`), local cache directories (`.pytest_cache`, `__pycache__`, `.turbo`), stray `.DS_Store` / `Thumbs.db` files, incomplete `.gitignore` rules, or large binary blobs committed directly to git.
 4. **README, Documentation & Community Standards Drift**: Outdated README code snippets, broken markdown links, dead badge images, missing `LICENSE` / `SECURITY.md` files, undocumented CLI commands, and stale version references.
 
-This comprehensive report synthesizes open-source tools across GitHub, analyzes critical gaps, and presents the architectural blueprint for a groundbreaking new subsystem: **`rush ship` (Total Ship-Readiness, Repository Cleanliness & Release Pre-Flight Intelligence)**.
+This comprehensive report synthesizes open-source tools across GitHub, analyzes critical gaps, provides an **exact pinned dependency matrix**, and presents the architectural blueprint for a groundbreaking new subsystem: **`rush ship` (Total Ship-Readiness, Repository Cleanliness & Release Pre-Flight Intelligence)**.
 
 ---
 
@@ -60,22 +60,83 @@ quadrantChart
 
 ---
 
-## 2. The 4 Pillars of Total Ship-Readiness
+## 2. Pinned Dependency & Integration Matrix
 
-To guarantee that a repository is 100% ready to ship, Rush organizes pre-flight intelligence into **4 distinct pillars**:
+To implement the `rush ship` subsystem cleanly, we specify exact pinned version requirements across Python extras, Node.js packages, and external CLI engines.
+
+### A. Python Dependencies (`pyproject.toml` `[project.optional-dependencies]`)
+
+```toml
+[project.optional-dependencies]
+ship = [
+    # PEP 517 isolated package builder
+    "build==1.2.2.post1",
+    # Wheel archive validator (catches test fixtures, misplaced files, missing licenses)
+    "check-wheel-contents==0.6.1",
+    # Distribution artifact metadata and description validator
+    "twine==6.0.1",
+    # AST-level Python API signature inspection for Semver drift detection
+    "griffe==1.5.7",
+    # Environment variable file syntax, ordering, and duplicate key linter
+    "dotenv-linter==0.5.0",
+    # Zero-downtime database migration linter
+    "sqlfluff==4.0.4",
+    # PyPI dependency vulnerability security auditor
+    "pip-audit==2.7.3",
+]
+```
+
+### B. Node.js & Global CLI Engine Matrix (`package.json` devDependencies / npm)
+
+```json
+{
+  "devDependencies": {
+    "publint": "^0.3.24",
+    "@arethetypeswrong/cli": "^0.18.5",
+    "markdownlint-cli": "^0.49.1",
+    "@stoplight/spectral-cli": "^6.14.3",
+    "typescript": "^5.8.2",
+    "knip": "^5.45.0"
+  }
+}
+```
+
+### C. Standalone Pre-Compiled Binary Engines (Environment Discovery)
+
+| Engine | Version Pin | Installation | Purpose in `rush ship` |
+|---|---|---|---|
+| **`lychee`** | `v0.18.0` | `cargo install lychee` / GitHub Releases | Sub-second broken link and anchor validation across all documentation |
+| **`hadolint`** | `v2.12.0` | `brew install hadolint` / Binary download | CIS Dockerfile benchmark & non-root user verification |
+| **`actionlint`** | `v1.7.7` | `go install` / Binary download | GitHub Actions workflow syntax, permissions & secret leak guard |
+| **`checkov`** | `v3.2.378` | `pip install checkov` | Terraform, Kubernetes, and CloudFormation pre-flight security scanner |
+
+### D. Zero-Dependency Native Fallback Architecture
+
+In alignment with Rush's core architectural contract (ADR 0001 & ADR 0005):
+- **Rush does not require external tools to be installed to function.**
+- Rush implements native AST-based fallback scanners in pure Python 3.12 for:
+  - `Code-to-.env.example` parity cross-referencing.
+  - Scratch file and temporary cruft detection.
+  - `.gitignore` completeness and untracked file auditing.
+  - README code snippet command extraction and validation.
+- When specialized external tools (`publint`, `attw`, `check-wheel-contents`, `lychee`) are available on `PATH`, Rush automatically discovers them and elevates audit depth.
+
+---
+
+## 3. The 4 Pillars of Total Ship-Readiness
 
 ```mermaid
 flowchart TD
     subgraph P1["Pillar 1: Repository Hygiene & Cruft Purge"]
         C1["Scratch Files & Dev Cruft (temp_*.py, scratch.py, *.log)"]
         C2["Local Caches & Dumps (.pytest_cache, __pycache__, .turbo, .db)"]
-        C3[".gitignore Completeness & Untracked File Leakage"]
+        C3[".gitignore Completeness & Stale Tracked File Leakage"]
         C4["Large Binary Bloats & LFS Auditing (>5MB uncompressed)"]
     end
 
     subgraph P2["Pillar 2: README, Docs & Community Health"]
         D1["README Completeness (Install, Quickstart, Badges, Links)"]
-        D2["README Code Snippet Validation (Do sample commands work?)"]
+        D2["README Code Snippet Validator (Do sample commands work?)"]
         D3["Documentation Parity & Broken Link Auditing (200+ docs)"]
         D4["Community Standard Files (LICENSE, SECURITY.md, CHANGELOG.md)"]
     end
@@ -90,7 +151,7 @@ flowchart TD
     subgraph P4["Pillar 4: Runtime Safety, Migrations & Blast Radius"]
         R1["Code AST vs .env.example / Vault Secret Parity"]
         R2["Zero-Downtime Database Migration Linter (Table Lock Check)"]
-        R3["Public API Semver Breaking Change Detection"]
+        R3["Public API Semver Breaking Change Detection (griffe)"]
         R4["Blast Radius & Automated Rollback Runbook (ROLLBACK.md)"]
     end
 
@@ -100,7 +161,7 @@ flowchart TD
 
 ---
 
-## 3. Detailed Specification of the Innovative `rush ship` Engines
+## 4. Detailed Specification of the Innovative `rush ship` Engines
 
 ### Pillar 1: Repository Cleanliness & Dev Cruft Purge (`rush ship clean`)
 - **Scratch File & Temporary Asset Scanner**:
@@ -110,7 +171,7 @@ flowchart TD
   - Flags git-tracked or unignored cache directories: `.pytest_cache/`, `__pycache__/`, `.ruff_cache/`, `.mypy_cache/`, `.turbo/`, `.parcel-cache/`, `dist/`, `build/`.
   - Flags mock SQLite test databases (`test.db`, `local.sqlite3`) that shouldn't be committed.
 - **`.gitignore` Hygiene & Leakage Validator**:
-  - Verifies that `.gitignore` contains standard ignores for the project's detected technology stacks.
+  - Verifies that `.gitignore` contains standard ignores for detected technology stacks.
   - Detects "stale tracked files"—files currently tracked in Git history that match active `.gitignore` patterns.
 - **Binary & Asset Bloat Auditor**:
   - Scans git staging and tree for large uncompressed binary assets (`>5MB` videos, zip archives, raw PSDs) that should use Git LFS or external CDN storage.
@@ -131,29 +192,29 @@ flowchart TD
 
 ### Pillar 3: Packaging & Distribution Artifact Sanitizer (`rush ship pack`)
 - **Ephemeral Sandbox Packaging**:
-  - Builds `.whl` / `npm pack` in an ephemeral RAM disk sandbox.
+  - Builds `.whl` / `npm pack` in an ephemeral RAM disk sandbox using `build==1.2.2.post1`.
   - Validates that consuming the package via `pip install` / `npm install` in an isolated virtualenv successfully imports the top-level package and executes declared CLI entrypoints.
-- **Packaging Sanitizer**:
+- **Packaging Sanitizer (`check-wheel-contents==0.6.1`)**:
   - Enforces that no `.env`, `.pem`, `.key`, `tests/`, or test fixtures are included in the published archive.
   - Checks that executable binary entrypoints have valid shebangs (`#!/usr/bin/env python3` or `#!/usr/bin/env node`) and executable file modes.
-- **Consumer Type Resolution**:
+- **Consumer Type Resolution (`publint@^0.3.24`, `@arethetypeswrong/cli@^0.18.5`)**:
   - Verifies `py.typed` (PEP 561) in Python packages.
-  - Verifies `package.json` `exports` maps across CJS and ESM with `@arethetypeswrong/cli` and `publint`.
+  - Verifies `package.json` `exports` maps across CJS and ESM.
 
 ### Pillar 4: Runtime Safety, Database Migrations & Blast Radius (`rush ship runtime`)
-- **Code-to-Environment Parity**:
+- **Code-to-Environment Parity (`rush ship env`)**:
   - Parses AST of Python (`os.environ`), TypeScript (`process.env`), and Go (`os.Getenv`) to extract all environment variable references.
   - Cross-checks with `.env.example`, Dockerfiles, and CI secrets to catch missing configuration keys before production deployment.
-- **Zero-Downtime Database Migration Linter**:
+- **Zero-Downtime Database Migration Linter (`rush ship migration`)**:
   - Inspects new SQL, Prisma, or Alembic migrations for dangerous table locks: adding `NOT NULL` without default, dropping columns instantly, or adding unindexed foreign keys.
-- **Public API Semver Breaking Change Guard**:
+- **Public API Semver Breaking Change Guard (`rush ship semver`, `griffe==1.5.7`)**:
   - Compares public function/class signatures against the previous git release tag. If breaking changes exist, enforces a **MAJOR** version bump.
 - **Blast-Radius & Automated Rollback Runbook (`ROLLBACK.md`)**:
   - Computes a 0–100% blast radius risk score and automatically drafts an instant-execution `ROLLBACK.md` with git revert hashes and database rollback commands.
 
 ---
 
-## 4. Proposed CLI & FastMCP Command Suite
+## 5. Proposed CLI & FastMCP Command Suite
 
 ```bash
 # 1. Total Ship-Readiness Pre-Flight Gate (Runs all 4 Pillars)
@@ -161,7 +222,7 @@ rush ship preflight .
 
 # 2. Repository Cleanliness & Dev Cruft Purge
 rush ship clean .
-rush ship clean . --fix    # Safely deletes scratch files and untracked logs
+rush ship clean . --fix    # Safely purges scratch files and untracked logs
 
 # 3. README & Documentation Health Check
 rush ship docs .
@@ -186,7 +247,7 @@ rush ship attestation --sign --output ship-attestation.json
 
 ---
 
-## 5. Summary of Innovation: Why `rush ship` Sets a New Standard
+## 6. Summary of Innovation: Why `rush ship` Sets a New Standard
 
 | Capability | Traditional Linters (Ruff/ESLint) | Packaging Checkers (twine/publint) | Rush `rush ship` |
 |---|---|---|---|
@@ -196,11 +257,11 @@ rush ship attestation --sign --output ship-attestation.json
 | **Code-to-Env Parity** | ❌ No | ❌ No | ✅ **AST-to-Env Cross-Check** |
 | **Zero-Downtime DB Migrations** | ❌ No | ❌ No | ✅ **Table Lock Hazard Detection** |
 | **Dry-Run Package Sandbox** | ❌ No | Partial (static only) | ✅ **Full Consumer Simulation** |
-| **Public API Semver Guard** | ❌ No | ❌ No | ✅ **AST Signature Diffing** |
+| **Public API Semver Guard** | ❌ No | ❌ No | ✅ **AST Signature Diffing (`griffe`)** |
 | **Automated Rollback Runbook** | ❌ No | ❌ No | ✅ **Instant `ROLLBACK.md` Generation** |
 
 ---
 
-## 6. Conclusion & Recommended Action Plan
+## 7. Conclusion & Recommended Action Plan
 
-By combining **Repository Hygiene**, **README/Doc Parity**, **Packaging Integrity**, and **Runtime/Migration Safety**, `rush ship` covers every single blind spot in modern software releases. It turns what is currently a stressful, error-prone manual launch checklist into an instantaneous, deterministic, sub-second pre-flight gate.
+By combining **Repository Hygiene**, **README/Doc Parity**, **Packaging Integrity**, and **Runtime/Migration Safety** alongside an **exact pinned dependency matrix**, `rush ship` covers every single blind spot in modern software releases. It turns what is currently a stressful, error-prone manual launch checklist into an instantaneous, deterministic, sub-second pre-flight gate.
