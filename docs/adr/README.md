@@ -31,5 +31,24 @@
 | 0027 | `src/rush/hook/` | `test_git_hook_guard.py` | 39 |
 | 0028 | `src/rush/score/` | `test_quality_scorecard.py` | 40 |
 | 0029 | `src/rush/vibecoder/` | `test_vibecoder_toolkit.py` | VibeCoder Toolkit |
+| 0030 | `src/rush/memory/` | `test_agent_context_memory.py` | 41A, 41B |
+| 0031 | `src/rush/ship/` | `test_ship_readiness_cockpit.py` | 41C |
+| 0032 | `src/rush/tools/context_pack.py` | `test_context_pack.py` | 42 |
+| 0033 | `src/rush/safety/hallucination.py` | `test_hallucination_guard.py` | 42 |
+| 0034 | `src/rush/tools/test_heal.py` | `test_flaky_test_healer.py` | 44 |
+| 0035 | `src/rush/mcp/mesh.py`, `src/rush/tools/swarm_merge.py` | `test_mcp_mesh.py`, `test_swarm_merge.py` | 46 |
+| 0036 | `src/rush/providers/offline.py`, `src/rush/release/attest.py` | `test_offline_runtime.py`, `test_attestation.py` | 44, 46 |
+| 0037 | Tree-sitter & `pyproject.toml` | `test_polyglot_grammars.py` | Dependencies |
+| 0038 | `src/rush/token_economy/`, `src/rush/token_economy/ccr_store.py` | `test_ccr_store.py` | 41, 43 |
+| 0039 | `src/rush/token_economy/toon/` | `test_toon_serialization.py` | 42 |
+| 0040 | `src/rush/token_economy/distillers/`, `src/rush/tools/common.py` | `test_command_distillers.py` | 41 |
+| 0041 | `src/rush/memory/mistake_miner.py` | `test_mistake_miner.py` | 43 |
+| 0042 | `src/rush/codegraph/grounding_verifier.py`, `src/rush/tools/hallu_guard.py` | `test_grounding_verifier.py` | 43 |
+| 0043 | `src/rush/token_economy/stale_sweeper.py` | `test_stale_sweeper.py` | 44 |
+| 0044 | `src/rush/codegraph/`, `src/rush/memory/` | Clean-room tests | 41–50 |
+| 0045 | `src/rush/token_economy/telemetry.py`, `src/rush/token_economy/tui_gain.py` | `test_telemetry.py`, `test_gain_tui.py` | 45 |
+| 0046 | `src/rush/tools/ship/` | `test_ship_clean_env_docs.py`, `test_ship_gate_cockpit.py` | 41, 42 |
+| 0047 | `src/rush/mcp_mesh/`, `src/rush/tools/swarm_merge.py` | `test_mcp_mesh.py`, `test_swarm_merge.py` | 49 |
+| 0048 | `src/rush/integrations/graft.py`, `src/rush/codegraph/` | `test_graft_integration.py`, `test_ast_skeletonizer.py` | 41–50 |
 
 The pre-existing `docs/ARCHITECTURE.md` draft is deliberately not modified by this implementation program; this index provides its required mapping without mixing unrelated draft content into Phase 00 scope.

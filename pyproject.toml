@@ -24,6 +24,12 @@ dependencies = [
     "click==8.4.2",       # CLI framework; matches headcleaner-cli
     "rich==13.9.4",       # Terminal pretty-printing; cyan/green/yellow palette
     "pytest==9.0.3",      # Test runner (we ship tests; users can `uv run pytest`)
+    "tiktoken==0.14.0",   # Exact BPE token counting (o200k/cl100k)
+    "tree-sitter==0.26.0",# Polyglot AST outline and skeleton parsing
+    "sqlglot==30.17.0",   # SQL DDL AST parsing for zero-downtime migration linting
+    "pillow==12.3.0",     # Image optimization and layout metadata inspection
+    "cryptography==50.0.0",# SLSA in-toto cryptographic provenance signing
+    "ruamel.yaml==0.19.1",# Strict YAML parsing for workflow emulation
 ]
 
 [project.optional-dependencies]
