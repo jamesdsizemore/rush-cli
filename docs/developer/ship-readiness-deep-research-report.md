@@ -1,267 +1,206 @@
-# Deep Research Report: Ship-Readiness Intelligence, Open-Source Ecosystems & Next-Generation Quality Scanners for Rush
+# Deep Research Report: Complete Ship-Readiness Intelligence, Repository Hygiene & Next-Generation Release Scanners for Rush
 
 **Author**: Antigravity Deep Research Subsystem  
 **Target Repository**: `rush-cli`  
 **Date**: August 2026  
-**Status**: Proposal & Architectural Blueprint  
+**Status**: Proposal & Comprehensive Architectural Blueprint  
 
 ---
 
 ## Executive Summary
 
-As software engineering accelerates through AI-assisted pair-programming and autonomous agent workflows, the traditional definition of "quality" (linting + unit tests) is no longer sufficient to guarantee that a repository is **ready to ship to production**. Modern deployment failures rarely stem from simple syntax errors; they happen when:
-1. **Environment Variables Drift**: Code calls `process.env.STRIPE_SECRET_KEY` or `os.environ["DATABASE_URL"]`, but the key was never added to `.env.example`, Kubernetes ConfigMaps, or production secret managers.
-2. **Distribution Artifacts Leak Secrets or Test Fixtures**: Published Python wheels (`.whl`) or npm tarballs (`.tgz`) accidentally bundle `.env` files, internal credentials, test databases, unminified source maps, or missing `py.typed` / CJS-ESM entrypoints.
-3. **Database Migrations Break Zero-Downtime Deploys**: A migration introduces `ALTER TABLE ... NOT NULL` without a default value or drops a column while old application instances are still serving traffic.
-4. **Breaking API Changes Violate Semver**: Public functions or REST/GraphQL endpoints change signatures without a corresponding Major semver bump, breaking downstream consumers.
-5. **Debug Artifacts and AI Slop Reach Production**: Hardcoded `localhost:3000` URLs, `debugger;`, `pdb.set_trace()`, or empty `# TODO: implement` stubs slip into release branches.
-6. **No Automated Rollback Runbook Exists**: When a canary deployment fails, engineers scramble to identify which database migration or git commit to revert.
+As software engineering accelerates through AI-assisted pair-programming and autonomous agent workflows, the traditional definition of "quality" (linting + unit tests) is no longer sufficient to guarantee that a repository is **ready to ship to production**. 
 
-This report synthesizes extensive research across the open-source ecosystem, evaluates the best integration candidates, and proposes a groundbreaking new subsystem for Rush: **`rush ship` (Ship-Readiness & Release Pre-Flight Intelligence)**.
+Real-world release failures and embarrassing package launches happen across four distinct vectors:
+1. **Runtime & Environment Hazards**: Undocumented environment variables in code, broken database migrations that cause downtime, unpinned container dependencies, or breaking API changes that violate Semver.
+2. **Distribution Artifact & Packaging Flaws**: Published wheels (`.whl`) or tarballs (`.tgz`) that accidentally bundle internal credentials, test databases, unminified source maps, or missing `py.typed` / CJS-ESM type resolution maps.
+3. **Repository Cruft & Development Pollution**: Leftover scratch scripts (`scratch.py`, `test_temp.ts`), local cache directories (`.pytest_cache`, `__pycache__`, `.turbo`), stray `.DS_Store` / `Thumbs.db` files, incomplete `.gitignore` rules, or large binary blobs committed directly to git.
+4. **README, Documentation & Community Standards Drift**: Outdated README code snippets, broken markdown links, dead badge images, missing `LICENSE` / `SECURITY.md` files, undocumented CLI commands, and stale version references.
+
+This comprehensive report synthesizes open-source tools across GitHub, analyzes critical gaps, and presents the architectural blueprint for a groundbreaking new subsystem: **`rush ship` (Total Ship-Readiness, Repository Cleanliness & Release Pre-Flight Intelligence)**.
 
 ---
 
 ## 1. Competitive Analysis & Open-Source Landscape
 
-We surveyed existing open-source tools, CLI utilities, and pre-publish scanners across GitHub to identify best practices, strengths, and structural gaps.
+We surveyed existing open-source tools, CLI utilities, and pre-publish scanners across GitHub to evaluate capabilities across all four release dimensions:
 
 ```mermaid
 quadrantChart
-    title Open-Source Ship-Readiness Landscape
-    x-axis Low Language Breadth --> High Language Breadth (Polyglot)
-    y-axis Static Syntax Only --> Full Production Pre-Flight Intelligence
-    quadrant-1 Rush "rush ship" (Unified Pre-Flight)
-    quadrant-2 OpsLevel / Cortex (Enterprise SaaS)
-    quadrant-3 publish-please / check-wheel-contents (Single Stack)
-    quadrant-4 OpenSSF Scorecard / Trivy (Security Focused)
-    "check-wheel-contents": [0.25, 0.35]
-    "publint / attw": [0.30, 0.40]
-    "dotenv-linter": [0.45, 0.25]
-    "delivery-gate": [0.55, 0.65]
-    "agents-shipgate": [0.60, 0.70]
-    "shipcheck-cli": [0.50, 0.60]
+    title Complete Ship-Readiness & Repo Hygiene Matrix
+    x-axis Code & Syntax Focus --> Repository, Meta & Distribution Focus
+    y-axis Single-Language / Siloed --> Unified Polyglot Intelligence
+    quadrant-1 Rush "rush ship" (Unified Pre-Flight & Hygiene)
+    quadrant-2 OpenSSF Scorecard / Repo Start
+    quadrant-3 check-wheel-contents / publint / attw
+    quadrant-4 dotenv-linter / lychee / bfg-repo-cleaner
+    "check-wheel-contents": [0.25, 0.30]
+    "publint / attw": [0.30, 0.35]
+    "dotenv-linter": [0.45, 0.20]
+    "lychee (broken links)": [0.65, 0.25]
+    "Repo Start / DevPulse": [0.70, 0.50]
+    "delivery-gate / agents-shipgate": [0.55, 0.65]
     "OpenSSF Scorecard": [0.75, 0.55]
-    "Trivy / Hadolint": [0.80, 0.45]
+    "BFG Repo-Cleaner / git-filter-repo": [0.80, 0.30]
     "Rush 'rush ship'": [0.90, 0.95]
 ```
 
 ### Table of Notable Open-Source Repositories & Tools
 
-| Repository / Tool | Ecosystem | Core Focus | Strengths | Limitations & Gaps |
+| Category | Repository / Tool | Ecosystem | Strengths | Limitations & Gaps |
 |---|---|---|---|---|
-| **[`check-wheel-contents`](https://github.com/jwodder/check-wheel-contents)** | Python | Wheel distribution integrity | Catches misplaced files, tests bundled in wheels, missing licenses | Python only; does not verify runtime imports or typing compatibility |
-| **[`publint`](https://github.com/bluwy/publint)** | JavaScript / TypeScript | `package.json` export linting | Validates `exports` maps across Node, Vite, Webpack, CJS/ESM | JS/TS only; ignores environment variables, database schemas, and git state |
-| **[`@arethetypeswrong/cli`](https://github.com/arethetypeswrong/arethetypeswrong.github.io)** (`attw`) | TypeScript | Type declaration resolution | Validates that consumers in both ESM and CJS can resolve `.d.ts` definitions | TypeScript only; does not test actual runtime execution |
-| **[`publish-please`](https://github.com/inikulin/publish-please)** | Node.js | Safe pre-publish gate | Runs pre-publish checklists (git status, tests, tag verification) | Node-specific; lacks deep AST analysis and blast-radius modeling |
-| **[`delivery-gate`](https://github.com/ramenprotokol/delivery-gate)** | Polyglot / Python | Release readiness gate | Combines automated checks with human attestations | Heavy reliance on manual checklists; no AST parsing or zero-downtime linting |
-| **[`agents-shipgate`](https://github.com/ThreeMoonsLab/agents-shipgate)** | AI / MCP / OpenAPI | AI Tool surface readiness | Audits MCP schemas and OpenAPI definitions for agent compatibility | Specialized solely on AI agent interfaces; misses core backend/infra |
-| **[`dotenv-linter`](https://github.com/dotenv-linter/dotenv-linter)** | Polyglot | Environment file hygiene | Checks syntax, ordering, duplicate keys in `.env` files | Does not inspect source code to see if code matches `.env` definitions |
-| **[`griffe`](https://github.com/mkdocstrings/griffe)** | Python | API signature inspection | Extracts API signatures to detect breaking changes | Python only; lacks container and packaging validation |
-| **[`dockle`](https://github.com/goodwithtech/dockle)** | Container | Container image CIS benchmark | Checks non-root user, credential leaks, and unnecessary permissions | Scans built images only; doesn't evaluate application logic or schema migrations |
-| **[`infracost`](https://github.com/infracost/infracost)** | Cloud / Terraform | Cloud cost estimation | Flags infrastructure cost spikes before merge | Cloud-infrastructure specific; doesn't evaluate application code |
+| **Packaging & Types** | **[`check-wheel-contents`](https://github.com/jwodder/check-wheel-contents)** | Python | Audits `.whl` files for misplaced files, tests, and licenses | Python only; does not verify runtime imports, entrypoints, or typing |
+| **Packaging & Types** | **[`publint`](https://github.com/bluwy/publint)** & **[`attw`](https://github.com/arethetypeswrong/arethetypeswrong.github.io)** | JS / TS | Lints `package.json` `exports` maps and verifies CJS/ESM `.d.ts` resolution | JS/TS only; ignores environment variables, git cruft, and documentation |
+| **Repo Cruft & Clean** | **[`Repo Start`](https://github.com/junkyard22/Repo-Start)** & **[`DevPulse`](https://github.com/Srijan-XI/DevPulse)** | Polyglot | Checks foundational files (README, LICENSE, CI workflows, `.gitignore`) | Rule-based without AST analysis or deep packaging simulation |
+| **Repo Cruft & Clean** | **[`BFG Repo-Cleaner`](https://rtyley.github.io/bfg-repo-cleaner/)** & **`git-filter-repo`** | Git | Cleans large binary blobs and sensitive files from git history | Reactive history cleaner; doesn't prevent uncommitted dev cruft |
+| **Documentation Health**| **[`lychee`](https://github.com/lycheeverse/lychee)** | Markdown | Fast link checker for markdown docs and websites | Link-only; does not check README code snippet validity or docstring coverage |
+| **Runtime & Config** | **[`dotenv-linter`](https://github.com/dotenv-linter/dotenv-linter)** | Polyglot | Lints `.env` syntax, ordering, and duplicate keys | Does not inspect source code to see if code matches `.env.example` |
+| **Release Gating** | **[`delivery-gate`](https://github.com/ramenprotokol/delivery-gate)** | Polyglot / Python | Combines machine checks with human attestation gates | Heavy reliance on manual checklists; no AST parsing or zero-downtime linting |
+| **AI Tool Surface** | **[`agents-shipgate`](https://github.com/ThreeMoonsLab/agents-shipgate)** | AI / MCP | Audits MCP schemas and OpenAPI definitions for agent compatibility | Specialized solely on AI agent interfaces; misses core backend & repo hygiene |
 
 ---
 
-## 2. The Core Gap: Why Existing Solutions Fall Short
+## 2. The 4 Pillars of Total Ship-Readiness
 
-1. **Fragmentation & Silos**: A modern application consists of Python/TypeScript backend services, SQL migrations, Dockerfiles, GitHub Actions CI workflows, and `.env` configs. Checking these requires running 10 separate tools with 10 disparate output formats.
-2. **Missing Code-to-Config Correlation**: Linters check code syntax; `dotenv-linter` checks `.env` syntax. **No existing tool cross-references the code's Abstract Syntax Tree against the `.env.example` and production secrets**.
-3. **Ignorance of Zero-Downtime Migration Hazards**: Linters don't understand that dropping a column or adding a non-nullable column without a default locks tables or breaks active application containers during rolling deploys.
-4. **Vibecoding & AI Slop Contamination**: AI assistants frequently leave debug statements (`console.log`, `print()`), local test ports (`http://localhost:8080`), and unfulfilled mock data in release branches.
-5. **No Blast-Radius or Rollback Intelligence**: Current gates give a binary pass/fail without telling developers: *"This release modifies 3 critical payment routes and 1 user table; blast radius is HIGH; rollout should be a 5% canary with a 15-minute soak."*
-
----
-
-## 3. Innovative Subsystem Blueprint: `rush ship`
-
-We propose introducing a first-of-its-kind, unified **Ship-Readiness Subsystem** to Rush:
+To guarantee that a repository is 100% ready to ship, Rush organizes pre-flight intelligence into **4 distinct pillars**:
 
 ```mermaid
-flowchart TB
-    subgraph Trigger["Release Trigger (rush ship)"]
-        CLI["rush ship preflight ."]
-        MCP["MCP Tool: rush_ship_preflight"]
-        CI["GitHub Action: rush ship gate"]
+flowchart TD
+    subgraph P1["Pillar 1: Repository Hygiene & Cruft Purge"]
+        C1["Scratch Files & Dev Cruft (temp_*.py, scratch.py, *.log)"]
+        C2["Local Caches & Dumps (.pytest_cache, __pycache__, .turbo, .db)"]
+        C3[".gitignore Completeness & Untracked File Leakage"]
+        C4["Large Binary Bloats & LFS Auditing (>5MB uncompressed)"]
     end
 
-    subgraph PreflightEngines["The 8 Ship-Readiness Intelligence Engines"]
-        direction TB
-        E1["1. Env & Secret Parity Engine (Code AST vs .env / Vault)"]
-        E2["2. Distribution Artifact & Packaging Sanitizer (Dry-Run Wheel/Tarball)"]
-        E3["3. Consumer Type & Resolution Guard (py.typed / attw / publint)"]
-        E4["4. Zero-Downtime Migration Linter (SQL / Prisma / Alembic Lock Check)"]
-        E5["5. Container Production Posture (Non-Root, Healthcheck, Minimal Size)"]
-        E6["6. Public API Semver & Breaking Change Guard (AST Signature Diff)"]
-        E7["7. Release Hygiene & AI Slop Purge (No Localhost, Debuggers, Hollow Stubs)"]
-        E8["8. Changelog, Version & Tag Parity (pyproject / package.json vs CHANGELOG.md)"]
+    subgraph P2["Pillar 2: README, Docs & Community Health"]
+        D1["README Completeness (Install, Quickstart, Badges, Links)"]
+        D2["README Code Snippet Validation (Do sample commands work?)"]
+        D3["Documentation Parity & Broken Link Auditing (200+ docs)"]
+        D4["Community Standard Files (LICENSE, SECURITY.md, CHANGELOG.md)"]
     end
 
-    subgraph DecisionMatrix["Production Impact & Risk Assessment"]
-        BlastRadius["Blast-Radius Risk Calculator (0–100%)"]
-        CanaryRecommender["Canary Rollout Strategy Generator (Direct vs 5% Soak)"]
-        AttestationSigner["HMAC-Signed Attestation (ship-attestation.json)"]
-        RollbackGenerator["Automated Rollback Runbook (ROLLBACK.md)"]
+    subgraph P3["Pillar 3: Distribution Packaging & Types"]
+        T1["Dry-Run Package Assembly (.whl / .tgz RAM Sandbox)"]
+        T2["Consumer Entrypoint & Shebang Verification"]
+        T3["PEP 561 py.typed & CJS/ESM Export Resolution (attw/publint)"]
+        T4["Sanitizer: Zero .env, secrets, or test fixtures in artifacts"]
     end
 
-    subgraph Outputs["Output Formats & Release Gates"]
-        TerminalReport["Interactive Terminal Scorecard"]
-        SARIFExport["SARIF 2.1.0 Release Gate Export"]
-        PRSummary["GitHub PR / Release Go-NoGo Card"]
+    subgraph P4["Pillar 4: Runtime Safety, Migrations & Blast Radius"]
+        R1["Code AST vs .env.example / Vault Secret Parity"]
+        R2["Zero-Downtime Database Migration Linter (Table Lock Check)"]
+        R3["Public API Semver Breaking Change Detection"]
+        R4["Blast Radius & Automated Rollback Runbook (ROLLBACK.md)"]
     end
 
-    Trigger --> PreflightEngines
-    PreflightEngines --> DecisionMatrix
-    DecisionMatrix --> Outputs
+    P1 & P2 & P3 & P4 --> PreflightGate["Unified Pre-Flight Ship Gate (rush ship preflight)"]
+    PreflightGate --> Attestation["Cryptographically Signed Attestation & PR Card"]
 ```
 
 ---
 
-## 4. Detailed Specification of the 8 Core Ship-Readiness Engines
+## 3. Detailed Specification of the Innovative `rush ship` Engines
 
-### Engine 1: Environment & Secret Contract Parity (`rush ship env`)
-- **AST Code Extraction**: Parses all Python (`os.environ`, `os.getenv`), TypeScript/JavaScript (`process.env`, `import.meta.env`), and Go (`os.Getenv`) references to identify all runtime environment keys used across the codebase.
-- **Contract Cross-Check**:
-  - Compares required code keys against `.env.example`, `.env.template`, and Dockerfile `ENV` declarations.
-  - Flags any environment variable referenced in code that is missing from documentation.
-  - Detects orphan keys defined in `.env.example` that are never referenced in code.
-  - Scans for dangerous hardcoded defaults (e.g. `SECRET_KEY = os.getenv("KEY", "super-secret-default")`).
+### Pillar 1: Repository Cleanliness & Dev Cruft Purge (`rush ship clean`)
+- **Scratch File & Temporary Asset Scanner**:
+  - Detects transient development files: `scratch.py`, `temp_*.ts`, `test_scratch.py`, `debug.log`, `output.txt`, `queries.sql`, `tmp/`.
+  - Scans for OS metadata cruft: `.DS_Store`, `Thumbs.db`, `desktop.ini`, `*.swp`, `*~`.
+- **Cache & Build Artifact Containment**:
+  - Flags git-tracked or unignored cache directories: `.pytest_cache/`, `__pycache__/`, `.ruff_cache/`, `.mypy_cache/`, `.turbo/`, `.parcel-cache/`, `dist/`, `build/`.
+  - Flags mock SQLite test databases (`test.db`, `local.sqlite3`) that shouldn't be committed.
+- **`.gitignore` Hygiene & Leakage Validator**:
+  - Verifies that `.gitignore` contains standard ignores for the project's detected technology stacks.
+  - Detects "stale tracked files"—files currently tracked in Git history that match active `.gitignore` patterns.
+- **Binary & Asset Bloat Auditor**:
+  - Scans git staging and tree for large uncompressed binary assets (`>5MB` videos, zip archives, raw PSDs) that should use Git LFS or external CDN storage.
 
-### Engine 2: Distribution Artifact & Packaging Sanitizer (`rush ship pack`)
-- **Dry-Run Package Assembly**: Builds candidate `.whl`, `.tar.gz`, or `npm pack` archives in an ephemeral RAM sandbox.
-- **Sanitization Filter**:
-  - Verifies zero `.env`, `.pem`, `.key`, or `.git` files are included.
-  - Ensures no `tests/`, `fixtures/`, or mock SQLite databases are bundled.
-  - Checks executable permissions and shebang lines (`#!/usr/bin/env python3` or `#!/usr/bin/env node`) on declared CLI binary entrypoints.
-  - Audits total uncompressed archive size against configured maximum payload budgets.
+### Pillar 2: README, Documentation & Community Health (`rush ship docs`)
+- **README Integrity & Completeness**:
+  - Verifies standard sections exist: Title, Overview, Quickstart / Installation, Usage, License.
+  - Validates all image badges (checks for HTTP 404s or broken shield URLs).
+  - Checks that all internal markdown links and anchor targets resolve to existing files and headers.
+- **README Code Snippet Validator**:
+  - Extracts bash / CLI code blocks from `README.md` and validates that referenced commands (e.g. `rush check .`) match registered CLI commands and valid flags.
+- **Documentation Parity & Freshness**:
+  - Runs `scripts/sync_docs.py` logic to verify that all documentation files are 100% in parity with canonical tool specifications and engine catalogs.
+  - Ensures no stale version numbers or deprecated flags are referenced in guides.
+- **Community Standards & Licensing**:
+  - Verifies `LICENSE` exists at the root and contains valid SPDX license metadata.
+  - Checks for `.github/SECURITY.md` (vulnerability disclosure policy) and `CHANGELOG.md` parity with the current release version.
 
-### Engine 3: Consumer Type & Resolution Guard (`rush ship types`)
-- **Python**: Verifies that PEP 561 marker file `py.typed` is present in package roots, preventing downstream consumers from seeing `Untyped module` errors in `mypy`.
-- **TypeScript / JavaScript**: Integrates `@arethetypeswrong/cli` and `publint` to verify `exports` maps, ensuring that both CommonJS (`require()`) and ESM (`import`) consumers resolve type definitions cleanly.
+### Pillar 3: Packaging & Distribution Artifact Sanitizer (`rush ship pack`)
+- **Ephemeral Sandbox Packaging**:
+  - Builds `.whl` / `npm pack` in an ephemeral RAM disk sandbox.
+  - Validates that consuming the package via `pip install` / `npm install` in an isolated virtualenv successfully imports the top-level package and executes declared CLI entrypoints.
+- **Packaging Sanitizer**:
+  - Enforces that no `.env`, `.pem`, `.key`, `tests/`, or test fixtures are included in the published archive.
+  - Checks that executable binary entrypoints have valid shebangs (`#!/usr/bin/env python3` or `#!/usr/bin/env node`) and executable file modes.
+- **Consumer Type Resolution**:
+  - Verifies `py.typed` (PEP 561) in Python packages.
+  - Verifies `package.json` `exports` maps across CJS and ESM with `@arethetypeswrong/cli` and `publint`.
 
-### Engine 4: Zero-Downtime Database Migration Linter (`rush ship migration`)
-- **Schema Lock & Hazard Detection**:
-  - Inspects new SQL scripts, Prisma migrations, or Alembic revisions in the release scope.
-  - Flags dangerous DDL operations that cause exclusive table locks:
-    - Adding `NOT NULL` columns without a `DEFAULT` clause.
-    - Dropping columns or renaming tables without a prior deprecation cycle.
-    - Adding unindexed foreign keys on large tables.
-    - Altering column data types that trigger a full table rewrite.
-
-### Engine 5: Container Production Posture (`rush ship container`)
-- **Docker & OCI Readiness**:
-  - Verifies `USER` directive is present and does not run as `root` (UID 0).
-  - Checks for explicit `HEALTHCHECK` instructions.
-  - Enforces multi-stage build patterns (verifying build tools like `gcc` or `npm` are excluded from final images).
-  - Scans for latest tag pinning (flagging `FROM node:latest` in favor of digest/version pins like `node:20.12-alpine`).
-
-### Engine 6: Public API Semver & Breaking Change Guard (`rush ship semver`)
-- **AST API Signature Diffing**:
-  - Compares the public module exports (`__all__`, exported functions/classes) against the latest Git release tag.
-  - Flags breaking changes:
-    - Removing public functions or methods.
-    - Adding mandatory positional parameters to existing functions.
-    - Changing return type annotations.
-  - Verifies that if breaking changes exist, the version bump in `pyproject.toml` / `package.json` is a **MAJOR** version bump under Semantic Versioning 2.0.0.
-
-### Engine 7: Release Hygiene & AI Slop Purge (`rush ship hygiene`)
-- **Pre-Flight Sanity Sweep**:
-  - Detects active debuggers: `pdb.set_trace()`, `breakpoint()`, `debugger;`, `console.log()`, `print()`.
-  - Flags hardcoded internal URLs: `http://localhost`, `127.0.0.1`, `http://0.0.0.0`, `test.example.com`.
-  - Scans for unresolved release blockers: `TODO(ship)`, `FIXME(prod)`, `@unimplemented`.
-  - Detects empty placeholder stubs or unfulfilled mock implementations.
-
-### Engine 8: Changelog & Tag Parity (`rush ship release-check`)
-- **Release Documentation Verification**:
-  - Verifies that the version declared in `pyproject.toml` or `package.json` matches a top-level section in `CHANGELOG.md`.
-  - Checks that `CHANGELOG.md` contains entries for all PRs and commits since the previous git release tag.
-  - Ensures repository git state is clean (no untracked files, no uncommitted changes).
+### Pillar 4: Runtime Safety, Database Migrations & Blast Radius (`rush ship runtime`)
+- **Code-to-Environment Parity**:
+  - Parses AST of Python (`os.environ`), TypeScript (`process.env`), and Go (`os.Getenv`) to extract all environment variable references.
+  - Cross-checks with `.env.example`, Dockerfiles, and CI secrets to catch missing configuration keys before production deployment.
+- **Zero-Downtime Database Migration Linter**:
+  - Inspects new SQL, Prisma, or Alembic migrations for dangerous table locks: adding `NOT NULL` without default, dropping columns instantly, or adding unindexed foreign keys.
+- **Public API Semver Breaking Change Guard**:
+  - Compares public function/class signatures against the previous git release tag. If breaking changes exist, enforces a **MAJOR** version bump.
+- **Blast-Radius & Automated Rollback Runbook (`ROLLBACK.md`)**:
+  - Computes a 0–100% blast radius risk score and automatically drafts an instant-execution `ROLLBACK.md` with git revert hashes and database rollback commands.
 
 ---
 
-## 5. Blast-Radius Scoring & Automated Rollback Runbooks
-
-Beyond simple pass/fail checks, `rush ship` provides operational decision intelligence:
-
-### A. Blast-Radius Scoring Algorithm
-
-$$\text{Blast Radius} = \sum (\text{Surface Weight} \times \text{File Churn} \times \text{Complexity})$$
-
-| Impact Surface | Surface Weight | Examples |
-|---|---|---|
-| **Critical Core** | `3.0x` | Auth middleware, payment routes, cryptography, DB migrations |
-| **Business Logic** | `1.5x` | Services, API controllers, worker tasks |
-| **Frontend UI** | `1.0x` | Components, stylesheets, client views |
-| **Documentation & Tests**| `0.1x` | Markdown docs, unit test files |
-
-- **Low Risk (0–25%)**: Safe for direct zero-downtime deployment.
-- **Medium Risk (26–60%)**: Recommends blue/green deployment with smoke testing.
-- **High Risk (61–100%)**: Recommends a **5% canary rollout with a 15-minute soak period** and alerts on-call engineers.
-
-### B. Automated Rollback Runbook Generation (`ROLLBACK.md`)
-
-Whenever `rush ship preflight` passes, it generates a deterministic, instant-execution rollback guide:
-```markdown
-# Rollback Runbook: Release v0.3.0
-- **Target Git Revert Hash**: `git revert -m 1 9f9fdbd`
-- **Database Rollback Command**: `alembic downgrade 4a3a71d`
-- **Canary Abort Threshold**: Error rate > 0.5% or P99 Latency > 450ms
-- **On-Call Escalation**: `#incident-response`
-```
-
----
-
-## 6. Proposed CLI & FastMCP Interface
+## 4. Proposed CLI & FastMCP Command Suite
 
 ```bash
-# 1. Complete Pre-Flight Ship-Readiness Check (All 8 Engines)
+# 1. Total Ship-Readiness Pre-Flight Gate (Runs all 4 Pillars)
 rush ship preflight .
 
-# 2. Environment Parity Audit Only
-rush ship env .
+# 2. Repository Cleanliness & Dev Cruft Purge
+rush ship clean .
+rush ship clean . --fix    # Safely deletes scratch files and untracked logs
 
-# 3. Packaging & Distribution Artifact Sanitizer
+# 3. README & Documentation Health Check
+rush ship docs .
+
+# 4. Packaging & Distribution Artifact Sanitizer
 rush ship pack .
 
-# 4. Zero-Downtime Migration Safety Check
+# 5. Environment & Zero-Downtime Migration Audit
+rush ship env .
 rush ship migration .
 
-# 5. Public API Breaking Change & Semver Guard
-rush ship semver .
-
-# 6. Generate Cryptographically Signed Release Attestation & Rollback Runbook
+# 6. Generate Signed Release Attestation & Rollback Runbook
 rush ship attestation --sign --output ship-attestation.json
 ```
 
-### FastMCP Tool Registrations for AI Coding Agents:
-- `rush_ship_preflight`: Evaluates repository ship-readiness and returns structured findings.
-- `rush_ship_env`: Cross-checks environment variable usage against documentation.
-- `rush_ship_blast_radius`: Computes release risk score and canary rollout strategy.
+### FastMCP Tool Registrations for AI Agents:
+- `rush_ship_preflight`: Holistic ship-readiness gate returning structured findings across all 4 pillars.
+- `rush_ship_clean`: Inspects and purges development scratch files and cache cruft.
+- `rush_ship_docs`: Audits README completeness, badge health, and broken markdown links.
+- `rush_ship_env`: Cross-checks environment variable AST references against `.env.example`.
+- `rush_ship_blast_radius`: Computes production blast radius and canary rollout advice.
 
 ---
 
-## 7. Phased Implementation Roadmap
+## 5. Summary of Innovation: Why `rush ship` Sets a New Standard
 
-```mermaid
-gantt
-    title Rush Ship-Readiness Subsystem Implementation Roadmap
-    dateFormat  YYYY-MM-DD
-    section Phase 1: Core Preflight & Env Parity
-    AST Env Variable Scanner           :a1, 2026-09-01, 7d
-    .env.example Cross-Reference Engine :a2, after a1, 5d
-    Debug Statement & Slop Purge        :a3, after a2, 4d
-    section Phase 2: Packaging & Migrations
-    Distribution Dry-Run Sandbox        :b1, 2026-09-15, 7d
-    Zero-Downtime Migration Linter      :b2, after b1, 6d
-    PEP 561 & TypeScript Export Guard   :b3, after b2, 5d
-    section Phase 3: Semver, Blast Radius & Attestation
-    Public API AST Diffing Engine       :c1, 2026-10-01, 7d
-    Blast Radius Calculator             :c2, after c1, 5d
-    Rollback Runbook & HMAC Signer      :c3, after c2, 5d
-    FastMCP & CLI Integration           :c4, after c3, 4d
-```
+| Capability | Traditional Linters (Ruff/ESLint) | Packaging Checkers (twine/publint) | Rush `rush ship` |
+|---|---|---|---|
+| **Code Syntax & Linting** | ✅ Yes | ❌ No | ✅ Integrated |
+| **Dev Cruft & Scratch Purge** | ❌ No | ❌ No | ✅ **Automated Detection & Clean** |
+| **README & Doc Parity** | ❌ No | ❌ No | ✅ **Snippet & Badge Validation** |
+| **Code-to-Env Parity** | ❌ No | ❌ No | ✅ **AST-to-Env Cross-Check** |
+| **Zero-Downtime DB Migrations** | ❌ No | ❌ No | ✅ **Table Lock Hazard Detection** |
+| **Dry-Run Package Sandbox** | ❌ No | Partial (static only) | ✅ **Full Consumer Simulation** |
+| **Public API Semver Guard** | ❌ No | ❌ No | ✅ **AST Signature Diffing** |
+| **Automated Rollback Runbook** | ❌ No | ❌ No | ✅ **Instant `ROLLBACK.md` Generation** |
 
 ---
 
-## 8. Conclusion
+## 6. Conclusion & Recommended Action Plan
 
-Implementing **`rush ship`** elevates Rush from a local code linter into an **end-to-end Release & Production Readiness Intelligence Platform**. By combining AST-level environment auditing, distribution artifact sanitization, zero-downtime database checks, semver breaking change detection, and automated rollback runbooks, Rush will provide developers and autonomous coding agents with the most comprehensive, bulletproof shipping gate in the software industry.
+By combining **Repository Hygiene**, **README/Doc Parity**, **Packaging Integrity**, and **Runtime/Migration Safety**, `rush ship` covers every single blind spot in modern software releases. It turns what is currently a stressful, error-prone manual launch checklist into an instantaneous, deterministic, sub-second pre-flight gate.
