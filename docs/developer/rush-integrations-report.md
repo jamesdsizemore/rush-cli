@@ -30,7 +30,7 @@ flowchart TD
     T --> Engine
 
     Engine --> CLI["rush CLI Commands (rush ship, rush slop, rush memory, rush gate)"]
-    Engine --> MCP["FastMCP Tools (rush_ship_preflight, rush_codegraph, rush_memory)"]
+    Engine --> MCP["FastMCP Tools (rush_ship_preflight, rush_graft, rush_memory)"]
 ```
 
 ---
@@ -50,7 +50,7 @@ The repositories are evaluated across three criteria:
 | 2 | **rsionnach/sloppylint** | Python AST Slop & Import Linter | **9.5** | **Tier 1** | `src/rush/engines/sloppylint.py` |
 | 3 | **ThreeMoonsLab/agents-shipgate** | Static Agent Tool Surface Gate | **9.5** | **Tier 1** | `src/rush/tools/ship.py` (`rush gate --agent`) |
 | 4 | **tejgokani/ShipCheck** | Post-Session Agent AST Security | **9.5** | **Tier 1** | `src/rush/security/` (Anti-pattern AST) |
-| 5 | **Cranot/roam-code** | Louvain Graph & Minimal Context | **9.5** | **Tier 1** | `src/rush/codegraph/` (Community clustering) |
+| 5 | **Cranot/roam-code** | Louvain Graph & Minimal Context | **9.5** | **Tier 1** | `src/rush/graft/` (Community clustering) |
 | 6 | **entireio/cli** | Shadow Git Ref Checkpointing | **9.5** | **Tier 1** | `src/rush/session_memory.py` (Shadow refs) |
 | 7 | **repowise-dev/repowise** | Codebase Biomarkers & Churn | **9.5** | **Tier 1** | `src/rush/hotspots/` (Risk matrix math) |
 | 8 | **Laith0003/ux-skill** | Deterministic UI/UX Anti-Slop | **9.5** | **Tier 1** | `src/rush/tools/ux.py` (Design tokens) |
@@ -58,16 +58,16 @@ The repositories are evaluated across three criteria:
 | 10 | **buildingjoshbetter/TrueMemory** | Encoding Gate & Trait Claims | **9.0** | **Tier 1** | `src/rush/session_memory.py` (Salience gate) |
 | 11 | **theanshsonkar/carto** | AST Import Map & Dynamic AGENTS.md| **9.0** | **Tier 1** | `scripts/sync_docs.py` (Topology generator) |
 | 12 | **anthony-chaudhary/dos-kernel** | Trust Syscalls & Git Claim Verifier| **9.0** | **Tier 1** | `src/rush/governance/` (Syscall gates) |
-| 13 | **codecoradev/cora-code** | Tri-Hybrid Search (FTS5+KNN+Graph) | **9.0** | **Tier 1** | `src/rush/codegraph/store.py` |
+| 13 | **codecoradev/cora-code** | Tri-Hybrid Search (FTS5+KNN+Graph) | **9.0** | **Tier 1** | `src/rush/graft/store.py` |
 | 14 | **TateLyman/shipcheck-cli** | Release Launch Hazard Scanner | **9.0** | **Tier 1** | `src/rush/tools/ship.py` (`rush preflight`) |
 | 15 | **Avtr99/antidote** | Anti-Band-Aid Structural Fixes | **9.0** | **Tier 1** | `src/rush/tools/slop.py` (Band-aid check) |
 | 16 | **patchrail/patchrail** | 31-Class CI Triage & Redactor | **9.0** | **Tier 1** | `src/rush/tools/ci.py` (Failure classifier) |
 | 17 | **modem-dev/hunk** | Review-First TUI & Semantic Hunks | **9.0** | **Tier 1** | `src/rush/tools/review.py` (Hunk viewer) |
 | 18 | **nrwl/nx** | Input Hashing & Computation Cache | **9.0** | **Tier 1** | `src/rush/cache.py` (Named inputs) |
-| 19 | **CodeBendKit/codeseek** | LanceDB + Tree-sitter + RRF Search | **9.0** | **Tier 1** | `src/rush/codegraph/` (RRF hybrid search) |
+| 19 | **CodeBendKit/codeseek** | LanceDB + Tree-sitter + RRF Search | **9.0** | **Tier 1** | `src/rush/graft/` (RRF hybrid search) |
 | 20 | **ReallyArtificial/mcp-jest** | MCP Server Testing Framework | **9.0** | **Tier 1** | `tests/test_mcp_protocol.py` |
 | 21 | **MemTensor/memmy-agent** | 4-Tier Memory Hierarchy | **8.5** | **Tier 1** | `src/rush/session_memory.py` (L1-L4) |
-| 22 | **scheidydude/codeindex** | Zero-Dep SQLite Symbol Map | **8.5** | **Tier 1** | `src/rush/codegraph/store.py` |
+| 22 | **scheidydude/codeindex** | Zero-Dep SQLite Symbol Map | **8.5** | **Tier 1** | `src/rush/graft/store.py` |
 | 23 | **SprocketLab/slop-code-bench** | Iterative Spec Drift Benchmark | **8.5** | **Tier 1** | `tests/benchmarks/` (Agent drift test) |
 | 24 | **angular/web-codegen-scorer** | 5-Pillar Web Quality Pipeline | **8.5** | **Tier 1** | `src/rush/tools/verify.py` |
 | 25 | **nikuscs/ts-code-scan** | Fast Rust TS Skeleton Extractor | **8.5** | **Tier 1** | `src/rush/token_economy/` (AST skeletons)|
@@ -145,15 +145,15 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 | 1 | **buildingjoshbetter/TrueMemory** | Python, SQLite, MCP | **9.0/10** | **Tier 1** | Retrieval-centered memory, Encoding Gate, Trait Claims | `src/rush/session_memory.py` |
 | 2 | **MemTensor/memmy-agent** | TypeScript, Fastify, SQLite | **8.5/10** | **Tier 1** | 4-layer memory hierarchy (Trace, Policy, World Model, Skill) | `src/rush/session_memory.py`, multi-agent context |
 | 3 | **akitaonrails/ai-memory** | Rust, Docker, Vector DB | **8.0/10** | **Tier 2** | Wiki-card context distillation, token auth, cross-vendor handoff | `src/rush/session_memory.py`, CLI memory hooks |
-| 4 | **Cranot/roam-code** | Python, Tree-sitter, SQLite | **9.5/10** | **Tier 1** | Louvain graph clustering, minimal context slicing, blast radius | `src/rush/codegraph/`, multi-agent refactor |
-| 5 | **scheidydude/codeindex** | Python stdlib, SQLite | **8.5/10** | **Tier 1** | Zero-dep symbol map, blast-radius scoring, interactive viz | `src/rush/codegraph/`, `src/rush/html_export.py` |
+| 4 | **Cranot/roam-code** | Python, Tree-sitter, SQLite | **9.5/10** | **Tier 1** | Louvain graph clustering, minimal context slicing, blast radius | `src/rush/graft/`, multi-agent refactor |
+| 5 | **scheidydude/codeindex** | Python stdlib, SQLite | **8.5/10** | **Tier 1** | Zero-dep symbol map, blast-radius scoring, interactive viz | `src/rush/graft/`, `src/rush/html_export.py` |
 | 6 | **theanshsonkar/carto** | Rust/TS, Multi-lang AST | **9.0/10** | **Tier 1** | Fast import mapping, dynamic `AGENTS.md` synthesis, CI diff grading | `scripts/sync_docs.py`, `src/rush/hygiene/` |
 | 7 | **Nimrobo/superdense** | TypeScript, SQLite, CLI | **8.0/10** | **Tier 2** | Outcome-loop verification, session token compaction engine | `src/rush/token_economy/`, `session_memory.py` |
 | 8 | **DSB-117/brainblast** | TypeScript, MCP, Node | **8.0/10** | **Tier 2** | Integration trap/footgun catalog, predictive research, guard hooks | `src/rush/safety/`, `src/rush/permissions.py` |
 | 9 | **anthony-chaudhary/dos-kernel** | Python, MCP | **9.0/10** | **Tier 1** | Trust syscalls, Git-action verification, collision arbitration | `src/rush/governance/`, `src/rush/safety/` |
 | 10 | **entireio/cli** | Go, Git Hooks | **9.5/10** | **Tier 1** | Shadow Git branch checkpoints (`entire/checkpoints/v1`), rewind | `src/rush/session_memory.py`, Git provenance |
 | 11 | **codecoradev/uteke** | Rust, SQLite, MCP | **8.0/10** | **Tier 2** | Zero-config offline semantic memory binary, remember/recall CLI | `src/rush/session_memory.py`, local vector search |
-| 12 | **codecoradev/cora-code** | Rust, SQLite, usearch | **9.0/10** | **Tier 1** | Tri-hybrid search (FTS5 + Vector KNN + Graph BFS) | `src/rush/codegraph/store.py`, `traverser.py` |
+| 12 | **codecoradev/cora-code** | Rust, SQLite, usearch | **9.0/10** | **Tier 1** | Tri-hybrid search (FTS5 + Vector KNN + Graph BFS) | `src/rush/graft/store.py`, `traverser.py` |
 | 13 | **alexjiaguo/dify-mcp** | TypeScript, Dify API | **6.5/10** | **Tier 2** | Comprehensive external API wrapping (138 tools) over stdio MCP | External platform integration pattern |
 | 14 | **aiagenta2z/onekey-gateway** | TypeScript, REST/MCP | **5.5/10** | **Tier 3** | Commercial API gateway & skill marketplace (`agtm`) | `src/rush/plugins/` packaging spec |
 | 15 | **hebbs-ai/boringos** | TypeScript, `.hebbsmod` | **7.5/10** | **Tier 2** | Subprocess CLI agent driver, modular packaged bundles | `src/rush/tools/`, headless agent orchestration |
@@ -217,7 +217,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
   * Includes audit evidence generation for compliance standards (SOC 2, EU AI Act).
 * **Score**: 9.5/10 | **Tier**: **Tier 1** (High Value / Direct Integration)
 * **Integration / Feature to Borrow for Rush**:
-  * **Direct Synergy with `src/rush/codegraph/`**: Roam-code's design directly aligns with Rush's Python architecture. Rush should incorporate Louvain graph community partitioning (`rush codegraph partition` / `rush graph cluster`) in `traverser.py` to divide large remediation tasks across parallel subagents.
+  * **Direct Synergy with `src/rush/graft/`**: Roam-code's design directly aligns with Rush's Python architecture. Rush should incorporate Louvain graph community partitioning (`rush graft partition` / `rush graph cluster`) in `traverser.py` to divide large remediation tasks across parallel subagents.
   * **Minimal Context Slicing**: Implement `rush_get_minimal_context` and `rush_get_impact_radius` MCP tools that return AST-sliced minimal subgraphs rather than dumping entire files.
 
 ---
@@ -231,7 +231,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
   * Includes a built-in lightweight local web server for interactive 2D/3D codebase visualization (`codeindex serve --viz`).
 * **Score**: 8.5/10 | **Tier**: **Tier 1** (High Value / Direct Integration)
 * **Integration / Feature to Borrow for Rush**:
-  * **Zero-Dependency Symbol Store**: Rush is a Python package with strict environment isolation. Adopting `codeindex`'s zero-dependency SQLite schema into `src/rush/codegraph/store.py` ensures instant symbol lookup without requiring heavyweight database servers.
+  * **Zero-Dependency Symbol Store**: Rush is a Python package with strict environment isolation. Adopting `codeindex`'s zero-dependency SQLite schema into `src/rush/graft/store.py` ensures instant symbol lookup without requiring heavyweight database servers.
   * **Blast Radius CLI**: Add `rush impact <path>` to report blast radius and dependency risk scores.
   * **Interactive HTML/TUI Visualization**: Connect codeindex's graph export format with Rush's `html_export.py` and `tui.py`.
 
@@ -335,7 +335,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
   * Integrates pre-commit hooks, git diff analysis, and branch security scanning.
 * **Score**: 9.0/10 | **Tier**: **Tier 1** (High Value / Direct Integration)
 * **Integration / Feature to Borrow for Rush**:
-  * **Tri-Hybrid Search for `src/rush/codegraph/`**: Merge lexical (FTS5), semantic (KNN), and structural (Tree-sitter AST Graph BFS) into a single unified search tool (`rush_search` / `rush_find_symbols`).
+  * **Tri-Hybrid Search for `src/rush/graft/`**: Merge lexical (FTS5), semantic (KNN), and structural (Tree-sitter AST Graph BFS) into a single unified search tool (`rush_search` / `rush_find_symbols`).
   * **Automated Pre-Commit Security Hooks**: Implement `rush hook install --pre-commit` to run fast hybrid diff checks prior to commit.
 
 ---
@@ -389,8 +389,8 @@ To elevate Rush into an industry-leading AI memory, context, and code intelligen
 |     - 4-Tier Memory: L1 Raw Trace -> L2 Policies -> L3 World Model -> L4 Skills   |
 |     - Local FTS5 + Vector KNN + XML Sanitized Framing (<rush_session_memory>)     |
 +-----------------------------------------------------------------------------------+
-|  2. TRI-HYBRID CODEGRAPH & STRUCTURAL MAPPER (Roam-Code + Cora-Code + Carto)      |
-|     - Fast Polyglot Tree-sitter AST Graph (SQLite .rush/codegraph.db)             |
+|  2. TRI-HYBRID GRAFT & STRUCTURAL MAPPER (Roam-Code + Cora-Code + Carto)      |
+|     - Fast Polyglot Tree-sitter AST Graph (SQLite .rush/graft.db)             |
 |     - Tri-Hybrid Search: FTS5 Exact + Vector KNN Semantic + Graph BFS Structural  |
 |     - Louvain Graph Community Detection for Multi-Agent Task Partitioning         |
 |     - Minimal Context Slicing & Blast-Radius Calculation (O(1) lookups)           |
@@ -408,7 +408,7 @@ To elevate Rush into an industry-leading AI memory, context, and code intelligen
 
 ### Actionable Roadmap Milestones:
 1. **Milestone 1 (Memory Refactor)**: Upgrade `src/rush/session_memory.py` from flat JSON to an Encoding-Gated SQLite store supporting L1-L4 hierarchy and trait claims.
-2. **Milestone 2 (CodeGraph Enhancement)**: Integrate Louvain community clustering and Tri-Hybrid search into `src/rush/codegraph/` (`python_ast.py`, `tree_sitter_poly.py`, `traverser.py`).
+2. **Milestone 2 (Graft Enhancement)**: Integrate Louvain community clustering and Tri-Hybrid search into `src/rush/graft/` (`python_ast.py`, `tree_sitter_poly.py`, `traverser.py`).
 3. **Milestone 3 (Git Provenance & Safety)**: Add Git shadow ref checkpointing and Git-grounded action verification to `src/rush/governance/` and `src/rush/safety/`.
 4. **Milestone 4 (Token Economy & Context Synthesis)**: Expand `src/rush/token_economy/compressor.py` with causal transcript compaction and wire dynamic topological map generation into `scripts/sync_docs.py`.
 
@@ -1265,7 +1265,7 @@ Tier Definitions:
 |---|------------|----------------------|--------------|------|---------------------------|
 | 1 | **nrwl/nx** | Monorepo Graph, Rust Daemon, Input Hashing, Computation Caching | **9.0 / 10** | **Tier 1** | Computation caching & `namedInputs` hashing for `rush.workspaces` |
 | 2 | **Flagsmith/flagsmith-js-client** | Feature Flag SDK, Multi-tier Cache Fallback, SSE Streaming | **6.5 / 10** | **Tier 2** | FlagSource fallback for beta quality engines & remote policy sync |
-| 3 | **CodeBendKit/codeseek** | Code Intelligence CLI/MCP, Tree-sitter Callgraph, LanceDB RRF Search | **9.0 / 10** | **Tier 1** | Hybrid dense/sparse BM25 + RRF ranking for `rush.codegraph` |
+| 3 | **CodeBendKit/codeseek** | Code Intelligence CLI/MCP, Tree-sitter Callgraph, LanceDB RRF Search | **9.0 / 10** | **Tier 1** | Hybrid dense/sparse BM25 + RRF ranking for `rush.graft` |
 | 4 | **TanStack/intent** | Agent Skills Packaging Standard, Skill Drift Validator | **8.5 / 10** | **Tier 1** | Package-bundled `SKILL.md` distribution & `rush skills validate` CI checks |
 | 5 | **bitloops/bitloops** | Intent & Context Engine, Rust Daemon, DevQL, ADR Modeling | **8.5 / 10** | **Tier 1** | Architectural boundary enforcement & high-signal context MCP tools |
 | 6 | **ReallyArtificial/mcp-jest** | MCP Server Testing Framework, stdio/SSE/HTTP Matchers | **9.0 / 10** | **Tier 1** | Automated test harness for Rush's 35 catalog tools & `rush mcp test` CLI |
@@ -1318,8 +1318,8 @@ Tier Definitions:
   - **MCP Bi-directional Graph Tools:** Exposes `codeseek_callers`, `codeseek_callees`, and `codeseek_callgraph` over standard JSON-RPC `stdio`.
 - **Score:** **9.0 / 10** | **Tier 1 (High Value / Direct Integration)**
 - **Rush Integration & Ideas to Borrow:**
-  - **CodeGraph Hybrid Search Upgrade:** Rush has `src/rush/codegraph/tree_sitter_poly.py` and `traverser.py`. Codeseek's LanceDB embedded architecture and RRF fusion search provide the exact recipe to add natural language semantic symbol search to Rush's AST symbol graph.
-  - **Impact Radius MCP Tools:** Expose `rush_codegraph_callers` and `rush_codegraph_impact` to help coding agents immediately inspect the downstream blast radius of proposed edits.
+  - **Graft Hybrid Search Upgrade:** Rush has `src/rush/graft/tree_sitter_poly.py` and `traverser.py`. Codeseek's LanceDB embedded architecture and RRF fusion search provide the exact recipe to add natural language semantic symbol search to Rush's AST symbol graph.
+  - **Impact Radius MCP Tools:** Expose `rush_graft_callers` and `rush_graft_impact` to help coding agents immediately inspect the downstream blast radius of proposed edits.
 
 ---
 
@@ -1457,7 +1457,7 @@ Tier Definitions:
 
 1. **Immediate Tier 1 Integrations:**
    - **Quality Engine Catalog (`src/rush/catalog.py` & `src/rush/tools/`):** Add `Laith0003/ux-skill` as `rush_ux_lint` and `rush_ux_design` for deterministic UI/UX quality control.
-   - **CodeGraph Search Enhancement (`src/rush/codegraph/`):** Integrate `CodeBendKit/codeseek`'s Reciprocal Rank Fusion (RRF) hybrid search algorithm and LanceDB vector backend with Tree-sitter AST graphs.
+   - **Graft Search Enhancement (`src/rush/graft/`):** Integrate `CodeBendKit/codeseek`'s Reciprocal Rank Fusion (RRF) hybrid search algorithm and LanceDB vector backend with Tree-sitter AST graphs.
    - **Hotspot & Health Metrics (`src/rush/hotspots/`):** Refine risk matrix math and biomarker calculations using `repowise-dev/repowise`'s battle-tested git churn/coupling heuristics.
    - **MCP Protocol Testing (`tests/test_mcp_protocol.py`):** Implement `ReallyArtificial/mcp-jest`-style test matchers to validate all 35 FastMCP tools against JSON-RPC 2.0 schemas and stdio isolation standards.
    - **Agent Skills Packaging & Drift Detection (`src/rush/skills/`):** Adopt `TanStack/intent`'s package-bundled `SKILL.md` distribution and build `rush skills validate` for CI pre-commit verification.
