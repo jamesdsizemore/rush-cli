@@ -74,3 +74,11 @@ rush token count src/ --top 5
 
 - Learn how to ship production code with confidence in [Shipping with Swagger](shipping-with-swagger.md).
 - Get ready-to-use prompt templates in [Vibecoder Cheat Sheet & Golden Prompts](cheat-sheet.md).
+
+## Built-In Token Reduction Subsystems (Phases 41–43)
+
+Rush now provides native token reduction tools directly in the CLI and FastMCP server:
+* **`rush token outline <path>`**: Uses `AstSkeletonizer` to replace function bodies with `...`, allowing your agent to read entire module interfaces in under 200 tokens.
+* **`--format toon`**: Formats findings and tables as compact pipe-tables instead of verbose JSON.
+* **Command Distillation**: Automatically filters pytest and cargo noise to send only failing assertions.
+* **CCR Caching**: Stores large outputs in SQLite (`.rush/cache/ccr.db`) and injects `<!-- ccr:chunk:HASH -->` tags.

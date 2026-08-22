@@ -50,3 +50,11 @@ Once connected, test with these prompts:
 - *"Run rush_lint on src/ and fix any issues reported by the linters."*
 
 See [Working with AI Agents](../user-guide/working-with-ai-agents.md) and [MCP Overview](../integrations/mcp-overview.md).
+
+## Using Context Intelligence & HalluGuard with AI Agents
+
+When configuring your AI coding agent with Rush's FastMCP server:
+* Call `rush_token_outline(path="...")` to read compact AST skeletons instead of consuming large whole-file token budgets.
+* Call `rush_hallu_guard(path="...")` to verify all imports in generated code are grounded in installed packages.
+* Call `rush_context_retrieve(chunk_hash="...")` to decompress and inspect large tool logs stored in CCR.
+* Call `rush_context_mistakes_check()` to review past Git revert regressions and avoid repeat errors.

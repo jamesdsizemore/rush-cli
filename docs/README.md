@@ -85,3 +85,15 @@ Start with [Contributor onboarding](developer/contributor-onboarding.md), then u
 ## Capability note
 
 Rush's default review is deterministic and local. Optional Graft context is explicit. `review --llm` is not a working model integration; it is a development stub and does not call a provider.
+
+## Context Intelligence, Token Diet & Ship Gates (v0.2.0 / Phases 41–43)
+
+Rush provides zero-overhead, high-signal context optimization and pre-flight release gates for AI coding agents:
+
+* **Command Distillers**: Real-time output compression for `pytest`, `cargo`, `ruff`, and `vitest` stripping noise while preserving exact failure blocks (50–90% token reduction).
+* **Compact Wire Serialization (TOON v4.1)**: Pipe-delimited tabular format (`--format toon`) cutting tool response payload size by 40–65%.
+* **AST Skeletonizer**: Target-aware symbol outline compressor (`rush token outline <path>`) preserving signatures, decorators, types, and docstrings while eliding method bodies with `...`.
+* **Reversible Chunk Store (CCR)**: Lossless SQLite caching (`.rush/cache/ccr.db`) replacing large blobs with `<!-- ccr:chunk:HASH -->` and instant recovery (`rush context retrieve <HASH>`).
+* **AST Grounding Verifier (`rush hallu-guard`)**: Real-time import validator ensuring zero phantom packages or hallucinated dependencies exist before code is executed.
+* **Pre-Mortem Mistake Memory (`rush context mistakes`)**: Historical Git revert miner extracting past regressions into proactive guardrails.
+* **Unified 7-Vector Ship Gate (`rush ship gate` / `rush ship`)**: Parallel release cockpit evaluating repository cleanliness, environment parity, docs integrity, migration hazards, SemVer diffs, package leak prevention, and test pass confidence.

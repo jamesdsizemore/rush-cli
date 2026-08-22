@@ -110,3 +110,30 @@ Stdio MCP stdout is reserved for JSON-RPC. Logs are stderr NDJSON. Engine proces
 
 See the focused developer chapters linked from [Developer guide](DEVELOPER_GUIDE.md) and the [ADRs](maintainers/adr/README.md).
 
+
+## 14. Context Intelligence & Token Economy Architecture (Phases 41–43)
+
+### 14.1 Content Routing & Subprocess Distillation
+The `ContentRouter` (`src/rush/token_economy/router.py`) classifies incoming payloads into `AST_CODE`, `TEST_LOG`, `TABULAR_DATA`, or `PROSE_MARKDOWN`. When test runners fail, command distillers (`PytestDistiller`, `CargoDistiller`, `RuffDistiller`, `VitestDistiller`) parse failure blocks, extract line-level assertions, and compress stdout/stderr before returning structured tool results.
+
+### 14.2 TOON v4.1 Wire Serialization
+The `ToonEncoder` (`src/rush/token_economy/toon/`) serializes tabular results into pipe-delimited tables with explicit column headers and escaped delimiters, reducing BPE token consumption over redundant JSON keys.
+
+### 14.3 Polyglot AST Skeletonizer & Merkle Invalidation
+The `AstSkeletonizer` (`src/rush/token_economy/ast_skeletonizer.py`) parses Python, TypeScript, and Rust files to generate structural outlines with `...` placeholders. The `MerkleInvalidator` (`src/rush/memory/merkle_invalidator.py`) stores SHA-256 node hashes in `.rush/cache/merkle.json` to reactively invalidate dependent cache entries only when AST nodes change.
+
+### 14.4 CCR (Context Compression & Restoration)
+The `CCRStore` (`src/rush/token_economy/ccr_store.py`) persists large execution outputs in `.rush/cache/ccr.db` and injects `<!-- ccr:chunk:HASH -->` tags. Retrieval via `rush context retrieve <HASH>` or FastMCP restores full uncompressed content on demand.
+
+### 14.5 Grounding Verification & HalluGuard
+`GroundingVerifier` (`src/rush/codegraph/grounding_verifier.py`) inspects concrete syntax tree imports against `sys.stdlib_module_names` and `importlib.metadata.distributions()`, flagging non-existent or hallucinated dependencies before execution.
+
+### 14.6 Pre-Flight 7-Vector Ship Cockpit
+The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release validation vectors in parallel:
+1. `clean`: Uncommitted scratch file detection (`ScratchCleaner`).
+2. `env`: AST environment variable parity check (`EnvParityLinter`).
+3. `docs`: Relative documentation link auditing (`DocsLinter`).
+4. `migration`: Zero-downtime SQL table-lock linter (`MigrationLinter`).
+5. `semver`: Breaking public API signature differ (`SemverLinter`).
+6. `pack`: Sensitive key / secret leak audit (`PackageLinter`).
+7. `gate`: Unified weighted verdict.

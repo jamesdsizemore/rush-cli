@@ -63,3 +63,12 @@ Add this one-liner to your prompt when working with any AI assistant:
 
 - Explore one-click formatting in [Instant Fix & Auto-Remediation](instant-fix-and-auto-remediation.md).
 - Learn how to slash your API bills in [Token Diet for Vibecoders](token-diet-for-vibecoders.md).
+
+## AST Grounding Verifier & `rush hallu-guard` (Phase 43)
+
+AI agents frequently hallucinate library names or import nonexistent helper packages. Rush's AST Grounding Verifier (`rush hallu-guard` / `rush_hallu_guard`) parses your concrete syntax tree and verifies every imported module against:
+1. Python standard library (`sys.stdlib_module_names`).
+2. Installed environment distributions (`importlib.metadata.distributions()`).
+3. Local repository module tree.
+
+Any ungrounded import is caught instantly before test execution or branch merging.

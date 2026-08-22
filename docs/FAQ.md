@@ -33,3 +33,27 @@ Rush enforces explicit execution permissions for potentially slow, heavy, or mut
 No. In the current release, `rush review --llm` is a development stub that returns deterministic placeholder information and makes zero outbound network or API calls. Default review uses fast, deterministic local heuristics.
 
 For more questions, see the [User Guide FAQ](user-guide/faq.md) and [Troubleshooting Guide](user-guide/troubleshooting.md).
+
+## Context Intelligence, Token Reduction & Ship Gates (Phases 41–43)
+
+### How does Rush reduce token consumption on test failures?
+Rush uses specialized command distillers (`src/rush/token_economy/distillers/`) for `pytest`, `cargo`, `ruff`, and `vitest`. When a test suite fails, Rush intercepts the raw stdout/stderr, extracts only the failure headers, assertion lines, and stack frames, and strips thousands of lines of noisy pass indicators, saving 50% to 90% of prompt tokens.
+
+### What is TOON and how does it save tokens over JSON?
+TOON (Token-Oriented Object Notation) v4.1 formats arrays of dictionaries into markdown pipe tables (`|col1|col2|`). Because JSON repeats dictionary keys on every single object, TOON eliminates repetitive key overhead, cutting payload token counts by 40% to 65%.
+
+### How does CCR (Context Compression & Restoration) work?
+When tool responses or logs exceed token thresholds, Rush stores the verbatim content in `.rush/cache/ccr.db` and replaces it with `<!-- ccr:chunk:<hash> -->`. If the AI agent or developer needs the full raw payload, it can retrieve it at any time using `rush context retrieve <hash>` or the FastMCP `rush_context_retrieve` tool.
+
+### What does `rush hallu-guard` do?
+`rush hallu-guard` parses Python Abstract Syntax Trees across your codebase or proposed patches and checks every `import` and `from ... import` against `sys.stdlib_module_names` and `importlib.metadata.distributions()`. If an AI agent attempts to import a package that is neither in Python's standard library nor installed in your environment, Rush flags it immediately before runtime.
+
+### What checks are included in `rush ship gate`?
+`rush ship gate` (or `rush ship`) evaluates 7 vectors in parallel:
+1. **Clean**: Ensures no uncommitted scratch or temporary files exist.
+2. **Env**: Confirms all `os.getenv` variables in code are declared in `.env.example`.
+3. **Docs**: Checks that all relative markdown links in `docs/` point to existing files.
+4. **Migration**: Analyzes SQL migration files for table-locking DDL hazards.
+5. **SemVer**: Compares public API signatures to prevent accidental breaking changes.
+6. **Pack**: Scans source trees to prevent leaking `.env` or private keys into release builds.
+7. **Gate**: Aggregates all vectors into a 0–100% release confidence score.

@@ -20,3 +20,32 @@
 | `.github/workflows/ci.yml` | locked quality/package and representative-engine jobs |
 | `docs/getting-started`, `user-guide`, `tutorials`, `reference` | user documentation |
 | `docs/developer`, `maintainers` | implementation and operations documentation |
+
+## Token Economy & Memory Source Layout (Phases 41–43)
+
+```
+src/rush/
+├── token_economy/          # Context intelligence and compression
+│   ├── router.py           # ContentRouter and ContentType classification
+│   ├── ast_skeletonizer.py # Polyglot AST outline compressor
+│   ├── ccr_store.py        # SQLite LRU chunk cache (.rush/cache/ccr.db)
+│   ├── distillers/         # Output distillers (pytest, cargo, ruff, vitest)
+│   └── toon/               # TOON v4.1 table encoder and decoder
+├── memory/                 # Persistent memory and history tracking
+│   ├── preference_store.py # Developer preferences (.rush/preferences.json)
+│   ├── checkpoint_journal.py # Session snapshots (.rush/sessions/)
+│   ├── merkle_invalidator.py # AST node hash tracking (.rush/cache/merkle.json)
+│   ├── invariant_graph.py  # Architectural decision graph (.rush/memory/invariants.json)
+│   ├── failure_ledger.py   # Negative knowledge failure ledger (.rush/memory/failures.db)
+│   └── mistake_miner.py    # Bi-temporal Git revert miner
+└── tools/
+    ├── ship/               # Pre-flight ship vectors and 7-vector cockpit
+    │   ├── cleaner.py      # Scratch directory cleaner
+    │   ├── env_linter.py   # AST environment variable parity linter
+    │   ├── docs_linter.py  # Markdown link parity auditor
+    │   ├── migration_linter.py # SQL table-lock migration hazard detector
+    │   ├── semver_linter.py # Public API breaking change contract differ
+    │   ├── package_linter.py # Sensitive key / secret leak auditor
+    │   └── cockpit.py      # Unified 7-vector parallel Ship Cockpit
+    └── hallu_guard.py      # Real-time AST grounding and phantom package guard
+```

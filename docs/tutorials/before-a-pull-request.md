@@ -27,3 +27,11 @@
 **Expected:** no source rewrite from checks; format remains check-only. Rush does not open the PR or claim human review.
 
 **Next:** [Team adoption](team-adoption.md).
+
+## Step 5: Run Pre-Flight Ship Gate (`rush ship gate`)
+
+Run Rush's 7-vector release readiness cockpit to verify scratch cleanliness, environment declarations, doc links, migration safety, and SemVer compatibility:
+```bash
+rush ship gate
+```
+If any vector fails, inspect the diagnostic output and remediate before opening your pull request.

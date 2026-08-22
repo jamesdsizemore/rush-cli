@@ -23,3 +23,9 @@
 **stdio** — Standard input/output pipes used for local process communication. Rush's MCP mode reserves stdout for protocol messages.
 
 **ToolResult** — Rush's consistent result object. See [Result reference](../reference/result-reference.md).
+
+### Context Intelligence Terms
+* **TOON**: Ultra-compact pipe-table wire format.
+* **CCR**: Context Compression & Restoration chunk storage.
+* **HalluGuard**: Static AST import grounding verifier.
+* **Ship Gate**: 7-vector pre-flight release readiness cockpit.

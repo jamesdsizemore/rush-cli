@@ -93,3 +93,20 @@ You just built and tested a complete, production-ready feature in 10 minutes fla
 
 - Set up your AI IDE in 2 minutes with [Setting Up Your AI Agent](setting-up-your-agent.md).
 - Learn how to banish AI hallucinations forever in [Slop-Busting & Hallucination Defense](slop-busting-and-hallucination-defense.md).
+
+## Pre-Flight Ship Cockpit in Your Workflow (Phase 42)
+
+Before opening a PR or tagging a release:
+```bash
+# 1. Purge scratch debris
+rush ship clean
+
+# 2. Check environment variable parity
+rush ship env
+
+# 3. Verify documentation links
+rush ship docs
+
+# 4. Run the full 7-vector Ship Gate Cockpit
+rush ship gate
+```

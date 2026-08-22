@@ -33,3 +33,16 @@ A comprehensive reference for terms, architectural concepts, and acronyms used a
 **Vibecoder Guardrails** — Specialized quality checks (such as `sloppylint`, `markdown-unfluff`, `git-guard`, `safe-env`, `diff-cover`) designed to catch AI slop, hallucinations, and untracked code artifacts before shipping.
 
 See [Getting Started Glossary](getting-started/glossary.md) and [Result Reference](reference/result-reference.md).
+
+### Context Intelligence & Ship Gate Terms (Phases 41–43)
+
+* **AST Skeletonization**: Replacing function/method implementation bodies with `...` or `/* ... */` while preserving signatures, type annotations, and docstrings for minimal token footprint.
+* **BPE (Byte-Pair Encoding)**: Token counting algorithm (`tiktoken` cl100k/o200k) used for exact budget estimation.
+* **CCR (Context Compression & Restoration)**: Lossless chunk caching protocol replacing large text blobs with `<!-- ccr:chunk:HASH -->` tags backed by local SQLite storage.
+* **Command Distiller**: Regex/AST parser that extracts concise failure frames from verbose build and test outputs (e.g., `pytest`, `cargo`, `vitest`).
+* **Grounding Verifier**: Static AST analyzer that confirms imported packages and symbols are physically present in the standard library or installed environment.
+* **HalluGuard**: Real-time pre-execution defense preventing AI agents from hallucinating nonexistent packages or typosquatting dependencies.
+* **Merkle Invalidator**: AST node hashing mechanism using SHA-256 to invalidate cached memories only when specific AST subtrees change.
+* **Mistake Miner**: Bi-temporal Git revert analyzer extracting historical regression post-mortems into active guardrails.
+* **Ship Cockpit**: Parallel 7-vector release readiness evaluator checking scratch hygiene, environment parity, docs links, SQL table locks, API compatibility, package safety, and test confidence.
+* **TOON (Token-Oriented Object Notation)**: Compact pipe-delimited table serialization format cutting 40–65% of JSON token overhead in MCP tool responses.

@@ -35,3 +35,10 @@ The catalog includes guarded and experimental capabilities to keep contracts vis
 ## Where do I report a security issue?
 
 Follow [Security reporting](../maintainers/incident-and-security.md); do not post sensitive details publicly.
+
+## Context Intelligence & Ship Readiness
+
+* **`rush ship gate`**: Evaluates 7 release vectors in parallel.
+* **`rush hallu-guard`**: Detects hallucinated or uninstalled package imports.
+* **`rush token outline`**: Compresses file source code into AST outlines.
+* **`rush context retrieve`**: Restores full uncompressed content from CCR cache.

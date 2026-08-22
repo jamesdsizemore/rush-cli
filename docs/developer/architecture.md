@@ -107,3 +107,21 @@ sequenceDiagram
 Stdio MCP stdout is reserved for JSON-RPC. Logs are stderr NDJSON. Engine processes cannot consume protocol input. Security-sensitive promoted adapters own config/environment constraints. Artifact writers validate target containment and overwrite intent. Browser/network/slow/fuzz/baseline/publication work is denied or skipped without explicit implemented permission.
 
 See the focused developer chapters linked from [Developer guide](../DEVELOPER_GUIDE.md) and the [ADRs](../maintainers/adr/README.md).
+
+## Context Intelligence Subsystem Integration (Phases 41–43)
+
+The context intelligence subsystem resides in `src/rush/token_economy/` and `src/rush/memory/`:
+* `src/rush/token_economy/router.py`: `ContentRouter` and `ContentType`.
+* `src/rush/token_economy/distillers/`: `PytestDistiller`, `CargoDistiller`, `RuffDistiller`, `VitestDistiller`.
+* `src/rush/token_economy/toon/`: `ToonEncoder`, `ToonDecoder`.
+* `src/rush/token_economy/ast_skeletonizer.py`: `AstSkeletonizer`.
+* `src/rush/token_economy/ccr_store.py`: `CCRStore` (`.rush/cache/ccr.db`).
+* `src/rush/codegraph/grounding_verifier.py`: `GroundingVerifier`.
+* `src/rush/tools/hallu_guard.py`: `HalluGuard`.
+* `src/rush/memory/preference_store.py`: `PreferenceStore` (`.rush/preferences.json`).
+* `src/rush/memory/checkpoint_journal.py`: `CheckpointJournal` (`.rush/sessions/`).
+* `src/rush/memory/merkle_invalidator.py`: `MerkleInvalidator` (`.rush/cache/merkle.json`).
+* `src/rush/memory/invariant_graph.py`: `InvariantGraph` (`.rush/memory/invariants.json`).
+* `src/rush/memory/failure_ledger.py`: `FailureLedger` (`.rush/memory/failures.db`).
+* `src/rush/memory/mistake_miner.py`: `MistakeMiner`.
+* `src/rush/tools/ship/`: `ScratchCleaner`, `EnvParityLinter`, `DocsLinter`, `MigrationLinter`, `SemverLinter`, `PackageLinter`, `ShipCockpit`.
