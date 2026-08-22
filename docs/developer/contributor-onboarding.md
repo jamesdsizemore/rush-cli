@@ -59,3 +59,9 @@ When contributing to Rush:
 * Place schema comparison algorithms in `src/rush/tools/db_drift.py`.
 * Place AST complexity calculations in `src/rush/tools/simplify.py`.
 
+
+
+## Contributing to Swarm and Traceability
+* Place multi-agent mesh lock components in `src/rush/mcp_mesh/`.
+* Place traceability and flight recorder tools in `src/rush/tools/`.
+

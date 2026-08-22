@@ -306,6 +306,58 @@ def _register_tools(server) -> None:
         description="Synthesize runtime type guards for unvalidated parameters",
     )
 
+    # Phase 49 Tools
+    def mcp_rush_trace() -> str:
+        import json
+
+        from rush.tools.trace import TraceScanner
+
+        scanner = TraceScanner()
+        res = scanner.scan_traceability()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_mesh_acquire_lock(path: str, agent_id: str) -> bool:
+        from rush.mcp_mesh.lock_manager import MeshLockManager
+
+        mgr = MeshLockManager()
+        return mgr.acquire(Path(path), agent_id=agent_id)
+
+    def mcp_rush_mesh_release_lock(path: str, agent_id: str) -> bool:
+        from rush.mcp_mesh.lock_manager import MeshLockManager
+
+        mgr = MeshLockManager()
+        return mgr.release(Path(path), agent_id=agent_id)
+
+    def mcp_rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:
+        import json
+
+        from rush.tools.swarm_merge import SwarmMergeSolver
+
+        solver = SwarmMergeSolver()
+        res = solver.merge_3way(base_code, ours_code, theirs_code)
+        return json.dumps(res, indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_trace,
+        name="rush_trace",
+        description="Scan codebase and specs to output requirement traceability matrix",
+    )
+    server.add_tool(
+        fn=mcp_rush_mesh_acquire_lock,
+        name="rush_mesh_acquire_lock",
+        description="Acquire non-blocking multi-agent file lock",
+    )
+    server.add_tool(
+        fn=mcp_rush_mesh_release_lock,
+        name="rush_mesh_release_lock",
+        description="Release multi-agent file lock",
+    )
+    server.add_tool(
+        fn=mcp_rush_swarm_merge,
+        name="rush_swarm_merge",
+        description="Execute 3-way AST merge conflict resolution",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

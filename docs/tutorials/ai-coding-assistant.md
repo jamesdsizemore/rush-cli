@@ -72,3 +72,8 @@ Instruct agents to run `rush_test_heal` to diagnose intermittent test failures.
 ## Schema Drift Agent Protocol
 Instruct agents to call `rush_db_drift` whenever altering SQLAlchemy or SQLModel entities.
 
+
+
+## Multi-Agent Mesh Protocol
+In multi-agent mode, instruct each subagent to acquire locks via `rush_mesh_acquire_lock` before modifying shared files.
+

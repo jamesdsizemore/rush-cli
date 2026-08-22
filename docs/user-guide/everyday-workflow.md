@@ -146,3 +146,10 @@ Now you can submit your pull request knowing that every test passes, every file 
 2. Simplify complex code: `rush simplify --file src/app.py`
 3. Synthesize type guards: `rush strictify --file src/app.py`
 
+
+
+## Multi-Agent & Traceability Workflow
+1. Check requirements: `rush trace`
+2. Reconcile branches: `rush swarm-merge`
+3. Simulate CI: `rush simulate-ci`
+

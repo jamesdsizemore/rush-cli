@@ -167,3 +167,11 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 * `ComplexityDecomposer` (`src/rush/tools/simplify.py`): Cyclomatic/cognitive AST analyzer.
 * `TypeSynthesizer` (`src/rush/tools/strictify.py`): Untyped parameter guard generator.
 
+
+
+## 18. Traceability, Flight Recorder & Swarm Subsystems (Phase 49)
+* `TraceScanner` (`src/rush/tools/trace.py`): Spec tag to AST implementation auditor.
+* `FlightRecorder` (`src/rush/tools/flight_recorder.py`): Session log persistence in `.rush/sessions/flights/`.
+* `SwarmMergeSolver` (`src/rush/tools/swarm_merge.py`): Semantic 3-way AST merge solver.
+* `MeshLockManager` (`src/rush/mcp_mesh/lock_manager.py`): Domain-socket/file lock manager for swarm concurrency.
+

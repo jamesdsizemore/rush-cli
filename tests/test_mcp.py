@@ -39,6 +39,10 @@ EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
     "rush_db_drift",
     "rush_simplify",
     "rush_strictify",
+    "rush_trace",
+    "rush_mesh_acquire_lock",
+    "rush_mesh_release_lock",
+    "rush_swarm_merge",
 }
 
 

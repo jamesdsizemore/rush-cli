@@ -98,3 +98,8 @@ Stop re-running test suites 10 times in AI context—use `rush test-heal` to dia
 ## Complexity Diet
 Decomposing 200-line monolithic functions with `rush simplify` reduces the context tokens needed for subsequent code edits by up to 50%.
 
+
+
+## Swarm Merge Token Diet
+Instead of feeding full merge conflicts into LLMs, `rush swarm-merge` reconciles non-overlapping edits deterministically with zero token overhead.
+

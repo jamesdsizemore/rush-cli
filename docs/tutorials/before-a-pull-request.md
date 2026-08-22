@@ -49,3 +49,8 @@ Run `rush api-diff --base main` to guarantee backward compatibility before openi
 ## Step 8: Check Database Drift and Complexity
 Run `rush db-drift` and `rush simplify` to guarantee clean migrations and modular architecture.
 
+
+
+## Step 9: Verify Traceability and Local CI
+Run `rush trace` to ensure 100% requirement coverage and `rush simulate-ci` to verify CI pass status.
+

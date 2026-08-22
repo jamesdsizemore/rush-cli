@@ -149,3 +149,12 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/tools/simplify.py`: Function complexity decomposer.
 * `src/rush/tools/strictify.py`: Runtime type guard synthesizer.
 
+
+
+## Traceability & Swarm Architecture (Phase 49)
+* `src/rush/tools/trace.py`: Requirement scanner.
+* `src/rush/tools/flight_recorder.py`: Flight recorder.
+* `src/rush/tools/swarm_merge.py`: 3-way AST reconciler.
+* `src/rush/mcp_mesh/`: Mesh lock daemon & client.
+* `src/rush/tools/simulate_ci.py`: Workflow emulator.
+

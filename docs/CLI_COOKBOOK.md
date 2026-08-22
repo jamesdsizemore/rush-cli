@@ -428,3 +428,21 @@ rush simplify --file src/rush/cli.py --max-complexity 12
 rush strictify --file src/rush/tools/common.py
 ```
 
+
+
+## Traceability & Swarm Recipes (Phase 49)
+### Generating Requirement Compliance Matrix
+```bash
+rush trace
+```
+
+### Resolving Concurrent Agent Merge Conflicts
+```bash
+rush swarm-merge --base file.py --ours file_a.py --theirs file_b.py
+```
+
+### Simulating GitHub Actions CI Locally
+```bash
+rush simulate-ci --workflow test.yml
+```
+

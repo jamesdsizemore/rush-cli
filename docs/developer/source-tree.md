@@ -88,3 +88,19 @@ src/rush/tools/
 └── strictify.py   # Runtime type guard synthesizer
 ```
 
+
+
+## Traceability & Mesh Modules
+```
+src/rush/
+├── mcp_mesh/
+│   ├── __init__.py
+│   ├── daemon.py          # Lock daemon
+│   └── lock_manager.py    # Local file-based mutex client
+└── tools/
+    ├── trace.py           # Spec-to-code traceability scanner
+    ├── flight_recorder.py # Session recorder & replayer
+    ├── swarm_merge.py     # 3-way AST merge solver
+    └── simulate_ci.py     # Local GHA workflow emulator
+```
+

@@ -48,3 +48,10 @@
 * **Complexity Decomposer**: Spaghetti function refactor engine.
 * **Type Synthesizer**: Runtime type guard generator.
 
+
+
+### Phase 49 Terms
+* **Trace Scanner**: Spec requirement auditor.
+* **Flight Recorder**: Session replayer.
+* **Swarm Merge**: 3-way AST conflict solver.
+

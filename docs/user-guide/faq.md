@@ -62,3 +62,10 @@ Follow [Security reporting](../maintainers/incident-and-security.md); do not pos
 * **`rush simplify`**: Analyze function complexity.
 * **`rush strictify`**: Synthesize runtime type guards.
 
+
+
+## Multi-Agent Swarms FAQ
+* **`rush trace`**: Requirement-to-test matrix.
+* **`rush swarm-merge`**: 3-way AST merge.
+* **`rush flight-recorder`**: Session replaying.
+

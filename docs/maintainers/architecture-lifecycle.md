@@ -16,3 +16,8 @@ Enforce zero breaking changes on minor releases via `rush api-diff` in CI.
 ## Migration Lifecycle Governance
 Enforce continuous schema parity using `rush db-drift` on all PRs that touch database models.
 
+
+
+## Requirement Traceability Governance
+Enforce requirement tag verification (`rush trace`) across all specifications and PRs.
+

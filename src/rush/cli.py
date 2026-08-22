@@ -2221,6 +2221,88 @@ def strictify_cmd(file_path: str) -> None:
         )
 
 
+@cli.command(name="trace")
+def trace_cmd() -> None:
+    """Scan codebase and specs to output requirement-to-test traceability matrix."""
+    from rush.tools.trace import TraceScanner
+
+    scanner = TraceScanner()
+    res = scanner.scan_traceability()
+    click.echo(
+        f"Traceability Matrix: {res['total_requirements']} requirements tracked."
+    )
+    for item in res["matrix"]:
+        click.echo(
+            f"  {item['requirement']}: [{item['status']}] Impls={len(item['implementations'])} Tests={len(item['tests'])}"
+        )
+
+
+@cli.command(name="flight-recorder")
+@click.option(
+    "--replay", "-r", "session_id", default=None, help="Replay a specific session ID."
+)
+def flight_recorder_cmd(session_id: str | None) -> None:
+    """Record and replay agent JSON-RPC sessions."""
+    from rush.tools.flight_recorder import FlightRecorder
+
+    recorder = FlightRecorder()
+    if session_id:
+        events = recorder.replay_session(session_id)
+        click.echo(
+            f"Flight Recorder: Replaying session '{session_id}' ({len(events)} events):"
+        )
+        for e in events:
+            click.echo(f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}")
+    else:
+        click.echo("Flight Recorder: Active (recording to .rush/sessions/flights/).")
+
+
+@cli.command(name="swarm-merge")
+@click.option("--base", required=True, help="Path to base file.")
+@click.option("--ours", required=True, help="Path to ours file.")
+@click.option("--theirs", required=True, help="Path to theirs file.")
+def swarm_merge_cmd(base: str, ours: str, theirs: str) -> None:
+    """Execute 3-way AST merge conflict resolution across concurrent agent changes."""
+    from rush.tools.swarm_merge import SwarmMergeSolver
+
+    solver = SwarmMergeSolver()
+    b_code = Path(base).read_text(encoding="utf-8")
+    o_code = Path(ours).read_text(encoding="utf-8")
+    t_code = Path(theirs).read_text(encoding="utf-8")
+    res = solver.merge_3way(b_code, o_code, t_code)
+    if res["success"]:
+        click.echo(
+            f"SwarmMerge: Success - reconciled {res['functions_merged']} functions cleanly."
+        )
+    else:
+        click.echo(f"SwarmMerge: FAIL - {res['error']}", err=True)
+        sys.exit(1)
+
+
+@cli.command(name="simulate-ci")
+@click.option(
+    "--workflow",
+    "-w",
+    default="ci.yml",
+    help="GitHub Actions workflow file to emulate.",
+)
+def simulate_ci_cmd(workflow: str) -> None:
+    """Emulate local GitHub Actions CI workflow execution."""
+    from rush.tools.simulate_ci import SimulateCi
+
+    sim = SimulateCi()
+    res = sim.run_workflow(workflow_name=workflow)
+    if res["passed"]:
+        click.echo(
+            f"SimulateCI: Workflow '{workflow}' passed ({res['steps_executed']} steps)."
+        )
+    else:
+        click.echo(
+            f"SimulateCI: FAIL at step '{res['failed_step']}': {res['error']}", err=True
+        )
+        sys.exit(1)
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

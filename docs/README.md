@@ -119,3 +119,11 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush simplify`: Cognitive complexity analyzer and decomposer.
 * `rush strictify`: Runtime type guard synthesizer.
 
+
+
+## Traceability, Flight Recorder & Swarm Merge (Phase 49)
+* `rush trace`: Requirement-to-test traceability scanner.
+* `rush flight-recorder`: JSON-RPC agent flight recorder and session replayer.
+* `rush swarm-merge`: 3-way AST merge conflict solver.
+* `rush simulate-ci`: Zero-cloud GitHub Actions workflow emulator.
+

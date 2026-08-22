@@ -89,3 +89,12 @@ It flags ORM fields added to models that have no corresponding `sa.Column` or SQ
 ### How does `rush simplify` assist developers?
 It identifies monolithic functions with cognitive complexity over threshold and outlines modular sub-function boundaries.
 
+
+
+## Traceability & Multi-Agent Swarms (Phase 49)
+### How does `rush swarm-merge` avoid git merge conflict markers?
+By parsing both versions into ASTs, it identifies distinct function/class additions and automatically inserts them into the AST module body cleanly.
+
+### What does `rush trace` verify?
+It links every requirement tag (e.g. `[REQ-042]`) in `docs/` to its corresponding function in `src/` and unit test in `tests/`.
+

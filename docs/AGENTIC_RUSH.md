@@ -118,3 +118,10 @@ Give your AI agent superpowers in two minutes:
 2. **Code Simplification**: Call `rush_simplify(file)` before refactoring to target high-complexity hotspots.
 3. **Type Strictness**: Call `rush_strictify(file)` to add defensive runtime checks to untyped inputs.
 
+
+
+## Agent Protocols for Swarms & Traceability (Phase 49)
+1. **File Locks**: Acquire `rush_mesh_acquire_lock(path, agent_id)` before writing files in parallel swarms.
+2. **Conflict Resolution**: Call `rush_swarm_merge(base, ours, theirs)` to reconcile concurrent edits.
+3. **Traceability**: Call `rush_trace()` to verify you have covered all required spec tags.
+

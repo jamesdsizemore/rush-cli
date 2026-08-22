@@ -151,3 +151,11 @@ Rush v0.2.0 introduces context optimization, AI token reduction, and release rea
 * `rush simplify --file <path>`: Identify overly complex functions.
 * `rush strictify --file <path>`: Add runtime type validations.
 
+
+
+## Traceability & Swarm Merge (Phase 49)
+* `rush trace`: Output requirement compliance matrix.
+* `rush flight-recorder --replay <id>`: Inspect past agent session steps.
+* `rush swarm-merge`: Automatically merge concurrent agent branches.
+* `rush simulate-ci`: Test GitHub Actions workflows locally.
+

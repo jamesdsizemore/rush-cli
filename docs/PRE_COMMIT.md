@@ -101,3 +101,8 @@ You can invoke Rush's fast pre-flight vectors directly in git workflows:
 * `rush db-drift`: Block commits with unmigrated ORM model fields.
 * `rush simplify`: Highlight functions exceeding maximum cognitive complexity.
 
+
+
+### Spec Traceability Pre-Commit Gate
+* `rush trace`: Ensure all requirement tags have valid source implementations and tests.
+

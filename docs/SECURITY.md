@@ -55,3 +55,8 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 ## Schema Integrity & Type Safety (Phase 48)
 `rush db-drift` and `rush strictify` protect runtime services against schema mismatch panics and unvalidated type injection payloads.
 
+
+
+## Multi-Agent Concurrency & Auditability (Phase 49)
+`MeshLockManager` prevents split-brain race conditions when multiple agent processes work in parallel, while `FlightRecorder` provides immutable audit logs of all tool calls and state transitions.
+

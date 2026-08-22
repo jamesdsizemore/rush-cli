@@ -127,3 +127,10 @@ Ensure your agent is configured to use:
 * `rush_simplify`: Identify complex functions for refactoring.
 * `rush_strictify`: Generate defensive runtime type assertions.
 
+
+
+## Phase 49 FastMCP Tools
+* `rush_trace`: Requirement matrix scanning.
+* `rush_mesh_acquire_lock` / `release`: Mutex locking.
+* `rush_swarm_merge`: AST 3-way conflict resolution.
+

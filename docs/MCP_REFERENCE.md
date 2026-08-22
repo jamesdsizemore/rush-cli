@@ -82,3 +82,8 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_db_drift()`**: Audit ORM models against migrations to detect schema drift.
 * **`rush_simplify(file, max_complexity=10)`**: Decompose high-complexity functions into modular helpers.
 * **`rush_strictify(file)`**: Synthesize runtime type guards for unvalidated parameters.
+
+* **`rush_trace()`**: Scan codebase and specs to output requirement traceability matrix.
+* **`rush_mesh_acquire_lock(path, agent_id)`**: Acquire non-blocking multi-agent file lock.
+* **`rush_mesh_release_lock(path, agent_id)`**: Release multi-agent file lock.
+* **`rush_swarm_merge(base_code, ours_code, theirs_code)`**: Execute 3-way AST merge conflict resolution.

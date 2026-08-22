@@ -254,3 +254,20 @@ Decompose high-complexity functions into clean helper sub-functions.
 ### `rush strictify`
 Synthesize runtime type guards for unvalidated function arguments.
 * `--file, -f`: Target file path (required).
+
+### `rush trace`
+Scan codebase and specs to output requirement-to-test traceability matrix.
+
+### `rush flight-recorder`
+Record and replay agent JSON-RPC sessions.
+* `--replay, -r`: Replay a specific session ID.
+
+### `rush swarm-merge`
+Execute 3-way AST merge conflict resolution across concurrent agent changes.
+* `--base`: Path to base file (required).
+* `--ours`: Path to ours file (required).
+* `--theirs`: Path to theirs file (required).
+
+### `rush simulate-ci`
+Emulate local GitHub Actions CI workflow execution.
+* `--workflow, -w`: GitHub Actions workflow file to emulate (default: ci.yml).

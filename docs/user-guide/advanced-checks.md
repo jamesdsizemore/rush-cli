@@ -99,3 +99,9 @@ rush bundle analyze dist/
 * `rush simplify`: Function complexity decomposition.
 * `rush strictify`: Runtime type guard generation.
 
+
+
+## Traceability & CI Simulation
+* `rush trace`: Spec-to-code traceability.
+* `rush simulate-ci`: Local GitHub Actions emulation.
+

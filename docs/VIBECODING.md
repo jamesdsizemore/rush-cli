@@ -87,3 +87,8 @@ When AI code generates flaky async tests, run `rush test-heal` to let Rush isola
 ## DB Drift & Simplification for Vibecoders (Phase 48)
 When AI generates massive functions or adds model fields without migrations, `rush simplify` and `rush db-drift` catch them before you hit deploy.
 
+
+
+## Multi-Agent Swarms for Vibecoders (Phase 49)
+Run multiple subagents without fear of corrupted files: Rush manages file locks and uses `rush swarm-merge` to combine their changes automatically.
+

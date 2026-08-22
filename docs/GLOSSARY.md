@@ -69,3 +69,11 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **DbDriftAuditor**: Static linter checking ORM classes against SQL migration statements.
 * **TypeSynthesizer**: Generator creating defensive runtime type guards for untyped arguments.
 
+
+
+### Traceability & Swarm Terms (Phase 49)
+* **FlightRecorder**: Subsystem capturing deterministic agent tool invocation histories.
+* **MeshLockManager**: Mutex coordinator preventing concurrent agent file overwrite races.
+* **SwarmMergeSolver**: AST-level reconciler merging non-overlapping class and function edits.
+* **TraceScanner**: Requirement matrix scanner validating spec IDs against AST source nodes.
+

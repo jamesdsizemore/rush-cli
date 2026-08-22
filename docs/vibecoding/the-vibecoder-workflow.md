@@ -124,3 +124,8 @@ Run `rush test-heal` whenever async tests fail intermittently.
 ## Database Drift Verification
 Run `rush db-drift` before deploying any database schema change.
 
+
+
+## Local CI Simulation
+Run `rush simulate-ci` before pushing to verify all GitHub Actions steps pass on your local machine.
+

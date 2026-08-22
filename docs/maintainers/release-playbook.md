@@ -26,3 +26,8 @@ Verify public API contract compatibility using `rush api-diff --base main`.
 ## Pre-Release Database Audit
 Execute `rush db-drift` to guarantee zero unmigrated schema changes before tagging releases.
 
+
+
+## Pre-Release Traceability Verification
+Run `rush trace` and `rush simulate-ci` to verify full specification compliance prior to tagging releases.
+

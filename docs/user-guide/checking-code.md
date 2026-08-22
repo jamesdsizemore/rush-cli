@@ -126,3 +126,9 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 * `rush db-drift`: Verify model/migration alignment.
 * `rush simplify`: Score cognitive complexity.
 
+
+
+## Traceability & Flight Recorder
+* `rush trace`: Requirement compliance.
+* `rush flight-recorder`: Replay session events.
+

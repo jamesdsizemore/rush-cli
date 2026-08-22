@@ -136,3 +136,11 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
   run: rush db-drift
 ```
 
+
+
+### Traceability CI Gate
+```yaml
+- name: Spec-to-Code Traceability Check
+  run: rush trace
+```
+

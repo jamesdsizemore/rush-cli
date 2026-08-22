@@ -21,3 +21,8 @@
 ## Simplified Function Context Efficiency
 Small, decomposed helper functions fit perfectly into subagent context windows without requiring entire module dumps.
 
+
+
+## Multi-Agent AST Merge Efficiency
+AST-based conflict resolution completely bypasses costly LLM re-prompting loops when merging parallel subagent branches.
+
