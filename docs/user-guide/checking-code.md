@@ -110,3 +110,31 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 ## Code Grounding & Outline Checks (Phases 41–43)
 * **AST Grounding**: Run `rush hallu-guard` to verify all imported modules are installed.
 * **AST Outlining**: Run `rush token outline <path>` for compact symbol signatures.
+
+## Context Packing & Blast Radius
+* `rush context pack`: Assemble token-bounded prompts.
+* `rush blast-radius`: Check affected routes and tests.
+
+
+
+## API Diffing
+* `rush api-diff`: Compare AST signatures against base branches.
+
+
+
+## Database & Complexity Auditing
+* `rush db-drift`: Verify model/migration alignment.
+* `rush simplify`: Score cognitive complexity.
+
+
+
+## Traceability & Flight Recorder
+* `rush trace`: Requirement compliance.
+* `rush flight-recorder`: Replay session events.
+
+
+
+## License & IAM Auditing
+* `rush license-matrix`: Classify dependency licenses.
+* `rush iam-audit`: Generate cloud access policies.
+

@@ -81,3 +81,34 @@ rush bundle analyze dist/
 * `rush ship migration`: Checks SQL files for table locks (`ALTER TABLE ... ADD COLUMN NOT NULL`).
 * `rush ship semver`: Compares AST public interfaces between versions.
 * `rush ship pack`: Scans repository trees for secret keys, credentials, and `.env` leaks.
+
+## Blast Radius & Architecture Checks
+* `rush blast-radius`: Downstream reachability.
+* `rush arch-guard`: Layer boundary verification.
+
+
+
+## Flaky Test Healing & API Diff
+* `rush test-heal`: Diagnose intermittent test failures.
+* `rush api-diff`: Ensure public signature parity.
+
+
+
+## DB Drift & Code Simplification
+* `rush db-drift`: Schema migration drift detection.
+* `rush simplify`: Function complexity decomposition.
+* `rush strictify`: Runtime type guard generation.
+
+
+
+## Traceability & CI Simulation
+* `rush trace`: Spec-to-code traceability.
+* `rush simulate-ci`: Local GitHub Actions emulation.
+
+
+
+## SLSA Attestation & Security
+* `rush attest`: Cryptographic build provenance.
+* `rush license-matrix`: Dependency compliance audit.
+* `rush iam-audit`: Cloud IAM policy synthesis.
+

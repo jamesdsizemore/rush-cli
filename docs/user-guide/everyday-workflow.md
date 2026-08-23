@@ -127,3 +127,37 @@ Now you can submit your pull request knowing that every test passes, every file 
 1. Start task: `rush session restore <name>` (or initialize with `rush session save <name>`).
 2. Verify grounding during development: `rush hallu-guard`.
 3. Check release gate before shipping: `rush ship gate`.
+
+## Daily Blast Radius & Gain Checks
+1. Check impact: `rush blast-radius --path <file>`
+2. Monitor savings: `rush context gain`
+3. Verify architecture: `rush arch-guard`
+
+
+
+## Testing & API Validation
+1. Heal flaky tests: `rush test-heal --target tests/test_api.py`
+2. Verify contracts: `rush api-diff --base main`
+
+
+
+## Database & Code Quality Checks
+1. Check database drift: `rush db-drift`
+2. Simplify complex code: `rush simplify --file src/app.py`
+3. Synthesize type guards: `rush strictify --file src/app.py`
+
+
+
+## Multi-Agent & Traceability Workflow
+1. Check requirements: `rush trace`
+2. Reconcile branches: `rush swarm-merge`
+3. Simulate CI: `rush simulate-ci`
+
+
+
+## Security & Release Workflow
+1. Check licenses: `rush license-matrix`
+2. Clean dead assets: `rush dead-asset`
+3. Generate PR card: `rush pr-synthesize`
+4. Attest build: `rush attest`
+

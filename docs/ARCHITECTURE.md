@@ -137,3 +137,50 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 5. `semver`: Breaking public API signature differ (`SemverLinter`).
 6. `pack`: Sensitive key / secret leak audit (`PackageLinter`).
 7. `gate`: Unified weighted verdict.
+
+## 15. Context Packing, Telemetry & Blast Radius Subsystems (Phases 44–46)
+
+### 15.1 Graph-Pruned Context Packing & Stale Sweeping (Phase 44)
+* `ContextPacker` (`src/rush/codegraph/context_packer.py`): Leverages AST outlines and PageRank importance to assemble token-budgeted prompt envelopes (`<rush_context>`).
+* `StaleSweeper` (`src/rush/token_economy/stale_sweeper.py`): Deduplicates multi-turn conversational history by replacing earlier turns' bloated file reads with 1-line summary tags.
+* `CacheAligner` (`src/rush/token_economy/cache_aligner.py`): Enforces prefix lengths above 1,024 tokens to optimize multi-provider KV prompt caching.
+
+### 15.2 Gain TUI & Token Economy Telemetry Ledger (Phase 45)
+* `TelemetryStore` (`src/rush/token_economy/telemetry.py`): Persists distillation and skeletonization metrics to `.rush/telemetry/tokens.db`.
+* `OutputShaper` (`src/rush/token_economy/output_shaper.py`): Regex-based output filter eliminating conversational filler when `--style terse` is active.
+* `render_gain_dashboard` (`src/rush/token_economy/tui_gain.py`): Interactive Rich layout rendering live token and dollar savings.
+
+### 15.3 Transitive Blast Radius & Architecture Guard (Phase 46)
+* `BlastRadiusAnalyzer` (`src/rush/tools/blast_radius.py`): Computes transitive downstream impact across files, API routes, and tests.
+* `ArchGuard` (`src/rush/tools/arch_guard.py`): Validates imports against `[architecture.layers]` declarative boundaries to prevent illegal reverse dependencies.
+
+
+## 16. Autonomous Test Healing & API Differ Subsystems (Phase 47)
+* `GitSandbox` (`src/rush/core/git_sandbox.py`): Ephemeral worktree lifecycle manager.
+* `TestHealer` (`src/rush/tools/test_heal.py`): Perturbation and race-condition diagnosis.
+* `ApiDiffer` (`src/rush/tools/api_diff.py`): AST-based breaking change differ.
+
+
+
+## 17. DB Drift, Complexity Decomposer & Type Guard Subsystems (Phase 48)
+* `DbDriftAuditor` (`src/rush/tools/db_drift.py`): Model vs. migration discrepancy detector.
+* `ComplexityDecomposer` (`src/rush/tools/simplify.py`): Cyclomatic/cognitive AST analyzer.
+* `TypeSynthesizer` (`src/rush/tools/strictify.py`): Untyped parameter guard generator.
+
+
+
+## 18. Traceability, Flight Recorder & Swarm Subsystems (Phase 49)
+* `TraceScanner` (`src/rush/tools/trace.py`): Spec tag to AST implementation auditor.
+* `FlightRecorder` (`src/rush/tools/flight_recorder.py`): Session log persistence in `.rush/sessions/flights/`.
+* `SwarmMergeSolver` (`src/rush/tools/swarm_merge.py`): Semantic 3-way AST merge solver.
+* `MeshLockManager` (`src/rush/mcp_mesh/lock_manager.py`): Domain-socket/file lock manager for swarm concurrency.
+
+
+
+## 19. SLSA Attestation, Security & Release Subsystems (Phase 50)
+* `SLSAAttestationGenerator` (`src/rush/tools/attest.py`): In-toto SLSA Level 3 builder.
+* `LicenseMatrixScanner` (`src/rush/tools/license_matrix.py`): Dependency license risk classifier.
+* `IamPolicySynthesizer` (`src/rush/tools/iam_audit.py`): Static SDK call policy synthesizer.
+* `DeadAssetScanner` (`src/rush/tools/dead_asset.py`): Media asset reference scanner.
+* `PrSynthesizer` (`src/rush/tools/pr_synthesize.py`): Semantic PR markdown generator.
+

@@ -97,3 +97,42 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * **AST Grounding Verifier (`rush hallu-guard`)**: Real-time import validator ensuring zero phantom packages or hallucinated dependencies exist before code is executed.
 * **Pre-Mortem Mistake Memory (`rush context mistakes`)**: Historical Git revert miner extracting past regressions into proactive guardrails.
 * **Unified 7-Vector Ship Gate (`rush ship gate` / `rush ship`)**: Parallel release cockpit evaluating repository cleanliness, environment parity, docs integrity, migration hazards, SemVer diffs, package leak prevention, and test pass confidence.
+
+## Context Packing, Telemetry HUD & Blast Radius (Phases 44–46)
+* **Graph-Pruned Context Packing (`rush context pack`)**: Packs verbatim focus symbols and depth-1 caller/callee signatures under strict token limits (e.g. `--budget 4000`).
+* **Prompt Cache Prefix Aligner (`rush context align-prompt`)**: Structures prompt prefixes ($\ge 1024$ tokens) and adds ephemeral cache-control headers for $\ge 85\%$ KV cache hit rates.
+* **Multi-Turn Stale Read Sweeper**: Automatically collapses older turns' verbose file reads into 1-line signatures (`<!-- stale_read: collapsed N lines -->`).
+* **Context Gain Terminal HUD (`rush context gain`)**: Interactive Rich TUI displaying gross vs. compressed tokens, compression ratios, and estimated dollar savings.
+* **Terse Persona Output Shaper (`rush context persona --set terse`)**: Strips conversational preamble and fluff words, cutting agent output tokens by 40–60%.
+* **Transitive Blast Radius Analyzer (`rush blast-radius --path <FILE>`)**: Calculates downstream reachability depth, affected API routes, and recommended test suites before making edits.
+* **Declarative Architecture Layer Guard (`rush arch-guard`)**: Enforces clean architecture directional layer matrices (e.g. Domain -> Application -> Infrastructure).
+
+
+## Test Healing & API Contract Differ (Phase 47)
+* `rush test-heal`: Autonomous flaky test stress diagnosis in isolated worktree sandboxes.
+* `rush api-diff`: Zero-server public API breaking change detection against base Git branches.
+
+
+
+## DB Drift, Simplify & Strictify (Phase 48)
+* `rush db-drift`: ORM-to-migration schema drift auditor.
+* `rush simplify`: Cognitive complexity analyzer and decomposer.
+* `rush strictify`: Runtime type guard synthesizer.
+
+
+
+## Traceability, Flight Recorder & Swarm Merge (Phase 49)
+* `rush trace`: Requirement-to-test traceability scanner.
+* `rush flight-recorder`: JSON-RPC agent flight recorder and session replayer.
+* `rush swarm-merge`: 3-way AST merge conflict solver.
+* `rush simulate-ci`: Zero-cloud GitHub Actions workflow emulator.
+
+
+
+## SLSA Attestation, Security Suite & Flagship Release (Phase 50)
+* `rush attest`: SLSA Level 3 cryptographic build provenance generator.
+* `rush license-matrix`: Open-source copyleft dependency risk auditor.
+* `rush iam-audit`: Least-privilege AWS/GCP IAM policy synthesizer.
+* `rush dead-asset`: Unreferenced asset and dead media pruner.
+* `rush pr-synthesize`: Structured semantic GitHub PR card generator.
+

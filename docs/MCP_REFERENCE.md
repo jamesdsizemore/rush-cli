@@ -68,3 +68,31 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_context_retrieve(chunk_hash)`**: Retrieve uncompressed content from CCR chunk store by hash.
 * **`rush_hallu_guard(path="")`**: Audit code imports against installed packages and stdlib.
 * **`rush_context_mistakes_check()`**: Check git revert history for past mistakes and anti-patterns.
+
+* **`rush_context_pack(path, symbol="", budget=4000)`**: Pack graph-pruned context outline under a strict token budget.
+
+* **`rush_context_gain_stats()`**: Return real-time token economy savings, compression ratios, and dollar metrics as JSON.
+
+* **`rush_blast_radius(path, depth=5)`**: Calculate downstream transitive blast radius for a changed file.
+* **`rush_arch_guard()`**: Validate codebase against clean architecture layer boundaries.
+
+* **`rush_test_heal(target, runs=5)`**: Diagnose flaky test race conditions in isolated sandbox and propose fixes.
+* **`rush_api_diff(base="main")`**: Detect breaking public API contract changes against base Git ref.
+
+* **`rush_db_drift()`**: Audit ORM models against migrations to detect schema drift.
+* **`rush_simplify(file, max_complexity=10)`**: Decompose high-complexity functions into modular helpers.
+* **`rush_strictify(file)`**: Synthesize runtime type guards for unvalidated parameters.
+
+* **`rush_trace()`**: Scan codebase and specs to output requirement traceability matrix.
+* **`rush_mesh_acquire_lock(path, agent_id)`**: Acquire non-blocking multi-agent file lock.
+* **`rush_mesh_release_lock(path, agent_id)`**: Release multi-agent file lock.
+* **`rush_swarm_merge(base_code, ours_code, theirs_code)`**: Execute 3-way AST merge conflict resolution.
+
+* **`rush_attest_generate(artifact_path="")`**: Generate in-toto SLSA Level 3 provenance statement.
+* **`rush_license_matrix()`**: Audit open-source dependencies for license risks.
+* **`rush_iam_audit()`**: Synthesize least-privilege cloud IAM policy.
+* **`rush_dead_asset()`**: Scan for unreferenced assets and dead media.
+* **`rush_pr_synthesize(base_branch="main")`**: Synthesize structured semantic pull request card.
+
+* **`rush_context_skeletonize(path)`**: Extract compressed AST outline skeletons for a target source file.
+* **`rush_context_cache_manifest()`**: Retrieve Merkle DAG content-addressable cache block manifests.

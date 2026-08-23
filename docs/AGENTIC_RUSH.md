@@ -99,3 +99,37 @@ Give your AI agent superpowers in two minutes:
 3. **Hallucination Defense**: Run `rush_hallu_guard` to verify generated code contains zero phantom packages.
 4. **Pre-Mortem Invariants**: Call `rush_context_mistakes_check` before starting work to avoid repeating reverted patterns.
 5. **Ship Cockpit**: Call `rush_ship_gate` before submitting pull requests or ending turns.
+
+## Agent Protocols for Context Packing & Blast Radius (Phases 44–46)
+1. **Context Packing**: Call `rush_context_pack(path, symbol, budget)` to retrieve focused AST context without blowing your token budget.
+2. **Savings Telemetry**: Call `rush_context_gain_stats()` to inspect session token savings and cost efficiency.
+3. **Blast Radius Analysis**: Call `rush_blast_radius(path)` before refactoring to know which downstream routes and tests are impacted.
+4. **Architecture Governance**: Call `rush_arch_guard()` to verify you have not introduced unauthorized cross-layer imports.
+
+
+## Agent Protocols for Test Healing & API Contracts (Phase 47)
+1. **Flaky Test Repair**: Call `rush_test_heal(target)` when encountering intermittent test failures.
+2. **API Guard**: Call `rush_api_diff(base='main')` to verify that your refactor maintains backward compatibility.
+
+
+
+## Agent Protocols for DB Drift & Code Simplification (Phase 48)
+1. **Database Safety**: Call `rush_db_drift()` after modifying ORM data models to ensure migrations exist.
+2. **Code Simplification**: Call `rush_simplify(file)` before refactoring to target high-complexity hotspots.
+3. **Type Strictness**: Call `rush_strictify(file)` to add defensive runtime checks to untyped inputs.
+
+
+
+## Agent Protocols for Swarms & Traceability (Phase 49)
+1. **File Locks**: Acquire `rush_mesh_acquire_lock(path, agent_id)` before writing files in parallel swarms.
+2. **Conflict Resolution**: Call `rush_swarm_merge(base, ours, theirs)` to reconcile concurrent edits.
+3. **Traceability**: Call `rush_trace()` to verify you have covered all required spec tags.
+
+
+
+## Agent Protocols for Security & Release (Phase 50)
+1. **Provenance**: Call `rush_attest_generate()` to produce SLSA build provenance.
+2. **Compliance**: Call `rush_license_matrix()` to ensure no viral licenses are added.
+3. **IAM Safety**: Call `rush_iam_audit()` to synthesize minimal cloud permissions.
+4. **PR Cards**: Call `rush_pr_synthesize()` to generate release notes.
+

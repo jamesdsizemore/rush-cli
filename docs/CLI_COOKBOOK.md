@@ -375,3 +375,92 @@ rush context retrieve <HASH>
 # View mined mistake guardrails
 rush context mistakes
 ```
+
+## Context Packing, Telemetry & Architecture Recipes (Phases 44–46)
+
+### Context Packing for Focused Refactoring
+```bash
+rush context pack --path src/rush/cli.py --symbol run_stdio --budget 3000
+```
+
+### Monitoring Live Token Savings
+```bash
+rush context gain
+```
+
+### Analyzing Blast Radius Before Modifying Shared Modules
+```bash
+rush blast-radius --path src/rush/tools/common.py --depth 4
+```
+
+### Auditing Architectural Boundaries
+```bash
+rush arch-guard
+```
+
+
+## Test Healing & API Recipes (Phase 47)
+### Diagnosing Flaky Tests
+```bash
+rush test-heal --target tests/test_concurrency.py --runs 10
+```
+
+### Checking API Compatibility
+```bash
+rush api-diff --base main
+```
+
+
+
+## DB Drift & Simplification Recipes (Phase 48)
+### Auditing Database Schema Drift
+```bash
+rush db-drift
+```
+
+### Decomposing Monolithic Functions
+```bash
+rush simplify --file src/rush/cli.py --max-complexity 12
+```
+
+### Synthesizing Runtime Type Guards
+```bash
+rush strictify --file src/rush/tools/common.py
+```
+
+
+
+## Traceability & Swarm Recipes (Phase 49)
+### Generating Requirement Compliance Matrix
+```bash
+rush trace
+```
+
+### Resolving Concurrent Agent Merge Conflicts
+```bash
+rush swarm-merge --base file.py --ours file_a.py --theirs file_b.py
+```
+
+### Simulating GitHub Actions CI Locally
+```bash
+rush simulate-ci --workflow test.yml
+```
+
+
+
+## SLSA Attestation & Security Recipes (Phase 50)
+### Generating Cryptographic Build Provenance
+```bash
+rush attest --out release.intoto.jsonl
+```
+
+### Auditing Dependencies for Copyleft Risks
+```bash
+rush license-matrix
+```
+
+### Synthesizing AWS S3 Least-Privilege Policy
+```bash
+rush iam-audit
+```
+

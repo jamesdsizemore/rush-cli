@@ -114,3 +114,41 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
     rush hallu-guard
     rush ship gate
 ```
+
+### Architectural Boundary CI Gate
+```yaml
+- name: Architecture Boundary Check
+  run: rush arch-guard
+```
+
+
+### API Breaking Change CI Gate
+```yaml
+- name: API Breaking Change Check
+  run: rush api-diff --base origin/main
+```
+
+
+
+### Database Drift CI Gate
+```yaml
+- name: DB Migration Drift Check
+  run: rush db-drift
+```
+
+
+
+### Traceability CI Gate
+```yaml
+- name: Spec-to-Code Traceability Check
+  run: rush trace
+```
+
+
+
+### SLSA Attestation CI Gate
+```yaml
+- name: SLSA Provenance Attestation
+  run: rush attest --out provenance.intoto.jsonl
+```
+

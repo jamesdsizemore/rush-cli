@@ -42,3 +42,37 @@ Follow [Security reporting](../maintainers/incident-and-security.md); do not pos
 * **`rush hallu-guard`**: Detects hallucinated or uninstalled package imports.
 * **`rush token outline`**: Compresses file source code into AST outlines.
 * **`rush context retrieve`**: Restores full uncompressed content from CCR cache.
+
+## Context Packing & Blast Radius
+
+* **`rush context pack`**: Pack token-bounded context.
+* **`rush context gain`**: View live token and dollar savings.
+* **`rush blast-radius`**: Analyze downstream change impact.
+* **`rush arch-guard`**: Validate layer boundary rules.
+
+
+## Test Healing FAQ
+* **`rush test-heal`**: Diagnose flaky tests.
+* **`rush api-diff`**: Check API breaking changes.
+
+
+
+## DB Drift & Simplification FAQ
+* **`rush db-drift`**: Check migration parity.
+* **`rush simplify`**: Analyze function complexity.
+* **`rush strictify`**: Synthesize runtime type guards.
+
+
+
+## Multi-Agent Swarms FAQ
+* **`rush trace`**: Requirement-to-test matrix.
+* **`rush swarm-merge`**: 3-way AST merge.
+* **`rush flight-recorder`**: Session replaying.
+
+
+
+## Security & Release FAQ
+* **`rush attest`**: SLSA Level 3 provenance.
+* **`rush license-matrix`**: Copyleft compliance.
+* **`rush iam-audit`**: Least-privilege IAM.
+

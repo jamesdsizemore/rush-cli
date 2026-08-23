@@ -35,3 +35,27 @@ Run Rush's 7-vector release readiness cockpit to verify scratch cleanliness, env
 rush ship gate
 ```
 If any vector fails, inspect the diagnostic output and remediate before opening your pull request.
+
+## Step 6: Check Blast Radius and Architecture Boundaries
+Run `rush blast-radius --path <file>` and `rush arch-guard` to verify no downstream routes are broken and layer boundaries are clean.
+
+
+
+## Step 7: Check API Contract Parity
+Run `rush api-diff --base main` to guarantee backward compatibility before opening a PR.
+
+
+
+## Step 8: Check Database Drift and Complexity
+Run `rush db-drift` and `rush simplify` to guarantee clean migrations and modular architecture.
+
+
+
+## Step 9: Verify Traceability and Local CI
+Run `rush trace` to ensure 100% requirement coverage and `rush simulate-ci` to verify CI pass status.
+
+
+
+## Step 10: Generate PR Card and Build Attestation
+Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.
+

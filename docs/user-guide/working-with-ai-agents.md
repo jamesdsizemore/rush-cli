@@ -107,3 +107,39 @@ Ensure your agent is configured to use:
 * `rush_context_retrieve`: Lossless CCR payload recovery.
 * `rush_context_mistakes_check`: Git revert mistake guardrails.
 * `rush_ship_gate`: 7-vector release readiness cockpit.
+
+## Phase 44-46 FastMCP Tools
+* `rush_context_pack`: Budgeted context packing.
+* `rush_context_gain_stats`: Live savings metrics.
+* `rush_blast_radius`: Downstream impact analysis.
+* `rush_arch_guard`: Layer boundary validation.
+
+
+
+## Phase 47 FastMCP Tools
+* `rush_test_heal`: Diagnose and stabilize test suites.
+* `rush_api_diff`: Verify API contract backward-compatibility.
+
+
+
+## Phase 48 FastMCP Tools
+* `rush_db_drift`: Detect unmigrated model attributes.
+* `rush_simplify`: Identify complex functions for refactoring.
+* `rush_strictify`: Generate defensive runtime type assertions.
+
+
+
+## Phase 49 FastMCP Tools
+* `rush_trace`: Requirement matrix scanning.
+* `rush_mesh_acquire_lock` / `release`: Mutex locking.
+* `rush_swarm_merge`: AST 3-way conflict resolution.
+
+
+
+## Phase 50 FastMCP Tools
+* `rush_attest_generate`: Create SLSA Level 3 provenance.
+* `rush_license_matrix`: Audit dependency licenses.
+* `rush_iam_audit`: Generate least-privilege IAM policies.
+* `rush_dead_asset`: Find unreferenced media.
+* `rush_pr_synthesize`: Build semantic PR descriptions.
+

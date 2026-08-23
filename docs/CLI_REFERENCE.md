@@ -208,3 +208,101 @@ Display historical Git-revert mistake guardrails.
 
 ### `rush hallu-guard`
 Audit codebase for hallucinated or phantom package imports.
+
+### `rush context pack`
+Pack graph-pruned context envelope under a strict token budget.
+* `--path, -p`: Target file path to pack (required).
+* `--symbol, -s`: Focus symbol to keep verbatim.
+* `--budget, -b`: Maximum token budget (default: 4000).
+
+### `rush context align-prompt`
+Align prompt prefix above provider cache boundary (>=1024 tokens).
+* `--system, -s`: System prompt string to align.
+
+### `rush context gain`
+Launch the interactive Rich terminal HUD displaying token compression and dollar savings.
+
+### `rush context persona`
+View or configure agent terse response persona style.
+* `--set`: Set persona style (`terse` | `default`).
+
+### `rush blast-radius`
+Analyze downstream transitive blast radius and affected tests.
+* `--path, -p`: Changed file path to analyze (required).
+* `--depth, -d`: Maximum traversal depth (default: 5).
+
+### `rush arch-guard`
+Evaluate codebase against declarative architectural layer boundary rules.
+
+### `rush test-heal`
+Diagnose flaky test race conditions and suggest stabilization fixes.
+* `--target, -t`: Target test file path (required).
+* `--runs, -r`: Number of perturbation runs (default: 5).
+
+### `rush api-diff`
+Detect breaking public API signature changes against base Git ref.
+* `--base, -b`: Base Git ref to compare against (default: main).
+
+### `rush db-drift`
+Audit ORM models against SQL migrations to detect unmigrated schema drift.
+
+### `rush simplify`
+Decompose high-complexity functions into clean helper sub-functions.
+* `--file, -f`: Target file path (required).
+* `--max-complexity, -m`: Maximum allowed cognitive complexity score (default: 10).
+
+### `rush strictify`
+Synthesize runtime type guards for unvalidated function arguments.
+* `--file, -f`: Target file path (required).
+
+### `rush trace`
+Scan codebase and specs to output requirement-to-test traceability matrix.
+
+### `rush flight-recorder`
+Record and replay agent JSON-RPC sessions.
+* `--replay, -r`: Replay a specific session ID.
+
+### `rush swarm-merge`
+Execute 3-way AST merge conflict resolution across concurrent agent changes.
+* `--base`: Path to base file (required).
+* `--ours`: Path to ours file (required).
+* `--theirs`: Path to theirs file (required).
+
+### `rush simulate-ci`
+Emulate local GitHub Actions CI workflow execution.
+* `--workflow, -w`: GitHub Actions workflow file to emulate (default: ci.yml).
+
+### `rush attest`
+Generate in-toto SLSA Level 3 cryptographic build provenance statement.
+* `--out, -o`: Output file path for SLSA JSON provenance.
+
+### `rush license-matrix`
+Audit project dependencies for copyleft and license risks.
+
+### `rush iam-audit`
+Synthesize least-privilege cloud IAM JSON policy from static SDK usage.
+
+### `rush dead-asset`
+Scan for unreferenced media, font, and image files in the repository.
+
+### `rush pr-synthesize`
+Synthesize structured semantic pull request markdown card.
+* `--base, -b`: Base branch to diff against (default: main).
+
+
+### `rush toon-inspect`
+Inspect Token-Optimized Object Notation (TOON) v4.1 wire serialization for AST nodes.
+
+### `rush skeletonize`
+Extract compressed Abstract Syntax Tree outline skeletons stripping internal function bodies.
+* `--path, -p`: Path to Python source file.
+
+### `rush context-cache`
+Inspect and manage Content-Addressable Merkle DAG CCR cache blocks.
+
+### `rush ccr-retrieve`
+Retrieve relevant codebase chunks using multi-vector embeddings and semantic CCR store.
+* `--query, -q`: Natural language or symbol query.
+
+### `rush context-mistakes`
+Query and record past codebase anti-patterns in Mistake Memory.

@@ -57,3 +57,53 @@ When tool responses or logs exceed token thresholds, Rush stores the verbatim co
 5. **SemVer**: Compares public API signatures to prevent accidental breaking changes.
 6. **Pack**: Scans source trees to prevent leaking `.env` or private keys into release builds.
 7. **Gate**: Aggregates all vectors into a 0–100% release confidence score.
+
+## Context Packing, Telemetry & Blast Radius (Phases 44–46)
+
+### How does `rush context pack` help with large refactors?
+Instead of reading 10 separate files and exceeding context limits, `rush context pack --path <file> --symbol <symbol> --budget 4000` packages the exact target implementation verbatim and includes compressed AST skeletons of surrounding dependencies, fitting complex module hierarchies into a single compact prompt.
+
+### What is the purpose of `rush context align-prompt`?
+AI providers (Anthropic, OpenAI, Gemini) offer up to 85%+ discounts on prompt tokens if the static prefix is identical and meets minimum token boundaries (typically 1,024 tokens). `rush context align-prompt` ensures your prompt prefix meets this threshold and injects proper cache control tags.
+
+### What does `rush blast-radius` calculate?
+`rush blast-radius --path <file>` parses all imports across the codebase to find every file, API endpoint, and test file that depends on the changed file, assigning a risk score (LOW, MEDIUM, HIGH) and recommending specific tests to run.
+
+### How does `rush arch-guard` enforce clean architecture?
+`rush arch-guard` checks all module imports against layer definitions (e.g. Domain, Application, Infrastructure). If a Domain entity attempts to import from Infrastructure or Presentation, `rush arch-guard` blocks the violation with a non-zero exit code.
+
+
+## Test Healing & API Contracts (Phase 47)
+### How does `rush test-heal` work?
+It executes multiple perturbation runs in a sandboxed git worktree, diagnosing non-deterministic timing issues and suggesting fixes.
+
+### What does `rush api-diff` protect against?
+It prevents breaking SDK/API changes by verifying that public function/class signatures have not removed arguments or symbols compared to the base branch.
+
+
+
+## DB Drift & Code Simplification (Phase 48)
+### What does `rush db-drift` catch?
+It flags ORM fields added to models that have no corresponding `sa.Column` or SQL `ALTER TABLE` statement in migration files.
+
+### How does `rush simplify` assist developers?
+It identifies monolithic functions with cognitive complexity over threshold and outlines modular sub-function boundaries.
+
+
+
+## Traceability & Multi-Agent Swarms (Phase 49)
+### How does `rush swarm-merge` avoid git merge conflict markers?
+By parsing both versions into ASTs, it identifies distinct function/class additions and automatically inserts them into the AST module body cleanly.
+
+### What does `rush trace` verify?
+It links every requirement tag (e.g. `[REQ-042]`) in `docs/` to its corresponding function in `src/` and unit test in `tests/`.
+
+
+
+## SLSA Attestation & Security (Phase 50)
+### What is an in-toto SLSA attestation?
+It is a cryptographically verifiable JSON document that proves exactly which git commit, build environment, and tool produced a release binary.
+
+### How does `rush iam-audit` protect cloud deployments?
+It parses all AWS SDK calls (e.g. `s3.get_object`) and generates an IAM policy containing only the exact permissions used by the code.
+

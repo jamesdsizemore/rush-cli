@@ -42,3 +42,26 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 1. Typosquatted dependencies and hallucinated package imports.
 2. Accidental inclusion of sensitive keys, `.env` files, or certificates in package builds.
 3. Risky table-locking SQL migrations in production deployments.
+
+## Architectural Layer Isolation (Phase 46)
+`rush arch-guard` prevents sensitive infrastructure code (database clients, crypto keys) from being imported into untrusted presentation or domain layers.
+
+
+## Safe Ephemeral Sandboxing (Phase 47)
+`GitSandbox` guarantees that test perturbation and self-healing fixes execute strictly in throwaway worktrees, preventing any corruption of working trees or developer secrets.
+
+
+
+## Schema Integrity & Type Safety (Phase 48)
+`rush db-drift` and `rush strictify` protect runtime services against schema mismatch panics and unvalidated type injection payloads.
+
+
+
+## Multi-Agent Concurrency & Auditability (Phase 49)
+`MeshLockManager` prevents split-brain race conditions when multiple agent processes work in parallel, while `FlightRecorder` provides immutable audit logs of all tool calls and state transitions.
+
+
+
+## SLSA Level 3 Supply Chain Security (Phase 50)
+Rush produces verifiable in-toto SLSA Level 3 build provenance statements for all distributed binaries, ensuring complete protection against build-time supply chain tampering.
+

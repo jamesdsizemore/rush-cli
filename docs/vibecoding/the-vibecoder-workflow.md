@@ -110,3 +110,27 @@ rush ship docs
 # 4. Run the full 7-vector Ship Gate Cockpit
 rush ship gate
 ```
+
+## Blast Radius in Vibecoding Workflow (Phase 46)
+Before refactoring a core function, run `rush blast-radius --path <file>` to verify all affected tests and routes.
+
+
+
+## Flaky Test Self-Healing
+Run `rush test-heal` whenever async tests fail intermittently.
+
+
+
+## Database Drift Verification
+Run `rush db-drift` before deploying any database schema change.
+
+
+
+## Local CI Simulation
+Run `rush simulate-ci` before pushing to verify all GitHub Actions steps pass on your local machine.
+
+
+
+## Semantic PR Generation
+Use `rush pr-synthesize` to generate perfect, professional PR descriptions in 1 second.
+

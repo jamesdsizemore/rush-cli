@@ -49,3 +49,70 @@ src/rush/
     │   └── cockpit.py      # Unified 7-vector parallel Ship Cockpit
     └── hallu_guard.py      # Real-time AST grounding and phantom package guard
 ```
+
+## Context Packing & Blast Radius Modules
+```
+src/rush/
+├── codegraph/
+│   └── context_packer.py  # PageRank context packing
+├── token_economy/
+│   ├── stale_sweeper.py   # Multi-turn history sweeper
+│   ├── cache_aligner.py   # Prompt cache boundary aligner
+│   ├── telemetry.py       # SQLite token ledger (.rush/telemetry/tokens.db)
+│   ├── output_shaper.py   # Terse persona output filter
+│   └── tui_gain.py        # Rich terminal gain dashboard
+└── tools/
+    ├── blast_radius.py    # Downstream reachability analyzer
+    └── arch_guard.py       # Architectural layer boundary guard
+```
+
+
+
+## Test Healing & API Diff Modules
+```
+src/rush/
+├── core/
+│   └── git_sandbox.py     # Ephemeral worktree sandbox manager
+└── tools/
+    ├── test_heal.py       # Autonomous flaky test healer
+    └── api_diff.py        # Public API signature differ
+```
+
+
+
+## DB Drift & Simplification Modules
+```
+src/rush/tools/
+├── db_drift.py    # ORM-to-migration schema drift auditor
+├── simplify.py    # Cognitive complexity refactoring decomposer
+└── strictify.py   # Runtime type guard synthesizer
+```
+
+
+
+## Traceability & Mesh Modules
+```
+src/rush/
+├── mcp_mesh/
+│   ├── __init__.py
+│   ├── daemon.py          # Lock daemon
+│   └── lock_manager.py    # Local file-based mutex client
+└── tools/
+    ├── trace.py           # Spec-to-code traceability scanner
+    ├── flight_recorder.py # Session recorder & replayer
+    ├── swarm_merge.py     # 3-way AST merge solver
+    └── simulate_ci.py     # Local GHA workflow emulator
+```
+
+
+
+## SLSA Attestation & Security Modules
+```
+src/rush/tools/
+├── attest.py         # SLSA Level 3 provenance generator
+├── license_matrix.py # Copyleft license scanner
+├── iam_audit.py      # Cloud IAM policy synthesizer
+├── dead_asset.py     # Unreferenced asset pruner
+└── pr_synthesize.py  # Semantic PR card synthesizer
+```
+

@@ -125,3 +125,45 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/memory/failure_ledger.py`: `FailureLedger` (`.rush/memory/failures.db`).
 * `src/rush/memory/mistake_miner.py`: `MistakeMiner`.
 * `src/rush/tools/ship/`: `ScratchCleaner`, `EnvParityLinter`, `DocsLinter`, `MigrationLinter`, `SemverLinter`, `PackageLinter`, `ShipCockpit`.
+
+## Context Packing, Telemetry & Blast Radius Architecture (Phases 44–46)
+* `src/rush/codegraph/context_packer.py`: `ContextPacker` for budget-constrained context assembly.
+* `src/rush/token_economy/stale_sweeper.py`: `StaleSweeper` for conversation history compression.
+* `src/rush/token_economy/cache_aligner.py`: `CacheAligner` for prompt cache boundary alignment.
+* `src/rush/token_economy/telemetry.py`: `TelemetryStore` logging to `.rush/telemetry/tokens.db`.
+* `src/rush/token_economy/output_shaper.py`: `OutputShaper` for terse persona formatting.
+* `src/rush/token_economy/tui_gain.py`: Rich TUI gain dashboard.
+* `src/rush/tools/blast_radius.py`: `BlastRadiusAnalyzer` and `BlastRadiusReport`.
+* `src/rush/tools/arch_guard.py`: `ArchGuard` layer validator.
+
+
+## Test Healing & API Differ Architecture (Phase 47)
+* `src/rush/core/git_sandbox.py`: Sandbox worktree isolation.
+* `src/rush/tools/test_heal.py`: Flaky test healer.
+* `src/rush/tools/api_diff.py`: Public API contract differ.
+
+
+
+## DB Drift & Simplification Architecture (Phase 48)
+* `src/rush/tools/db_drift.py`: Schema migration drift auditor.
+* `src/rush/tools/simplify.py`: Function complexity decomposer.
+* `src/rush/tools/strictify.py`: Runtime type guard synthesizer.
+
+
+
+## Traceability & Swarm Architecture (Phase 49)
+* `src/rush/tools/trace.py`: Requirement scanner.
+* `src/rush/tools/flight_recorder.py`: Flight recorder.
+* `src/rush/tools/swarm_merge.py`: 3-way AST reconciler.
+* `src/rush/mcp_mesh/`: Mesh lock daemon & client.
+* `src/rush/tools/simulate_ci.py`: Workflow emulator.
+
+
+
+## SLSA Attestation & Security Architecture (Phase 50)
+* `src/rush/tools/attest.py`: SLSA provenance attestation generator.
+* `src/rush/tools/license_matrix.py`: License risk matrix.
+* `src/rush/tools/iam_audit.py`: Cloud IAM policy synthesizer.
+* `src/rush/tools/dead_asset.py`: Dead asset pruner.
+* `src/rush/tools/pr_synthesize.py`: PR card generator.
+

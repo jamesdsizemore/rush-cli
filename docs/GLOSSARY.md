@@ -46,3 +46,42 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **Mistake Miner**: Bi-temporal Git revert analyzer extracting historical regression post-mortems into active guardrails.
 * **Ship Cockpit**: Parallel 7-vector release readiness evaluator checking scratch hygiene, environment parity, docs links, SQL table locks, API compatibility, package safety, and test confidence.
 * **TOON (Token-Oriented Object Notation)**: Compact pipe-delimited table serialization format cutting 40–65% of JSON token overhead in MCP tool responses.
+
+### Context Packing, Telemetry & Blast Radius Terms (Phases 44–46)
+* **ArchGuard**: Declarative architectural boundary validator enforcing directional dependency rules between software layers.
+* **Blast Radius**: The downstream set of modules, API routes, and test suites affected by modifying a target source file.
+* **Cache Aligner**: Pre-processor that pads invariant prompt prefixes above 1,024 tokens to maximize provider KV prompt cache hits.
+* **Context Packer**: Algorithm that extracts verbatim focus symbols while compressing peripheral code to meet strict token budgets.
+* **Stale Read Sweeper**: Optimizer that collapses older conversation turns' file contents into 1-line signatures.
+* **Telemetry Ledger**: SQLite database (`.rush/telemetry/tokens.db`) tracking token savings and estimated dollar reductions.
+* **Terse Persona**: Agent response shaper stripping conversational fluff and filler words for concise output.
+
+
+### Test Healing & API Diff Terms (Phase 47)
+* **ApiDiffer**: AST semantic diffing engine flagging removed exports or altered signatures.
+* **GitSandbox**: Ephemeral throwaway worktree context manager ensuring clean isolation.
+* **TestHealer**: Autonomous engine executing perturbation stress runs to stabilize flaky tests.
+
+
+
+### DB Drift & Code Simplification Terms (Phase 48)
+* **ComplexityDecomposer**: AST tool measuring cognitive branch depth and proposing helper abstractions.
+* **DbDriftAuditor**: Static linter checking ORM classes against SQL migration statements.
+* **TypeSynthesizer**: Generator creating defensive runtime type guards for untyped arguments.
+
+
+
+### Traceability & Swarm Terms (Phase 49)
+* **FlightRecorder**: Subsystem capturing deterministic agent tool invocation histories.
+* **MeshLockManager**: Mutex coordinator preventing concurrent agent file overwrite races.
+* **SwarmMergeSolver**: AST-level reconciler merging non-overlapping class and function edits.
+* **TraceScanner**: Requirement matrix scanner validating spec IDs against AST source nodes.
+
+
+
+### SLSA Attestation & Security Terms (Phase 50)
+* **DeadAssetScanner**: Tool scanning for unreferenced fonts and images to reduce build weight.
+* **IamPolicySynthesizer**: Static analyzer generating least-privilege IAM policies from SDK calls.
+* **LicenseMatrixScanner**: Compliance tool classifying dependencies into permissive vs. copyleft.
+* **SLSAAttestationGenerator**: Subsystem generating cryptographic SLSA Level 3 build provenance.
+

@@ -1991,6 +1991,394 @@ def context_mistakes_cmd() -> None:
         click.echo(f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}")
 
 
+@context_group.command(name="pack")
+@click.option("--path", "-p", required=True, help="Target file path to pack.")
+@click.option("--symbol", "-s", default="", help="Focus symbol to keep verbatim.")
+@click.option("--budget", "-b", default=4000, type=int, help="Maximum token budget.")
+def context_pack_cmd(path: str, symbol: str, budget: int) -> None:
+    """Pack graph-pruned context envelope under a strict token budget."""
+    from rush.codegraph.context_packer import ContextPacker
+
+    packer = ContextPacker()
+    res = packer.pack(Path(path), target_symbol=symbol, max_tokens=budget)
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    click.echo(f"# Context Packed ({res['tokens']} tokens / max {res['max_tokens']})")
+    click.echo(res["packed_text"])
+
+
+@context_group.command(name="align-prompt")
+@click.option("--system", "-s", required=True, help="System prompt to align.")
+def context_align_prompt_cmd(system: str) -> None:
+    """Align prompt prefix above provider cache boundary (>=1024 tokens)."""
+    from rush.token_economy.cache_aligner import CacheAligner
+
+    aligner = CacheAligner()
+    aligned = aligner.align_prompt(system)
+    click.echo(
+        f"Aligned tokens: {aligned['system']['aligned_tokens']} (Padded: {aligned['system']['padded']})"
+    )
+
+
+@context_group.command(name="gain")
+def context_gain_cmd() -> None:
+    """Launch the Rich terminal HUD displaying token compression and dollar savings."""
+    from rush.token_economy.tui_gain import render_gain_dashboard
+
+    render_gain_dashboard()
+
+
+@context_group.command(name="persona")
+@click.option(
+    "--set",
+    "set_persona",
+    type=click.Choice(["terse", "default"]),
+    default=None,
+    help="Set agent response persona style.",
+)
+def context_persona_cmd(set_persona: str | None) -> None:
+    """View or configure agent terse response persona style."""
+    from rush.memory.preference_store import PreferenceStore
+
+    prefs = PreferenceStore()
+    if set_persona:
+        prefs.set_preference("persona_style", set_persona)
+        click.echo(f"Persona style set to: {set_persona}")
+    else:
+        current = prefs.get_preference("persona_style", "terse")
+        click.echo(f"Current persona style: {current}")
+
+
+@cli.command(name="blast-radius")
+@click.option("--path", "-p", required=True, help="Changed file path to analyze.")
+@click.option("--depth", "-d", default=5, type=int, help="Maximum traversal depth.")
+def blast_radius_cmd(path: str, depth: int) -> None:
+    """Analyze downstream transitive blast radius and affected tests."""
+    from rush.tools.blast_radius import BlastRadiusAnalyzer
+
+    analyzer = BlastRadiusAnalyzer()
+    report = analyzer.analyze([Path(path)], max_depth=depth)
+    click.echo(f"Blast Radius Impact: Risk={report.risk_score}")
+    click.echo(
+        f"  Affected Files ({len(report.affected_files)}): {', '.join(report.affected_files) or 'None'}"
+    )
+    click.echo(
+        f"  Affected Routes ({len(report.affected_routes)}): {', '.join(report.affected_routes) or 'None'}"
+    )
+    click.echo(
+        f"  Recommended Tests ({len(report.recommended_tests)}): {', '.join(report.recommended_tests) or 'None'}"
+    )
+
+
+@cli.command(name="arch-guard")
+def arch_guard_cmd() -> None:
+    """Evaluate codebase against architectural layer boundary rules."""
+    from rush.tools.arch_guard import ArchGuard
+
+    guard = ArchGuard()
+    res = guard.evaluate_boundaries()
+    if res["passed"]:
+        click.echo("ArchGuard: All layer boundaries respected.")
+    else:
+        click.echo(
+            f"ArchGuard: FAIL - {res['violations_count']} architectural boundary violations:",
+            err=True,
+        )
+        for v in res["violations"]:
+            click.echo(
+                f"  {v['source_file']} ({v['source_layer']}) imports illegal layer {v['illegal_target_layer']}",
+                err=True,
+            )
+        sys.exit(1)
+
+
+@cli.command(name="test-heal")
+@click.option("--target", "-t", required=True, help="Target test path to diagnose.")
+@click.option("--runs", "-r", default=5, type=int, help="Number of perturbation runs.")
+def test_heal_cmd(target: str, runs: int) -> None:
+    """Diagnose flaky test race conditions and suggest stabilization fixes."""
+    from rush.tools.test_heal import TestHealer
+
+    healer = TestHealer()
+    res = healer.diagnose_and_heal(target, runs=runs)
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    click.echo(f"Test Heal Diagnostic: {res['test_path']}")
+    click.echo(
+        f"  Runs: {res['runs']} (Passes: {res['passes']}, Failures: {res['failures']})"
+    )
+    click.echo(
+        f"  Status: {'FLAKY' if res['is_flaky'] else 'DETERMINISTIC'} - {res['diagnosis']}"
+    )
+    if res["suggested_fix"]:
+        click.echo(f"  Fix:\n{res['suggested_fix']}")
+
+
+@cli.command(name="api-diff")
+@click.option("--base", "-b", default="main", help="Base Git ref to compare against.")
+def api_diff_cmd(base: str) -> None:
+    """Detect breaking public API signature changes against base Git ref."""
+    from rush.tools.api_diff import ApiDiffer
+
+    differ = ApiDiffer()
+    res = differ.diff_public_api(base_ref=base)
+    if res["passed"]:
+        click.echo(
+            f"ApiDiff: No breaking public API changes detected against '{base}'."
+        )
+    else:
+        click.echo(
+            f"ApiDiff: FAIL - {res['breaking_changes_count']} breaking API changes against '{base}':",
+            err=True,
+        )
+        for b in res["breaking_changes"]:
+            click.echo(f"  {b['file']}: [{b['type']}] {b['details']}", err=True)
+        sys.exit(1)
+
+
+@cli.command(name="db-drift")
+def db_drift_cmd() -> None:
+    """Audit ORM models against SQL migrations to detect unmigrated schema drift."""
+    from rush.tools.db_drift import DbDriftAuditor
+
+    auditor = DbDriftAuditor()
+    res = auditor.audit_drift()
+    if res["passed"]:
+        click.echo("DbDrift: All ORM models are synchronized with migrations.")
+    else:
+        click.echo(
+            f"DbDrift: FAIL - {res['drift_count']} schema drift hazards found:",
+            err=True,
+        )
+        for issue in res["drift_issues"]:
+            click.echo(f"  {issue['model']}: {issue['details']}", err=True)
+        sys.exit(1)
+
+
+@cli.command(name="simplify")
+@click.option(
+    "--file",
+    "-f",
+    "file_path",
+    required=True,
+    help="File path to analyze for cognitive complexity.",
+)
+@click.option(
+    "--max-complexity",
+    "-m",
+    default=10,
+    type=int,
+    help="Maximum allowed cognitive complexity score.",
+)
+def simplify_cmd(file_path: str, max_complexity: int) -> None:
+    """Decompose high-complexity functions into clean helper sub-functions."""
+    from rush.tools.simplify import ComplexityDecomposer
+
+    decomposer = ComplexityDecomposer()
+    res = decomposer.decompose_file(Path(file_path), max_complexity=max_complexity)
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    if not res["needs_simplification"]:
+        click.echo(
+            f"Simplify: File '{file_path}' has clean complexity (<= {max_complexity})."
+        )
+    else:
+        click.echo(
+            f"Simplify: {res['complex_functions_count']} functions exceed complexity threshold ({max_complexity}):"
+        )
+        for c in res["candidates"]:
+            click.echo(
+                f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): {c['recommendation']}"
+            )
+
+
+@cli.command(name="strictify")
+@click.option(
+    "--file",
+    "-f",
+    "file_path",
+    required=True,
+    help="File path to analyze for untyped parameters.",
+)
+def strictify_cmd(file_path: str) -> None:
+    """Synthesize runtime type guards for unvalidated function arguments."""
+    from rush.tools.strictify import TypeSynthesizer
+
+    synth = TypeSynthesizer()
+    res = synth.audit_and_synthesize(Path(file_path))
+    if "error" in res:
+        click.echo(f"Error: {res['error']}", err=True)
+        sys.exit(1)
+    click.echo(
+        f"Strictify: Found {res['untyped_count']} untyped parameters in '{file_path}':"
+    )
+    for u in res["untyped_arguments"]:
+        click.echo(
+            f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' -> Guard: {u['suggested_guard']}"
+        )
+
+
+@cli.command(name="trace")
+def trace_cmd() -> None:
+    """Scan codebase and specs to output requirement-to-test traceability matrix."""
+    from rush.tools.trace import TraceScanner
+
+    scanner = TraceScanner()
+    res = scanner.scan_traceability()
+    click.echo(
+        f"Traceability Matrix: {res['total_requirements']} requirements tracked."
+    )
+    for item in res["matrix"]:
+        click.echo(
+            f"  {item['requirement']}: [{item['status']}] Impls={len(item['implementations'])} Tests={len(item['tests'])}"
+        )
+
+
+@cli.command(name="flight-recorder")
+@click.option(
+    "--replay", "-r", "session_id", default=None, help="Replay a specific session ID."
+)
+def flight_recorder_cmd(session_id: str | None) -> None:
+    """Record and replay agent JSON-RPC sessions."""
+    from rush.tools.flight_recorder import FlightRecorder
+
+    recorder = FlightRecorder()
+    if session_id:
+        events = recorder.replay_session(session_id)
+        click.echo(
+            f"Flight Recorder: Replaying session '{session_id}' ({len(events)} events):"
+        )
+        for e in events:
+            click.echo(f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}")
+    else:
+        click.echo("Flight Recorder: Active (recording to .rush/sessions/flights/).")
+
+
+@cli.command(name="swarm-merge")
+@click.option("--base", required=True, help="Path to base file.")
+@click.option("--ours", required=True, help="Path to ours file.")
+@click.option("--theirs", required=True, help="Path to theirs file.")
+def swarm_merge_cmd(base: str, ours: str, theirs: str) -> None:
+    """Execute 3-way AST merge conflict resolution across concurrent agent changes."""
+    from rush.tools.swarm_merge import SwarmMergeSolver
+
+    solver = SwarmMergeSolver()
+    b_code = Path(base).read_text(encoding="utf-8")
+    o_code = Path(ours).read_text(encoding="utf-8")
+    t_code = Path(theirs).read_text(encoding="utf-8")
+    res = solver.merge_3way(b_code, o_code, t_code)
+    if res["success"]:
+        click.echo(
+            f"SwarmMerge: Success - reconciled {res['functions_merged']} functions cleanly."
+        )
+    else:
+        click.echo(f"SwarmMerge: FAIL - {res['error']}", err=True)
+        sys.exit(1)
+
+
+@cli.command(name="simulate-ci")
+@click.option(
+    "--workflow",
+    "-w",
+    default="ci.yml",
+    help="GitHub Actions workflow file to emulate.",
+)
+def simulate_ci_cmd(workflow: str) -> None:
+    """Emulate local GitHub Actions CI workflow execution."""
+    from rush.tools.simulate_ci import SimulateCi
+
+    sim = SimulateCi()
+    res = sim.run_workflow(workflow_name=workflow)
+    if res["passed"]:
+        click.echo(
+            f"SimulateCI: Workflow '{workflow}' passed ({res['steps_executed']} steps)."
+        )
+    else:
+        click.echo(
+            f"SimulateCI: FAIL at step '{res['failed_step']}': {res['error']}", err=True
+        )
+        sys.exit(1)
+
+
+@cli.command(name="attest")
+@click.option(
+    "--out", "-o", default=None, help="Output file path for SLSA JSON provenance."
+)
+def attest_cmd(out: str | None) -> None:
+    """Generate in-toto SLSA Level 3 cryptographic build provenance statement."""
+    import json
+
+    from rush.tools.attest import SLSAAttestationGenerator
+
+    generator = SLSAAttestationGenerator()
+    stmt = generator.generate_attestation()
+    if out:
+        Path(out).write_text(json.dumps(stmt, indent=2), encoding="utf-8")
+        click.echo(f"Attestation: SLSA Level 3 provenance written to '{out}'.")
+    else:
+        click.echo(json.dumps(stmt, indent=2))
+
+
+@cli.command(name="license-matrix")
+def license_matrix_cmd() -> None:
+    """Audit project dependencies for copyleft and license risks."""
+    from rush.tools.license_matrix import LicenseMatrixScanner
+
+    scanner = LicenseMatrixScanner()
+    res = scanner.scan_licenses()
+    click.echo(
+        f"License Matrix: Scanned {res['total_packages']} packages (Copyleft violations: {res['copyleft_violations_count']}):"
+    )
+    for p in res["packages"]:
+        click.echo(
+            f"  {p['package']}: {p['license']} [{p['category']}] (Risk: {p['risk']})"
+        )
+
+
+@cli.command(name="iam-audit")
+def iam_audit_cmd() -> None:
+    """Synthesize least-privilege cloud IAM JSON policy from static SDK usage."""
+    import json
+
+    from rush.tools.iam_audit import IamPolicySynthesizer
+
+    synth = IamPolicySynthesizer()
+    policy = synth.synthesize_policy()
+    click.echo("IAM Policy Synthesizer: Synthesized least-privilege AWS/GCP policy:")
+    click.echo(json.dumps(policy, indent=2))
+
+
+@cli.command(name="dead-asset")
+def dead_asset_cmd() -> None:
+    """Scan for unreferenced media, font, and image files in the repository."""
+    from rush.tools.dead_asset import DeadAssetScanner
+
+    scanner = DeadAssetScanner()
+    res = scanner.scan_dead_assets()
+    if res["dead_assets_count"] == 0:
+        click.echo(
+            f"DeadAsset: Clean - all {res['total_assets']} assets are referenced."
+        )
+    else:
+        click.echo(f"DeadAsset: Found {res['dead_assets_count']} unreferenced assets:")
+        for a in res["dead_assets"]:
+            click.echo(f"  {a}")
+
+
+@cli.command(name="pr-synthesize")
+@click.option("--base", "-b", default="main", help="Base branch to diff against.")
+def pr_synthesize_cmd(base: str) -> None:
+    """Synthesize structured semantic pull request markdown card."""
+    from rush.tools.pr_synthesize import PrSynthesizer
+
+    synth = PrSynthesizer()
+    card = synth.synthesize_pr_card(base_branch=base)
+    click.echo(card)
+
+
 @cli.command(name="hallu-guard")
 def hallu_guard_cmd() -> None:
     """Audit codebase for hallucinated or phantom package imports."""

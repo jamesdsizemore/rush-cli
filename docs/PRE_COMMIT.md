@@ -87,3 +87,27 @@ You can invoke Rush's fast pre-flight vectors directly in git workflows:
 * `rush hallu-guard`: Blocks commits with hallucinated dependencies.
 * `rush ship env`: Blocks commits missing `.env.example` declarations.
 * `rush ship pack`: Blocks commits with unredacted secret leaks.
+
+### Architecture Boundary Pre-Commit Hook
+* `rush arch-guard`: Prevent unauthorized cross-layer imports from entering git history.
+
+
+### API Compatibility Pre-Commit Gate
+* `rush api-diff`: Ensure no unintended breaking API changes are committed.
+
+
+
+### Database Migration & Complexity Pre-Commit Gate
+* `rush db-drift`: Block commits with unmigrated ORM model fields.
+* `rush simplify`: Highlight functions exceeding maximum cognitive complexity.
+
+
+
+### Spec Traceability Pre-Commit Gate
+* `rush trace`: Ensure all requirement tags have valid source implementations and tests.
+
+
+
+### License Compliance Pre-Commit Gate
+* `rush license-matrix`: Prevent viral copyleft dependencies from being added to pyproject.toml.
+

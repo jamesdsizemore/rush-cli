@@ -82,3 +82,29 @@ Rush now provides native token reduction tools directly in the CLI and FastMCP s
 * **`--format toon`**: Formats findings and tables as compact pipe-tables instead of verbose JSON.
 * **Command Distillation**: Automatically filters pytest and cargo noise to send only failing assertions.
 * **CCR Caching**: Stores large outputs in SQLite (`.rush/cache/ccr.db`) and injects `<!-- ccr:chunk:HASH -->` tags.
+
+## Context Packing & Stale Read Sweeping (Phases 44–45)
+* `rush context pack`: Packs exact symbols under token budgets.
+* StaleSweeper: Prunes old turns to single-line summaries.
+* `rush context persona --set terse`: Trims filler words from outputs.
+
+
+
+## Flaky Test Diet
+Stop re-running test suites 10 times in AI context—use `rush test-heal` to diagnose non-determinism in one step.
+
+
+
+## Complexity Diet
+Decomposing 200-line monolithic functions with `rush simplify` reduces the context tokens needed for subsequent code edits by up to 50%.
+
+
+
+## Swarm Merge Token Diet
+Instead of feeding full merge conflicts into LLMs, `rush swarm-merge` reconciles non-overlapping edits deterministically with zero token overhead.
+
+
+
+## Dead Asset Diet
+Pruning unused images and dead fonts with `rush dead-asset` reduces repository size and keeps AI indexing clean and fast.
+

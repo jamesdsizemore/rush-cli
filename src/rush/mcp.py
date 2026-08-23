@@ -171,6 +171,263 @@ def _register_tools(server) -> None:
         description="Check git revert history for past mistakes and anti-patterns",
     )
 
+    # Phase 44 Tools
+    def mcp_rush_context_pack(path: str, symbol: str = "", budget: int = 4000) -> str:
+        from rush.codegraph.context_packer import ContextPacker
+
+        packer = ContextPacker()
+        res = packer.pack(Path(path), target_symbol=symbol, max_tokens=budget)
+        if "error" in res:
+            return f"Error: {res['error']}"
+        return res["packed_text"]
+
+    server.add_tool(
+        fn=mcp_rush_context_pack,
+        name="rush_context_pack",
+        description="Pack graph-pruned context outline under a strict token budget",
+    )
+
+    # Phase 45 Tools
+    def mcp_rush_context_gain_stats() -> str:
+        import json
+
+        from rush.token_economy.telemetry import TelemetryStore
+
+        store = TelemetryStore()
+        return json.dumps(store.get_summary(), indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_context_gain_stats,
+        name="rush_context_gain_stats",
+        description="Get real-time token economy savings and cost metrics",
+    )
+
+    # Phase 46 Tools
+    def mcp_rush_blast_radius(path: str, depth: int = 5) -> str:
+        from rush.tools.blast_radius import BlastRadiusAnalyzer
+
+        analyzer = BlastRadiusAnalyzer()
+        report = analyzer.analyze([Path(path)], max_depth=depth)
+        return report.model_dump_json(indent=2)
+
+    def mcp_rush_arch_guard() -> str:
+        from rush.tools.arch_guard import ArchGuard
+
+        guard = ArchGuard()
+        res = guard.evaluate_boundaries()
+        return (
+            "All boundaries respected"
+            if res["passed"]
+            else f"Found {res['violations_count']} layer violations"
+        )
+
+    server.add_tool(
+        fn=mcp_rush_blast_radius,
+        name="rush_blast_radius",
+        description="Calculate downstream transitive blast radius for a changed file",
+    )
+    server.add_tool(
+        fn=mcp_rush_arch_guard,
+        name="rush_arch_guard",
+        description="Validate codebase against clean architecture layer boundaries",
+    )
+
+    # Phase 47 Tools
+    def mcp_rush_test_heal(target: str, runs: int = 5) -> str:
+        import json
+
+        from rush.tools.test_heal import TestHealer
+
+        healer = TestHealer()
+        res = healer.diagnose_and_heal(target, runs=runs)
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_api_diff(base: str = "main") -> str:
+        import json
+
+        from rush.tools.api_diff import ApiDiffer
+
+        differ = ApiDiffer()
+        res = differ.diff_public_api(base_ref=base)
+        return json.dumps(res, indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_test_heal,
+        name="rush_test_heal",
+        description="Diagnose flaky test race conditions and suggest fixes",
+    )
+    server.add_tool(
+        fn=mcp_rush_api_diff,
+        name="rush_api_diff",
+        description="Detect breaking public API changes against base Git ref",
+    )
+
+    # Phase 48 Tools
+    def mcp_rush_db_drift() -> str:
+        import json
+
+        from rush.tools.db_drift import DbDriftAuditor
+
+        auditor = DbDriftAuditor()
+        res = auditor.audit_drift()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_simplify(file: str, max_complexity: int = 10) -> str:
+        import json
+
+        from rush.tools.simplify import ComplexityDecomposer
+
+        decomposer = ComplexityDecomposer()
+        res = decomposer.decompose_file(Path(file), max_complexity=max_complexity)
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_strictify(file: str) -> str:
+        import json
+
+        from rush.tools.strictify import TypeSynthesizer
+
+        synth = TypeSynthesizer()
+        res = synth.audit_and_synthesize(Path(file))
+        return json.dumps(res, indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_db_drift,
+        name="rush_db_drift",
+        description="Audit ORM models against migrations to detect schema drift",
+    )
+    server.add_tool(
+        fn=mcp_rush_simplify,
+        name="rush_simplify",
+        description="Decompose high-complexity functions into modular helpers",
+    )
+    server.add_tool(
+        fn=mcp_rush_strictify,
+        name="rush_strictify",
+        description="Synthesize runtime type guards for unvalidated parameters",
+    )
+
+    # Phase 49 Tools
+    def mcp_rush_trace() -> str:
+        import json
+
+        from rush.tools.trace import TraceScanner
+
+        scanner = TraceScanner()
+        res = scanner.scan_traceability()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_mesh_acquire_lock(path: str, agent_id: str) -> bool:
+        from rush.mcp_mesh.lock_manager import MeshLockManager
+
+        mgr = MeshLockManager()
+        return mgr.acquire(Path(path), agent_id=agent_id)
+
+    def mcp_rush_mesh_release_lock(path: str, agent_id: str) -> bool:
+        from rush.mcp_mesh.lock_manager import MeshLockManager
+
+        mgr = MeshLockManager()
+        return mgr.release(Path(path), agent_id=agent_id)
+
+    def mcp_rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:
+        import json
+
+        from rush.tools.swarm_merge import SwarmMergeSolver
+
+        solver = SwarmMergeSolver()
+        res = solver.merge_3way(base_code, ours_code, theirs_code)
+        return json.dumps(res, indent=2)
+
+    server.add_tool(
+        fn=mcp_rush_trace,
+        name="rush_trace",
+        description="Scan codebase and specs to output requirement traceability matrix",
+    )
+    server.add_tool(
+        fn=mcp_rush_mesh_acquire_lock,
+        name="rush_mesh_acquire_lock",
+        description="Acquire non-blocking multi-agent file lock",
+    )
+    server.add_tool(
+        fn=mcp_rush_mesh_release_lock,
+        name="rush_mesh_release_lock",
+        description="Release multi-agent file lock",
+    )
+    server.add_tool(
+        fn=mcp_rush_swarm_merge,
+        name="rush_swarm_merge",
+        description="Execute 3-way AST merge conflict resolution",
+    )
+
+    # Phase 50 Tools
+    def mcp_rush_attest_generate(artifact_path: str = "") -> str:
+        import json
+
+        from rush.tools.attest import SLSAAttestationGenerator
+
+        gen = SLSAAttestationGenerator()
+        p = Path(artifact_path) if artifact_path else None
+        res = gen.generate_attestation(p)
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_license_matrix() -> str:
+        import json
+
+        from rush.tools.license_matrix import LicenseMatrixScanner
+
+        scanner = LicenseMatrixScanner()
+        res = scanner.scan_licenses()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_iam_audit() -> str:
+        import json
+
+        from rush.tools.iam_audit import IamPolicySynthesizer
+
+        synth = IamPolicySynthesizer()
+        res = synth.synthesize_policy()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_dead_asset() -> str:
+        import json
+
+        from rush.tools.dead_asset import DeadAssetScanner
+
+        scanner = DeadAssetScanner()
+        res = scanner.scan_dead_assets()
+        return json.dumps(res, indent=2)
+
+    def mcp_rush_pr_synthesize(base_branch: str = "main") -> str:
+        from rush.tools.pr_synthesize import PrSynthesizer
+
+        synth = PrSynthesizer()
+        return synth.synthesize_pr_card(base_branch=base_branch)
+
+    server.add_tool(
+        fn=mcp_rush_attest_generate,
+        name="rush_attest_generate",
+        description="Generate in-toto SLSA Level 3 provenance statement",
+    )
+    server.add_tool(
+        fn=mcp_rush_license_matrix,
+        name="rush_license_matrix",
+        description="Audit open-source dependencies for license risks",
+    )
+    server.add_tool(
+        fn=mcp_rush_iam_audit,
+        name="rush_iam_audit",
+        description="Synthesize least-privilege cloud IAM policy",
+    )
+    server.add_tool(
+        fn=mcp_rush_dead_asset,
+        name="rush_dead_asset",
+        description="Scan for unreferenced assets and dead media",
+    )
+    server.add_tool(
+        fn=mcp_rush_pr_synthesize,
+        name="rush_pr_synthesize",
+        description="Synthesize structured semantic pull request card",
+    )
+
 
 async def run_stdio() -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""

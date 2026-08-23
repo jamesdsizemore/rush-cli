@@ -41,3 +41,33 @@ When contributing to Rush:
 * Place release validation vectors in `src/rush/tools/ship/`.
 * Place grounding verifiers in `src/rush/codegraph/`.
 * Register subcommands in `src/rush/cli.py` and FastMCP tools in `src/rush/mcp.py`.
+
+## Contributing to Blast Radius and Telemetry
+* Place codegraph packing engines in `src/rush/codegraph/`.
+* Place token economy and telemetry modules in `src/rush/token_economy/`.
+* Place architectural guards in `src/rush/tools/`.
+
+
+
+## Contributing to Test Healing and API Differ
+* Place sandbox isolation logic in `src/rush/core/`.
+* Place test healing and API diff tools in `src/rush/tools/`.
+
+
+
+## Contributing to DB Drift and Simplification
+* Place schema comparison algorithms in `src/rush/tools/db_drift.py`.
+* Place AST complexity calculations in `src/rush/tools/simplify.py`.
+
+
+
+## Contributing to Swarm and Traceability
+* Place multi-agent mesh lock components in `src/rush/mcp_mesh/`.
+* Place traceability and flight recorder tools in `src/rush/tools/`.
+
+
+
+## Contributing to Security and Release Suite
+* Place cryptographic attestation tools in `src/rush/tools/attest.py`.
+* Place compliance tools in `src/rush/tools/license_matrix.py`.
+
