@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 
@@ -51,7 +52,9 @@ def update_docs_for_phase(
         cli_entries = []
         for cmd in cli_commands:
             if f"### `{cmd['name']}`" not in t:
-                cli_entries.append(f"### `{cmd['name']}`\n{cmd['description']}\n* Syntax / Options: `{cmd.get('syntax', '')}`\n")
+                cli_entries.append(
+                    f"### `{cmd['name']}`\n{cmd['description']}\n* Syntax / Options: `{cmd.get('syntax', '')}`\n"
+                )
         if cli_entries:
             header = f"\n## Phase {phase_num}: {phase_title} Commands\n\n"
             t += header + "\n".join(cli_entries)
@@ -65,7 +68,9 @@ def update_docs_for_phase(
         mcp_entries = []
         for tool in mcp_tools:
             if f"`{tool['name']}`" not in t:
-                mcp_entries.append(f"* **`{tool['name']}({tool.get('params', '')})`**: {tool['description']}")
+                mcp_entries.append(
+                    f"* **`{tool['name']}({tool.get('params', '')})`**: {tool['description']}"
+                )
         if mcp_entries:
             header = f"\n## Phase {phase_num} FastMCP Tools\n\n"
             t += header + "\n".join(mcp_entries) + "\n"
@@ -99,7 +104,11 @@ def update_docs_for_phase(
     gl = docs / "GLOSSARY.md"
     if gl.exists():
         t = gl.read_text(encoding="utf-8")
-        gl_entries = [f"* **{term}**: {defn}" for term, defn in glossary_terms.items() if f"**{term}**" not in t]
+        gl_entries = [
+            f"* **{term}**: {defn}"
+            for term, defn in glossary_terms.items()
+            if f"**{term}**" not in t
+        ]
         if gl_entries:
             t += f"\n### Phase {phase_num} Terms\n" + "\n".join(gl_entries) + "\n"
             gl.write_text(t, encoding="utf-8")
@@ -155,13 +164,15 @@ def update_docs_for_phase(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Update full docs corpus for a phase")
-    parser.add_argument("--meta", required=True, help="Path to JSON file containing phase metadata")
+    parser.add_argument(
+        "--meta", required=True, help="Path to JSON file containing phase metadata"
+    )
     args = parser.parse_args()
 
     meta_file = Path(args.meta)
     if not meta_file.exists():
         print(f"Metadata file {meta_file} not found.")
-        exit(1)
+        sys.exit(1)
 
     data = json.loads(meta_file.read_text(encoding="utf-8"))
     update_docs_for_phase(
