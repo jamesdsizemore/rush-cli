@@ -25,7 +25,7 @@ def runner() -> CliRunner:
 
 def test_version_string() -> None:
     """Package exposes __version__ matching pyproject.toml."""
-    assert __version__ == "0.2.0"
+    assert __version__ == "0.3.0"
 
 
 def test_imports():

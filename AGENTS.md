@@ -37,3 +37,36 @@ Every `[tools.<name>]` table in `rush.toml` must match a canonical `TOOL_SPECS`
 entry. Update the catalog, configuration guide, and example together when
 adding a tool.
 - Do not commit, publish, or alter release versions unless explicitly asked.
+
+## Agent guidelines & anti-patterns
+
+### Understanding genuine innovation
+- **Do not mistake commodity tooling for innovation**: Re-labeling existing
+  developer tasks (linters, E2E runners, git commits, database seeders, basic
+  error handling) with buzzwords like "Autonomous" or "Agentic" is not
+  innovation. If an existing Chrome extension, framework, or standard coding
+  assistant already does it, it is not an innovation.
+- **Do not substitute academic jargon for practical value**: Dumping compiler
+  theory (SMT solvers, BDI models, Tarjan SCC algorithms) does not constitute
+  product capability.
+- **Zero recycling of rejected ideas**: Once an idea or direction is rejected,
+  it is permanently blacklisted. Never re-word, re-skin, or re-package it.
+
+### Understanding what "Agentic" means
+- **Automation is not Agentic**: Simply running a script, linter, test suite, or
+  calling an API on demand is deterministic automation, not agentic capability.
+- **Agentic means closed-loop autonomy**: An agentic capability provides the AI
+  agent itself with the substrate to perceive environment state, maintain grounded
+  memory, plan under uncertainty, execute in isolation, observe feedback, and
+  autonomously self-correct without human intervention.
+- **Agent-side vs User-side**: Agentic features live on the *agent's* side of the
+  system (enhancing how the AI reasons, navigates, remembers, and verifies), not
+  as consumer UI widgets or product gimmicks for the end-user.
+
+### Scope boundaries
+- **No UI/Frontend design**: Rush is strictly a local CLI, FastMCP server, and
+  backend/systems quality substrate. Never propose or build UI design tools,
+  visual mockups, color/theme pickers, or Figma-style visual canvases.
+- **No unprompted Git hooks**: Never install, propose, or configure Git hooks.
+
+
