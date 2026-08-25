@@ -422,9 +422,7 @@ def run_provider_probe(
         )
     if route.mode == "api" and route.provider_id == "deepseek":
         return _run_deepseek_api_probe(scenario, route, start_time, t0)
-    if route.provider_id == "zai" and not (
-        os.environ.get("ANTHROPIC_BASE_URL") and os.environ.get("ANTHROPIC_AUTH_TOKEN")
-    ):
+    if route.provider_id == "zai":
         return ProbeResult(
             scenario_id=scenario.scenario_id,
             probe="provider",
@@ -432,10 +430,10 @@ def run_provider_probe(
             started_at=start_time,
             duration_ms=int((time.perf_counter() - t0) * 1000),
             metrics={
-                "evidence_mode": "zai-profile-not-configured",
+                "evidence_mode": "zai-route-deferred",
                 "route_id": route.route_id,
             },
-            fallback="zai-cli-profile-not-configured",
+            fallback="zai-route-deferred",
             reproduction=(
                 f"python -m scripts.benchmarks.run --scenario {scenario.scenario_id} "
                 f"--allow-live-route {route.route_id}"

@@ -12,6 +12,8 @@ The same `SessionContinuityTool` owns `context_pack` and `context_retrieve`; leg
 
 `SessionContinuityTool` also exposes read-only coordination operations. `coordination_check` inspects a repository-local lock without creating, releasing, or overwriting it; a held lock reports `conflict`, an expired one reports `stale`, and malformed evidence is `unavailable`. `coordination_merge_preview` detects overlapping edits and returns a manual-reconciliation receipt without emitting merged source. `coordination_recovery` reads bounded flight and failure receipts only; it never replays commands or retries a patch.
 
+`provider_resume` remains inside the same continuity boundary. It projects only current goal/open work/freshness from a saved receipt into a fixed CLI argument array for Claude Code, Codex CLI, or Antigravity. Network permission is required; Z.AI is deferred. The route never reads a keychain, opens a browser, changes a provider profile, or returns the provider response.
+
 Rush is a Python 3.12 package with two transports and one implementation layer. Click CLI commands and FastMCP tools invoke the same objects from `src/rush/tools/`; external programs are isolated behind adapters in `src/rush/engines/`.
 
 ```mermaid

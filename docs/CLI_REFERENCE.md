@@ -8,6 +8,8 @@ Use `rush session save NAME --file PATH --allow-cache-write --json` to save a lo
 
 The catalogued `continuity` tool also accepts `coordination_check`, `coordination_merge_preview`, and `coordination_recovery` through its JSON/MCP contract. These are evidence-only operations: stale or held locks, merge conflicts, and failure/replay receipts require explicit human or agent follow-up; Rush does not unlock, merge, or retry automatically.
 
+Use `rush session resume NAME --provider claude_code|codex_cli|antigravity_cli --allow-network --json` to hand a saved checkpoint to an already-authenticated local coding CLI. Rush sends only the current goal, open work, and freshness—not historic instructions, credentials, raw transcript, failed patch, or provider output. Z.AI is explicitly deferred and returns `skipped` without process invocation.
+
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
 ## Which command should I run?

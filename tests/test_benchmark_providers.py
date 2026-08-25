@@ -160,7 +160,66 @@ def test_zai_route_refuses_to_mislabel_an_unconfigured_claude_cli(
         scenario, allow_live_route=route.route_id, custom_route=route
     )
     assert result.outcome == Outcome.DEFERRED
-    assert result.fallback == "zai-cli-profile-not-configured"
+    assert result.fallback == "zai-route-deferred"
+
+
+def test_zai_is_deferred_even_when_its_environment_is_present(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.z.ai/api/anthropic")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "zai_test_token")
+    route = RouteDescriptor(
+        provider_id="zai",
+        route_id="zai-claude-code-live",
+        mode="cli",
+        command=["claude", "-p", "Reply with exactly BENCHMARK_OK."],
+        official_docs_url="https://docs.z.ai/devpack/tool/claude",
+        terms_url="https://z.ai/terms",
+        privacy_url="https://z.ai/privacy",
+        credential_boundary="user-configured Claude Code profile",
+    )
+    scenario = Scenario(
+        scenario_id="sc-zai-deferred",
+        probe="provider",
+        category="handoff",
+        input={"route_id": route.route_id},
+        required_facts=(),
+        expected_outcome=Outcome.DEFERRED,
+    )
+    monkeypatch.setattr(
+        "subprocess.run", lambda *_args, **_kwargs: pytest.fail("must not run Z.AI")
+    )
+
+    result = run_provider_probe(
+        scenario, allow_live_route=route.route_id, custom_route=route
+    )
+
+    assert result.outcome == Outcome.DEFERRED
+    assert result.fallback == "zai-route-deferred"
+
+
+def test_router_cli_presence_does_not_pass_without_its_gateway_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    scenario = Scenario(
+        scenario_id="router-9r-cli-only",
+        probe="provider",
+        category="budget",
+        input={"router_id": "9Router"},
+        required_facts=(),
+        expected_outcome=Outcome.DEFERRED,
+    )
+
+    class CliProcess:
+        returncode = 0
+        stdout = "Usage: 9router [options]"
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: CliProcess())
+    result = run_router_probe(scenario, allow_live_route="router-9r-edge")
+
+    assert result.outcome == Outcome.DEFERRED
+    assert result.fallback == "router-endpoint-not-configured"
 
 
 def test_routers_independence():
@@ -200,8 +259,8 @@ def test_router_requires_explicit_route_and_configured_endpoint(
 
     monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: CliProcess())
     cli_pass = run_router_probe(scenario, allow_live_route="router-9r-edge")
-    assert cli_pass.outcome == Outcome.PASS
-    assert cli_pass.metrics["evidence_mode"] == "live-router-cli"
+    assert cli_pass.outcome == Outcome.DEFERRED
+    assert cli_pass.fallback == "router-endpoint-not-configured"
 
     class Response:
         status = 200
@@ -219,7 +278,7 @@ def test_router_requires_explicit_route_and_configured_endpoint(
     monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
     passed = run_router_probe(scenario, allow_live_route="router-9r-edge")
     assert passed.outcome == Outcome.PASS
-    assert passed.metrics["evidence_mode"] == "live-router-cli"
+    assert passed.metrics["evidence_mode"] == "live-router"
 
     monkeypatch.delenv("RUSH_BENCHMARK_9ROUTER_URL", raising=False)
     explicit = run_router_probe(

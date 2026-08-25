@@ -8,7 +8,7 @@
     "supported_dialects": ["mcp", "jsonl", "xml"],
     "cli_command": ["9router", "--help"],
     "cli_marker": "Usage: 9router",
-    "endpoint_required": false
+    "endpoint_required": true
   },
   "OmniRoute": {
     "route_id": "router-omni-hybrid",
@@ -17,8 +17,8 @@
     "terms_url": "https://github.com/ourines/omniroute/blob/main/LICENSE",
     "privacy_url": "https://github.com/ourines/omniroute",
     "supported_dialects": ["acp", "a2a", "json"],
-    "cli_command": ["omniroute", "--output", "json", "--base-url", "http://127.0.0.1:20128", "models"],
-    "cli_marker": "auto/best-coding",
+    "cli_command": ["omniroute", "models", "list"],
+    "cli_marker": "models",
     "endpoint_required": true
   }
 }
