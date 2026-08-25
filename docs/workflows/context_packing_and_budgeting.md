@@ -3,10 +3,10 @@
 ## Insufficient-budget branch
 
 1. Read the `context_pack` envelope.
-2. If it is `skipped` and recovery is `available`, preserve the returned handle in the handoff.
+2. If it is `skipped` and recovery is `available`, preserve the returned handle in the handoff. If recovery is `not_created/cache_write_required`, either grant cache-write permission deliberately or keep the omission explicit; do not fabricate a handle.
 3. Call `context_retrieve` only for that handle when omitted evidence becomes necessary.
 
-The recovery chunk is redacted before storage and never causes automatic budget expansion.
+The recovery chunk is redacted before permitted storage and never causes automatic budget expansion. Overflow telemetry records local estimated token counts with `provider_cost: null`; it is not a cost claim.
 
 ## 1. Overview
 `rush context pack --json` returns a canonical continuity `ToolResult`: selected source evidence, estimated local tokens, omissions, and recovery state. It skeletonizes the selected target file; it does not claim graph/PageRank ranking or provider-token savings. An insufficient budget returns `skipped` with an explicit omission reason.

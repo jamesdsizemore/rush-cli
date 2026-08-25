@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from rush.permissions import ExecutionPermissions
 from rush.tools.continuity import SessionContinuityTool
 from src.rush.codegraph.context_packer import ContextPacker
 from src.rush.token_economy.cache_aligner import CacheAligner
@@ -135,4 +136,59 @@ def test_continuity_context_retrieve_returns_or_explicitly_misses_handle(
     assert missing["metadata"]["context_envelope"]["recovery"] == {
         "state": "not_found",
         "handle": "f" * 64,
+    }
+
+
+def test_continuity_overflow_requires_cache_write_and_preserves_target_evidence(
+    tmp_path: Path,
+):
+    target = tmp_path / "service.py"
+    target.write_text(
+        "def authenticate() -> bool:\n    return True\n", encoding="utf-8"
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="context_pack",
+        context_path="service.py",
+        token_budget=1,
+    )
+
+    envelope = result["metadata"]["context_envelope"]
+    assert result["status"] == "skipped"
+    assert envelope["selected_evidence"] == [
+        {"path": "service.py", "selection": "target_file"}
+    ]
+    assert envelope["recovery"] == {
+        "state": "not_created",
+        "reason": "cache_write_required",
+    }
+    assert not (tmp_path / ".rush" / "cache" / "ccr.db").exists()
+
+
+def test_continuity_overflow_records_local_token_telemetry_without_provider_cost(
+    tmp_path: Path,
+):
+    target = tmp_path / "service.py"
+    target.write_text(
+        "def authenticate() -> bool:\n    return True\n", encoding="utf-8"
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="context_pack",
+        context_path="service.py",
+        token_budget=1,
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+    envelope = result["metadata"]["context_envelope"]
+    assert result["status"] == "skipped"
+    assert envelope["recovery"]["state"] == "available"
+    assert envelope["telemetry"] == {
+        "state": "recorded",
+        "source": "local_estimate",
+        "raw_tokens": envelope["tokens"]["estimated"],
+        "compressed_tokens": 1,
+        "provider_cost": None,
     }

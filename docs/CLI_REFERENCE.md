@@ -2,7 +2,7 @@
 
 ## Recover an omitted context pack
 
-When `rush context pack --budget N --json` returns `skipped` with `metadata.context_envelope.recovery.state: "available"`, pass its handle to `rush context retrieve HANDLE --json`. The stored payload was redacted before local CCR persistence; an unknown handle remains a structured `skipped` result.
+When `rush context pack --budget N --allow-cache-write --json` returns `skipped` with `metadata.context_envelope.recovery.state: "available"`, pass its handle to `rush context retrieve HANDLE --json`. Without explicit cache-write permission, an insufficient budget returns `recovery.state: "not_created"` with `cache_write_required` and writes no CCR data. Stored payloads are redacted before local persistence; an unknown handle remains a structured `skipped` result.
 
 ## Session checkpoints
 

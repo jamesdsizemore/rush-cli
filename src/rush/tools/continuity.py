@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
 import urllib.error
@@ -26,6 +27,7 @@ from ..permissions import (
 )
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
+from ..token_economy.telemetry import TelemetryStore
 from ..tools.flight_recorder import FlightRecorder
 from .base import ToolFn, ToolResult
 
@@ -302,14 +304,50 @@ class SessionContinuityTool(ToolFn):
             target, target_symbol=target_symbol, max_tokens=1_000_000
         )
         estimated = int(packed.get("tokens", 0))
+        selected_evidence = [{"path": context_path, "selection": "target_file"}]
         if estimated > token_budget:
+            allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
+            if not allowed:
+                envelope = {
+                    "selected_evidence": selected_evidence,
+                    "tokens": {
+                        "estimated": estimated,
+                        "actual": None,
+                        "budget": token_budget,
+                    },
+                    "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
+                    "recovery": {
+                        "state": "not_created",
+                        "reason": "cache_write_required",
+                    },
+                    "telemetry": {
+                        "state": "not_recorded",
+                        "reason": "cache_write_required",
+                        "provider_cost": None,
+                    },
+                    "redaction_count": 0,
+                }
+                return self._result(
+                    started,
+                    "skipped",
+                    f"Context recovery requires {', '.join(missing)}.",
+                    operation="context_pack",
+                    granted=granted,
+                    requested=_WRITE_PERMISSION,
+                    context_envelope=envelope,
+                )
             safe_packed, redactions = SecretRedactor.redact_value(packed)
             tag = CCRStore(project_root).store_chunk(
                 json.dumps(safe_packed, sort_keys=True, default=str)
             )
             handle = tag.removeprefix("<!-- ccr:chunk:").removesuffix(" -->")
+            TelemetryStore(project_root).record_savings(
+                "continuity_context_pack",
+                raw_tokens=estimated,
+                compressed_tokens=token_budget,
+            )
             envelope = {
-                "selected_evidence": [],
+                "selected_evidence": selected_evidence,
                 "tokens": {
                     "estimated": estimated,
                     "actual": None,
@@ -317,6 +355,13 @@ class SessionContinuityTool(ToolFn):
                 },
                 "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
                 "recovery": {"state": "available", "handle": handle},
+                "telemetry": {
+                    "state": "recorded",
+                    "source": "local_estimate",
+                    "raw_tokens": estimated,
+                    "compressed_tokens": token_budget,
+                    "provider_cost": None,
+                },
                 "redaction_count": redactions,
             }
             return self._result(
@@ -325,11 +370,12 @@ class SessionContinuityTool(ToolFn):
                 "Context pack requires a larger token budget.",
                 operation="context_pack",
                 granted=granted,
+                requested=_WRITE_PERMISSION,
                 context_envelope=envelope,
             )
         safe_packed, redactions = SecretRedactor.redact_value(packed)
         envelope = {
-            "selected_evidence": [{"path": context_path, "selection": "target_file"}],
+            "selected_evidence": selected_evidence,
             "tokens": {"estimated": estimated, "actual": None, "budget": token_budget},
             "omissions": [],
             "recovery": {"state": "not_needed"},
@@ -352,7 +398,12 @@ class SessionContinuityTool(ToolFn):
         handle: str | None,
         granted: ExecutionPermissions,
     ) -> ToolResult:
-        content = CCRStore(root).retrieve_chunk(handle or "") if handle else None
+        database = root / ".rush" / "cache" / "ccr.db"
+        content = (
+            CCRStore(root).retrieve_chunk(handle or "", touch=granted.cache_write)
+            if handle and database.is_file()
+            else None
+        )
         recovery = {
             "state": "recovered" if content is not None else "not_found",
             "handle": handle,
@@ -424,6 +475,8 @@ class SessionContinuityTool(ToolFn):
             if coordination["state"] == "conflict"
             else "No conflicting local owner."
             if coordination["state"] == "available"
+            else "Local ownership is held by this agent."
+            if coordination["state"] == "held"
             else "Local ownership evidence is unavailable.",
             operation="coordination_check",
             granted=granted,
@@ -510,11 +563,13 @@ class SessionContinuityTool(ToolFn):
                 replay_state = "recorded" if events else "not_found"
             except (OSError, ValueError):
                 replay_state = "unavailable"
-        failure = (
-            FailureLedger(root).get_receipt(failure_fingerprint)
-            if isinstance(failure_fingerprint, str)
-            else None
-        )
+        failure = None
+        failure_unavailable = False
+        if isinstance(failure_fingerprint, str):
+            try:
+                failure = FailureLedger(root).get_receipt(failure_fingerprint)
+            except (OSError, sqlite3.DatabaseError):
+                failure_unavailable = True
         mined_mistakes, _ = SecretRedactor.redact_value(
             MistakeMiner(root).mine_mistakes()
         )
@@ -535,11 +590,15 @@ class SessionContinuityTool(ToolFn):
                 "event_count": len(events),
                 **({"last_event_type": events[-1].get("event_type")} if events else {}),
             },
-            "failure": failure
-            or (
-                {"fingerprint": failure_fingerprint, "state": "tombstoned"}
-                if isinstance(failure_fingerprint, str)
-                else {"state": "not_requested"}
+            "failure": (
+                {"fingerprint": failure_fingerprint, "state": "unavailable"}
+                if failure_unavailable and isinstance(failure_fingerprint, str)
+                else failure
+                or (
+                    {"fingerprint": failure_fingerprint, "state": "tombstoned"}
+                    if isinstance(failure_fingerprint, str)
+                    else {"state": "not_requested"}
+                )
             ),
             "mistakes": mistakes,
         }
@@ -928,9 +987,49 @@ class SessionContinuityTool(ToolFn):
         failure_fingerprint = handoff.get("failure_fingerprint")
         failure_receipt = None
         if isinstance(failure_fingerprint, str):
-            failure_receipt = FailureLedger(project_root).get_receipt(
-                failure_fingerprint
-            ) or {"fingerprint": failure_fingerprint, "state": "tombstoned"}
+            try:
+                failure_receipt = FailureLedger(project_root).get_receipt(
+                    failure_fingerprint
+                ) or {"fingerprint": failure_fingerprint, "state": "tombstoned"}
+            except (OSError, sqlite3.DatabaseError):
+                failure_receipt = {
+                    "fingerprint": failure_fingerprint,
+                    "state": "unavailable",
+                }
+        session_memory = {
+            "authority": "historical_evidence",
+            "state": "absent",
+            "count": 0,
+            "records": [],
+        }
+        try:
+            from ..session_memory import SessionMemoryManager
+
+            records = SessionMemoryManager(
+                memory_file=project_root / ".rush" / "session_memory.json"
+            ).load_records()
+            session_memory = {
+                "authority": "historical_evidence",
+                "state": "available" if records else "absent",
+                "count": len(records[-5:]),
+                "records": [
+                    {
+                        "timestamp": record.timestamp,
+                        "tool_name": record.tool_name,
+                        "finding_count": record.finding_count,
+                        "fixes_applied": record.fixes_applied,
+                        "summary": record.summary,
+                    }
+                    for record in records[-5:]
+                ],
+            }
+        except (OSError, ValueError, TypeError):
+            session_memory = {
+                "authority": "historical_evidence",
+                "state": "unavailable",
+                "count": 0,
+                "records": [],
+            }
         receipt, redaction_count = SecretRedactor.redact_value(
             {
                 "version": 1,
@@ -946,6 +1045,7 @@ class SessionContinuityTool(ToolFn):
                 ),
                 "freshness": "current",
                 "failure_receipt": failure_receipt,
+                "session_memory": session_memory,
             }
         )
         receipt["redaction_count"] = redaction_count

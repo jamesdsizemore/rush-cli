@@ -49,19 +49,20 @@ class CCRStore:
 
         return f"<!-- ccr:chunk:{h} -->"
 
-    def retrieve_chunk(self, chunk_hash: str) -> str | None:
-        """Retrieves raw content by chunk hash and updates LRU timestamp."""
+    def retrieve_chunk(self, chunk_hash: str, *, touch: bool = True) -> str | None:
+        """Retrieves raw content and updates LRU state only when explicitly allowed."""
         now = int(time.time())
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute(
                 "SELECT content FROM chunks WHERE hash = ?", (chunk_hash,)
             )
             row = cur.fetchone()
-            if row:
+            if row and touch:
                 conn.execute(
                     "UPDATE chunks SET last_accessed_at = ? WHERE hash = ?",
                     (now, chunk_hash),
                 )
                 conn.commit()
+            if row:
                 return row[0]
         return None

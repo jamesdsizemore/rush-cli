@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rush.permissions import ExecutionPermissions
 from rush.session_memory import SessionMemoryManager
+from rush.tools.continuity import SessionContinuityTool
 
 
 def test_session_memory_persistence(tmp_path: Path) -> None:
@@ -75,3 +77,55 @@ def test_session_memory_redacts_secret_before_persistence(tmp_path: Path) -> Non
     persisted = mem_file.read_text(encoding="utf-8")
     assert secret not in persisted
     assert "[REDACTED_ANTHROPIC_KEY]" in persisted
+
+
+def test_continuity_handoff_includes_bounded_redacted_session_memory(
+    tmp_path: Path,
+) -> None:
+    manager = SessionMemoryManager(
+        memory_file=tmp_path / ".rush" / "session_memory.json"
+    )
+    secret = "sk-ant-abcdefghijklmnopqrstuvwxyz012345"
+    manager.record_turn(
+        tool_name="continuity",
+        findings=1,
+        fixes=0,
+        summary=f"Prior evidence included {secret}",
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff.json",
+        handoff={"current_goal": "resume safely"},
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+    memory = result["metadata"]["handoff"]["session_memory"]
+    assert memory["authority"] == "historical_evidence"
+    assert memory["state"] == "available"
+    assert memory["count"] == 1
+    assert memory["records"][0]["tool_name"] == "continuity"
+    assert secret not in str(result)
+
+
+def test_continuity_save_keeps_corrupt_failure_ledger_as_unavailable_evidence(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / ".rush" / "memory" / "failures.db"
+    database.parent.mkdir(parents=True)
+    database.write_bytes(b"not a sqlite database")
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff.json",
+        handoff={"failure_fingerprint": "a" * 64},
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+    assert result["status"] == "ok"
+    assert result["metadata"]["handoff"]["failure_receipt"] == {
+        "fingerprint": "a" * 64,
+        "state": "unavailable",
+    }

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rush.tools.common import run_subprocess
-
 
 class WorkingTreeDirtyTracker:
     """Tracks uncommitted file modifications and prevents clobbering dirty working states."""
@@ -14,6 +12,8 @@ class WorkingTreeDirtyTracker:
         self.repo_root = repo_root.resolve()
 
     def get_dirty_files(self) -> list[str]:
+        from rush.tools.common import run_subprocess
+
         proc = run_subprocess(["git", "status", "--porcelain"], cwd=self.repo_root)
         if proc.returncode != 0:
             return []

@@ -403,6 +403,37 @@ def test_omniroute_resume_surfaces_rejected_response_without_body(
     assert result["metadata"]["provider_route"]["state"] == "rejected"
 
 
+@pytest.mark.parametrize("exception", [OSError("offline"), TimeoutError("slow")])
+def test_omniroute_resume_reports_local_transport_unavailable(
+    monkeypatch, exception, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(exception),
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id="omniroute_api",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "skipped"
+    assert result["raw"] is None
+    assert result["metadata"]["provider_route"]["state"] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("provider_id", "binary", "required_args"),
     [
@@ -431,3 +462,59 @@ def test_continuity_provider_resume_uses_verified_cli_contracts(
     assert command_binary == binary
     for argument in required_args:
         assert argument in command
+
+
+@pytest.mark.parametrize(
+    "provider_id, binary", [("codex_cli", "codex"), ("antigravity_cli", "agy")]
+)
+def test_direct_cli_resume_has_permission_gated_bounded_process_behavior(
+    monkeypatch, provider_id, binary, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        handoff={
+            "current_goal": "complete the route",
+            "open_work": ["run focused verification"],
+            "historic_instruction": "never forward this",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    calls = []
+    monkeypatch.setattr("shutil.which", lambda candidate: f"C:/tools/{candidate}.cmd")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **kwargs: (
+            calls.append((command, kwargs)) or type("Process", (), {"returncode": 0})()
+        ),
+    )
+
+    denied = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id=provider_id,
+        permissions=ExecutionPermissions(),
+    )
+    allowed = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id=provider_id,
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert denied["status"] == "skipped"
+    assert denied["metadata"]["provider_route"]["state"] == "permission_denied"
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert binary in str(command)
+    assert "never forward this" not in str(command)
+    assert kwargs["shell"] is False
+    assert kwargs["timeout"] == 120
+    assert allowed["status"] == "ok"
+    assert allowed["raw"] is None

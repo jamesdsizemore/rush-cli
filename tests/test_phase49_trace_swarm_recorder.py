@@ -112,6 +112,24 @@ def test_continuity_coordination_reports_held_lock_without_overwrite(tmp_path: P
     assert target.read_text() == "value = 1\n"
 
 
+def test_continuity_coordination_reports_same_owner_as_held_evidence(tmp_path: Path):
+    target = tmp_path / "owned.py"
+    target.write_text("value = 1\n")
+    locks = MeshLockManager(project_root=tmp_path)
+    assert locks.acquire(target, agent_id="agent-a", timeout_s=0.1)
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_check",
+        coordination_path="owned.py",
+        agent_id="agent-a",
+    )
+
+    assert result["status"] == "ok"
+    assert result["summary"] == "Local ownership is held by this agent."
+    assert result["metadata"]["coordination"] == {"state": "held", "owner": "agent-a"}
+
+
 def test_failure_ledger_receipt_never_returns_failed_patch(tmp_path: Path):
     from rush.memory.failure_ledger import FailureLedger
 
@@ -256,3 +274,23 @@ def test_continuity_recovery_skips_missing_or_corrupt_replay_evidence(
         corrupt["metadata"]["coordination"]["recovery"]["replay"]["state"]
         == "unavailable"
     )
+
+
+def test_continuity_recovery_handles_corrupt_failure_ledger_as_evidence(
+    tmp_path: Path,
+):
+    database = tmp_path / ".rush" / "memory" / "failures.db"
+    database.parent.mkdir(parents=True)
+    database.write_bytes(b"not a sqlite database")
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_recovery",
+        failure_fingerprint="a" * 64,
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["coordination"]["recovery"]["failure"] == {
+        "fingerprint": "a" * 64,
+        "state": "unavailable",
+    }

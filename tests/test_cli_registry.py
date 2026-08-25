@@ -195,6 +195,7 @@ def test_context_pack_stores_redacted_omission_under_a_recoverable_handle(
         operation="context_pack",
         context_path="service.py",
         token_budget=1,
+        permissions=ExecutionPermissions(cache_write=True),
     )
 
     assert packed["status"] == "skipped"

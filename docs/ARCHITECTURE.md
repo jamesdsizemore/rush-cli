@@ -2,19 +2,19 @@
 
 ## P3 recoverable context envelope
 
-`SessionContinuityTool.context_pack` fails closed when a budget cannot contain selected context. It redacts the omitted packed evidence before placing it in the repository-local CCR store and returns only a stable recovery handle. `context_retrieve` resolves that handle explicitly; it does not implicitly replay omitted material.
+`SessionContinuityTool.context_pack` fails closed when a budget cannot contain selected context. A recovery handle is created only with explicit `cache_write` permission; otherwise the result is `skipped` with `recovery: {state: "not_created", reason: "cache_write_required"}` and no CCR database is created. When permitted, Rush redacts the omitted packed evidence before repository-local CCR persistence and returns only its stable handle. `context_retrieve` resolves that handle explicitly without touching its LRU state unless cache-write permission is granted; it does not implicitly replay omitted material.
 
 ## Phase 1 session continuity boundary
 
 `SessionContinuityTool` in `src/rush/tools/continuity.py` is the sole implementation for local save/list/restore. CLI `rush session` adapters and the catalogued MCP `rush_continuity` tool call that boundary; neither transport writes checkpoints itself. A save requires `ExecutionPermissions(cache_write=True)`, while list/restore avoid creating `.rush/` when no session directory exists.
 
-On save, the same boundary creates a redacted `metadata.handoff` receipt: current goal, open work, dependency content snapshots, a quarantined historic-instruction marker, and a receipt-only failed-attempt pointer. Restore recomputes dependency snapshots and reports `freshness: current` or `stale`; legacy checkpoints report `freshness: unknown` and are not migrated automatically.
+On save, the same boundary creates a redacted `metadata.handoff` receipt: current goal, open work, dependency content snapshots, a quarantined historic-instruction marker, a receipt-only failed-attempt pointer, and at most five redacted historical `SessionMemoryManager` records labelled `historical_evidence`. Restore recomputes dependency snapshots and reports `freshness: current` or `stale`; legacy checkpoints report `freshness: unknown` and are not migrated automatically.
 
-The same `SessionContinuityTool` owns `context_pack` and `context_retrieve`; legacy CLI/MCP context transports delegate to it. Its `metadata.context_envelope` carries selected evidence, estimated local tokens, omissions, recovery state, and redaction count. It does not claim provider-token or cache-hit measurements.
+The same `SessionContinuityTool` owns `context_pack` and `context_retrieve`; legacy CLI/MCP context transports delegate to it. Its `metadata.context_envelope` carries selected evidence, estimated local tokens, omissions, recovery state, redaction count, and—when omission persistence is permitted—local-estimate telemetry. Telemetry always sets `provider_cost: null`; Rush does not claim provider-token, price, or cache-hit measurements.
 
 ## Phase 4 coordination boundary
 
-`SessionContinuityTool` also exposes read-only coordination operations. `coordination_check` inspects a repository-local lock without creating, releasing, or overwriting it; a held lock reports `conflict`, an expired one reports `stale`, and malformed evidence is `unavailable`. `coordination_merge_preview` detects overlapping edits and returns a manual-reconciliation receipt without emitting merged source. `coordination_recovery` reads bounded flight and failure receipts only; it never replays commands or retries a patch.
+`SessionContinuityTool` also exposes read-only coordination operations. `coordination_check` inspects a repository-local lock without creating, releasing, or overwriting it; a foreign held lock reports `conflict`, the requesting owner receives explicit `held` evidence, an expired lock reports `stale`, and malformed evidence is `unavailable`. `coordination_merge_preview` detects overlapping edits and returns a manual-reconciliation receipt without emitting merged source. `coordination_recovery` reads bounded flight and failure receipts only; a corrupt ledger is structured unavailable evidence. It never replays commands or retries a patch.
 
 `provider_resume` remains inside the same continuity boundary. It projects only current goal/open work/freshness from a saved receipt into a fixed CLI argument array for Claude Code, Codex CLI, or Antigravity, or a fixed loopback OmniRoute OpenAI-compatible request. Network permission is required; Z.AI is deferred and 9Router remains unavailable pending its key/model contract. The route never reads a keychain, opens a browser, changes a provider profile, or returns the provider response.
 

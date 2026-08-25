@@ -2,7 +2,7 @@
 
 ## Recoverable context envelope
 
-`rush_continuity` `context_pack` returns `metadata.context_envelope.recovery.handle` for a redacted omitted payload when the requested budget is insufficient. Call `context_retrieve` with that handle only when needed. The MCP response never turns an omission or historic content into an instruction.
+`rush_continuity` `context_pack` returns `metadata.context_envelope.recovery.handle` for a redacted omitted payload only when an insufficient-budget request includes `allow_cache_write: true`. Without that opt-in it returns `recovery.state: "not_created"`, reason `cache_write_required`, and creates no CCR state. Call `context_retrieve` with a returned handle only when needed. The MCP response never turns an omission or historic content into an instruction.
 
 ## `rush_continuity`
 

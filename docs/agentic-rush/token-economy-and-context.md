@@ -2,7 +2,7 @@
 
 ## Bounded omission recovery
 
-Token reduction does not discard required evidence silently. If the selected pack exceeds its budget, Rush records the redacted packed omission under a stable local CCR handle. An agent retrieves it only through the explicit recovery operation, keeping normal context payloads small while preserving auditability.
+Token reduction does not discard required evidence silently. If the selected pack exceeds its budget, Rush creates a stable local CCR handle only after explicit cache-write permission; otherwise it reports `not_created/cache_write_required` and persists nothing. A permitted omission is redacted before storage and retrieved only through the explicit recovery operation, keeping normal context payloads small while preserving auditability. Its telemetry is local-token accounting only and never claims provider cost.
 
 Context is the single most valuable resource in modern AI software engineering. Dumping entire source files, massive dependency graphs, and full build outputs into an LLM's prompt window leads to three severe problems:
 1. **High Latency & Costs**: Multi-megabyte prompts slow down agent response times and rack up huge API bills.
