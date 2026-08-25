@@ -10,7 +10,7 @@ Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the cont
 
 `rush_continuity` additionally supports `coordination_check`, `coordination_merge_preview`, and `coordination_recovery`. `metadata.coordination.state` is `available`, `conflict`, `stale`, `merge_conflict`, `recovery_evidence`, or `unavailable`. The response is evidence, not an instruction to release locks, merge, replay, or retry work.
 
-For `operation: "provider_resume"`, pass `name`, `provider_id`, and `allow_network: true`. `claude_code`, `codex_cli`, and `antigravity_cli` use an existing local authenticated profile. The response exposes only `metadata.provider_route` (`provider_id`, `transport`, `state`) and never model output or credentials. `zai` is deferred.
+For `operation: "provider_resume"`, pass `name`, `provider_id`, and `allow_network: true`. `claude_code`, `codex_cli`, and `antigravity_cli` use an existing local authenticated profile; `omniroute_api` uses one fixed loopback OpenAI-compatible request with `model: "auto"` and semantic response validation. The response exposes only `metadata.provider_route` and never model output or credentials. `zai` is deferred; `9router_api` remains unavailable pending a key/model contract.
 
 ## Common result
 

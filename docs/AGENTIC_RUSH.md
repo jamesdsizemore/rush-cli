@@ -1,6 +1,6 @@
 # Agentic Rush: The AI Agent Copilot & Quality Control Engine
 
-> **Phase 5 provider boundary:** `rush session resume` supports only user-owned `claude_code`, `codex_cli`, and `antigravity_cli` profiles, with explicit `--allow-network`. It projects only current goal, open work, and freshness; historical instructions, transcripts, failed patches, credentials, and provider output are excluded. Z.AI is deferred without invocation. 9Router and OmniRoute are tracked, but are not resume adapters yet.
+> **Phase 5 provider boundary:** `rush session resume` supports user-owned `claude_code`, `codex_cli`, `antigravity_cli`, and the fixed-loopback `omniroute_api` route, with explicit `--allow-network`. It projects only current goal, open work, and freshness; historical instructions, transcripts, failed patches, credentials, and provider output are excluded. Z.AI is deferred without invocation. 9Router remains tracked pending its explicit API-key and user-selected-model route contract.
 
 > **Phase 1 continuity:** `rush session` and MCP `rush_continuity` share one local checkpoint contract. Save is denied unless the caller explicitly grants cache-write permission; list and restore are read-only and return canonical `ToolResult` data.
 

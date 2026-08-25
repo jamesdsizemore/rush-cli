@@ -2,7 +2,7 @@
   "9Router": {
     "route_id": "router-9r-edge",
     "vendor_name": "9Router Intelligence Protocol",
-    "evidence_url": "https://9router.dev/architecture/spec",
+    "evidence_url": "https://github.com/decolua/9router",
     "terms_url": "https://9router.dev/terms",
     "privacy_url": "https://9router.dev/privacy",
     "supported_dialects": ["mcp", "jsonl", "xml"],
@@ -13,12 +13,10 @@
   "OmniRoute": {
     "route_id": "router-omni-hybrid",
     "vendor_name": "OmniRoute",
-    "evidence_url": "https://github.com/ourines/omniroute",
-    "terms_url": "https://github.com/ourines/omniroute/blob/main/LICENSE",
-    "privacy_url": "https://github.com/ourines/omniroute",
+    "evidence_url": "https://github.com/diegosouzapw/OmniRoute",
+    "terms_url": "https://github.com/diegosouzapw/OmniRoute/blob/main/LICENSE",
+    "privacy_url": "https://github.com/diegosouzapw/OmniRoute",
     "supported_dialects": ["acp", "a2a", "json"],
-    "cli_command": ["omniroute", "models", "list"],
-    "cli_marker": "models",
     "endpoint_required": true
   }
 }

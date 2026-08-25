@@ -2,7 +2,7 @@
 
 ## Continue work with another agent CLI
 
-Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI with explicit `--allow-network`. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred; 9Router and OmniRoute are not resume choices yet.
+Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI, or through OmniRoute's fixed local API, with explicit `--allow-network`. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred; 9Router is not a resume choice yet.
 
 AI coding assistants like **Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
 

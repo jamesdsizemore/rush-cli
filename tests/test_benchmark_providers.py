@@ -289,6 +289,44 @@ def test_router_requires_explicit_route_and_configured_endpoint(
     assert explicit.outcome == Outcome.PASS
 
 
+def test_omniroute_benchmark_uses_gateway_endpoint_not_management_cli(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    scenario = Scenario(
+        scenario_id="router-omni",
+        probe="provider",
+        category="budget",
+        input={"router_id": "OmniRoute"},
+        required_facts=(),
+        expected_outcome=Outcome.PASS,
+    )
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"data":[{"id":"auto"}]}'
+
+    monkeypatch.setattr(
+        "subprocess.run", lambda *_args, **_kwargs: pytest.fail("must not invoke CLI")
+    )
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+    result = run_router_probe(
+        scenario,
+        allow_live_route="router-omni-hybrid",
+        router_urls=["OmniRoute=http://127.0.0.1:20128"],
+    )
+
+    assert result.outcome == Outcome.PASS
+    assert result.metrics["evidence_mode"] == "live-router"
+
+
 def test_tampered_instruction_is_quarantined():
     cases = load_protocol_cases()
     assert len(cases) >= 4

@@ -2,7 +2,7 @@
 
 ## Provider-continuation exclusion
 
-No `[tools.continuity]` credential, endpoint, executable, or persistent network-grant schema exists. A future 9Router or OmniRoute route requires a reviewed configuration contract and matching catalog/configuration tests before exposure.
+No `[tools.continuity]` credential, endpoint, executable, or persistent network-grant schema exists. OmniRoute uses its fixed local `127.0.0.1:20128` endpoint and no Rush credential store. A future 9Router route requires a reviewed key/model configuration contract and matching catalog/configuration tests before exposure.
 
 ## Continuity has no persistent configuration grant
 

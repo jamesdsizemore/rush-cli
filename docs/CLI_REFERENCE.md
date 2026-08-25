@@ -92,7 +92,7 @@ rush benchmark run --scenario local-granite-278m-c0 --foreground
 rush benchmark status
 ```
 
-Default result storage is `%LOCALAPPDATA%\Rush\benchmarks\run`; the default model cache is `%LOCALAPPDATA%\Rush\benchmark-model-cache`; job state and worker logs are `%LOCALAPPDATA%\Rush\benchmarks\jobs`. Repeat `--allow-model-download`, `--local-runtime-executable`, and `--allow-live-route` to cover multiple candidates, runtimes, and live routes in one evidence campaign. `status` only reads durable job and scenario-result JSON; it never attaches to a worker. Router probes require their exact `--allow-live-route`: 9Router validates its installed CLI, while OmniRoute validates its installed CLI plus the configured `RUSH_BENCHMARK_OMNIROUTE_URL` (or `--router-url OmniRoute=URL`). An optional matching `_API_KEY` variable is sent only as the local request authorization header.
+Default result storage is `%LOCALAPPDATA%\Rush\benchmarks\run`; the default model cache is `%LOCALAPPDATA%\Rush\benchmark-model-cache`; job state and worker logs are `%LOCALAPPDATA%\Rush\benchmarks\jobs`. Repeat `--allow-model-download`, `--local-runtime-executable`, and `--allow-live-route` to cover multiple candidates, runtimes, and live routes in one evidence campaign. `status` only reads durable job and scenario-result JSON; it never attaches to a worker. Router benchmarks require their exact `--allow-live-route` and a configured gateway endpoint; 9Router CLI presence alone never passes. OmniRoute's continuity adapter is separate: it uses the fixed loopback API and never reads `RUSH_BENCHMARK_OMNIROUTE_URL` or an API-key variable.
 
 ## Test-confidence and advanced commands
 

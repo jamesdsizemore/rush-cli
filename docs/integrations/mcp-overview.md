@@ -2,7 +2,7 @@
 
 ## Continuity provider operation
 
-`rush_continuity` exposes `provider_resume` through the shared continuity tool. The only implemented provider IDs are `claude_code`, `codex_cli`, and `antigravity_cli`; explicit network permission applies identically to CLI and MCP. 9Router and OmniRoute resume work is not exposed, while Z.AI returns deferred without invocation.
+`rush_continuity` exposes `provider_resume` through the shared continuity tool. Implemented provider IDs are `claude_code`, `codex_cli`, `antigravity_cli`, and fixed-loopback `omniroute_api`; explicit network permission applies identically to CLI and MCP. 9Router resume work is not exposed, while Z.AI returns deferred without invocation.
 
 The Model Context Protocol (MCP) connects AI models and coding assistants to local tools, development environments, and live diagnostics securely.
 
