@@ -10,6 +10,10 @@ However, working with AI models without guardrails introduces common frustration
 
 Rush was designed from the ground up to be the ultimate companion and quality gate for AI coding workflows.
 
+## Resuming work safely
+
+Use `rush session save NAME --allow-cache-write --goal "…" --open-work "…" --dependency PATH --json` to hand the next agent a bounded local receipt. Restore shows the goal/frontier and whether declared dependencies are current; historic instructions are quarantined evidence, not instructions to execute, and raw transcripts are not imported as memory.
+
 ---
 
 ## 1. Connecting Rush to Your AI Assistant via FastMCP

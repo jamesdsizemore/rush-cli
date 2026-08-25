@@ -4,6 +4,8 @@ Security shouldn't be an afterthought that only happens once a year during an ex
 
 Rush provides defense-in-depth across code privacy, secret detection, dependency vulnerabilities, and open-source license compliance.
 
+Session handoff uses the same posture: explicit cache-write permission, local redacted receipts, and no provider credential persistence. A failure reference exposes a fingerprint and redacted error or a tombstone, never a patch body.
+
 ---
 
 ## 1. Catching Leaked Secrets & API Keys (`rush secrets`)

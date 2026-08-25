@@ -1,9 +1,12 @@
 """Negative knowledge failure ledger recording failed AST patch fingerprints."""
 
 import hashlib
+import re
 import sqlite3
 import time
 from pathlib import Path
+
+from rush.safety.redactor import SecretRedactor
 
 
 class FailureLedger:
@@ -31,6 +34,8 @@ class FailureLedger:
 
     def record_failure(self, failed_patch: str, error_message: str) -> str:
         fingerprint = hashlib.sha256(failed_patch.encode("utf-8")).hexdigest()
+        safe_patch = SecretRedactor.redact_text(failed_patch)
+        safe_error = SecretRedactor.redact_text(error_message)
         now = int(time.time())
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -39,7 +44,7 @@ class FailureLedger:
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(fingerprint) DO UPDATE SET error_message=excluded.error_message
                 """,
-                (fingerprint, error_message, failed_patch, now),
+                (fingerprint, safe_error, safe_patch, now),
             )
             conn.commit()
         return fingerprint
@@ -51,3 +56,20 @@ class FailureLedger:
                 "SELECT 1 FROM failure_ledgers WHERE fingerprint = ?", (fingerprint,)
             )
             return cur.fetchone() is not None
+
+    def get_receipt(self, fingerprint: str) -> dict[str, str | int] | None:
+        """Return safe failure evidence without disclosing the failed patch."""
+        if not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+            return None
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT error_message, created_at FROM failure_ledgers WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fingerprint": fingerprint,
+            "created_at": row[1],
+            "redacted_error": SecretRedactor.redact_text(row[0]),
+        }

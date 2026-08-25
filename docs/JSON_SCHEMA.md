@@ -2,7 +2,7 @@
 
 ## Continuity `ToolResult`
 
-`continuity` returns `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`, `artifacts`, and `metadata`. `metadata.operation` identifies `save`, `list`, or `restore`; `metadata.execution` records requested and granted permissions. Empty lists are `ok`; missing checkpoints and denied saves are `skipped`.
+`continuity` returns `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`, `artifacts`, and `metadata`. `metadata.operation` identifies `save`, `list`, or `restore`; `metadata.execution` records requested and granted permissions. A saved or restored receipt appears at `metadata.handoff` with `version`, `current_goal`, `open_work`, `historic_instruction`, `dependencies`, `freshness`, `failure_receipt`, and `redaction_count`. `historic_instruction` is only `{authority: "historical_evidence", state: "quarantined", present}`; receipt failures expose a fingerprint/redacted error or an explicit tombstone, never a failed patch. Empty lists are `ok`; missing checkpoints and denied saves are `skipped`.
 
 Rush produces standardized, machine-readable JSON output for all 38 tools when invoked with `--json` or via FastMCP.
 

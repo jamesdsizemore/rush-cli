@@ -2,7 +2,7 @@
 
 ## Continuity outcome rules
 
-The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission.
+The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` as quarantined `historical_evidence`, dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
 
 Every CLI and MCP operation returns the same canonical ToolResult shape.
 

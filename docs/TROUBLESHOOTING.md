@@ -6,6 +6,10 @@ This guide addresses common error messages, unexpected behaviors, and troublesho
 
 ## 1. Common Issues & Solutions
 
+### Continuity restore reports `freshness: "stale"`
+- **Cause**: A declared handoff dependency changed, disappeared, or left the repository boundary after save.
+- **Solution**: Inspect the redacted `metadata.handoff.dependencies`, re-check the changed source, then save a new checkpoint. Do not treat a stale receipt or quarantined historic instruction as a current directive.
+
 ### Tool Returns `status: "skipped"`
 - **Cause**: The external engine binary is not installed on your system or is missing from `PATH`.
 - **Solution**: Install the required engine locally (e.g. `npm install -g eslint`, `pip install semgrep`, `brew install trivy`). Run `rush capabilities . --json` to verify engine discovery.

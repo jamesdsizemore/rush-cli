@@ -2,6 +2,8 @@
 
 > **Phase 1 continuity:** `rush session` and MCP `rush_continuity` share one local checkpoint contract. Save is denied unless the caller explicitly grants cache-write permission; list and restore are read-only and return canonical `ToolResult` data.
 
+> **Phase 2 handoff:** save may carry a redacted current goal, open-work frontier, dependency hashes, and a failure receipt. Historic instructions are recorded only as quarantined `historical_evidence`, never as current authority.
+
 Welcome to **Agentic Rush**. 
 
 Whether you are building with **Cursor, Claude Code, Cline, Windsurf, Roo Code, GitHub Copilot Workspace**, or custom autonomous agent frameworks, you've likely encountered the reality of AI coding assistants: they are incredibly fast, but without guardrails, they can introduce subtle bugs, hallucinatory code ("AI slop"), destructive commands, out-of-sync types, and bloated token context costs.

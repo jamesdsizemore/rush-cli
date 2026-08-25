@@ -4,6 +4,8 @@
 
 `SessionContinuityTool` in `src/rush/tools/continuity.py` is the sole implementation for local save/list/restore. CLI `rush session` adapters and the catalogued MCP `rush_continuity` tool call that boundary; neither transport writes checkpoints itself. A save requires `ExecutionPermissions(cache_write=True)`, while list/restore avoid creating `.rush/` when no session directory exists.
 
+On save, the same boundary creates a redacted `metadata.handoff` receipt: current goal, open work, dependency content snapshots, a quarantined historic-instruction marker, and a receipt-only failed-attempt pointer. Restore recomputes dependency snapshots and reports `freshness: current` or `stale`; legacy checkpoints report `freshness: unknown` and are not migrated automatically.
+
 Rush is a Python 3.12 package with two transports and one implementation layer. Click CLI commands and FastMCP tools invoke the same objects from `src/rush/tools/`; external programs are isolated behind adapters in `src/rush/engines/`.
 
 ```mermaid

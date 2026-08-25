@@ -9,6 +9,7 @@ Rush is designed to make the safe action the default.
 - **Explicit execution permissions.** Browser, slow, network, download, build, and artifact-write operations require explicit permission flags (`--allow-*`) and report structured `metadata.execution`.
 - **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` makes no provider call.
 - **No secrets in normalized logs/results.** Obvious secret assignments are redacted, but raw external tool behavior still deserves care.
+- **Continuity is receipt-based.** Save requires explicit cache-write permission; restore marks changed declared dependencies `stale`, keeps legacy checkpoints `unknown`, and never promotes historic instructions to authority.
 
 ```mermaid
 flowchart TD

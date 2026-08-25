@@ -2,6 +2,8 @@
 
 Rush is strictly local-first. It contains no telemetry, analytics tracking, external data collection, or remote reporting servers.
 
+Session handoff state is also local: secret-shaped values are redacted before session-memory and checkpoint persistence; provider credentials, raw historic instructions, raw transcripts, and failed patches are excluded from the receipt. Redaction is a safety layer, not permission to store credentials.
+
 ---
 
 ## 1. Core Privacy Invariants

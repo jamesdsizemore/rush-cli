@@ -1,6 +1,6 @@
 {
   "gate_id": "BG-AUTH",
-  "status": "pending_p2_t01",
+  "status": "pass",
   "scope": "Authority and persistence behavior for redacted local session handoff.",
   "supersedes_false_mapping": {
     "source_decision_id": "B-D01",
@@ -13,6 +13,17 @@
     "tombstoned or missing evidence remains explicit",
     "current dependency changes mark the handoff stale"
   ],
+  "observed_evidence": {
+    "test_command": ".venv/Scripts/python.exe -m pytest tests/test_session_memory.py tests/test_phase41_memory_ship.py tests/test_cli_registry.py tests/test_mcp.py -q",
+    "observed_result": "19 passed",
+    "assertions": [
+      "historic instruction is quarantined as historical_evidence",
+      "secret-shaped values are redacted before session-memory and checkpoint persistence",
+      "dependency changes mark restored handoff stale",
+      "known failures expose only a redacted receipt; missing evidence is tombstoned",
+      "CLI and stdio MCP expose the same structured handoff receipt"
+    ]
+  },
   "unblocks_after_pass": ["P2-T02"],
-  "reproduction": ".venv/Scripts/python.exe -m pytest tests/test_session_memory.py tests/test_phase41_memory_ship.py -q"
+  "reproduction": ".venv/Scripts/python.exe -m pytest tests/test_session_memory.py tests/test_phase41_memory_ship.py tests/test_cli_registry.py tests/test_mcp.py -q"
 }

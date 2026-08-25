@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from typing import Any
 
 SECRET_PATTERNS = [
     (re.compile(r"sk-ant-[a-zA-Z0-9_\-]{20,}"), "[REDACTED_ANTHROPIC_KEY]"),
@@ -32,6 +33,25 @@ class SecretRedactor:
         for pattern, replacement in SECRET_PATTERNS:
             redacted = pattern.sub(replacement, redacted)
         return redacted
+
+    @classmethod
+    def redact_value(cls, value: Any) -> tuple[Any, int]:
+        """Recursively redact JSON-compatible values before they are persisted."""
+        if isinstance(value, str):
+            redacted = cls.redact_text(value)
+            return redacted, int(redacted != value)
+        if isinstance(value, list):
+            items = [cls.redact_value(item) for item in value]
+            return [item for item, _ in items], sum(count for _, count in items)
+        if isinstance(value, tuple):
+            items = [cls.redact_value(item) for item in value]
+            return tuple(item for item, _ in items), sum(count for _, count in items)
+        if isinstance(value, dict):
+            items = {key: cls.redact_value(item) for key, item in value.items()}
+            return {key: item for key, (item, _) in items.items()}, sum(
+                count for _, count in items.values()
+            )
+        return value, 0
 
     @staticmethod
     def calculate_entropy(data: str) -> float:

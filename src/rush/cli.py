@@ -1933,11 +1933,38 @@ def session_group() -> None:
     multiple=True,
     help="Active files to include in session snapshot.",
 )
+@click.option(
+    "--goal", "current_goal", help="Current user goal recorded as handoff evidence."
+)
+@click.option(
+    "--open-work",
+    multiple=True,
+    help="Open work item recorded as handoff evidence; repeat for multiple items.",
+)
+@click.option(
+    "--historic-instruction",
+    help="Historic instruction captured only as quarantined evidence.",
+)
+@click.option(
+    "--failure-fingerprint",
+    help="Optional failed-attempt fingerprint; no failed patch is returned.",
+)
+@click.option(
+    "--dependency",
+    "dependencies",
+    multiple=True,
+    help="Repository-local dependency path to snapshot for handoff freshness.",
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def session_save_cmd(
     name: str,
     files: tuple[str, ...],
+    current_goal: str | None,
+    open_work: tuple[str, ...],
+    historic_instruction: str | None,
+    failure_fingerprint: str | None,
+    dependencies: tuple[str, ...],
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -1955,6 +1982,13 @@ def session_save_cmd(
         operation="save",
         name=name,
         files=list(files),
+        handoff={
+            "current_goal": current_goal,
+            "open_work": list(open_work),
+            "historic_instruction": historic_instruction,
+            "failure_fingerprint": failure_fingerprint,
+            "dependencies": list(dependencies),
+        },
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,

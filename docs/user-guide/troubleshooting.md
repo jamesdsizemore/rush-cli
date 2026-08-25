@@ -2,6 +2,8 @@
 
 When a tool fails, an engine warning appears, or an unexpected result occurs, this guide will help you understand what happened and how to fix it in seconds.
 
+For `rush session restore`, inspect `metadata.handoff.freshness`. `stale` means a declared dependency changed or vanished; inspect the redacted receipt, revalidate the work, and save a new handoff. A quarantined historic instruction is evidence only and must not be replayed as a live command.
+
 ---
 
 ## Common Questions & Solutions
