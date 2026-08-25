@@ -1,33 +1,33 @@
 {
   "gate_id": "BG-CTX",
   "status": "pass",
-  "scope": "Deterministic selected-context and CCR-recovery baseline for the Phase 3 envelope contract.",
+  "scope": "Narrow deterministic ContextPacker and CCR probe baseline for Phase 3 entry; it is not validation of the public envelope contract.",
   "source_decisions": [
     {
       "decision_id": "B-D04",
       "status": "pass",
-      "claim": "Context packing records raw/packed token metrics, preserves required facts, and fails closed when a required fact cannot be supplied."
+      "claim": "A temporary-file ContextPacker probe exposes raw/packed metrics, preserves one required fact, and returns insufficient-budget when a requested fact is absent."
     },
     {
       "decision_id": "B-D05",
       "status": "pass",
-      "claim": "CCR storage restores a known chunk exactly and represents a missing chunk as a failed lookup."
+      "claim": "The probe reports a successful local CCR retrieval and a failed missing-chunk lookup; it does not independently bind a stored hash to a retrieval assertion."
     }
   ],
   "evidence_mode": "deterministic local fixture tests",
   "evidence": {
-    "fixture": "tests/fixtures/benchmarks/context_cases.json",
+    "fixture_scope": "context_cases.json schema check only; behavior assertions use temporary inputs in the test",
     "test_command": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_context.py -q",
     "observed_result": "3 passed",
     "assertions": [
-      "packing exposes raw/packed token metrics and non-negative measured token savings",
+      "packing exposes raw/packed token metrics and non-negative probe-reported token savings",
       "a missing mandatory fact produces an inconclusive insufficient-budget outcome",
-      "CCR restores a known chunk byte-for-byte and rejects a missing chunk"
+      "CCR reports a successful retrieval and rejects a missing chunk"
     ]
   },
   "unblocks": ["P3-T01"],
   "limitations": [
-    "This gate does not attest the P3 public ToolResult envelope, selected evidence identifiers, omission reasons, or recovery-handle schema.",
+    "This gate does not attest the P3 public ToolResult envelope, selected evidence identifiers, omission reasons, recovery-handle schema, corpus-level token reduction, or byte-for-byte CCR restoration.",
     "P3-T01 and P3-T02 must add direct red/green contract evidence before enabling those behaviors."
   ],
   "reproduction": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_context.py -q"
