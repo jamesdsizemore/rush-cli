@@ -1,5 +1,9 @@
 # Privacy & Data Handling Guarantees
 
+## Provider-resume data boundary
+
+Only `current_goal`, `open_work`, and `freshness` are projected to a supported CLI. Historic instructions, transcripts, failed patches, credentials, and provider output are excluded and no provider response is persisted. Router/API transport needs its own reviewed privacy contract before activation.
+
 Rush is strictly local-first. It contains no telemetry, analytics tracking, external data collection, or remote reporting servers.
 
 Session handoff state is also local: secret-shaped values are redacted before session-memory and checkpoint persistence; provider credentials, raw historic instructions, raw transcripts, and failed patches are excluded from the receipt. Redaction is a safety layer, not permission to store credentials.

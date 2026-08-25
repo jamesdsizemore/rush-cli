@@ -1,5 +1,9 @@
 # Security Policy & Vulnerability Reporting
 
+## Provider resume
+
+Resume requires `--allow-network`, uses typed argv with no shell, and discards provider stdout/stderr rather than retaining an unbounded buffer. It does not read/write credentials or change provider profiles.
+
 Rush prioritizes code security, execution isolation, and responsible disclosure.
 
 Continuity saves require explicit cache-write permission. A checkpoint records a redacted receipt, not a credential or executable instruction: historic instructions are quarantined evidence, and failed attempts resolve only to a redacted ledger receipt or an explicit tombstone.

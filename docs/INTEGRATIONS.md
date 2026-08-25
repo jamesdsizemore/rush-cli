@@ -1,5 +1,9 @@
 # Ecosystem Integrations Hub
 
+## Coding-provider continuity
+
+Implemented continuation integrations are user-owned Claude Code, Codex, and Antigravity (`agy`) CLIs. Z.AI is deferred. 9Router is a CLI/gateway and OmniRoute has CLI/API forms, but neither is currently an executable continuity-resume integration.
+
 Rush integrates cleanly into your existing developer workflows, AI coding assistants, continuous integration pipelines, and editor task runners.
 
 ---

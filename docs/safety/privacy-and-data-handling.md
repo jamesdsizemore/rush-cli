@@ -1,5 +1,9 @@
 # Privacy and data handling
 
+## Provider-resume projection
+
+Continuity sends only current goal, open work, and freshness to a supported CLI. It excludes historical instructions, transcripts, failed patches, credentials, and provider output; those values are neither returned nor persisted. Z.AI is never invoked, and router/API transport remains inactive pending its own contract.
+
 ## Local behavior
 
 Rush reads the target and invokes installed local engines. It has no telemetry implementation and opens no network server. Human output goes to CLI stdout; MCP stdout is protocol-only; NDJSON logs go to stderr.

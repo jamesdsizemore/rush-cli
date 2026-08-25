@@ -1,5 +1,9 @@
 # Configuration reference
 
+## Provider resume is invocation-scoped
+
+There is no configuration table for provider executable paths, profiles, credentials, endpoints, or persistent network permission. Authentication is inherited from the already configured user-owned CLI, and `--allow-network` is required per invocation.
+
 ## Continuity permissions
 
 No `rush.toml` value enables checkpoint writes. Use `--allow-cache-write` only on a save invocation; MCP callers pass `allow_cache_write: true` for that individual call.

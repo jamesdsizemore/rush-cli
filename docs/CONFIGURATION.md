@@ -1,5 +1,9 @@
 # Rush Configuration Overview
 
+## Provider continuation has no persistent configuration
+
+Rush does not store provider credentials, executable paths, OAuth profiles, endpoint URLs, or network grants in `rush.toml`. Each resume invocation supplies its own explicit `--allow-network`; installed CLI authentication stays owned by the CLI.
+
 ## Session continuity permissions
 
 `rush.toml` cannot grant session persistence. A caller must grant `--allow-cache-write` for each CLI save, or `allow_cache_write: true` for the corresponding MCP call; this prevents a repository configuration file from silently authorizing local writes.

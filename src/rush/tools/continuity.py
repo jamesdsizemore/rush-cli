@@ -625,7 +625,10 @@ class SessionContinuityTool(ToolFn):
                 command,
                 cwd=root,
                 shell=False,
-                capture_output=True,
+                # Provider output is deliberately not evidence for a handoff receipt.
+                # Discard it rather than retaining an unbounded buffer in this process.
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=120.0,
                 check=False,

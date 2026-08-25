@@ -1,5 +1,9 @@
 # Model Context Protocol (MCP) Server Architecture & Development
 
+## Continuity provider registration
+
+Do not add transport-specific provider logic. `provider_resume` is routed through `SessionContinuityTool`, so CLI and MCP share permission checks, projection, structured skipped states, and output suppression. A 9Router/OmniRoute adapter must be implemented and tested in that shared tool before it is registered.
+
 ## Continuity registration
 
 `SessionContinuityTool` belongs in `ALL_TOOLS`; `_register_tools` exposes it as `rush_continuity` through its shared `__call__`. Do not add separate session-save MCP handlers, because they would bypass the common result and permission contract.

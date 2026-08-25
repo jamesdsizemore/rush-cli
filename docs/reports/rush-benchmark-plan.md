@@ -11,7 +11,7 @@ The deliverable is a runnable, reproducible benchmark harness—not a list of be
 | Runnable harness | `.venv/Scripts/python.exe -m scripts.benchmarks.run --scenario <id> --output <dir>` loads one fixture, executes only its declared probe, and writes one schema-valid result JSON. |
 | Deterministic CI proof | `.venv/Scripts/python.exe -m pytest tests/test_benchmark_*.py -q` passes without network, credentials, model downloads, external CLIs, or a daemon. |
 | Provider/OAuth/CLI proof | Each named provider has a fixture-mode result. A live result is possible only when the user explicitly selects one pre-authenticated route; no credential value reaches source, fixture, result, or log. |
-| 9Router and OmniRouter | Independent route descriptors, evidence records, and tests exist; a shared generic-router descriptor fails validation. |
+| 9Router and OmniRoute | Independent route descriptors, evidence records, and tests exist; a shared generic-router descriptor fails validation. |
 | Token reduction | The harness invokes `rush.codegraph.context_packer.ContextPacker` and records raw/control/packed token counts at 2k, 8k, and 16k. A pass requires >=50% median input-token reduction and zero loss of declared required facts. |
 | Consumer hardware | Final phase writes a measured `hardware-profile.json`, source register, and local result for each available profile; unavailable profiles are `deferred`, never fabricated. |
 | Handoff | `final-handoff.md` links every decision record to fixture IDs, test command, result JSON, exact unblocked P-task, and rejected fallback. |
@@ -180,10 +180,15 @@ def run_scenario(
     allow_live_route: str | None = None,
     allow_model_download: str | None = None,
 ) -> ProbeResult:
-    scenario = load_scenarios()[scenario_id]  # KeyError is converted to FixtureError
+    scenario = load_scenarios().get(scenario_id)
+    if scenario is None:
+        raise FixtureError(f"unknown scenario: {scenario_id}")
     if scenario.probe not in PROBES:
         raise FixtureError(f"unknown probe: {scenario.probe}")
-    result = PROBES[scenario.probe](
+    probe = PROBES.get(scenario.probe)
+    if probe is None:
+        raise FixtureError(f"unknown probe: {scenario.probe}")
+    result = probe(
         scenario, model_cache=model_cache,
         allow_live_route=allow_live_route,
         allow_model_download=allow_model_download,
@@ -246,14 +251,14 @@ Entry: clean worktree. Outcome: a deterministic runner can execute fixture probe
 | B1-T03 | Add raw-history, naive-summary, and declared-control scenarios to `scenarios.json`; extend `tests/test_benchmark_runner.py`. | Red: missing token/latency/recovery/repetition metric passes. Green: all control results require those metrics and identical repeated fixture output. | `rtk grep "ContextPacker" src tests`; `rtk pytest tests/test_benchmark_runner.py`; `graft grep "ContextPacker" .`; `context-mode search "baseline continuation" --project . --type prose --limit 12` | none |
 | B1-T04 | Create `research/benchmark/B1/decision-B-D01-B-D02.json` only from runner output. | Red: decision writer accepts result without fixture ID, red/green command, or fallback. Green: it rejects incomplete decisions and emits links to result JSON. | `rtk pytest tests/test_benchmark_contracts.py`; `rtk diff`; `graft check .`; `context-mode search "B-D01 B-D02" --project . --type prose --limit 12` | this plan; `docs/TESTING.md`; `docs/DEVELOPER_GUIDE.md`; `docs/developer/backlog.md`; `docs/developer/issues.md` |
 
-### B2 — provider APIs, OAuth/CLI routes, 9Router, OmniRouter, and protocol
+### B2 — provider APIs, OAuth/CLI routes, 9Router, OmniRoute, and protocol
 
 Entry: B1 green. Outcome: descriptor-driven, fixture-first route evaluation exists before the other benchmark phases. B-D07/B-D08/B-D09/B-D10 remain individually gated.
 
 | Task | Files to create or change | Red → green acceptance | RTK / Graft / context-mode | Documents updated |
 |---|---|---|---|---|
 | B2-T01 | Create `providers.py`, `tests/fixtures/benchmarks/provider_routes.json`, `tests/test_benchmark_providers.py`. Add descriptors for Codex/OpenAI, Claude Code/Anthropic, Antigravity, Z.AI, DeepSeek, Mistral, and OpenRouter. | Red: descriptor lacking route mode, docs/terms/privacy evidence, command array, or credential boundary validates. Green: it fails; fixture mode produces redacted result; live mode rejects absent `--allow-live-route`. | `rtk read --line-numbers src/rush/providers/base.py`; `rtk pytest tests/test_benchmark_providers.py`; `graft callers LLMProvider .`; `context-mode search "provider capability OAuth CLI" --project . --type code --limit 20` | none |
-| B2-T02 | Add 9Router and OmniRouter entries to `tests/fixtures/benchmarks/routers.json`; extend `providers.py` and provider tests. | Red: both router IDs share evidence URL, route ID, or generic vendor name. Green: independent evidence and result files are required; no generic router descriptor is accepted. | `rtk read --line-numbers tests/fixtures/benchmarks/routers.json`; `rtk pytest tests/test_benchmark_providers.py`; `graft grep "provider" .`; `context-mode search "9Router OmniRouter" --project . --type prose --limit 20` | none |
+| B2-T02 | Add 9Router and OmniRoute entries to `tests/fixtures/benchmarks/routers.json`; extend `providers.py` and provider tests. | Red: both router IDs share evidence URL, route ID, or generic vendor name. Green: independent evidence and result files are required; no generic router descriptor is accepted. | `rtk read --line-numbers tests/fixtures/benchmarks/routers.json`; `rtk pytest tests/test_benchmark_providers.py`; `graft grep "provider" .`; `context-mode search "9Router OmniRoute" --project . --type prose --limit 20` | none |
 | B2-T03 | Create `protocol.py`, `tests/fixtures/benchmarks/protocol_cases.json`, and protocol tests in `tests/test_benchmark_providers.py`. | Red: JSONL/Markdown/MCP/ACP/A2A tampered input becomes trusted history. Green: parser returns a quarantined, source-spanned result with an explicit fallback. | `rtk grep "mcp" src tests`; `rtk pytest tests/test_benchmark_providers.py`; `graft grep "register" .`; `context-mode search "handoff protocol tombstone" --project . --type code --limit 20` | none |
 | B2-T04 | Write B-D07/B-D08/B-D09/B-D10 results from the B2 runner output. | Red: decision can name two routes in one unblocking field. Green: each decision contains one route/router, its fixture IDs, source evidence, fallback, and exact P-task. | `rtk pytest tests/test_benchmark_providers.py`; `rtk diff`; `graft check .`; `context-mode search "B-D07 B-D08 B-D09 B-D10" --project . --type prose --limit 12` | this plan; `docs/TESTING.md`; `docs/DEPENDENCY_POLICY.md`; `docs/developer/backlog.md`; `docs/developer/issues.md` |
 

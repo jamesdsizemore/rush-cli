@@ -1,5 +1,9 @@
 # Platform & Ecosystem Compatibility
 
+## Provider continuation compatibility
+
+Only installed, authenticated `claude`, `codex`, and `agy` profiles are supported direct continuation routes. Rush does not launch OAuth/browser flows, invoke a shell, or mutate profiles. 9Router and OmniRoute compatibility is not claimed until their routes are implemented and tested.
+
 This document defines the platform, operating system, and language ecosystem compatibility boundaries for Rush CLI and its Model Context Protocol (MCP) server.
 
 ---

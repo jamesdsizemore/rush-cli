@@ -210,6 +210,26 @@ def test_continuity_provider_resume_defers_zai_without_starting_a_process(
     }
 
 
+@pytest.mark.parametrize("provider_id", ["9router_api", "omniroute_api"])
+def test_continuity_provider_resume_does_not_invoke_unimplemented_router_routes(
+    monkeypatch, provider_id, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    monkeypatch.setattr(
+        "subprocess.run", lambda *_args, **_kwargs: pytest.fail("must not invoke route")
+    )
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        provider_id=provider_id,
+        permissions=ExecutionPermissions(network=True),
+    )
+    assert result["status"] == "skipped"
+    assert result["metadata"]["provider_route"]["state"] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("provider_id", "binary", "required_args"),
     [

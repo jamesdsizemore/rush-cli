@@ -1,5 +1,9 @@
 # CLI Cookbook & Command Recipes
 
+## Provider-backed checkpoint continuation
+
+Save a checkpoint, then run `rush session resume handoff --provider claude_code --allow-network --json` (or `codex_cli` / `antigravity_cli`). A missing executable, timeout, or nonzero exit is structured; provider output is discarded. Z.AI is deferred and 9Router/OmniRoute are not yet CLI resume adapters.
+
 ## Save and resume a local session
 
 ```powershell

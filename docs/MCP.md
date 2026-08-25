@@ -1,5 +1,9 @@
 # Rush with coding assistants
 
+## Provider-resume parity
+
+MCP `rush_continuity` `provider_resume` uses the same shared operation as the CLI. Only `claude_code`, `codex_cli`, and `antigravity_cli` are implemented, and network permission is explicit. Router/API IDs are structured `skipped` results; Z.AI is deferred without process or credential access.
+
 ## Session continuity
 
 MCP exposes the catalogued `rush_continuity` tool with `path`, `operation` (`save`, `list`, or `restore`), optional `name`/`files`, and `allow_cache_write`. It returns the same canonical object as `rush session`; saving without the explicit boolean permission returns `skipped` and does not create a checkpoint.
