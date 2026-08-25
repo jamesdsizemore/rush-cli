@@ -1,5 +1,7 @@
 # Agentic Rush: The AI Agent Copilot & Quality Control Engine
 
+> **P3/P4 recovery:** When context cannot fit its budget, Rush stores a redacted omission under a stable local CCR handle so another agent can recover it deliberately. Coordination recovery also exposes up to three redacted mined mistake records as historical evidence only; neither recovery form executes a prior instruction, patch, or retry.
+
 > **Phase 5 provider boundary:** `rush session resume` supports user-owned `claude_code`, `codex_cli`, `antigravity_cli`, and the fixed-loopback `omniroute_api` route, with explicit `--allow-network`. It projects only current goal, open work, and freshness; historical instructions, transcripts, failed patches, credentials, and provider output are excluded. Z.AI is deferred without invocation. 9Router remains tracked pending its explicit API-key and user-selected-model route contract.
 
 > **Phase 1 continuity:** `rush session` and MCP `rush_continuity` share one local checkpoint contract. Save is denied unless the caller explicitly grants cache-write permission; list and restore are read-only and return canonical `ToolResult` data.

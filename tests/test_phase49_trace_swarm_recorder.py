@@ -204,6 +204,31 @@ def test_continuity_recovery_exposes_only_replay_and_failure_receipts(
     assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(result)
 
 
+def test_continuity_recovery_surfaces_redacted_mined_mistake_evidence(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(
+        "rush.memory.mistake_miner.MistakeMiner.mine_mistakes",
+        lambda _self: [
+            {
+                "reverted_subject": "unsafe resume adapter",
+                "rationale": "token=sk-ant-abcdefghijklmnopqrstuvwxyz012345",
+                "guard_status": "active",
+            }
+        ],
+    )
+
+    result = SessionContinuityTool().run(tmp_path, operation="coordination_recovery")
+
+    assert result["status"] == "ok"
+    mistakes = result["metadata"]["coordination"]["recovery"]["mistakes"]
+    assert mistakes[0]["authority"] == "historical_evidence"
+    assert mistakes[0]["guard_status"] == "active"
+    assert mistakes[0]["reverted_subject"] == "unsafe resume adapter"
+    assert mistakes[0]["rationale"].startswith("token=[REDACTED")
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(result)
+
+
 def test_continuity_recovery_skips_missing_or_corrupt_replay_evidence(
     tmp_path: Path,
 ):

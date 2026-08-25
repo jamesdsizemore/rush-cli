@@ -1,5 +1,9 @@
 # Safety overview
 
+## Historical recovery evidence
+
+Mined mistake records are redacted and labelled historical evidence in coordination recovery. They remain non-authoritative: no command, patch, merge, or retry follows automatically from them.
+
 Rush is designed to make the safe action the default.
 
 - **No implicit installs.** Missing optional engines return `skipped`.

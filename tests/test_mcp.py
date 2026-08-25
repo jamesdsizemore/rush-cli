@@ -71,6 +71,8 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         dict[str, object],
         dict[str, object],
         list[dict[str, object]],
+        dict[str, object],
+        dict[str, object],
         str,
     ]:
         params = StdioServerParameters(
@@ -155,6 +157,28 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                     continuity_payloads.append(
                         json.loads(continuity_response.content[0].text)
                     )
+                packed_response = await session.call_tool(
+                    "rush_continuity",
+                    {
+                        "path": str(tmp_path),
+                        "operation": "context_pack",
+                        "context_path": "review_target.py",
+                        "token_budget": 1,
+                    },
+                )
+                packed_payload = json.loads(packed_response.content[0].text)
+                recovery_handle = packed_payload["metadata"]["context_envelope"][
+                    "recovery"
+                ]["handle"]
+                retrieved_response = await session.call_tool(
+                    "rush_continuity",
+                    {
+                        "path": str(tmp_path),
+                        "operation": "context_retrieve",
+                        "context_handle": recovery_handle,
+                    },
+                )
+                retrieved_payload = json.loads(retrieved_response.content[0].text)
 
             server_stderr.seek(0)
             return (
@@ -164,6 +188,8 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                 payload,
                 lint_payload,
                 continuity_payloads,
+                packed_payload,
+                retrieved_payload,
                 server_stderr.read(),
             )
 
@@ -174,6 +200,8 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         payload,
         lint_payload,
         continuity_payloads,
+        packed_payload,
+        retrieved_payload,
         server_stderr,
     ) = _run(exercise())
 
@@ -217,6 +245,12 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "transport": "cli",
         "state": "deferred",
     }
+    assert packed_payload["status"] == "skipped"
+    assert packed_payload["metadata"]["context_envelope"]["recovery"]["state"] == (
+        "available"
+    )
+    assert retrieved_payload["status"] == "ok"
+    assert "review_target.py" in retrieved_payload["raw"]["content"]
     for continuity_payload in continuity_payloads:
         assert {"tool", "status", "duration_ms", "summary", "findings"} <= {
             *continuity_payload

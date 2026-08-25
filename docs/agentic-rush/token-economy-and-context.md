@@ -1,5 +1,9 @@
 # Token Economy & Context Optimization
 
+## Bounded omission recovery
+
+Token reduction does not discard required evidence silently. If the selected pack exceeds its budget, Rush records the redacted packed omission under a stable local CCR handle. An agent retrieves it only through the explicit recovery operation, keeping normal context payloads small while preserving auditability.
+
 Context is the single most valuable resource in modern AI software engineering. Dumping entire source files, massive dependency graphs, and full build outputs into an LLM's prompt window leads to three severe problems:
 1. **High Latency & Costs**: Multi-megabyte prompts slow down agent response times and rack up huge API bills.
 2. **Context Window Saturation**: Passing unnecessary boilerplate pushes crucial instructions and system prompts out of the attention window.

@@ -1,5 +1,13 @@
 # Workflow: Graph-Pruned Context Packing & Budgeting
 
+## Insufficient-budget branch
+
+1. Read the `context_pack` envelope.
+2. If it is `skipped` and recovery is `available`, preserve the returned handle in the handoff.
+3. Call `context_retrieve` only for that handle when omitted evidence becomes necessary.
+
+The recovery chunk is redacted before storage and never causes automatic budget expansion.
+
 ## 1. Overview
 `rush context pack --json` returns a canonical continuity `ToolResult`: selected source evidence, estimated local tokens, omissions, and recovery state. It skeletonizes the selected target file; it does not claim graph/PageRank ranking or provider-token savings. An insufficient budget returns `skipped` with an explicit omission reason.
 

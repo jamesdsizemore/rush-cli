@@ -1,5 +1,9 @@
 # Workflow: Bi-Temporal Git Revert Mistake Pre-Mortem
 
+## Continuity recovery integration
+
+`coordination_recovery` surfaces up to three redacted mined revert guardrails as `historical_evidence`. They help a new agent avoid known mistakes but never authorize a patch replay, lock release, or retry.
+
 ## 1. Overview
 The Mistake Miner extracts anti-patterns from repository Git revert history (`git log --grep="[Rr]evert"`). It structures historical regressions into proactive guardrails, preventing AI agents from repeating known failure loops.
 

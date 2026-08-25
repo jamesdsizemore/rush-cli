@@ -1,5 +1,9 @@
 # Patch Remediation & Session Memory
 
+## Historical mistake guardrails
+
+Continuity recovery carries a small, redacted set of mined revert guardrails as historical evidence. It does not carry a failed patch, replay an earlier command, or promote old rationale into current instructions.
+
 When AI coding assistants refactor code or fix bugs, they often produce multi-file unified diffs. If a diff contains syntax errors, fails linters, or breaks unit tests, applying it directly pollutes your git working directory and forces painful manual rollbacks.
 
 Rush’s **Patch Remediation Subsystem** (`rush patch`) and **Session Memory Engine** (`rush memory`) provide a closed-loop verification cycle and multi-turn conversational memory for agent interactions.

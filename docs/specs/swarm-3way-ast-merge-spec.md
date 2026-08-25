@@ -1,5 +1,9 @@
 # Specification: Swarm 3-Way AST Merge Conflict Resolver
 
+## Recovery non-authority
+
+Mined mistake evidence may explain why an earlier change was reverted, but it cannot select a merge outcome or trigger a merge. Conflicts continue to require explicit manual reconciliation.
+
 ## 1. Overview
 `SwarmMergeSolver` (`src/rush/tools/swarm_merge.py`) resolves concurrent multi-agent git merge conflicts at the AST level, combining distinct method/class modifications without textual conflict markers.
 

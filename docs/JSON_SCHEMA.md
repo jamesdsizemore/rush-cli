@@ -1,5 +1,9 @@
 # JSON Schema & Output Specification
 
+## Context recovery handle
+
+For an insufficient `context_pack` budget, `metadata.context_envelope` carries `omissions` and `recovery: {state: "available", handle: <sha256>}`. The handle identifies a redacted local CCR chunk. `context_retrieve` returns `recovery.state: "recovered"` or structured `not_found`; it does not infer or recreate a handle.
+
 ## Continuity `ToolResult`
 
 `continuity` returns `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`, `artifacts`, and `metadata`. `metadata.operation` identifies `save`, `list`, or `restore`; `metadata.execution` records requested and granted permissions. A saved or restored receipt appears at `metadata.handoff` with `version`, `current_goal`, `open_work`, `historic_instruction`, `dependencies`, `freshness`, `failure_receipt`, and `redaction_count`. `historic_instruction` is only `{authority: "historical_evidence", state: "quarantined", present}`; receipt failures expose a fingerprint/redacted error or an explicit tombstone, never a failed patch. Empty lists are `ok`; missing checkpoints and denied saves are `skipped`.

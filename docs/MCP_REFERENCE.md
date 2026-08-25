@@ -1,5 +1,9 @@
 # MCP tool reference
 
+## Recoverable context envelope
+
+`rush_continuity` `context_pack` returns `metadata.context_envelope.recovery.handle` for a redacted omitted payload when the requested budget is insufficient. Call `context_retrieve` with that handle only when needed. The MCP response never turns an omission or historic content into an instruction.
+
 ## `rush_continuity`
 
 Use `operation: "save" | "list" | "restore"` with the project `path`. `save` additionally accepts `name`, `files`, `allow_cache_write: true`, `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, and `dependencies`; all responses are canonical `ToolResult` objects. A missing checkpoint or ungranted save is a structured `skipped` result, never prose on stdio. CLI and MCP expose identical redacted `metadata.handoff` receipt semantics.

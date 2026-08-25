@@ -1,5 +1,9 @@
 # Rush architecture
 
+## P3 recoverable context envelope
+
+`SessionContinuityTool.context_pack` fails closed when a budget cannot contain selected context. It redacts the omitted packed evidence before placing it in the repository-local CCR store and returns only a stable recovery handle. `context_retrieve` resolves that handle explicitly; it does not implicitly replay omitted material.
+
 ## Phase 1 session continuity boundary
 
 `SessionContinuityTool` in `src/rush/tools/continuity.py` is the sole implementation for local save/list/restore. CLI `rush session` adapters and the catalogued MCP `rush_continuity` tool call that boundary; neither transport writes checkpoints itself. A save requires `ExecutionPermissions(cache_write=True)`, while list/restore avoid creating `.rush/` when no session directory exists.
