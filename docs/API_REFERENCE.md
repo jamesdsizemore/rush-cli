@@ -1,5 +1,9 @@
 # Python Internal API Reference
 
+## Recoverable context and coordination evidence
+
+`SessionContinuityTool.run(..., operation="context_pack")` stores redacted omitted packed context in local `CCRStore` when its token budget is insufficient. The canonical `metadata.context_envelope.recovery.handle` can be supplied to `context_retrieve`; it is not an instruction or a transcript import. `coordination_recovery` also returns bounded mined mistake records labelled `historical_evidence`, alongside replay and failure receipts.
+
 ## Session continuity
 
 `rush.tools.continuity.SessionContinuityTool.run(path, operation, name, files, handoff, permissions)` returns the canonical `ToolResult`. Operations are `save`, `list`, and `restore`; `save` is `skipped` without explicit cache-write permission, and a missing checkpoint is `skipped` rather than an exception. `handoff` accepts `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, and repository-relative `dependencies`; the persisted result exposes only the redacted receipt in `metadata.handoff`.

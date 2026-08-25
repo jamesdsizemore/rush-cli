@@ -181,6 +181,36 @@ def test_context_cli_uses_shared_canonical_envelope(tmp_path: Path) -> None:
     assert recovered_payload["raw"] == {"content": "recoverable context"}
 
 
+def test_context_pack_stores_redacted_omission_under_a_recoverable_handle(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "service.py"
+    source.write_text(
+        "def answer() -> str:\n    return 'sk-ant-abcdefghijklmnopqrstuvwxyz012345'\n",
+        encoding="utf-8",
+    )
+
+    packed = SessionContinuityTool().run(
+        tmp_path,
+        operation="context_pack",
+        context_path="service.py",
+        token_budget=1,
+    )
+
+    assert packed["status"] == "skipped"
+    recovery = packed["metadata"]["context_envelope"]["recovery"]
+    assert recovery["state"] == "available"
+    assert isinstance(recovery["handle"], str)
+    recovered = SessionContinuityTool().run(
+        tmp_path,
+        operation="context_retrieve",
+        context_handle=recovery["handle"],
+    )
+    assert recovered["status"] == "ok"
+    assert "service.py" in recovered["raw"]["content"]
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in recovered["raw"]["content"]
+
+
 def test_session_resume_exposes_deferred_provider_state_without_invocation(
     tmp_path: Path,
 ) -> None:

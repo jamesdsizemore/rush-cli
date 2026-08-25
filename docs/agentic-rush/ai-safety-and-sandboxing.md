@@ -1,5 +1,9 @@
 # AI Safety & Worktree Sandboxing
 
+## Recovery does not execute history
+
+Replay, failure, and mined mistake records returned during coordination recovery are evidence only. Rush never uses them to release a lock, apply a patch, or retry an action automatically.
+
 Autonomous AI coding agents possess tremendous speed, but granting an LLM unsupervised shell and filesystem access introduces severe operational risks. A single hallucinated command or uncontained file path can wipe local data, overwrite git history, or leak environment credentials.
 
 Rush’s **AI Safety & Sandboxing Subsystem** (`rush safety`) establishes a deterministic, non-bypassable perimeter around all agent interactions.

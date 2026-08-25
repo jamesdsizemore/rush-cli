@@ -1,5 +1,9 @@
 # Understanding Rush Results
 
+## Context recovery result
+
+An insufficient context budget is a safe `skipped` result. Check `metadata.context_envelope.recovery`: `available` gives a stable redacted CCR handle, `recovered` confirms explicit retrieval, and `not_found` means no content was returned. This is evidence management, not a provider completion claim.
+
 When you run a command in Rush, you receive a clear, structured summary of what happened. This guide explains how to read Rush findings, what each status means, and how exit codes work when automating Rush in scripts or CI pipelines.
 
 ---

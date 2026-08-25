@@ -1,5 +1,9 @@
 # Result and exit-code reference
 
+## Context omission outcomes
+
+`context_pack` returns `skipped` when the mandatory selected evidence exceeds its budget. If it records `metadata.context_envelope.recovery.state: "available"`, use the accompanying local CCR handle with `context_retrieve`. An absent chunk is `skipped`, never an invented result.
+
 ## Provider-resume outcomes
 
 Provider resume returns canonical `ToolResult`: `ok` only for a successful supported CLI process; `skipped` for deferred, unavailable, or denied routes; and `error` for a failed process. The result metadata names only provider ID, transport, and state; it never includes provider stdout/stderr, credentials, or full historical handoff content.

@@ -1,5 +1,9 @@
 # Pair Programming with AI Agents
 
+## Recover context deliberately
+
+If `rush context pack` reports `recovery.state: "available"`, use its CCR handle with `rush context retrieve`. The retrieved content was redacted before storage. Coordination recovery may show prior mistake guardrails as historical evidence; inspect current repository state rather than replaying a previous patch or instruction.
+
 ## Continue work with another agent CLI
 
 Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI, or through OmniRoute's fixed local API, with explicit `--allow-network`. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred; 9Router is not a resume choice yet.

@@ -1,5 +1,9 @@
 # CLI reference
 
+## Recover an omitted context pack
+
+When `rush context pack --budget N --json` returns `skipped` with `metadata.context_envelope.recovery.state: "available"`, pass its handle to `rush context retrieve HANDLE --json`. The stored payload was redacted before local CCR persistence; an unknown handle remains a structured `skipped` result.
+
 ## Session checkpoints
 
 Use `rush session save NAME --file PATH --allow-cache-write --json` to save a local checkpoint, `rush session list --json` to inspect it, and `rush session restore NAME --json` to retrieve it. All three return a canonical `ToolResult` with `--json`; save without `--allow-cache-write` returns `status: "skipped"` and writes nothing. A deliberate handoff adds `--goal TEXT`, repeatable `--open-work TEXT`, `--historic-instruction TEXT`, `--failure-fingerprint SHA256`, and repeatable repository-relative `--dependency PATH`; only the redacted receipt is persisted.

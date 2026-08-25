@@ -1,5 +1,9 @@
 # Rush Epistemic Memory & Coding Agent Substrate
 
+## Bounded recovery references
+
+Context omissions are stored only after redaction as local CCR chunks and exposed by a stable handle. Coordination recovery can add mined git-revert guardrails as `historical_evidence`; these are context for judgment, never executable instructions or a trigger for retry.
+
 ## 1. Why Existing Agent Memory Fails
 
 Current agent memory implementations (chat history summaries, vector databases, or static `.cursorrules` / `AGENTS.md` files) break down because they treat all text equally:

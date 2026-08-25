@@ -1,5 +1,9 @@
 # Specification: Token Economy Telemetry Ledger
 
+## Recovery telemetry boundary
+
+Telemetry may report measured local token estimates and the existence of a recoverable omission handle, but must not claim provider-token savings or cost for a CCR retrieval unless that measurement exists. Recovery handles are evidence references, not usage or billing events.
+
 ## 1. Overview
 `TelemetryStore` records only events explicitly supplied by Rush callers in local `.rush/telemetry/tokens.db`; it is not telemetry sent off-machine and its derived cost estimate is not a provider invoice.
 

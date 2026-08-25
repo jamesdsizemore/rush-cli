@@ -18,6 +18,7 @@ from ..mcp_mesh.lock_manager import MeshLockManager
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..memory.failure_ledger import FailureLedger
 from ..memory.merkle_invalidator import MerkleInvalidator
+from ..memory.mistake_miner import MistakeMiner
 from ..permissions import (
     ExecutionPermissions,
     build_execution_metadata,
@@ -302,6 +303,11 @@ class SessionContinuityTool(ToolFn):
         )
         estimated = int(packed.get("tokens", 0))
         if estimated > token_budget:
+            safe_packed, redactions = SecretRedactor.redact_value(packed)
+            tag = CCRStore(project_root).store_chunk(
+                json.dumps(safe_packed, sort_keys=True, default=str)
+            )
+            handle = tag.removeprefix("<!-- ccr:chunk:").removesuffix(" -->")
             envelope = {
                 "selected_evidence": [],
                 "tokens": {
@@ -310,7 +316,8 @@ class SessionContinuityTool(ToolFn):
                     "budget": token_budget,
                 },
                 "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
-                "recovery": {"state": "not_created"},
+                "recovery": {"state": "available", "handle": handle},
+                "redaction_count": redactions,
             }
             return self._result(
                 started,
@@ -508,6 +515,19 @@ class SessionContinuityTool(ToolFn):
             if isinstance(failure_fingerprint, str)
             else None
         )
+        mined_mistakes, _ = SecretRedactor.redact_value(
+            MistakeMiner(root).mine_mistakes()
+        )
+        mistakes = [
+            {
+                "authority": "historical_evidence",
+                "reverted_subject": item.get("reverted_subject", "unknown"),
+                "rationale": item.get("rationale", "No explanation provided"),
+                "guard_status": item.get("guard_status", "unknown"),
+            }
+            for item in mined_mistakes[:3]
+            if isinstance(item, dict)
+        ]
         recovery = {
             "replay": {
                 "state": replay_state,
@@ -521,14 +541,15 @@ class SessionContinuityTool(ToolFn):
                 if isinstance(failure_fingerprint, str)
                 else {"state": "not_requested"}
             ),
+            "mistakes": mistakes,
         }
-        available = bool(events or failure)
+        available = bool(events or failure or mistakes)
         return self._result(
             started,
             "ok" if available else "skipped",
             "Recovery evidence is available; no retry was performed."
             if available
-            else "No replay or failure evidence was found.",
+            else "No replay, failure, or mistake evidence was found.",
             operation="coordination_recovery",
             granted=granted,
             coordination={

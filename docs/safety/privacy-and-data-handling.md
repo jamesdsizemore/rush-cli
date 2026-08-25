@@ -1,5 +1,9 @@
 # Privacy and data handling
 
+## Recoverable omission privacy
+
+Before an omitted context payload is retained for CCR recovery, Rush applies the same value redaction boundary used for returned context. The recovery handle is local; mined mistake rationale is redacted and labelled historical evidence, never promoted to instruction authority.
+
 ## Provider-resume projection
 
 Continuity sends only current goal, open work, and freshness to a supported CLI or OmniRoute's fixed local API. It excludes historical instructions, transcripts, failed patches, credentials, and provider output; those values are neither returned nor persisted. Z.AI is never invoked, and 9Router transport remains inactive pending its own key/model contract.

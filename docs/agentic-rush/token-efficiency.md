@@ -1,5 +1,9 @@
 # Agentic Rush/Token Efficiency
 
+## Recover instead of re-expanding
+
+An insufficient context budget yields a recoverable redacted CCR handle, not an unbounded prompt retry. This preserves token discipline: the agent starts with the bounded envelope and deliberately retrieves omitted evidence only when its current task requires it.
+
 ## Token Efficiency Architecture (Phases 41–43)
 * **Command Distillation / TOON / AST Skeletons**: local transformations whose measured token counts depend on the concrete input.
 * **CCR Caching**: SQLite chunking with `<!-- ccr:chunk:HASH -->`.
