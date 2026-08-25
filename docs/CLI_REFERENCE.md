@@ -4,6 +4,8 @@
 
 Use `rush session save NAME --file PATH --allow-cache-write --json` to save a local checkpoint, `rush session list --json` to inspect it, and `rush session restore NAME --json` to retrieve it. All three return a canonical `ToolResult` with `--json`; save without `--allow-cache-write` returns `status: "skipped"` and writes nothing. A deliberate handoff adds `--goal TEXT`, repeatable `--open-work TEXT`, `--historic-instruction TEXT`, `--failure-fingerprint SHA256`, and repeatable repository-relative `--dependency PATH`; only the redacted receipt is persisted.
 
+`rush context pack --path FILE [--symbol NAME] [--budget N] --json` and `rush context retrieve HASH --json` use the same canonical contract. A too-small budget or missing hash is structured `skipped`, never fabricated context.
+
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
 ## Which command should I run?

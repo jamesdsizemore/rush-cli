@@ -1,7 +1,7 @@
 # Specification: Token Economy Telemetry Ledger
 
 ## 1. Overview
-The `TelemetryStore` (`src/rush/token_economy/telemetry.py`) records all token distillation, AST skeletonization, and TOON serialization events in a persistent SQLite database (`.rush/telemetry/tokens.db`).
+`TelemetryStore` records only events explicitly supplied by Rush callers in local `.rush/telemetry/tokens.db`; it is not telemetry sent off-machine and its derived cost estimate is not a provider invoice.
 
 ## 2. Table Schema
 ```sql

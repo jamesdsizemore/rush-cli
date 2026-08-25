@@ -6,6 +6,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
+from ..codegraph.context_packer import ContextPacker
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..memory.failure_ledger import FailureLedger
 from ..memory.merkle_invalidator import MerkleInvalidator
@@ -15,9 +16,12 @@ from ..permissions import (
     check_permissions,
 )
 from ..safety.redactor import SecretRedactor
+from ..token_economy.ccr_store import CCRStore
 from .base import ToolFn, ToolResult
 
-SessionOperation = Literal["save", "list", "restore"]
+SessionOperation = Literal[
+    "save", "list", "restore", "context_pack", "context_retrieve"
+]
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
 
 
@@ -45,6 +49,10 @@ class SessionContinuityTool(ToolFn):
         historic_instruction: str | None = None,
         failure_fingerprint: str | None = None,
         dependencies: list[str] | None = None,
+        context_path: str | None = None,
+        target_symbol: str = "",
+        token_budget: int = 4000,
+        context_handle: str | None = None,
     ) -> ToolResult:
         return self.run(
             path,
@@ -59,6 +67,10 @@ class SessionContinuityTool(ToolFn):
                 "dependencies": dependencies or [],
             },
             permissions=ExecutionPermissions(cache_write=allow_cache_write),
+            context_path=context_path,
+            target_symbol=target_symbol,
+            token_budget=token_budget,
+            context_handle=context_handle,
         )
 
     def run(
@@ -69,6 +81,10 @@ class SessionContinuityTool(ToolFn):
         name: str | None = None,
         files: list[str] | None = None,
         handoff: dict[str, Any] | None = None,
+        context_path: str | None = None,
+        target_symbol: str = "",
+        token_budget: int = 4000,
+        context_handle: str | None = None,
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
     ) -> ToolResult:
@@ -77,7 +93,13 @@ class SessionContinuityTool(ToolFn):
         root = path.resolve()
         granted = permissions or ExecutionPermissions()
 
-        if operation not in {"save", "list", "restore"}:
+        if operation not in {
+            "save",
+            "list",
+            "restore",
+            "context_pack",
+            "context_retrieve",
+        }:
             return self._result(
                 started,
                 "error",
@@ -85,6 +107,13 @@ class SessionContinuityTool(ToolFn):
                 operation=operation,
                 granted=granted,
             )
+
+        if operation == "context_pack":
+            return self._context_pack(
+                started, root, context_path, target_symbol, token_budget, granted
+            )
+        if operation == "context_retrieve":
+            return self._context_retrieve(started, root, context_handle, granted)
 
         if operation in {"save", "restore"} and not self._valid_name(name):
             return self._result(
@@ -170,6 +199,102 @@ class SessionContinuityTool(ToolFn):
             handoff=handoff_receipt,
         )
 
+    def _context_pack(
+        self,
+        started: float,
+        project_root: Path,
+        context_path: str | None,
+        target_symbol: str,
+        token_budget: int,
+        granted: ExecutionPermissions,
+    ) -> ToolResult:
+        if not context_path or token_budget < 1:
+            return self._result(
+                started,
+                "error",
+                "Context pack requires a repository-relative path and positive token budget.",
+                operation="context_pack",
+                granted=granted,
+            )
+        target = (project_root / context_path).resolve()
+        if project_root not in target.parents or not target.is_file():
+            return self._result(
+                started,
+                "skipped",
+                "Context target was not found inside the project.",
+                operation="context_pack",
+                granted=granted,
+            )
+        packed = ContextPacker(project_root).pack(
+            target, target_symbol=target_symbol, max_tokens=1_000_000
+        )
+        estimated = int(packed.get("tokens", 0))
+        if estimated > token_budget:
+            envelope = {
+                "selected_evidence": [],
+                "tokens": {
+                    "estimated": estimated,
+                    "actual": None,
+                    "budget": token_budget,
+                },
+                "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
+                "recovery": {"state": "not_created"},
+            }
+            return self._result(
+                started,
+                "skipped",
+                "Context pack requires a larger token budget.",
+                operation="context_pack",
+                granted=granted,
+                context_envelope=envelope,
+            )
+        safe_packed, redactions = SecretRedactor.redact_value(packed)
+        envelope = {
+            "selected_evidence": [{"path": context_path, "selection": "target_file"}],
+            "tokens": {"estimated": estimated, "actual": None, "budget": token_budget},
+            "omissions": [],
+            "recovery": {"state": "not_needed"},
+            "redaction_count": redactions,
+        }
+        return self._result(
+            started,
+            "ok",
+            "Packed bounded context evidence.",
+            operation="context_pack",
+            granted=granted,
+            raw=safe_packed,
+            context_envelope=envelope,
+        )
+
+    def _context_retrieve(
+        self,
+        started: float,
+        root: Path,
+        handle: str | None,
+        granted: ExecutionPermissions,
+    ) -> ToolResult:
+        content = CCRStore(root).retrieve_chunk(handle or "") if handle else None
+        recovery = {
+            "state": "recovered" if content is not None else "not_found",
+            "handle": handle,
+        }
+        return self._result(
+            started,
+            "ok" if content is not None else "skipped",
+            "Recovered context handle."
+            if content is not None
+            else "Context handle was not found.",
+            operation="context_retrieve",
+            granted=granted,
+            raw={"content": content} if content is not None else None,
+            context_envelope={
+                "selected_evidence": [],
+                "tokens": {"estimated": None, "actual": None, "budget": None},
+                "omissions": [],
+                "recovery": recovery,
+            },
+        )
+
     @staticmethod
     def _valid_name(name: str | None) -> bool:
         return bool(name) and Path(name).name == name and name not in {".", ".."}
@@ -186,6 +311,7 @@ class SessionContinuityTool(ToolFn):
         raw: Any = None,
         artifacts: list[str] | None = None,
         handoff: dict[str, Any] | None = None,
+        context_envelope: dict[str, Any] | None = None,
     ) -> ToolResult:
         return {
             "tool": self.name,
@@ -206,6 +332,11 @@ class SessionContinuityTool(ToolFn):
                     producer="checkpoint-journal",
                 ),
                 **({"handoff": handoff} if handoff is not None else {}),
+                **(
+                    {"context_envelope": context_envelope}
+                    if context_envelope is not None
+                    else {}
+                ),
             },
         }
 

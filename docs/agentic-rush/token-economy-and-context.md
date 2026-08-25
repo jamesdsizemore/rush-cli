@@ -5,7 +5,7 @@ Context is the single most valuable resource in modern AI software engineering. 
 2. **Context Window Saturation**: Passing unnecessary boilerplate pushes crucial instructions and system prompts out of the attention window.
 3. **"Needle in a Haystack" Amnesia**: LLMs struggle to find critical details when buried inside thousands of lines of irrelevant code.
 
-Rush’s **Token Economy Subsystem** (`rush token`) provides offline byte-pair encoding (BPE) accounting, AST outline compression, and prompt caching strategies that reduce token usage by **70% to 90%**.
+Rush’s **Token Economy Subsystem** (`rush token`) provides local BPE accounting and bounded transformations. Token reduction is reported only for the concrete input; it is not a promised provider-cost or model-performance saving.
 
 ---
 

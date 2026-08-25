@@ -1,15 +1,13 @@
 # Agentic Rush/Token Efficiency
 
 ## Token Efficiency Architecture (Phases 41–43)
-* **Command Distillation**: 50–90% reduction on test outputs (`PytestDistiller`, `CargoDistiller`, `VitestDistiller`).
-* **TOON v4.1 Serialization**: 40–65% reduction on tabular findings (`--format toon`).
-* **AST Skeletons**: 85%+ reduction on module reading (`rush token outline`).
+* **Command Distillation / TOON / AST Skeletons**: local transformations whose measured token counts depend on the concrete input.
 * **CCR Caching**: SQLite chunking with `<!-- ccr:chunk:HASH -->`.
 
 ## Context Packing & Stale Sweeping Efficiency
-* `ContextPacker`: 70–85% token reduction via PageRank-prioritized skeletons.
-* `StaleSweeper`: 60–80% savings in multi-turn sessions by pruning stale file reads.
-* `CacheAligner`: $\ge 85\%$ KV prompt cache hit rate.
+* `ContextPacker`: a bounded target-file skeleton envelope; it reports estimated local tokens and fails closed for an insufficient budget.
+* `StaleSweeper`: deterministic local history pruning, not a measured provider saving.
+* `CacheAligner`: local prefix padding only; it does not measure or guarantee a provider cache-hit rate.
 
 
 

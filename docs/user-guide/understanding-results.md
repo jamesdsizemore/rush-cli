@@ -8,6 +8,8 @@ When you run a command in Rush, you receive a clear, structured summary of what 
 
 Whenever Rush evaluates a tool, it outputs a consistent, clean block:
 
+For `rush context pack --json` and `rush context retrieve --json`, inspect `metadata.context_envelope`: `selected_evidence`, local token fields, `omissions`, and `recovery`. `skipped` with `insufficient_budget` or `not_found` is an explicit safe outcome, not a successful context handoff.
+
 ```text
 [WARN] lint [ruff]: 2 issue(s) (120ms)
   src/auth/jwt.py:42:10: F401 `datetime` imported but unused

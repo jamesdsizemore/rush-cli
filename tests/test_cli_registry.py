@@ -13,6 +13,7 @@ from rush.mcp import build_server_instructions
 from rush.permissions import ExecutionPermissions
 from rush.tools import LintTool
 from rush.tools.continuity import SessionContinuityTool
+from src.rush.token_economy.ccr_store import CCRStore
 
 
 def test_catalog_path_command_uses_the_tool_name_and_standard_options() -> None:
@@ -161,3 +162,20 @@ def test_session_cli_returns_the_same_canonical_lifecycle_result(
     assert handoff["current_goal"] == "Finish the redacted handoff"
     assert handoff["open_work"] == ["verify restore receipt"]
     assert handoff["historic_instruction"]["authority"] == "historical_evidence"
+
+
+def test_context_cli_uses_shared_canonical_envelope(tmp_path: Path) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path("service.py").write_text("def answer() -> int:\n    return 42\n")
+        packed = runner.invoke(
+            cli, ["context", "pack", "--path", "service.py", "--json"]
+        )
+        tag = CCRStore(Path.cwd()).store_chunk("recoverable context")
+        handle = tag.split(":")[2].split()[0]
+        recovered = runner.invoke(cli, ["context", "retrieve", handle, "--json"])
+    packed_payload = json.loads(packed.output)
+    recovered_payload = json.loads(recovered.output)
+    assert packed.exit_code == recovered.exit_code == 0
+    assert packed_payload["metadata"]["context_envelope"]["selected_evidence"]
+    assert recovered_payload["raw"] == {"content": "recoverable context"}

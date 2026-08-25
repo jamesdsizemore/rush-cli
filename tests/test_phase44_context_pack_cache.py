@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+from rush.tools.continuity import SessionContinuityTool
 from src.rush.codegraph.context_packer import ContextPacker
 from src.rush.token_economy.cache_aligner import CacheAligner
+from src.rush.token_economy.ccr_store import CCRStore
 from src.rush.token_economy.stale_sweeper import StaleSweeper
 
 
@@ -62,3 +64,75 @@ class AuthService:
     assert "AuthService" in res["packed_text"]
     assert "if token ==" in res["packed_text"]
     assert "def revoke" in res["packed_text"]
+
+
+def test_continuity_context_pack_returns_bounded_evidence_envelope(tmp_path: Path):
+    target = tmp_path / "service.py"
+    target.write_text(
+        "def authenticate(token: str) -> bool:\n"
+        "    api_key = 'sk-ant-abcdefghijklmnopqrstuvwxyz012345'\n"
+        "    return bool(token)\n",
+        encoding="utf-8",
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="context_pack",
+        context_path="service.py",
+        target_symbol="authenticate",
+        token_budget=500,
+    )
+
+    assert result["tool"] == "continuity"
+    assert result["status"] == "ok"
+    envelope = result["metadata"]["context_envelope"]
+    assert envelope["selected_evidence"][0]["path"] == "service.py"
+    assert envelope["tokens"]["estimated"] > 0
+    assert envelope["tokens"]["actual"] is None
+    assert envelope["omissions"] == []
+    assert envelope["recovery"] == {"state": "not_needed"}
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in result["raw"]["packed_text"]
+
+
+def test_continuity_context_pack_fails_closed_when_budget_is_insufficient(
+    tmp_path: Path,
+):
+    target = tmp_path / "service.py"
+    target.write_text(
+        "def authenticate() -> bool:\n    return True\n", encoding="utf-8"
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path, operation="context_pack", context_path="service.py", token_budget=1
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["context_envelope"]["omissions"] == [
+        {"reason": "insufficient_budget", "mandatory": True}
+    ]
+
+
+def test_continuity_context_retrieve_returns_or_explicitly_misses_handle(
+    tmp_path: Path,
+):
+    tag = CCRStore(tmp_path).store_chunk("selected source")
+    handle = tag.split(":")[2].split()[0]
+
+    found = SessionContinuityTool().run(
+        tmp_path, operation="context_retrieve", context_handle=handle
+    )
+    missing = SessionContinuityTool().run(
+        tmp_path, operation="context_retrieve", context_handle="f" * 64
+    )
+
+    assert found["status"] == "ok"
+    assert found["raw"] == {"content": "selected source"}
+    assert found["metadata"]["context_envelope"]["recovery"] == {
+        "state": "recovered",
+        "handle": handle,
+    }
+    assert missing["status"] == "skipped"
+    assert missing["metadata"]["context_envelope"]["recovery"] == {
+        "state": "not_found",
+        "handle": "f" * 64,
+    }

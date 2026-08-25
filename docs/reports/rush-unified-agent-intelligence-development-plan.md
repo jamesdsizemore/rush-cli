@@ -160,7 +160,7 @@ P2 definition of done: users can save/restore an inspectable redacted handoff, a
 
 Beginning goal: create one deterministic, evidence-carrying context result from existing pack/recovery/token components. Entry: P2 commit and BG-CTX decision; BG-RET/BG-LOCAL only for optional semantic/model work, which remains deferred unless approved. In scope: ContextPacker, ContentRouter, AstSkeletonizer, CCRStore, CacheAligner, StaleSweeper, TelemetryStore, GroundingVerifier/HalluGuard through P1 seam. Deferred: model download, index adoption, benchmark execution, provider trial.
 
-Checklist: [ ] P3-T00 discovery [ ] P3-WP1 envelope [ ] P3-WP2 recovery/telemetry [ ] P3-DOC audit [ ] P3-BI reconciliation [ ] P3-V checks [ ] P3-C commit.
+Checklist: [x] P3-T00 discovery [x] P3-WP1 envelope [x] P3-WP2 recovery/telemetry [x] P3-DOC audit [x] P3-BI reconciliation [x] P3-V checks [x] P3-C commit.
 
 P3-WP1 — deterministic selected-context result  
 P3-T00: rtk-map packer/token/grounding symbols and source sections; record reused evidence/refresher rule; run `graft check .` and `context-mode search ContextPacker --project .`; record any stale/unavailable derived index as non-authoritative; checklist P3-T00.  

@@ -1,7 +1,7 @@
 # Workflow: Graph-Pruned Context Packing & Budgeting
 
 ## 1. Overview
-`ContextPacker` (`rush context pack`) constructs tight, token-bounded context packages by extracting target symbol implementations verbatim and eliding surrounding peripheral functions into AST skeletons under a hard budget cap.
+`rush context pack --json` returns a canonical continuity `ToolResult`: selected source evidence, estimated local tokens, omissions, and recovery state. It skeletonizes the selected target file; it does not claim graph/PageRank ranking or provider-token savings. An insufficient budget returns `skipped` with an explicit omission reason.
 
 ## 2. Usage Examples
 ```bash
