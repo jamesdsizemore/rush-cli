@@ -1,5 +1,9 @@
 # Testing Architecture & Verification Protocols
 
+## Session continuity contract tests
+
+The focused CLI/MCP suites cover denied-before-write save, permitted save/list/restore lifecycle, canonical JSON fields, and live stdio-MCP protocol cleanliness. Tests use a temporary project path and must verify that a denied save does not create `.rush/`.
+
 Rush uses a multi-layered testing strategy combining deterministic parser fixtures, mock subprocess isolation, and end-to-end transport verification.
 
 ---

@@ -60,6 +60,17 @@ class EngineSpec:
 
 
 TOOL_SPECS: dict[str, ToolSpec] = {
+    "continuity": ToolSpec(
+        name="continuity",
+        category="workflow",
+        description="Save, list, or restore local Rush session checkpoints.",
+        mcp_description=(
+            "Save, list, or restore a local Rush session checkpoint. Saving requires "
+            "explicit cache-write permission."
+        ),
+        engine_names=(),
+        maturity="real_adapter",
+    ),
     "semantic-drift": ToolSpec(
         name="semantic-drift",
         category="test",
@@ -345,6 +356,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 
 
 _TOOL_MATURITY: dict[str, ToolMaturity] = {
+    "continuity": "real_adapter",
     "semantic-drift": "browser_runtime",
     "review": "real_adapter",
     "lint": "real_adapter",

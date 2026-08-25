@@ -10,7 +10,7 @@ from rush.mcp import build_server_instructions
 
 
 def test_every_catalogued_tool_has_a_declared_valid_maturity() -> None:
-    assert len(TOOL_SPECS) == 37
+    assert len(TOOL_SPECS) == 38
     assert all(spec.maturity in TOOL_MATURITY_VALUES for spec in TOOL_SPECS.values())
     assert TOOL_SPECS["coverage"].maturity == "importer"
     assert TOOL_SPECS["codeql"].maturity == "importer"

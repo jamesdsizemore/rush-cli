@@ -56,13 +56,6 @@ def _register_tools(server) -> None:
         )
 
     # Phase 41 Tools
-    def mcp_rush_session_save(name: str, files: list[str]) -> str:
-        from rush.memory.checkpoint_journal import CheckpointJournal
-
-        journal = CheckpointJournal()
-        dest = journal.save_checkpoint(name, {}, files)
-        return f"Session saved: {dest}"
-
     def mcp_rush_ship_clean(dry_run: bool = False) -> str:
         from rush.tools.ship.cleaner import ScratchCleaner
 
@@ -130,11 +123,6 @@ def _register_tools(server) -> None:
         mistakes = miner.mine_mistakes()
         return f"Loaded {len(mistakes)} mistake guardrails"
 
-    server.add_tool(
-        fn=mcp_rush_session_save,
-        name="rush_session_save",
-        description="Save developer context snapshot to .rush/sessions/",
-    )
     server.add_tool(
         fn=mcp_rush_ship_clean,
         name="rush_ship_clean",

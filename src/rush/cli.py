@@ -1933,42 +1933,74 @@ def session_group() -> None:
     multiple=True,
     help="Active files to include in session snapshot.",
 )
-def session_save_cmd(name: str, files: tuple[str, ...]) -> None:
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def session_save_cmd(
+    name: str,
+    files: tuple[str, ...],
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
     """Save an active session checkpoint to .rush/sessions/."""
-    from rush.memory.checkpoint_journal import CheckpointJournal
+    from .tools.continuity import SessionContinuityTool
 
-    journal = CheckpointJournal()
-    path = journal.save_checkpoint(name, {"cwd": str(Path.cwd())}, list(files))
-    click.echo(f"Session checkpoint saved to {path}")
+    result = SessionContinuityTool().run(
+        Path.cwd(),
+        operation="save",
+        name=name,
+        files=list(files),
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(result, as_json)
 
 
 @session_group.command(name="list")
-def session_list_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def session_list_cmd(as_json: bool) -> None:
     """List all saved session checkpoints."""
-    from rush.memory.checkpoint_journal import CheckpointJournal
+    from .tools.continuity import SessionContinuityTool
 
-    journal = CheckpointJournal()
-    sessions = journal.list_checkpoints()
-    if not sessions:
-        click.echo("No saved session checkpoints found.")
-        return
-    click.echo(f"Saved Session Checkpoints ({len(sessions)}):")
-    for s in sessions:
-        click.echo(f"  - {s.get('name')} (files: {len(s.get('files', []))})")
+    _render_session_result(
+        SessionContinuityTool().run(Path.cwd(), operation="list"),
+        as_json,
+    )
 
 
 @session_group.command(name="restore")
 @click.argument("name")
-def session_restore_cmd(name: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def session_restore_cmd(name: str, as_json: bool) -> None:
     """Restore a saved session checkpoint."""
-    from rush.memory.checkpoint_journal import CheckpointJournal
+    from .tools.continuity import SessionContinuityTool
 
-    journal = CheckpointJournal()
-    data = journal.restore_checkpoint(name)
-    if not data:
-        click.echo(f"Error: Session checkpoint '{name}' not found.", err=True)
-        sys.exit(1)
-    click.echo(f"Session '{name}' restored. Files: {', '.join(data.get('files', []))}")
+    _render_session_result(
+        SessionContinuityTool().run(Path.cwd(), operation="restore", name=name),
+        as_json,
+    )
+
+
+def _render_session_result(result: dict, as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        render_result(result)
+    from .tools.common import exit_code_for
+
+    raise click.exceptions.Exit(exit_code_for(result))
 
 
 @cli.group(name="ship")

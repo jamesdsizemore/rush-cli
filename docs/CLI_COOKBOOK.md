@@ -1,6 +1,16 @@
 # CLI Cookbook & Command Recipes
 
-This cookbook provides copy-pasteable command patterns for everyday engineering tasks across all 37 tools and 121 engines in Rush CLI.
+## Save and resume a local session
+
+```powershell
+rush session save handoff --file src/rush/cli.py --allow-cache-write --json
+rush session list --json
+rush session restore handoff --json
+```
+
+The checkpoint is local to `.rush/sessions/`; do not put secrets in its name or file list. Omitting `--allow-cache-write` leaves the filesystem unchanged and returns `skipped`.
+
+This cookbook provides copy-pasteable command patterns for everyday engineering tasks across all 38 tools and 121 engines in Rush CLI.
 
 ---
 

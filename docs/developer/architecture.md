@@ -1,5 +1,9 @@
 # Rush architecture
 
+## Continuity transport invariant
+
+The catalogued `SessionContinuityTool` owns local checkpoint behavior. `cli.py` session commands and MCP registration are thin transports; additions must preserve that single implementation and the canonical `ToolResult` shape.
+
 Rush is a Python 3.12 package with two transports and one implementation layer. Click CLI commands and FastMCP tools invoke the same objects from `src/rush/tools/`; external programs are isolated behind adapters in `src/rush/engines/`.
 
 ```mermaid
@@ -22,7 +26,7 @@ flowchart TB
 
 ## Core contracts
 
-- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity across all 37 tools and 121 engines.
+- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity across all 38 tools and 121 engines.
 - `ToolFn.run(path, *, config, ...)` is the internal execution surface. `ToolFn.__call__` is MCP-facing and must expose only JSON-schema-safe parameters.
 - ToolResult required keys are `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; optional extensions include metrics, artifacts, metadata, and review fields.
 - A missing optional executable returns `skipped`; it must not raise or install anything.

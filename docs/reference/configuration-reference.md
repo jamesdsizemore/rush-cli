@@ -1,5 +1,9 @@
 # Configuration reference
 
+## Continuity permissions
+
+No `rush.toml` value enables checkpoint writes. Use `--allow-cache-write` only on a save invocation; MCP callers pass `allow_cache_write: true` for that individual call.
+
 Rush configuration is optional. It discovers the nearest `rush.toml` while walking upward from the target and stops at the Git root or filesystem root.
 
 ## Precedence

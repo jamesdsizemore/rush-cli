@@ -1,6 +1,10 @@
 # Tool catalog
 
-The catalog contains 37 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
+## `continuity` — workflow, real adapter
+
+Manages local session checkpoints through `save`, `list`, and `restore`. It is implemented by `SessionContinuityTool`, has no external engine, and uses explicit cache-write permission for `save`; it is registered as MCP `rush_continuity`.
+
+The catalog contains 38 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
 
 | Tool | Category | Maturity | Engines / behavior |
 |---|---|---|---|

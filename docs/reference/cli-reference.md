@@ -1,5 +1,9 @@
 # CLI reference
 
+## Session continuity
+
+`rush session save NAME --file PATH --allow-cache-write --json`, `rush session list --json`, and `rush session restore NAME --json` are the session lifecycle. Save is denied by default; every `--json` response is a `ToolResult`.
+
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
 ## Which command should I run?

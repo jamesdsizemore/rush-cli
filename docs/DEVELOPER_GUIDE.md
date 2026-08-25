@@ -1,5 +1,9 @@
 # Developer guide
 
+## Continuity contribution rule
+
+Keep session operation logic in `src/rush/tools/continuity.py`. CLI and MCP code may adapt arguments and render results, but must not instantiate `CheckpointJournal` or invent transport-specific strings.
+
 This guide is for contributors. User help begins at [Documentation home](README.md).
 
 ## Local verification loop
