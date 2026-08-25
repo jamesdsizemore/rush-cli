@@ -4,6 +4,8 @@ When AI coding assistants refactor code or fix bugs, they often produce multi-fi
 
 Rush’s **Patch Remediation Subsystem** (`rush patch`) and **Session Memory Engine** (`rush memory`) provide a closed-loop verification cycle and multi-turn conversational memory for agent interactions.
 
+`rush session` handoff is deliberately narrower than conversational memory: it persists a redacted goal/frontier receipt, dependency snapshots, and a receipt-only failure pointer. It excludes raw transcripts, provider credentials, historic-instruction text, and failed patches; historic instruction presence is quarantined as non-actionable evidence.
+
 ---
 
 ## 1. Closed-Loop Patch Remediation

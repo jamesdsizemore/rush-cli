@@ -2,7 +2,7 @@
 
 ## Session continuity
 
-`rush.tools.continuity.SessionContinuityTool.run(path, operation, name, files, permissions)` returns the canonical `ToolResult`. Operations are `save`, `list`, and `restore`; `save` is `skipped` without explicit cache-write permission, and a missing checkpoint is `skipped` rather than an exception.
+`rush.tools.continuity.SessionContinuityTool.run(path, operation, name, files, handoff, permissions)` returns the canonical `ToolResult`. Operations are `save`, `list`, and `restore`; `save` is `skipped` without explicit cache-write permission, and a missing checkpoint is `skipped` rather than an exception. `handoff` accepts `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, and repository-relative `dependencies`; the persisted result exposes only the redacted receipt in `metadata.handoff`.
 
 Rush is packaged as a local CLI application and stdio Model Context Protocol (MCP) server. While Rush does not expose an external programmatic Python library, internal contributors and custom tool authors interact with the following stable core contracts in `src/rush/`.
 

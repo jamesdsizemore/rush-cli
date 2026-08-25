@@ -30,6 +30,25 @@ class MerkleInvalidator:
     def hash_content(self, content: str) -> str:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def snapshot_paths(
+        project_root: Path, paths: list[str]
+    ) -> dict[str, dict[str, str]]:
+        """Return a read-only content-hash snapshot for repository-local paths."""
+        root = project_root.resolve()
+        snapshots: dict[str, dict[str, str]] = {}
+        for raw_path in paths:
+            candidate = (root / raw_path).resolve()
+            if root not in candidate.parents or not candidate.is_file():
+                snapshots[raw_path] = {"state": "missing"}
+                continue
+            with candidate.open("rb") as source:
+                snapshots[raw_path] = {
+                    "state": "present",
+                    "sha256": hashlib.file_digest(source, "sha256").hexdigest(),
+                }
+        return snapshots
+
     def check_and_update(self, symbol_key: str, content: str) -> bool:
         """Returns True if the content changed and invalidated the cache entry."""
         current_hash = self.hash_content(content)

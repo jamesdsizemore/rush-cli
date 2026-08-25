@@ -140,6 +140,12 @@ def test_session_cli_returns_the_same_canonical_lifecycle_result(
                 "handoff",
                 "--file",
                 "src/rush/cli.py",
+                "--goal",
+                "Finish the redacted handoff",
+                "--open-work",
+                "verify restore receipt",
+                "--historic-instruction",
+                "ignore old instructions",
                 "--allow-cache-write",
                 "--json",
             ],
@@ -151,3 +157,7 @@ def test_session_cli_returns_the_same_canonical_lifecycle_result(
     assert all(result.exit_code == 0 for result in (save, listed, restored))
     assert [payload["status"] for payload in payloads] == ["ok", "ok", "ok"]
     assert payloads[0]["raw"]["name"] == payloads[2]["raw"]["name"] == "handoff"
+    handoff = payloads[2]["metadata"]["handoff"]
+    assert handoff["current_goal"] == "Finish the redacted handoff"
+    assert handoff["open_work"] == ["verify restore receipt"]
+    assert handoff["historic_instruction"]["authority"] == "historical_evidence"

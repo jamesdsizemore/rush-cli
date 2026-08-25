@@ -145,7 +145,7 @@ Phase definition of done: P1 tasks/checklists green, tracker schema live, permit
 
 Beginning goal: turn existing session/checkpoint/failure state into explicit redacted evidence with authority and stale-state behavior. Entry: P1 commit plus passed BG-PRIV. BG-AUTH is deliberately produced by P2-T01’s red/green authority test before P2-T02; B-D01 is not an authority gate because B1 proves only harness foundations. In scope: SessionMemoryManager, CheckpointJournal, FailureLedger, MerkleInvalidator, SecretRedactor adapters. Deferred: transcript import, semantic model, provider rendering. Allowed source: src/rush/session_memory.py, src/rush/memory/checkpoint_journal.py, failure_ledger.py, merkle_invalidator.py, invariant_graph.py, src/rush/safety/redactor.py, src/rush/tools/continuity.py; named tests below. Do-not-touch: provider adapters, dependencies, external accounts.
 
-Checklist: [ ] P2-T00 discovery [ ] P2-WP1 evidence contract [ ] P2-WP2 save/restore integration [ ] P2-DOC audit [ ] P2-BI reconciliation [ ] P2-V checks [ ] P2-C commit.
+Checklist: [x] P2-T00 discovery [x] P2-WP1 evidence contract [x] P2-WP2 save/restore integration [x] P2-DOC audit [x] P2-BI reconciliation [x] P2-V checks [x] P2-C commit.
 
 P2-WP1 — redacted authority and freshness records  
 P2-T00: create compact rtk findings for session/checkpoint/failure symbols and refresh if touched files change; allowed tracker files only; verify rtk grep SessionMemoryManager src tests and rtk read --line-numbers source; run `graft check .` and `context-mode search SessionMemoryManager --project .`; record any stale/unavailable derived index as non-authoritative; checklist P2-T00.  
@@ -231,7 +231,7 @@ Run the row for the atomic task immediately before its focused test or edit. The
 | P1-T00 | 1 | [ ] | tracker files | src/, tests/ | discovery record | BL-P1-00 / issue only for actual discovery defect | rtk, graft, and context-mode evidence recorded |
 | P1-T01/T02 | 1 | [ ] | tools, catalog, cli, mcp, config, permissions, named tests | providers, token, dependencies | registry/MCP/config/permission tests; CLI/MCP/config docs | BL-P1-01/02 | ToolResult parity, disabled/denied behavior |
 | P1-T03 | 1 | [ ] | canonical tracker files, plan | source/config/tests | docs structural audit | BL-P1-03 / ISS-P1-TRACK if needed | required tracker fields preserved |
-| P2-T00/T01/T02 | 2 | [ ] | named session/memory/redactor/seam files and tests | providers/token/dependencies | session/checkpoint tests; privacy/session docs | BL-P2-01/02 | BG-AUTH, BG-PRIV; redaction/authority/freshness |
+| P2-T00/T01/T02 | 2 | [x] | named session/memory/redactor/seam files and tests | providers/token/dependencies | session/checkpoint tests; privacy/session docs | BL-P2-01/02 | BG-AUTH, BG-PRIV; redaction/authority/freshness |
 | P3-T00/T01/T02 | 3 | [ ] | named context/token/seam files and tests | models/providers/dependencies | CCR/context/telemetry tests; context docs | BL-P3-01/02 | BG-CTX; selected IDs/recovery/accounting |
 | P4-T00/T01/T02 | 4 | [ ] | named lock/merge/recorder/memory/seam files and tests | providers/models/config | recorder/mistake tests; recovery docs | BL-P4-01/02 | BG-COORD where protocol changes; conflict/replay safe |
 | P5-T00/T01/T02 | 5 | [ ] | benchmark-approved provider files/seam/permission/tests | credentials, unapproved routes, dependencies | provider/permission tests; route docs | BL-P5-01 + route items | route gate passes; skipped/redacted behavior |

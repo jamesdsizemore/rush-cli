@@ -7,6 +7,8 @@ Current agent memory implementations (chat history summaries, vector databases, 
 * **No invalidation when code changes:** When code is refactored, past memories about function signatures, API behavior, or test assumptions become silently toxic, poisoning future agent turns with stale information.
 * **Context pollution:** Dumping memory files into every prompt burns token budgets and dilutes the model's focus on the active task.
 
+The continuity receipt therefore carries only selected current goal/open work, hashes for declared dependencies, and bounded failure evidence. A historic instruction is explicitly `historical_evidence` and `quarantined`, never an executable authority; restore marks mismatched snapshots stale instead of silently reusing them.
+
 ---
 
 ## 2. The Core Primitives of Rush Memory

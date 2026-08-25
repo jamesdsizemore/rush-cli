@@ -4,6 +4,8 @@
 
 Rush protects source files, Git history, credentials, MCP protocol integrity, local machine resources, network targets, release artifacts, and report paths.
 
+The continuity trust boundary accepts explicit CLI/MCP handoff fields only at `SessionContinuityTool`; save needs cache-write permission. Historic instructions are reduced to quarantined evidence, and failed attempts are surfaced only as redacted receipts/tombstones so a resumed agent cannot treat retained text as authority.
+
 ## Trust boundaries
 
 ```mermaid

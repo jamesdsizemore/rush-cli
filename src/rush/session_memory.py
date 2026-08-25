@@ -13,6 +13,7 @@ from pathlib import Path
 from xml.sax import saxutils
 
 from rush.logging import get_logger, log_subsystem
+from rush.safety.redactor import SecretRedactor
 
 logger = get_logger("session_memory")
 
@@ -60,7 +61,9 @@ class SessionMemoryManager:
         records = self.load_records()
 
         # Sanitize summary (strip null bytes, truncate)
-        sanitized_summary = summary.replace("\x00", "").strip()[:1024]
+        sanitized_summary = SecretRedactor.redact_text(
+            summary.replace("\x00", "").strip()[:1024]
+        )
         new_record = SessionRecord(
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             tool_name=tool_name,

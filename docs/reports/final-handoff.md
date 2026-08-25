@@ -1,20 +1,20 @@
-# Rush Benchmark Final Handoff & Decision Record
+# Historical benchmark handoff index (non-canonical)
 
-This document records all deterministic gate evaluation decisions and unblocked engineering tasks.
+This historical index describes a prior fixture campaign. Its referenced `research/` result blobs are intentionally untracked and may be absent; it is not authority for product work or phase entry. Canonical, committed phase gates live in `docs/reports/continuity-gates/` and must be reconciled from reproducible evidence before use.
 
 | Gate / Decision | Status | Unblocked Task | Fixtures | Result JSON | Fallback |
 |---|:---:|---|---|---|---|
-| `B-D01` (Harness Foundation & Typed Contracts) | `inconclusive` | `P2-T01` | scenarios.json | [`B1/decision-B-D01-B-D02.json`](B1/decision-B-D01-B-D02.json) | fixture-only-mode |
-| `B-D02` (Control Corpus & Baseline Telemetry) | `pass` | `P3-T01` | scenarios.json | [`B1/decision-B-D01-B-D02.json`](B1/decision-B-D01-B-D02.json) | naive-summary-baseline |
-| `B-D03` (Privacy Redaction & Parser Bounds) | `pass` | `P2-T02` | privacy_cases.json | [`B3/decision-B-D03.json`](B3/decision-B-D03.json) | strict-pattern-scrubbing |
-| `B-D04` (ContextPacker Token Reduction) | `pass` | `P3-T01` | context_cases.json | [`B4/decision-B-D04-B-D05.json`](B4/decision-B-D04-B-D05.json) | full-file-fallback |
-| `B-D05` (CCR Chunk Cache & Exact Byte Restoration) | `pass` | `P3-T02` | context_cases.json | [`B4/decision-B-D04-B-D05.json`](B4/decision-B-D04-B-D05.json) | uncompressed-raw-text |
-| `B-D06` (Local Model Hardware Profiling & Runtime Bounds) | `pass` | `P4-T01` | local_candidates.json | [`B6/decision-B-D06.json`](B6/decision-B-D06.json) | lexical-symbol-search |
-| `B-D07` (Provider Route Security & Redaction) | `pass` | `P5-T01` | provider_routes.json | [`B2/decision-B-D07-B-D10.json`](B2/decision-B-D07-B-D10.json) | fixture-replay |
-| `B-D08` (9Router Route Independence) | `pass` | `P5-T02` | routers.json | [`B2/decision-B-D07-B-D10.json`](B2/decision-B-D07-B-D10.json) | direct-provider-route |
-| `B-D09` (OmniRouter Multi-Agent Mesh Independence) | `pass` | `P5-T02` | routers.json | [`B2/decision-B-D07-B-D10.json`](B2/decision-B-D07-B-D10.json) | direct-provider-route |
-| `B-D10` (Protocol Quarantine of Tampered Envelopes) | `pass` | `P5-T03` | protocol_cases.json | [`B2/decision-B-D07-B-D10.json`](B2/decision-B-D07-B-D10.json) | quarantined-import |
-| `B-D11` (Multi-Agent Lock Mesh & Checkpoint Replay) | `pass` | `P4-T02` | coordination_cases.json | [`B5/decision-B-D11.json`](B5/decision-B-D11.json) | optimistic-single-agent-lock |
+| `B-D01` (Harness Foundation & Typed Contracts) | `inconclusive` | none | scenarios.json | ignored/untracked evidence | fixture-only-mode |
+| `B-D02` (Control Corpus & Baseline Telemetry) | `pass` | none | scenarios.json | ignored/untracked evidence | naive-summary-baseline |
+| `B-D03` (Privacy Redaction & Parser Bounds) | `pass` | none; see `BG-PRIV` scope | privacy_cases.json | ignored/untracked evidence | strict-pattern-scrubbing |
+| `B-D04` (ContextPacker Token Reduction) | `pass` | none | context_cases.json | ignored/untracked evidence | full-file-fallback |
+| `B-D05` (CCR Chunk Cache & Exact Byte Restoration) | `pass` | none | context_cases.json | ignored/untracked evidence | uncompressed-raw-text |
+| `B-D06` (Local Model Hardware Profiling & Runtime Bounds) | `pass` | none | local_candidates.json | ignored/untracked evidence | lexical-symbol-search |
+| `B-D07` (Provider Route Security & Redaction) | `pass` | none | provider_routes.json | ignored/untracked evidence | fixture-replay |
+| `B-D08` (9Router Route Independence) | `pass` | none | routers.json | ignored/untracked evidence | direct-provider-route |
+| `B-D09` (OmniRoute Multi-Agent Mesh Independence) | `pass` | none | routers.json | ignored/untracked evidence | direct-provider-route |
+| `B-D10` (Protocol Quarantine of Tampered Envelopes) | `pass` | none | protocol_cases.json | ignored/untracked evidence | quarantined-import |
+| `B-D11` (Multi-Agent Lock Mesh & Checkpoint Replay) | `pass` | none | coordination_cases.json | ignored/untracked evidence | optimistic-single-agent-lock |
 
 ## Reproduction Commands
 
@@ -58,7 +58,7 @@ This document records all deterministic gate evaluation decisions and unblocked 
 .venv/Scripts/python.exe -m pytest tests/test_benchmark_providers.py -q
 ```
 
-### `B-D09`: OmniRouter Multi-Agent Mesh Independence
+### `B-D09`: OmniRoute Multi-Agent Mesh Independence
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_benchmark_providers.py -q
 ```

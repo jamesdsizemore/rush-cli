@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from rush.safety.redactor import SecretRedactor
+
 
 class CheckpointJournal:
     """Manages session checkpoints and replay state."""
@@ -19,12 +21,14 @@ class CheckpointJournal:
     ) -> Path:
         """Saves a point-in-time session checkpoint."""
         timestamp = int(time.time())
-        checkpoint_data = {
-            "name": name,
-            "created_at": timestamp,
-            "metadata": metadata,
-            "files": files,
-        }
+        checkpoint_data, _ = SecretRedactor.redact_value(
+            {
+                "name": name,
+                "created_at": timestamp,
+                "metadata": metadata,
+                "files": files,
+            }
+        )
         dest = self.session_dir / f"{name}.json"
         dest.write_text(json.dumps(checkpoint_data, indent=2), encoding="utf-8")
         return dest

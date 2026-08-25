@@ -7,3 +7,5 @@
 - Rush is not an OS sandbox or complete penetration testing suite.
 - `skipped` exits 0 and requires JSON policy handling when a check is mandatory.
 - Platform CI is Linux-focused; Windows/macOS behavior is verified through local tests and project isolation guidance.
+- Continuity freshness covers only caller-declared repository-relative dependencies; an unchanged receipt is not a proof that all repository state is current.
+- Redaction is pattern-based and receipt-focused; Rush does not retain provider credentials, raw historic instructions, transcripts, or failed patches for handoff.

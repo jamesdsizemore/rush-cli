@@ -2,6 +2,8 @@
 
 A comprehensive guide for debugging engine discovery, subprocess execution, MCP transport hangs, parser errors, and platform-specific behaviors.
 
+For continuity, run a JSON save/restore and inspect only `metadata.handoff`: it is deliberately redacted and reports dependency `freshness`, a quarantined historic-instruction marker, and a failure receipt/tombstone. Diagnose a stale receipt by comparing declared paths, then save a fresh checkpoint; never add raw secrets, transcripts, or provider credentials to debugging output.
+
 ---
 
 ## 1. Structured Debugging Workflow
