@@ -4,6 +4,8 @@ Rush prioritizes code security, execution isolation, and responsible disclosure.
 
 Continuity saves require explicit cache-write permission. A checkpoint records a redacted receipt, not a credential or executable instruction: historic instructions are quarantined evidence, and failed attempts resolve only to a redacted ledger receipt or an explicit tombstone.
 
+Coordination inspection is read-only. Held and stale locks, merge conflicts, and replay history are reported as bounded evidence; Rush does not release locks, apply a merge, execute recorded events, or retry failed patches.
+
 ---
 
 ## 1. The 7 Defensive Controls

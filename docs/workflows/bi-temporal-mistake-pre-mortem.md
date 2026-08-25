@@ -3,6 +3,8 @@
 ## 1. Overview
 The Mistake Miner extracts anti-patterns from repository Git revert history (`git log --grep="[Rr]evert"`). It structures historical regressions into proactive guardrails, preventing AI agents from repeating known failure loops.
 
+Continuity recovery does not execute those guardrails or rerun a failed patch. It exposes only a bounded, redacted failure receipt and replay metadata so the next agent can inspect evidence before choosing a new action.
+
 ## 2. Mistake Triplet Architecture
 Every mined revert is indexed as a structured triplet:
 1. **Believed** (Reverted feature or change description)

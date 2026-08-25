@@ -4,6 +4,8 @@ Autonomous AI coding agents possess tremendous speed, but granting an LLM unsupe
 
 Rush’s **AI Safety & Sandboxing Subsystem** (`rush safety`) establishes a deterministic, non-bypassable perimeter around all agent interactions.
 
+Continuity coordination follows the same rule: inspecting locks, merge previews, flight events, and failure receipts is read-only. A caller must explicitly resolve ownership or a conflict; Rush never silently unlocks, merges, or replays work.
+
 ---
 
 ## 1. Destructive Command Interception

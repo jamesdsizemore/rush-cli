@@ -14,10 +14,30 @@ class MeshLockManager:
         self.locks_dir.mkdir(parents=True, exist_ok=True)
 
     def _lock_file_for(self, target_path: Path) -> Path:
-        sanitized = (
-            str(target_path).replace("/", "_").replace("\\", "_").replace(":", "_")
-        )
+        sanitized = self._lock_name(target_path)
         return self.locks_dir / f"{sanitized}.lock"
+
+    @staticmethod
+    def _lock_name(target_path: Path) -> str:
+        return str(target_path).replace("/", "_").replace("\\", "_").replace(":", "_")
+
+    @classmethod
+    def inspect(cls, project_root: Path, target_path: Path) -> dict[str, object]:
+        """Read lock evidence without creating a lock directory or changing a lock."""
+        lock_path = (
+            project_root / ".rush" / "locks" / f"{cls._lock_name(target_path)}.lock"
+        )
+        if not lock_path.is_file():
+            return {"state": "available", "owner": None}
+        try:
+            data = json.loads(lock_path.read_text(encoding="utf-8"))
+            owner = data.get("agent_id")
+            acquired_at = data.get("acquired_at")
+            if not isinstance(owner, str) or not isinstance(acquired_at, (int, float)):
+                return {"state": "unavailable", "owner": None}
+            return {"state": "held", "owner": owner, "acquired_at": acquired_at}
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {"state": "unavailable", "owner": None}
 
     def acquire(self, file_path: Path, agent_id: str, timeout_s: float = 5.0) -> bool:
         lock_p = self._lock_file_for(file_path)
@@ -49,8 +69,5 @@ class MeshLockManager:
 
     def owner(self, file_path: Path) -> str | None:
         """Read the owner without acquiring, releasing, or modifying a lock."""
-        lock_p = self._lock_file_for(file_path)
-        try:
-            return json.loads(lock_p.read_text(encoding="utf-8")).get("agent_id")
-        except Exception:  # noqa: BLE001
-            return None
+        owner = self.inspect(self.project_root, file_path).get("owner")
+        return owner if isinstance(owner, str) else None

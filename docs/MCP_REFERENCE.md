@@ -8,6 +8,8 @@ Use `operation: "save" | "list" | "restore"` with the project `path`. `save` add
 
 Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the continuity implementation and return the same `ToolResult` envelope as their CLI equivalents.
 
+`rush_continuity` additionally supports `coordination_check`, `coordination_merge_preview`, and `coordination_recovery`. `metadata.coordination.state` is `available`, `conflict`, `stale`, `merge_conflict`, `recovery_evidence`, or `unavailable`. The response is evidence, not an instruction to release locks, merge, replay, or retry work.
+
 ## Common result
 
 Every tool returns canonical ToolResult data documented in [Result reference](reference/result-reference.md). A missing optional engine is a structured `skipped` result, not an installation request.

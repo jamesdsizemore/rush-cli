@@ -8,6 +8,10 @@ On save, the same boundary creates a redacted `metadata.handoff` receipt: curren
 
 The same `SessionContinuityTool` owns `context_pack` and `context_retrieve`; legacy CLI/MCP context transports delegate to it. Its `metadata.context_envelope` carries selected evidence, estimated local tokens, omissions, recovery state, and redaction count. It does not claim provider-token or cache-hit measurements.
 
+## Phase 4 coordination boundary
+
+`SessionContinuityTool` also exposes read-only coordination operations. `coordination_check` inspects a repository-local lock without creating, releasing, or overwriting it; a held lock reports `conflict`, an expired one reports `stale`, and malformed evidence is `unavailable`. `coordination_merge_preview` detects overlapping edits and returns a manual-reconciliation receipt without emitting merged source. `coordination_recovery` reads bounded flight and failure receipts only; it never replays commands or retries a patch.
+
 Rush is a Python 3.12 package with two transports and one implementation layer. Click CLI commands and FastMCP tools invoke the same objects from `src/rush/tools/`; external programs are isolated behind adapters in `src/rush/engines/`.
 
 ```mermaid

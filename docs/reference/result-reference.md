@@ -6,6 +6,8 @@ The `continuity` tool uses `ok` for successful save/list/restore and empty lists
 
 Context operations use `ok` for a bounded pack or recovered handle and `skipped` for insufficient budget or a missing handle. Their `metadata.context_envelope` identifies selected evidence, local token values, omissions, and recovery state.
 
+Coordination uses `ok` only for available ownership, conflict-free preview, or available recovery evidence. It uses `skipped` for held/stale ownership, overlapping merge edits, and missing/corrupt replay evidence. `metadata.coordination` is receipt data only and contains no source merge, failed patch, or executable replay event.
+
 Every CLI and MCP operation returns the same canonical ToolResult shape.
 
 ```json

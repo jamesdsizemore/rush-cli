@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
@@ -18,10 +19,18 @@ from ..permissions import (
 )
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
+from ..tools.flight_recorder import FlightRecorder
 from .base import ToolFn, ToolResult
 
 SessionOperation = Literal[
-    "save", "list", "restore", "context_pack", "context_retrieve", "coordination_check"
+    "save",
+    "list",
+    "restore",
+    "context_pack",
+    "context_retrieve",
+    "coordination_check",
+    "coordination_merge_preview",
+    "coordination_recovery",
 ]
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
 
@@ -56,6 +65,11 @@ class SessionContinuityTool(ToolFn):
         context_handle: str | None = None,
         coordination_path: str | None = None,
         agent_id: str | None = None,
+        coordination_max_age_s: float = 300.0,
+        base_code: str | None = None,
+        ours_code: str | None = None,
+        theirs_code: str | None = None,
+        flight_session_id: str | None = None,
     ) -> ToolResult:
         return self.run(
             path,
@@ -76,6 +90,11 @@ class SessionContinuityTool(ToolFn):
             context_handle=context_handle,
             coordination_path=coordination_path,
             agent_id=agent_id,
+            coordination_max_age_s=coordination_max_age_s,
+            base_code=base_code,
+            ours_code=ours_code,
+            theirs_code=theirs_code,
+            flight_session_id=flight_session_id,
         )
 
     def run(
@@ -92,6 +111,12 @@ class SessionContinuityTool(ToolFn):
         context_handle: str | None = None,
         coordination_path: str | None = None,
         agent_id: str | None = None,
+        coordination_max_age_s: float = 300.0,
+        base_code: str | None = None,
+        ours_code: str | None = None,
+        theirs_code: str | None = None,
+        flight_session_id: str | None = None,
+        failure_fingerprint: str | None = None,
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
     ) -> ToolResult:
@@ -107,6 +132,8 @@ class SessionContinuityTool(ToolFn):
             "context_pack",
             "context_retrieve",
             "coordination_check",
+            "coordination_merge_preview",
+            "coordination_recovery",
         }:
             return self._result(
                 started,
@@ -123,21 +150,25 @@ class SessionContinuityTool(ToolFn):
         if operation == "context_retrieve":
             return self._context_retrieve(started, root, context_handle, granted)
         if operation == "coordination_check":
-            target = (root / (coordination_path or "")).resolve()
-            owner = MeshLockManager(root).owner(target)
-            coordination = {
-                "state": "conflict" if owner and owner != agent_id else "available",
-                "owner": owner,
-            }
-            return self._result(
+            return self._coordination_check(
                 started,
-                "skipped" if coordination["state"] == "conflict" else "ok",
-                "Local ownership conflict; no change was made."
-                if coordination["state"] == "conflict"
-                else "No conflicting local owner.",
-                operation=operation,
-                granted=granted,
-                coordination=coordination,
+                root,
+                coordination_path,
+                agent_id,
+                coordination_max_age_s,
+                granted,
+            )
+        if operation == "coordination_merge_preview":
+            return self._coordination_merge_preview(
+                started, base_code, ours_code, theirs_code, granted
+            )
+        if operation == "coordination_recovery":
+            return self._coordination_recovery(
+                started,
+                root,
+                flight_session_id,
+                failure_fingerprint or (handoff or {}).get("failure_fingerprint"),
+                granted,
             )
 
         if operation in {"save", "restore"} and not self._valid_name(name):
@@ -316,6 +347,176 @@ class SessionContinuityTool(ToolFn):
                 "selected_evidence": [],
                 "tokens": {"estimated": None, "actual": None, "budget": None},
                 "omissions": [],
+                "recovery": recovery,
+            },
+        )
+
+    def _coordination_check(
+        self,
+        started: float,
+        root: Path,
+        coordination_path: str | None,
+        agent_id: str | None,
+        max_age_s: float,
+        granted: ExecutionPermissions,
+    ) -> ToolResult:
+        target = (root / (coordination_path or "")).resolve()
+        if root not in target.parents or not target.is_file() or max_age_s < 0:
+            return self._result(
+                started,
+                "skipped",
+                "Coordination target was not found inside the project.",
+                operation="coordination_check",
+                granted=granted,
+                coordination={"state": "unavailable", "owner": None},
+            )
+        lock = MeshLockManager.inspect(root, target)
+        owner = lock.get("owner")
+        if lock["state"] == "held":
+            acquired_at = float(lock["acquired_at"])
+            if time.time() - acquired_at > max_age_s:
+                coordination = {
+                    "state": "stale",
+                    "owner": owner,
+                    "action": "manual_recovery_required",
+                }
+                return self._result(
+                    started,
+                    "skipped",
+                    "Stale local ownership evidence requires manual recovery.",
+                    operation="coordination_check",
+                    granted=granted,
+                    coordination=coordination,
+                )
+        coordination = {
+            "state": "conflict"
+            if lock["state"] == "held" and owner != agent_id
+            else lock["state"],
+            "owner": owner,
+        }
+        return self._result(
+            started,
+            "skipped" if coordination["state"] in {"conflict", "unavailable"} else "ok",
+            "Local ownership conflict; no change was made."
+            if coordination["state"] == "conflict"
+            else "No conflicting local owner."
+            if coordination["state"] == "available"
+            else "Local ownership evidence is unavailable.",
+            operation="coordination_check",
+            granted=granted,
+            coordination=coordination,
+        )
+
+    def _coordination_merge_preview(
+        self,
+        started: float,
+        base_code: str | None,
+        ours_code: str | None,
+        theirs_code: str | None,
+        granted: ExecutionPermissions,
+    ) -> ToolResult:
+        from .swarm_merge import SwarmMergeSolver
+
+        if not all(
+            isinstance(code, str) for code in (base_code, ours_code, theirs_code)
+        ):
+            return self._result(
+                started,
+                "skipped",
+                "Merge preview requires all three source revisions.",
+                operation="coordination_merge_preview",
+                granted=granted,
+                coordination={"state": "unavailable", "owner": None},
+            )
+        preview = SwarmMergeSolver().merge_3way(base_code, ours_code, theirs_code)
+        conflicts = preview.get("conflicts", [])
+        if not preview.get("success"):
+            return self._result(
+                started,
+                "skipped",
+                "Merge conflict requires manual reconciliation.",
+                operation="coordination_merge_preview",
+                granted=granted,
+                coordination={
+                    "state": "merge_conflict",
+                    "action": "manual_reconciliation_required",
+                    "conflicts": conflicts,
+                },
+            )
+        return self._result(
+            started,
+            "ok",
+            "Merge preview found no overlapping edits.",
+            operation="coordination_merge_preview",
+            granted=granted,
+            coordination={"state": "merge_preview", "owner": None},
+        )
+
+    def _coordination_recovery(
+        self,
+        started: float,
+        root: Path,
+        session_id: str | None,
+        failure_fingerprint: Any,
+        granted: ExecutionPermissions,
+    ) -> ToolResult:
+        if session_id is not None and not self._valid_name(session_id):
+            return self._result(
+                started,
+                "skipped",
+                "Replay session was not found.",
+                operation="coordination_recovery",
+                granted=granted,
+                coordination={
+                    "state": "unavailable",
+                    "recovery": {
+                        "replay": {
+                            "state": "not_found",
+                            "session_id": None,
+                            "event_count": 0,
+                        },
+                        "failure": {"state": "not_requested"},
+                    },
+                },
+            )
+        replay_state = "not_found"
+        events: list[dict[str, Any]] = []
+        if session_id:
+            try:
+                events = FlightRecorder(root, create=False).replay_session(session_id)
+                replay_state = "recorded" if events else "not_found"
+            except (OSError, ValueError):
+                replay_state = "unavailable"
+        failure = (
+            FailureLedger(root).get_receipt(failure_fingerprint)
+            if isinstance(failure_fingerprint, str)
+            else None
+        )
+        recovery = {
+            "replay": {
+                "state": replay_state,
+                "session_id": session_id,
+                "event_count": len(events),
+                **({"last_event_type": events[-1].get("event_type")} if events else {}),
+            },
+            "failure": failure
+            or (
+                {"fingerprint": failure_fingerprint, "state": "tombstoned"}
+                if isinstance(failure_fingerprint, str)
+                else {"state": "not_requested"}
+            ),
+        }
+        available = bool(events or failure)
+        return self._result(
+            started,
+            "ok" if available else "skipped",
+            "Recovery evidence is available; no retry was performed."
+            if available
+            else "No replay or failure evidence was found.",
+            operation="coordination_recovery",
+            granted=granted,
+            coordination={
+                "state": "recovery_evidence" if available else "unavailable",
                 "recovery": recovery,
             },
         )
