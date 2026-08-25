@@ -1,0 +1,24 @@
+{
+  "9Router": {
+    "route_id": "router-9r-edge",
+    "vendor_name": "9Router Intelligence Protocol",
+    "evidence_url": "https://9router.dev/architecture/spec",
+    "terms_url": "https://9router.dev/terms",
+    "privacy_url": "https://9router.dev/privacy",
+    "supported_dialects": ["mcp", "jsonl", "xml"],
+    "cli_command": ["9router", "--help"],
+    "cli_marker": "Usage: 9router",
+    "endpoint_required": false
+  },
+  "OmniRoute": {
+    "route_id": "router-omni-hybrid",
+    "vendor_name": "OmniRoute",
+    "evidence_url": "https://github.com/ourines/omniroute",
+    "terms_url": "https://github.com/ourines/omniroute/blob/main/LICENSE",
+    "privacy_url": "https://github.com/ourines/omniroute",
+    "supported_dialects": ["acp", "a2a", "json"],
+    "cli_command": ["omniroute", "--output", "json", "--base-url", "http://127.0.0.1:20128", "models"],
+    "cli_marker": "auto/best-coding",
+    "endpoint_required": true
+  }
+}

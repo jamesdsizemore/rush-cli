@@ -70,6 +70,20 @@ rush mcp serve
 
 `rush capabilities PATH --json` reads local project markers, allowed `rush.toml` tables, known local report filenames, and `PATH`; it does not execute, install, or version-probe an engine. States distinguish configured, installed, applicable, missing, and blocked. `rush plan PATH --profile default|nonbrowser --json` expands that inventory deterministically with report/engine prerequisites; browser-runtime capabilities remain absent from `nonbrowser`.
 
+## Benchmark execution
+
+`rush benchmark run` persists a job request and starts a detached worker by default, so a long model load or provider call has no stdout pipe, process handle, or monitoring loop in the invoking client. It does not download a model or call a provider unless the corresponding explicit option is supplied. Use `--foreground` only for a short, directly observed run.
+
+```powershell
+rush benchmark run --scenario local-granite-278m-c0
+rush benchmark run --scenario local-granite-278m-c0 --allow-model-download granite-278m-embedding --local-runtime-executable C:\path\to\onnxruntime_perf_test.exe
+rush benchmark run --all --allow-model-download granite-278m-embedding --allow-model-download bge-small-en-v1.5 --allow-model-download phi-4-mini-instruct --allow-model-download qwen2.5-coder-7b-instruct --local-runtime-executable C:\path\to\onnxruntime_perf_test.exe --local-runtime-executable C:\path\to\llama-bench.exe
+rush benchmark run --scenario local-granite-278m-c0 --foreground
+rush benchmark status
+```
+
+Default result storage is `%LOCALAPPDATA%\Rush\benchmarks\run`; the default model cache is `%LOCALAPPDATA%\Rush\benchmark-model-cache`; job state and worker logs are `%LOCALAPPDATA%\Rush\benchmarks\jobs`. Repeat `--allow-model-download`, `--local-runtime-executable`, and `--allow-live-route` to cover multiple candidates, runtimes, and live routes in one evidence campaign. `status` only reads durable job and scenario-result JSON; it never attaches to a worker. Router probes require their exact `--allow-live-route`: 9Router validates its installed CLI, while OmniRoute validates its installed CLI plus the configured `RUSH_BENCHMARK_OMNIROUTE_URL` (or `--router-url OmniRoute=URL`). An optional matching `_API_KEY` variable is sent only as the local request authorization header.
+
 ## Test-confidence and advanced commands
 
 `coverage`, `pbt`, `flaky`, `contract`, `snapshot`, `mutation`, `fuzz`, and `load` operate in dual modes:

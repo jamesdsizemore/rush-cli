@@ -43,10 +43,13 @@
 | **ISS-048-01** | Phase 48 | DB Schema Drift | Case-insensitive SQL column name mismatch | Normalized column names to lowercase in `DbDriftAuditor` | **Closed** |
 | **ISS-049-01** | Phase 49 | Swarm AST Merge | Function ordering conflicts during 3-way reconciliation | Implemented sorted union merge strategy in `SwarmMergeSolver` | **Closed** |
 | **ISS-050-01** | Phase 50 | SLSA Attestation | Reproducibility timestamp format mismatch | Standardized on ISO-8601 UTC in `SLSAAttestationGenerator` | **Closed** |
+| **ISS-BENCH-01** | Benchmark | Provider Subprocess | Subprocess execution missing check=False in provider probe | Added explicit `check=False` to `subprocess.run` in `providers.py` | **Closed** |
+| **ISS-BENCH-02** | Benchmark | Context Budgeting | Skeletonizer stripping AST comments containing facts | Preserved docstrings and added explicit target_symbol support | **Closed** |
+| **ISS-BENCH-03** | Benchmark | Local Model Security | Ollama runtime and in-repo cache containment violations | Implemented strict rejection in `validate_local_runtime_command` | **Closed** |
 
 ---
 
-## 2. Implementation Milestones (Phases 41–50)
+## 2. Implementation Milestones (Phases 41–50 & Benchmarks)
 * [x] **Phase 41**: BPE token accounting, command distillers (pytest/cargo/ruff/vitest), session checkpoint journal, base ship linters.
 * [x] **Phase 42**: TOON v4.1 serializer, AST skeletonizer, Merkle invalidator, 7-vector Ship Gate Cockpit.
 * [x] **Phase 43**: CCR chunk store, GroundingVerifier / HalluGuard, InvariantGraph, FailureLedger, MistakeMiner.
@@ -57,3 +60,4 @@
 * [x] **Phase 48**: ORM schema drift auditor, cognitive complexity decomposer, and runtime type guard synthesizer.
 * [x] **Phase 49**: Spec-to-code traceability scanner, agent flight recorder, and swarm 3-way AST merge solver.
 * [x] **Phase 50**: SLSA Level 3 cryptographic build attestation, copyleft license scanner, least-privilege IAM synthesizer, and flagship v0.3.0 release.
+* [x] **Benchmark Harness (B1–B6)**: Typed contracts, atomic reporting, 40 declared fixtures, provider descriptors, privacy secret redactions, ContextPacker/CCR probes, multi-agent lock mesh verification, and consumer hardware profiling.

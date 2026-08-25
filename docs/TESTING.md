@@ -50,3 +50,26 @@ See [Testing Guide](developer/testing-guide.md).
 * Unit tests for 7-vector Ship Cockpit: `tests/test_phase42_ship_cockpit.py`.
 * Unit tests for CCR store and GroundingVerifier: `tests/test_phase43_ccr_grounding.py`.
 * Unit tests for InvariantGraph, FailureLedger, and MistakeMiner: `tests/test_phase43_mistake_memory.py`.
+
+---
+
+## 4. Benchmark Harness Verification (Phases B1–B6)
+
+The reproducible benchmark harness provides descriptor-driven validation across provider routes, privacy redaction, context budgeting, multi-agent lock coordination, and consumer hardware profiling:
+
+```bash
+# Run all benchmark test suites (contracts, runner, providers, privacy, context, coordination, local)
+.venv/Scripts/python.exe -m pytest tests/test_benchmark_*.py -q
+
+# Verify the detached-worker boundary without launching a live model or provider
+.venv/Scripts/python.exe -m pytest tests/test_benchmark_jobs.py tests/test_cli_benchmark.py -q
+
+# Run all 40 declared scenarios and output atomic results to research/benchmark/B1/
+.venv/Scripts/python.exe -m scripts.benchmarks.run --all --output research/benchmark/B1
+```
+
+Key benchmark guarantees:
+- **Zero-Network CI Determinism**: Every test executes offline via `tests/fixtures/benchmarks/`.
+- **Secret Redaction**: All outputs and exceptions sanitize credentials to `[REDACTED:<TYPE>]`.
+- **Execution Safety**: Subprocesses require explicit `--allow-live-route` or `--allow-model-download` opt-in, invoke `shell=False`, and reject `ollama`.
+- **Detached Live Execution**: `rush benchmark run` writes a durable job before launching a detached worker with redirected logs; `rush benchmark status` reads that state without process attachment.

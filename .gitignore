@@ -28,3 +28,8 @@ htmlcov/
 # local research directory
 research/
 
+# Rush local runtime state and Windows cache-path artifacts
+.rush/cache/
+.rush/sessions/
+.rush/*.db
+%SystemDrive%/

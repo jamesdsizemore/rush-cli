@@ -116,3 +116,22 @@ src/rush/tools/
 └── pr_synthesize.py  # Semantic PR card synthesizer
 ```
 
+## Benchmark Harness & Verification Modules (Phases B1–B6)
+```
+scripts/
+└── benchmarks/
+    ├── contracts.py     # Dataclass models & schema validation
+    ├── fixtures.py      # Path-contained JSON fixture loader
+    ├── run.py           # CLI runner & real-time terminal reporter
+    ├── reporting.py     # Atomic temporary-file-and-replace writer
+    ├── providers.py     # Provider route descriptor execution & scrubbing
+    ├── protocol.py      # Multi-dialect envelope parser & quarantine
+    ├── privacy.py       # Secret redaction & bounded parser limits
+    ├── context.py       # ContextPacker & CCRStore retrieval probes
+    ├── coordination.py  # MeshLockManager & CheckpointJournal probes
+    └── local.py         # Hardware profiling & Ollama exclusion
+tests/
+└── fixtures/
+    └── benchmarks/      # 40 declared scenario & candidate JSON fixtures
+```
+

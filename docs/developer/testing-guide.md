@@ -45,3 +45,22 @@ Layer 9: Packaging & Clean Distribution Tests (Wheel and sdist installation smok
 - Run `pytest tests/test_phase01_truth_audit.py` to ensure fixture registration parity.
 
 See [Testing Reference](../TESTING.md) and [Tool Development Guide](tool-development.md).
+
+---
+
+## 4. Benchmark Harness & Gate Verifications (Phases B1–B6)
+
+The benchmark harness tests 40 declared scenarios across 6 core domains:
+
+```bash
+# Run all benchmark test suites (contracts, runner, providers, privacy, context, coordination, local)
+.venv/Scripts/python.exe -m pytest tests/test_benchmark_*.py -q
+
+# Run all 40 benchmark scenarios and print terminal execution table
+.venv/Scripts/python.exe -m scripts.benchmarks.run --all
+```
+
+Key invariants:
+- **Zero-Network Invariant**: All tests execute using local JSON fixtures in `tests/fixtures/benchmarks/`.
+- **Secret Redaction**: Credentials never appear in output JSON or logs; sanitized to `[REDACTED:<TYPE>]`.
+- **Ollama Rejection**: The `ollama` runtime and repository-local model caches are rejected.

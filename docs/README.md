@@ -136,3 +136,10 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush dead-asset`: Unreferenced asset and dead media pruner.
 * `rush pr-synthesize`: Structured semantic GitHub PR card generator.
 
+## Benchmark Harness & Verification Framework (Phases B1–B6)
+* Deterministic offline test suite across 40 scenarios (`python -m scripts.benchmarks.run --all`).
+* Descriptor-driven provider/CLI routes, secret redaction, and protocol quarantine.
+* Exact byte restoration via CCR chunk caching and `ContextPacker` token reduction verification.
+* Host hardware profiling and strict Ollama rejection.
+* Formal gate decision records in [`docs/reports/final-handoff.md`](reports/final-handoff.md).
+

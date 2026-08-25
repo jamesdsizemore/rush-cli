@@ -44,3 +44,4 @@
 | **Phase 48** | DB Drift, Simplify & Strictify | `rush db-drift`, `rush simplify`, `rush strictify`, `rush_db_drift`, `rush_simplify` | **Complete** |
 | **Phase 49** | Traceability, Flight Recorder & Swarm Merge | `rush trace`, `rush flight-recorder`, `rush swarm-merge`, `rush simulate-ci` | **Complete** |
 | **Phase 50** | SLSA Attestation, Security Suite & Flagship Release | `rush attest`, `rush license-matrix`, `rush iam-audit`, `rush dead-asset`, `rush pr-synthesize` | **Complete** |
+| **Benchmark Harness** | Reproducible Verification & Provider Routing (Phases B1–B6) | `scripts.benchmarks.run`, 40 declared scenarios, 11 decision records, CI harness | **Complete** |
