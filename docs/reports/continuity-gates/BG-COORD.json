@@ -1,0 +1,19 @@
+{
+  "gate_id": "BG-COORD",
+  "status": "pass",
+  "scope": "Narrow deterministic local coordination baseline for Phase 4 entry; it is not approval for a daemon, automatic merge, or external protocol.",
+  "source_decision_id": "B-D11",
+  "evidence": {
+    "test_command": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_coordination.py -q",
+    "assertions": [
+      "a second local agent cannot acquire an already-held lock",
+      "the coordination probe reports checkpoint restoration and two replay events"
+    ]
+  },
+  "unblocks": ["P4-T01"],
+  "limitations": [
+    "P4 direct tests must prove user-visible ownership/conflict/staleness and receipt semantics.",
+    "This record approves no automatic merge, retry, external service, or provider protocol."
+  ],
+  "reproduction": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_coordination.py -q"
+}
