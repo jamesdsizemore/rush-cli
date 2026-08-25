@@ -138,6 +138,13 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                         "operation": "restore",
                         "name": "handoff",
                     },
+                    {
+                        "path": str(tmp_path),
+                        "operation": "provider_resume",
+                        "name": "handoff",
+                        "provider_id": "zai",
+                        "allow_network": True,
+                    },
                 ]
                 continuity_payloads = []
                 for arguments in continuity_calls:
@@ -192,6 +199,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "ok",
         "ok",
         "ok",
+        "skipped",
     ]
     assert "--allow-cache-write" in continuity_payloads[0]["summary"]
     assert continuity_payloads[1]["raw"]["name"] == "handoff"
@@ -203,6 +211,11 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "authority": "historical_evidence",
         "state": "quarantined",
         "present": True,
+    }
+    assert continuity_payloads[4]["metadata"]["provider_route"] == {
+        "provider_id": "zai",
+        "transport": "cli",
+        "state": "deferred",
     }
     for continuity_payload in continuity_payloads:
         assert {"tool", "status", "duration_ms", "summary", "findings"} <= {

@@ -194,3 +194,12 @@ def test_session_resume_exposes_deferred_provider_state_without_invocation(
     payload = json.loads(result.output)
     assert payload["status"] == "skipped"
     assert payload["metadata"]["provider_route"]["state"] == "deferred"
+
+
+def test_session_resume_help_lists_only_implemented_direct_routes() -> None:
+    result = CliRunner().invoke(cli, ["session", "resume", "--help"])
+    assert result.exit_code == 0
+    assert "claude_code, codex_cli," in result.output
+    assert "antigravity_cli" in result.output
+    assert "9router_api" not in result.output
+    assert "omniroute_api" not in result.output

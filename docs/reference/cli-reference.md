@@ -1,5 +1,9 @@
 # CLI reference
 
+## `session resume`
+
+`rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI. It never shells out, retains provider output, retries, or alters authentication. Z.AI is intentionally deferred; unimplemented 9Router/OmniRoute IDs return canonical `skipped` results.
+
 ## Session continuity
 
 `rush session save NAME --file PATH --allow-cache-write --json`, `rush session list --json`, and `rush session restore NAME --json` are the session lifecycle. Save is denied by default; every `--json` response is a `ToolResult`.

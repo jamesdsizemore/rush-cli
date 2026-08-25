@@ -1,5 +1,9 @@
 # Security & Supply Chain Protection
 
+## Provider-continuation boundary
+
+Provider continuation is an explicit local process invocation with no shell, no package installation, no profile mutation, and no retained provider output. Permission is per invocation. Unsupported router routes are skipped rather than guessed or redirected.
+
 Security shouldn't be an afterthought that only happens once a year during an external audit. In high-velocity development, security checks need to happen continuously as code is written.
 
 Rush provides defense-in-depth across code privacy, secret detection, dependency vulnerabilities, and open-source license compliance.

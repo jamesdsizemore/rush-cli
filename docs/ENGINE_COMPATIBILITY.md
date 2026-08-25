@@ -1,5 +1,9 @@
 # Engine compatibility and integration contract
 
+## Continuity route engines
+
+The supported direct engines are Claude Code (`claude_code`), Codex CLI (`codex_cli`), and Antigravity CLI (`antigravity_cli`). Z.AI is deferred; 9Router and OmniRoute remain inventory entries rather than continuity engines.
+
 A catalog command is not automatically a live scanner. Rush labels every tool with one maturity:
 
 - `real_adapter`: Rush discovers a local binary, invokes a bounded list-only command, parses output, and has fixture-backed reference tests.

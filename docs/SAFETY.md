@@ -1,5 +1,9 @@
 # Safety overview
 
+## Bounded provider handoff
+
+Provider resume is opt-in, projection-limited, and non-retrying. Unsupported 9Router/OmniRoute IDs return `skipped`; Z.AI is deferred without invocation. There is no automatic provider routing, OAuth flow, or profile mutation.
+
 Rush is designed to make the safe action the default.
 
 - **No implicit installs.** Missing optional engines return `skipped`.

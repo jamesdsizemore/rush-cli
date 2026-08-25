@@ -1,5 +1,9 @@
 # Configuration Schema Specification (`rush.toml`)
 
+## Provider-continuation exclusion
+
+No `[tools.continuity]` credential, endpoint, executable, or persistent network-grant schema exists. A future 9Router or OmniRoute route requires a reviewed configuration contract and matching catalog/configuration tests before exposure.
+
 ## Continuity has no persistent configuration grant
 
 There is no `[tools.continuity]` permission field. Checkpoint creation is controlled only by the per-invocation cache-write permission, so configuration remains unable to escalate local persistence.

@@ -192,6 +192,8 @@ Beginning goal: add named provider routes under one permission/redaction/provena
 
 Checklist: [ ] P5-T00 discovery [ ] P5-WP1 capability boundary [ ] P5-WP2 named routes [ ] P5-DOC audit [ ] P5-BI reconciliation [ ] P5-V checks [ ] P5-C commit.
 
+Current execution record: `claude_code`, `codex_cli`, and `antigravity_cli` now have bounded shared CLI/MCP adapters. Z.AI is deferred without invocation. 9Router CLI/gateway and OmniRoute CLI/API are enabled inventory routes but remain unimplemented continuity adapters; their individual backlog/issues are `BL-P5-02`/`ISS-P5-9ROUTER` and `BL-P5-03`/`ISS-P5-OMNIROUTE`. The P5 checklist must remain open until those route contracts and final documentation audit are complete.
+
 P5-WP1 — approved capability boundary  
 P5-T00: rtk-map providers/base.py, existing provider modules, permissions, config and provider tests; verify current CLI help; record exact approved decision IDs; checklist P5-T00.  
 P5-T01: test first that an unapproved/missing provider returns skipped with redacted provenance and no credential path. Preconditions BG-PROV for any enabled route. Allowed src/rush/providers/base.py, src/rush/providers/openai.py, src/rush/providers/anthropic.py, src/rush/permissions.py, src/rush/tools/continuity.py, tests/test_providers.py, tests/test_permissions.py. Do-not-touch credentials/config/dependencies until explicit approved task. Initial failure: route leaks/assumes credential or lacks fallback. Implement smallest capability policy seam. Negative: no automatic cross-provider retry or token/keychain read. Docs: provider/privacy/permissions. Backlog BL-P5-01; issue per unapproved route. Verify focused/full/Ruff. Accept: skipped/redaction/provenance tests green. Checklist P5-WP1/P5-T01.
@@ -568,6 +570,8 @@ Every current docs/ file is listed below. **U-Pn** is an update required by the 
 | docs/workflows/multi_agent_mesh_and_traceability.md | Workflow: Multi-Agent Mesh Coordination & Traceability | R / R / R / U-P4 / R |
 | docs/workflows/supply_chain_security_and_flagship_release.md | Workflow: Supply Chain Security & Flagship Release | R / R / R / R / R |
 Matrix complete: every non-U phase is an explicit review-only audit. A changed effect outside §3A requires an issue, matrix amendment, and phase-document-pack update before implementation.
+
+P5 matrix amendment: `docs/JSON_SCHEMA.md` was changed by the initial P5 implementation although it had a review-only matrix cell. `ISS-P5-DOC-SCOPE` records that scope exception; its content remains reviewed and no further JSON-schema change is authorized by P5 without a linked task and matrix update.
 ## 9. Unresolved decisions that block implementation
 
 | Decision | Blocked task | Issue / backlog | Smallest evidence required |

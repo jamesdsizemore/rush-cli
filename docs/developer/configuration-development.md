@@ -1,5 +1,9 @@
 # Configuration Subsystem Development Guide
 
+## Provider-route configuration rule
+
+Do not add arbitrary provider environment, endpoint, or credential tables. The current continuation contract has no persistent provider configuration. A future router/API route needs a named `TOOL_SPECS`-backed schema, documentation update, permission tests, and redaction tests before configuration is accepted.
+
 ## Continuity is intentionally not configuration
 
 Do not add a `rush.toml` flag that grants session writes. The existing invocation-scoped `ExecutionPermissions(cache_write=True)` contract is the authorization boundary and is tested as denied by default.

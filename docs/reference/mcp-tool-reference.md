@@ -1,5 +1,9 @@
 # MCP tool reference
 
+## `rush_continuity` provider resume
+
+The `provider_resume` operation accepts a checkpoint name and supported provider ID and returns the canonical continuity `ToolResult`. It has CLI/MCP parity for permission, bounded projection, skipped/unavailable states, and output suppression. It does not yet execute 9Router or OmniRoute routes; Z.AI is deferred.
+
 ## `rush_continuity`
 
 Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional checkpoint `name`, `files`, and `allow_cache_write`. The result is canonical JSON, with denied writes and absent checkpoints represented by `status: "skipped"`.
