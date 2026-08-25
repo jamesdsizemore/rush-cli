@@ -2,7 +2,7 @@
 
 ## Provider resume
 
-Resume requires `--allow-network`, uses typed argv with no shell, and discards provider stdout/stderr rather than retaining an unbounded buffer. It does not read/write credentials or change provider profiles.
+Resume requires `--allow-network`. CLI routes use typed argv with no shell and discard provider stdout/stderr; OmniRoute uses one fixed localhost HTTP request and discards the response after semantic validation. Rush does not read/write credentials or change provider profiles.
 
 Rush prioritizes code security, execution isolation, and responsible disclosure.
 

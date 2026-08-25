@@ -2,7 +2,7 @@
 
 ## Provider-resume setup
 
-No MCP client configuration, API key, or OAuth setting is required or accepted by Rush for provider continuation. Clients call the local `rush_continuity` tool and must request permission for the supported user-owned CLI routes. Do not configure 9Router or OmniRoute as resume providers yet.
+No MCP client configuration, API key, or OAuth setting is required or accepted by Rush for provider continuation. Clients call the local `rush_continuity` tool and must request permission for supported user-owned CLI routes or the fixed-loopback OmniRoute API route. Do not configure 9Router as a resume provider yet.
 
 Configure Rush as a local Model Context Protocol (MCP) server across Claude Desktop, Claude Code, Cursor, Windsurf, Zed, and other AI coding assistants.
 

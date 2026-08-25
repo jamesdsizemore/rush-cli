@@ -2,7 +2,7 @@
 
 ## Bounded provider handoff
 
-Provider resume is opt-in, projection-limited, and non-retrying. Unsupported 9Router/OmniRoute IDs return `skipped`; Z.AI is deferred without invocation. There is no automatic provider routing, OAuth flow, or profile mutation.
+Provider resume is opt-in, projection-limited, and non-retrying. OmniRoute uses one fixed loopback API request and validates semantic completion without retaining its response. Unsupported 9Router returns `skipped`; Z.AI is deferred without invocation. There is no automatic provider routing, OAuth flow, or profile mutation.
 
 Rush is designed to make the safe action the default.
 

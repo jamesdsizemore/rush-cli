@@ -2,7 +2,7 @@
 
 ## `rush_continuity` provider resume
 
-The `provider_resume` operation accepts a checkpoint name and supported provider ID and returns the canonical continuity `ToolResult`. It has CLI/MCP parity for permission, bounded projection, skipped/unavailable states, and output suppression. It does not yet execute 9Router or OmniRoute routes; Z.AI is deferred.
+The `provider_resume` operation accepts a checkpoint name and supported provider ID and returns the canonical continuity `ToolResult`. It has CLI/MCP parity for permission, bounded projection, states, and output suppression. It executes the fixed-loopback OmniRoute route after permission and semantic response validation; 9Router is not implemented and Z.AI is deferred.
 
 ## `rush_continuity`
 

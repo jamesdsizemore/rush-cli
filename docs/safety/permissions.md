@@ -2,7 +2,7 @@
 
 ## Provider continuation permission
 
-`provider_resume` requires explicit network permission (`--allow-network`) before Rush invokes a supported user-owned CLI. The permission does not grant credential reads, OAuth/browser access, automatic fallback, automatic retry, or a 9Router/OmniRoute API route.
+`provider_resume` requires explicit network permission (`--allow-network`) before Rush invokes a supported user-owned CLI or the fixed-loopback OmniRoute API. The permission does not grant credential reads, OAuth/browser access, automatic fallback, automatic retry, or a 9Router API route.
 
 Rush distinguishes ordinary local inspection from work that can be expensive, mutating, browser-driven, or networked.
 

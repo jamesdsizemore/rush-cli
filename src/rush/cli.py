@@ -2033,7 +2033,7 @@ def session_restore_cmd(name: str, as_json: bool) -> None:
     "--provider",
     "provider_id",
     required=True,
-    help="Implemented direct CLI route: claude_code, codex_cli, or antigravity_cli.",
+    help="Implemented route: claude_code, codex_cli, antigravity_cli, or omniroute_api.",
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")

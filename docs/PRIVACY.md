@@ -2,7 +2,7 @@
 
 ## Provider-resume data boundary
 
-Only `current_goal`, `open_work`, and `freshness` are projected to a supported CLI. Historic instructions, transcripts, failed patches, credentials, and provider output are excluded and no provider response is persisted. Router/API transport needs its own reviewed privacy contract before activation.
+Only `current_goal`, `open_work`, and `freshness` are projected to a supported CLI or OmniRoute's fixed local API. Historic instructions, transcripts, failed patches, credentials, and provider output are excluded and no provider response is persisted. 9Router API transport remains inactive until its separately reviewed key/model contract exists.
 
 Rush is strictly local-first. It contains no telemetry, analytics tracking, external data collection, or remote reporting servers.
 

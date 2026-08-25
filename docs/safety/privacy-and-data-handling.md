@@ -2,7 +2,7 @@
 
 ## Provider-resume projection
 
-Continuity sends only current goal, open work, and freshness to a supported CLI. It excludes historical instructions, transcripts, failed patches, credentials, and provider output; those values are neither returned nor persisted. Z.AI is never invoked, and router/API transport remains inactive pending its own contract.
+Continuity sends only current goal, open work, and freshness to a supported CLI or OmniRoute's fixed local API. It excludes historical instructions, transcripts, failed patches, credentials, and provider output; those values are neither returned nor persisted. Z.AI is never invoked, and 9Router transport remains inactive pending its own key/model contract.
 
 ## Local behavior
 

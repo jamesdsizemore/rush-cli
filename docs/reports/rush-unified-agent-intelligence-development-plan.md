@@ -192,7 +192,7 @@ Beginning goal: add named provider routes under one permission/redaction/provena
 
 Checklist: [ ] P5-T00 discovery [ ] P5-WP1 capability boundary [ ] P5-WP2 named routes [ ] P5-DOC audit [ ] P5-BI reconciliation [ ] P5-V checks [ ] P5-C commit.
 
-Current execution record: `claude_code`, `codex_cli`, and `antigravity_cli` now have bounded shared CLI/MCP adapters. Z.AI is deferred without invocation. 9Router CLI/gateway and OmniRoute CLI/API are enabled inventory routes but remain unimplemented continuity adapters; their individual backlog/issues are `BL-P5-02`/`ISS-P5-9ROUTER` and `BL-P5-03`/`ISS-P5-OMNIROUTE`. The P5 checklist must remain open until those route contracts and final documentation audit are complete.
+Current execution record: `claude_code`, `codex_cli`, and `antigravity_cli` have bounded shared CLI/MCP adapters. `omniroute_api` has a fixed-loopback, no-Rush-credential adapter at `127.0.0.1:20128/v1/chat/completions`, with `model: auto`, one bounded projection, and semantic response validation. Z.AI is deferred without invocation. 9Router CLI/gateway remains the only unimplemented enabled route because its documented API requires a user-selected model and API-key contract; its records are `BL-P5-02`/`ISS-P5-9ROUTER`. The P5 checklist remains open until that route and the final audit are complete.
 
 P5-WP1 — approved capability boundary  
 P5-T00: rtk-map providers/base.py, existing provider modules, permissions, config and provider tests; verify current CLI help; record exact approved decision IDs; checklist P5-T00.  

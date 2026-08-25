@@ -2,7 +2,7 @@
 
 ## `session resume`
 
-`rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI. It never shells out, retains provider output, retries, or alters authentication. Z.AI is intentionally deferred; unimplemented 9Router/OmniRoute IDs return canonical `skipped` results.
+`rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli|omniroute_api} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI or OmniRoute's fixed loopback API. It never shells out for API use, retains provider output, retries, or alters authentication. Z.AI is intentionally deferred; unimplemented 9Router returns canonical `skipped`.
 
 ## Session continuity
 

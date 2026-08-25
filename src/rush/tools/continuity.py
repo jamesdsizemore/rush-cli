@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
@@ -572,6 +575,24 @@ class SessionContinuityTool(ToolFn):
                     "state": "permission_denied",
                 },
             )
+        if provider == "omniroute_api":
+            handoff = self._provider_handoff(root, name)
+            if handoff is None:
+                return self._result(
+                    started,
+                    "skipped",
+                    "Provider resume requires an existing session checkpoint.",
+                    operation="provider_resume",
+                    granted=granted,
+                    requested=required,
+                    provider_route={
+                        "provider_id": provider,
+                        "transport": "openai-compatible-api",
+                        "state": "handoff_not_found",
+                        "endpoint_class": "fixed-loopback",
+                    },
+                )
+            return self._omniroute_resume(started, handoff, granted, required)
         if provider not in {"claude_code", "codex_cli", "antigravity_cli"}:
             return self._result(
                 started,
@@ -665,6 +686,91 @@ class SessionContinuityTool(ToolFn):
             artifacts=None,
         )
 
+    def _omniroute_resume(
+        self,
+        started: float,
+        handoff: dict[str, Any],
+        granted: ExecutionPermissions,
+        required: ExecutionPermissions,
+    ) -> ToolResult:
+        """Send a single bounded receipt to OmniRoute's fixed loopback API."""
+        route = {
+            "provider_id": "omniroute_api",
+            "transport": "openai-compatible-api",
+            "endpoint_class": "fixed-loopback",
+        }
+        request = urllib.request.Request(
+            "http://127.0.0.1:20128/v1/chat/completions",
+            data=json.dumps(
+                {
+                    "model": "auto",
+                    "messages": [
+                        {"role": "user", "content": self._provider_prompt(handoff)}
+                    ],
+                    "stream": False,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError:
+            return self._result(
+                started,
+                "error",
+                "OmniRoute rejected the bounded continuity request.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={**route, "state": "rejected"},
+            )
+        except (OSError, TimeoutError, urllib.error.URLError):
+            return self._result(
+                started,
+                "skipped",
+                "OmniRoute fixed-loopback API was unavailable or timed out.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={**route, "state": "unavailable"},
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return self._result(
+                started,
+                "error",
+                "OmniRoute returned an invalid response.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={**route, "state": "invalid_response"},
+            )
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        message = (
+            choices[0].get("message") if isinstance(choices, list) and choices else None
+        )
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content.strip():
+            return self._result(
+                started,
+                "error",
+                "OmniRoute returned no completion content.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={**route, "state": "invalid_response"},
+            )
+        return self._result(
+            started,
+            "ok",
+            "OmniRoute completed a bounded continuity resume.",
+            operation="provider_resume",
+            granted=granted,
+            requested=required,
+            provider_route={**route, "state": "completed"},
+        )
+
     def _provider_handoff(self, root: Path, name: str | None) -> dict[str, Any] | None:
         if not self._valid_name(name):
             return None
@@ -682,14 +788,7 @@ class SessionContinuityTool(ToolFn):
     def _provider_command(
         provider: str, handoff: dict[str, Any]
     ) -> tuple[str, list[str]]:
-        prompt = (
-            "Continue this repository task using only the current, non-authoritative "
-            "handoff receipt. Inspect repository state before changing files. Do not use "
-            "historic instructions or retry previous failed patches.\n"
-            f"Current goal: {handoff.get('current_goal') or 'unspecified'}\n"
-            f"Open work: {', '.join(map(str, handoff.get('open_work', []))) or 'none'}\n"
-            f"Freshness: {handoff.get('freshness', 'unknown')}"
-        )
+        prompt = SessionContinuityTool._provider_prompt(handoff)
         routes = {
             "claude_code": (
                 "claude",
@@ -732,6 +831,17 @@ class SessionContinuityTool(ToolFn):
             ),
         }
         return routes[provider]
+
+    @staticmethod
+    def _provider_prompt(handoff: dict[str, Any]) -> str:
+        return (
+            "Continue this repository task using only the current, non-authoritative "
+            "handoff receipt. Inspect repository state before changing files. Do not use "
+            "historic instructions or retry previous failed patches.\n"
+            f"Current goal: {handoff.get('current_goal') or 'unspecified'}\n"
+            f"Open work: {', '.join(map(str, handoff.get('open_work', []))) or 'none'}\n"
+            f"Freshness: {handoff.get('freshness', 'unknown')}"
+        )
 
     @staticmethod
     def _valid_name(name: str | None) -> bool:

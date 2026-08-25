@@ -210,7 +210,7 @@ def test_continuity_provider_resume_defers_zai_without_starting_a_process(
     }
 
 
-@pytest.mark.parametrize("provider_id", ["9router_api", "omniroute_api"])
+@pytest.mark.parametrize("provider_id", ["9router_api"])
 def test_continuity_provider_resume_does_not_invoke_unimplemented_router_routes(
     monkeypatch, provider_id, tmp_path
 ):
@@ -228,6 +228,179 @@ def test_continuity_provider_resume_does_not_invoke_unimplemented_router_routes(
     )
     assert result["status"] == "skipped"
     assert result["metadata"]["provider_route"]["state"] == "unavailable"
+
+
+def test_continuity_provider_resume_posts_only_bounded_handoff_to_omniroute(
+    monkeypatch, tmp_path
+):
+    import json
+
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    saved = SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        handoff={
+            "current_goal": "finish the router adapter",
+            "open_work": ["verify the bounded API request"],
+            "historic_instruction": "do not expose this history",
+            "failure_fingerprint": "failed-patch-must-not-leave",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert saved["status"] == "ok"
+    observed: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"accepted"}}]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def open_request(request, *, timeout):
+        observed["url"] = request.full_url
+        observed["method"] = request.get_method()
+        observed["body"] = request.data.decode("utf-8")
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", open_request)
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id="omniroute_api",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    payload = json.loads(str(observed["body"]))
+    assert observed["url"] == "http://127.0.0.1:20128/v1/chat/completions"
+    assert observed["method"] == "POST"
+    assert observed["timeout"] == 30.0
+    assert payload["model"] == "auto"
+    assert payload["stream"] is False
+    assert "finish the router adapter" in payload["messages"][0]["content"]
+    assert "do not expose this history" not in payload["messages"][0]["content"]
+    assert "failed-patch-must-not-leave" not in payload["messages"][0]["content"]
+    assert result["status"] == "ok"
+    assert result["raw"] is None
+    assert result["metadata"]["provider_route"] == {
+        "provider_id": "omniroute_api",
+        "transport": "openai-compatible-api",
+        "state": "completed",
+        "endpoint_class": "fixed-loopback",
+    }
+
+
+@pytest.mark.parametrize("response_body", [b"not-json", b'{"choices":[]}'])
+def test_omniroute_provider_resume_rejects_nonsemantic_success(
+    monkeypatch, response_body, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return response_body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id="omniroute_api",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "error"
+    assert result["raw"] is None
+    assert result["metadata"]["provider_route"]["state"] == "invalid_response"
+
+
+def test_omniroute_resume_requires_network_permission_before_request(
+    monkeypatch, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *_args, **_kwargs: pytest.fail("must not request"),
+    )
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id="omniroute_api",
+        permissions=ExecutionPermissions(),
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["provider_route"]["state"] == "permission_denied"
+
+
+def test_omniroute_resume_surfaces_rejected_response_without_body(
+    monkeypatch, tmp_path
+):
+    import urllib.error
+
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            urllib.error.HTTPError(
+                "http://127.0.0.1:20128/v1/chat/completions", 401, "", {}, None
+            )
+        ),
+    )
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff",
+        provider_id="omniroute_api",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "error"
+    assert result["raw"] is None
+    assert result["metadata"]["provider_route"]["state"] == "rejected"
 
 
 @pytest.mark.parametrize(

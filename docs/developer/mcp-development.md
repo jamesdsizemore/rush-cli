@@ -2,7 +2,7 @@
 
 ## Continuity provider registration
 
-Do not add transport-specific provider logic. `provider_resume` is routed through `SessionContinuityTool`, so CLI and MCP share permission checks, projection, structured skipped states, and output suppression. A 9Router/OmniRoute adapter must be implemented and tested in that shared tool before it is registered.
+Do not add transport-specific provider logic. `provider_resume` is routed through `SessionContinuityTool`, so CLI and MCP share permission checks, projection, structured states, and output suppression. OmniRoute's fixed-loopback adapter lives there; a 9Router adapter must likewise be implemented and tested in that shared tool before it is registered.
 
 ## Continuity registration
 

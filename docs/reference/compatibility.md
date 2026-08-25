@@ -2,7 +2,7 @@
 
 ## Provider continuation
 
-Compatibility is limited to preinstalled, authenticated Claude Code, Codex, and Antigravity CLI profiles. 9Router CLI/gateway and OmniRoute CLI/API require route-specific adapter contracts before they can be listed as supported continuation providers.
+Compatibility includes preinstalled, authenticated Claude Code, Codex, and Antigravity CLI profiles plus OmniRoute's fixed local OpenAI-compatible API. 9Router CLI/gateway still requires its API-key and selected-model adapter contract before it can be listed as a supported continuation provider.
 
 Defines exact platform, language ecosystem, and engine version compatibility boundaries for Rush CLI.
 
