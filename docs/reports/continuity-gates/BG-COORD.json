@@ -5,6 +5,7 @@
   "source_decision_id": "B-D11",
   "evidence": {
     "test_command": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_coordination.py -q",
+    "observed_result": "3 passed",
     "assertions": [
       "a second local agent cannot acquire an already-held lock",
       "the coordination probe reports checkpoint restoration and two replay events"
