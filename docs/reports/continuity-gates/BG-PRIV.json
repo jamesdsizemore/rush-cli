@@ -1,0 +1,24 @@
+{
+  "gate_id": "BG-PRIV",
+  "status": "pass",
+  "scope": "Deterministic privacy/parser baseline for continuity persistence.",
+  "source_decision_id": "B-D03",
+  "source_status": "pass",
+  "evidence_mode": "deterministic sanitized fixture",
+  "evidence": {
+    "fixture": "tests/fixtures/benchmarks/privacy_cases.json",
+    "test_command": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_privacy.py -q",
+    "observed_result": "4 passed",
+    "sanitized_assertions": [
+      "secret-shaped values are redacted",
+      "bounded parser inputs do not expose raw secret values",
+      "candidate binary validation rejects unsafe paths"
+    ]
+  },
+  "unblocks": ["P2-T01"],
+  "limitations": [
+    "This gate does not attest the P2 persisted handoff envelope.",
+    "P2-T01 must prove redaction before checkpoint write and restore."
+  ],
+  "reproduction": ".venv/Scripts/python.exe -m pytest tests/test_benchmark_privacy.py -q"
+}

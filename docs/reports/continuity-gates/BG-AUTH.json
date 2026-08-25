@@ -1,0 +1,18 @@
+{
+  "gate_id": "BG-AUTH",
+  "status": "pending_p2_t01",
+  "scope": "Authority and persistence behavior for redacted local session handoff.",
+  "supersedes_false_mapping": {
+    "source_decision_id": "B-D01",
+    "source_status": "inconclusive",
+    "reason": "B1 evaluates harness foundation and explicitly unblocks no product task; it does not prove replay, tombstone, or historic-instruction authority behavior."
+  },
+  "required_pass_evidence": [
+    "historic instruction is stored only as non-actionable evidence",
+    "replayed or restored handoff cannot become current authority",
+    "tombstoned or missing evidence remains explicit",
+    "current dependency changes mark the handoff stale"
+  ],
+  "unblocks_after_pass": ["P2-T02"],
+  "reproduction": ".venv/Scripts/python.exe -m pytest tests/test_session_memory.py tests/test_phase41_memory_ship.py -q"
+}
