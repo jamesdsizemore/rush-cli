@@ -188,7 +188,7 @@ P4 definition of done: handoff exposes owner/conflict/stale/replay/failure evide
 
 ### Phase 5 — approved interoperability and hardening
 
-Beginning goal: add named provider routes under one permission/redaction/provenance contract. The implementation inventory is fixed: Claude Code, Codex CLI, Antigravity (`agy`), 9Router CLI/gateway, and OmniRoute CLI/API are enabled routes; Z.AI is explicitly deferred. Entry: P4 commit; route evidence is repaired and recorded per enabled route. In scope: existing LLMProvider and existing OpenAI/Anthropic providers; only approved adapter seams. Deferred: Z.AI, automatic routing, credential store, generic endpoint substitution, model selection.
+Beginning goal: add named provider routes under one permission/redaction/provenance contract. The implementation inventory is fixed: Claude Code, Codex CLI, Antigravity (`agy`), 9Router CLI/gateway, and OmniRoute CLI/API are enabled routes; Z.AI is explicitly deferred. Entry: P4 commit; route evidence is repaired and recorded per enabled route. In scope: existing LLMProvider and existing OpenAI/Anthropic providers; only approved adapter seams. Deferred: Z.AI, automatic routing, credential store, generic endpoint substitution, and automatic model selection.
 
 Checklist: [x] P5-T00 discovery [x] P5-WP1 capability boundary [ ] P5-WP2 named routes [x] P5-DOC audit [x] P5-BI reconciliation [x] P5-V checks [ ] P5-C commit.
 
