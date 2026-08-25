@@ -2188,18 +2188,17 @@ def context_group() -> None:
 
 @context_group.command(name="retrieve")
 @click.argument("chunk_hash")
-def context_retrieve_cmd(chunk_hash: str) -> None:
-    """Retrieve raw content from CCR SQLite chunk store by hash."""
-    from rush.token_economy.ccr_store import CCRStore
+@click.option("--json", "as_json", is_flag=True, help="Emit canonical ToolResult JSON.")
+def context_retrieve_cmd(chunk_hash: str, as_json: bool) -> None:
+    """Retrieve a CCR chunk through the shared continuity contract."""
+    from rush.tools.continuity import SessionContinuityTool
 
-    store = CCRStore()
-    content = store.retrieve_chunk(chunk_hash)
-    if content is None:
-        click.echo(
-            f"Error: Chunk hash '{chunk_hash}' not found in CCR store.", err=True
-        )
-        sys.exit(1)
-    click.echo(content)
+    _render_session_result(
+        SessionContinuityTool().run(
+            Path.cwd(), operation="context_retrieve", context_handle=chunk_hash
+        ),
+        as_json,
+    )
 
 
 @context_group.command(name="mistakes")
@@ -2221,17 +2220,21 @@ def context_mistakes_cmd() -> None:
 @click.option("--path", "-p", required=True, help="Target file path to pack.")
 @click.option("--symbol", "-s", default="", help="Focus symbol to keep verbatim.")
 @click.option("--budget", "-b", default=4000, type=int, help="Maximum token budget.")
-def context_pack_cmd(path: str, symbol: str, budget: int) -> None:
-    """Pack graph-pruned context envelope under a strict token budget."""
-    from rush.codegraph.context_packer import ContextPacker
+@click.option("--json", "as_json", is_flag=True, help="Emit canonical ToolResult JSON.")
+def context_pack_cmd(path: str, symbol: str, budget: int, as_json: bool) -> None:
+    """Pack bounded context through the shared continuity contract."""
+    from rush.tools.continuity import SessionContinuityTool
 
-    packer = ContextPacker()
-    res = packer.pack(Path(path), target_symbol=symbol, max_tokens=budget)
-    if "error" in res:
-        click.echo(f"Error: {res['error']}", err=True)
-        sys.exit(1)
-    click.echo(f"# Context Packed ({res['tokens']} tokens / max {res['max_tokens']})")
-    click.echo(res["packed_text"])
+    _render_session_result(
+        SessionContinuityTool().run(
+            Path.cwd(),
+            operation="context_pack",
+            context_path=path,
+            target_symbol=symbol,
+            token_budget=budget,
+        ),
+        as_json,
+    )
 
 
 @context_group.command(name="align-prompt")

@@ -93,12 +93,12 @@ def _register_tools(server) -> None:
         return skeletonizer.skeletonize(code, focus_symbol=focus_symbol or None)
 
     # Phase 43 Tools
-    def mcp_rush_context_retrieve(chunk_hash: str) -> str:
-        from rush.token_economy.ccr_store import CCRStore
+    def mcp_rush_context_retrieve(chunk_hash: str, path: str = ".") -> dict:
+        from rush.tools.continuity import SessionContinuityTool
 
-        store = CCRStore()
-        content = store.retrieve_chunk(chunk_hash)
-        return content or f"Error: Chunk {chunk_hash} not found"
+        return SessionContinuityTool().run(
+            Path(path), operation="context_retrieve", context_handle=chunk_hash
+        )
 
     def mcp_rush_hallu_guard(path: str = "") -> str:
         from rush.tools.hallu_guard import HalluGuard
@@ -160,14 +160,17 @@ def _register_tools(server) -> None:
     )
 
     # Phase 44 Tools
-    def mcp_rush_context_pack(path: str, symbol: str = "", budget: int = 4000) -> str:
-        from rush.codegraph.context_packer import ContextPacker
+    def mcp_rush_context_pack(path: str, symbol: str = "", budget: int = 4000) -> dict:
+        from rush.tools.continuity import SessionContinuityTool
 
-        packer = ContextPacker()
-        res = packer.pack(Path(path), target_symbol=symbol, max_tokens=budget)
-        if "error" in res:
-            return f"Error: {res['error']}"
-        return res["packed_text"]
+        target = Path(path)
+        return SessionContinuityTool().run(
+            target.parent if target.is_absolute() else Path.cwd(),
+            operation="context_pack",
+            context_path=target.name if target.is_absolute() else path,
+            target_symbol=symbol,
+            token_budget=budget,
+        )
 
     server.add_tool(
         fn=mcp_rush_context_pack,

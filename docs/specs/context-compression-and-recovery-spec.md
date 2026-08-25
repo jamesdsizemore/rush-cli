@@ -1,7 +1,7 @@
 # Specification: Context Compression & Restoration (CCR)
 
 ## 1. Overview
-Context Compression & Restoration (CCR) provides deterministic, lossless caching for large tool outputs, code chunks, and execution logs. Large outputs are persisted in a local SQLite LRU chunk store (`.rush/cache/ccr.db`) and replaced in LLM context windows with lightweight restoration tags.
+CCR stores explicitly supplied local chunks in `.rush/cache/ccr.db`. `rush context retrieve HASH --json` returns a canonical receipt with recovered content or structured `skipped`/`not_found`; it does not promise automatic capture, eviction policy, or provider delivery.
 
 ## 2. Restoration Tag Format
 ```html
