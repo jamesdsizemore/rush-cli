@@ -46,3 +46,11 @@ class MeshLockManager:
             except Exception:  # noqa: BLE001, S110
                 pass
         return False
+
+    def owner(self, file_path: Path) -> str | None:
+        """Read the owner without acquiring, releasing, or modifying a lock."""
+        lock_p = self._lock_file_for(file_path)
+        try:
+            return json.loads(lock_p.read_text(encoding="utf-8")).get("agent_id")
+        except Exception:  # noqa: BLE001
+            return None
