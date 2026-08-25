@@ -1,0 +1,37 @@
+{
+  "cases": [
+    {
+      "type": "api_key",
+      "input": "Bearer sk-proj-1234567890abcdef1234567890",
+      "expected_detector": "OPENAI_KEY"
+    },
+    {
+      "type": "github_token",
+      "input": "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+      "expected_detector": "GITHUB_TOKEN"
+    },
+    {
+      "type": "aws_key",
+      "input": "AKIAIOSFODNN7EXAMPLE",
+      "expected_detector": "AWS_KEY"
+    },
+    {
+      "type": "private_key",
+      "input": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----",
+      "expected_detector": "PRIVATE_KEY"
+    },
+    {
+      "type": "max_bytes_overflow",
+      "input": "data",
+      "byte_size": 25000000,
+      "max_bytes": 10000000
+    },
+    {
+      "type": "candidate_binary",
+      "input": "gitleaks",
+      "binary": "gitleaks",
+      "version": "8.18.0",
+      "license": "MIT"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {
+      "action": "lock_contention",
+      "file": "src/rush/tools/base.py",
+      "agent_1": "agent-primary",
+      "agent_2": "agent-secondary"
+    },
+    {
+      "action": "checkpoint_and_flight",
+      "session_id": "sess-test-01",
+      "checkpoint_name": "ckpt-01",
+      "metadata": {"task": "auth_refactor", "tests_passing": 5},
+      "files": ["src/rush/config.py", "tests/test_config.py"],
+      "events": [
+        {"type": "tool_call", "payload": {"tool": "rush_lint"}},
+        {"type": "tool_result", "payload": {"status": "pass"}}
+      ]
+    },
+    {
+      "action": "lock_release",
+      "file": "src/rush/tools/base.py",
+      "agent": "agent-primary"
+    }
+  ]
+}

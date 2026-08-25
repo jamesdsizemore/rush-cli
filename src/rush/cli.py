@@ -7,6 +7,7 @@ MCP tool calls (requirement C3 — single source of truth).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -324,6 +325,165 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
     else:
         for step in result["steps"]:
             click.echo(f"{step['tool']}: {step['state']} ({step['reason']})")
+
+
+def _benchmark_default_root() -> Path:
+    """Return the durable user-local benchmark root, never a repository path."""
+    return (
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        / "Rush"
+        / "benchmarks"
+    )
+
+
+def _benchmark_default_model_cache() -> Path:
+    """Return the durable user-local model cache, never a repository path."""
+    return (
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        / "Rush"
+        / "benchmark-model-cache"
+    )
+
+
+@cli.group()
+def benchmark() -> None:
+    """Run and inspect durable local benchmark artifacts."""
+
+
+@benchmark.command("run")
+@click.option("--scenario", type=str, default=None, help="One declared scenario ID.")
+@click.option("--all", "run_all", is_flag=True, help="Run every declared scenario.")
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=_benchmark_default_root() / "run",
+    show_default=True,
+)
+@click.option(
+    "--model-cache",
+    type=click.Path(path_type=Path),
+    default=_benchmark_default_model_cache(),
+    show_default=True,
+)
+@click.option(
+    "--allow-model-download",
+    type=str,
+    multiple=True,
+    help="Candidate ID permitted to download into the external model cache.",
+)
+@click.option(
+    "--local-runtime-executable",
+    type=click.Path(path_type=Path),
+    multiple=True,
+    help="Explicit llama.cpp and/or onnxruntime_perf_test executable; repeat as needed.",
+)
+@click.option(
+    "--allow-live-route",
+    type=str,
+    multiple=True,
+    help="Provider route ID permitted for live execution; repeat as needed.",
+)
+@click.option(
+    "--provider-executable",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Explicit provider CLI executable.",
+)
+@click.option(
+    "--router-url",
+    multiple=True,
+    help="Explicit router endpoint as NAME=URL; repeat for multiple routers.",
+)
+@click.option(
+    "--foreground",
+    is_flag=True,
+    help="Run in the invoking process; detached execution is the default.",
+)
+def benchmark_run(
+    scenario: str | None,
+    run_all: bool,
+    output: Path,
+    model_cache: Path,
+    allow_model_download: tuple[str, ...],
+    local_runtime_executable: tuple[Path, ...],
+    allow_live_route: tuple[str, ...],
+    provider_executable: Path | None,
+    router_url: tuple[str, ...],
+    foreground: bool,
+) -> None:
+    """Start a durable detached benchmark; live routes require explicit opt-in."""
+    from scripts.benchmarks.run import main as benchmark_main
+
+    argv = ["--output", str(output), "--model-cache", str(model_cache)]
+    if scenario:
+        argv.extend(["--scenario", scenario])
+    else:
+        argv.append("--all")
+    for candidate_id in allow_model_download:
+        argv.extend(["--allow-model-download", candidate_id])
+    for runtime_path in local_runtime_executable:
+        argv.extend(["--local-runtime-executable", str(runtime_path)])
+    for route_id in allow_live_route:
+        argv.extend(["--allow-live-route", route_id])
+    if provider_executable:
+        argv.extend(["--provider-executable", str(provider_executable)])
+    for endpoint in router_url:
+        argv.extend(["--router-url", endpoint])
+    if foreground:
+        raise click.exceptions.Exit(benchmark_main(argv))
+
+    from scripts.benchmarks.jobs import start_job
+
+    job = start_job(
+        job_root=output.parent / "jobs",
+        argv=argv,
+        output=output,
+    )
+    click.echo(
+        f"Started {job['job_id']}; durable state: {output.parent / 'jobs' / (job['job_id'] + '.json')}"
+    )
+
+
+@benchmark.command("status")
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=_benchmark_default_root() / "run",
+    show_default=True,
+)
+def benchmark_status(output: Path) -> None:
+    """Print durable job and scenario state without attaching to a worker."""
+    jobs_root = output.parent / "jobs"
+    if jobs_root.is_dir():
+        for path in sorted(jobs_root.glob("benchmark-*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            click.echo(
+                f"{payload.get('job_id', path.stem)}: {payload.get('state', 'unknown')}"
+            )
+    if not output.is_dir():
+        return
+    results: list[dict[str, object]] = []
+    for path in sorted(output.rglob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(payload, dict)
+            and "scenario_id" in payload
+            and "outcome" in payload
+        ):
+            results.append(payload)
+    if not results:
+        click.echo("No benchmark scenario results found.")
+        return
+    for result in results:
+        click.echo(
+            f"{result['scenario_id']}: {result['outcome']} ({result.get('duration_ms', 0)}ms)"
+        )
 
 
 # --- Subcommands (one per tool) --------------------------------------------

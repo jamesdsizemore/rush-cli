@@ -1,0 +1,60 @@
+{
+  "candidates": [
+    {
+      "candidate_id": "granite-278m-embedding",
+      "hf_repo": "ibm-granite/granite-embedding-278m-multilingual",
+      "revision": "a9cb5338491faf32b73dd17b714a31821c021bbf",
+      "artifact_url": "https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual/resolve/a9cb5338491faf32b73dd17b714a31821c021bbf/model.onnx",
+      "sha256": "aefac97b384f92932a61a19900d41c870679d5b8e6ceb682768eb153d0e31c7d",
+      "expected_size_bytes": 1112413925,
+      "license": "Apache-2.0",
+      "quantization": "ONNX",
+      "weight_file": "model.onnx",
+      "disk_size_mb": 1061,
+      "runtime_timeout_s": 120,
+      "target_profile": "C0"
+    },
+    {
+      "candidate_id": "bge-small-en-v1.5",
+      "hf_repo": "BAAI/bge-small-en-v1.5",
+      "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+      "artifact_url": "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/onnx/model.onnx?download=true",
+      "sha256": "828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35",
+      "expected_size_bytes": 133093490,
+      "license": "MIT",
+      "quantization": "ONNX",
+      "weight_file": "model.onnx",
+      "disk_size_mb": 133,
+      "runtime_timeout_s": 120,
+      "target_profile": "C0"
+    },
+    {
+      "candidate_id": "qwen2.5-coder-7b-instruct",
+      "hf_repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "revision": "13fb94bfda8c8cf22497dc57b78f391a9acb426a",
+      "artifact_url": "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/13fb94bfda8c8cf22497dc57b78f391a9acb426a/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
+      "expected_size_bytes": 4683073536,
+      "license": "Apache-2.0",
+      "quantization": "Q4_K_M",
+      "weight_file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "disk_size_mb": 4680,
+      "runtime_timeout_s": 600,
+      "target_profile": "C2"
+    },
+    {
+      "candidate_id": "phi-4-mini-instruct",
+      "hf_repo": "gaianet/Phi-4-mini-instruct-GGUF",
+      "revision": "e9a6dd9897e5392279c49972a97e39efc6425747",
+      "artifact_url": "https://huggingface.co/gaianet/Phi-4-mini-instruct-GGUF/resolve/e9a6dd9897e5392279c49972a97e39efc6425747/Phi-4-mini-instruct-Q4_K_M.gguf",
+      "sha256": "55239fbd0dc947146be056e7850d2fa3a55d0091aa2cc873767e686c3b15eeed",
+      "expected_size_bytes": 2491874624,
+      "license": "MIT",
+      "quantization": "Q4_K_M",
+      "weight_file": "phi-4-mini-instruct-q4_k_m.gguf",
+      "disk_size_mb": 2490,
+      "runtime_timeout_s": 300,
+      "target_profile": "C1"
+    }
+  ]
+}

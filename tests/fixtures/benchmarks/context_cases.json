@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "case_id": "ctx-2k-pack",
+      "budget": 2000,
+      "target_file": "src/rush/cli.py",
+      "required_facts": ["repository uses Python 3.12"]
+    },
+    {
+      "case_id": "ctx-8k-pack",
+      "budget": 8000,
+      "target_file": "src/rush/cli.py",
+      "required_facts": ["repository uses Python 3.12", "FastMCP stdio"]
+    },
+    {
+      "case_id": "ctx-16k-pack",
+      "budget": 16000,
+      "target_file": "src/rush/cli.py",
+      "required_facts": ["repository uses Python 3.12", "FastMCP stdio", "ToolResult"]
+    },
+    {
+      "case_id": "ccr-roundtrip",
+      "budget": 4000,
+      "ccr_action": "store",
+      "content": "def test_chunk(): return 42"
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+{
+  "routes": [
+    {
+      "provider_id": "openai",
+      "route_id": "openai-gpt-4o-fixture",
+      "mode": "fixture",
+      "command": ["python", "-m", "scripts.benchmarks.providers", "--fixture", "openai"],
+      "official_docs_url": "https://platform.openai.com/docs",
+      "terms_url": "https://openai.com/policies/terms-of-use",
+      "privacy_url": "https://openai.com/policies/privacy-policy",
+      "credential_boundary": "OPENAI_API_KEY",
+      "redaction_patterns": ["sk-[A-Za-z0-9_-]{20,}"],
+      "timeout_s": 30.0
+    },
+    {
+      "provider_id": "openai",
+      "route_id": "openai-codex-oauth-cli-live",
+      "mode": "oauth_cli",
+      "command": ["codex", "exec", "--ephemeral", "--json", "--sandbox", "read-only", "Reply with exactly BENCHMARK_OK. Do not use tools, read files, or modify state."],
+      "official_docs_url": "https://github.com/openai/codex",
+      "terms_url": "https://openai.com/policies/terms-of-use",
+      "privacy_url": "https://openai.com/policies/privacy-policy",
+      "credential_boundary": "local Codex OAuth profile",
+      "redaction_patterns": ["sk-[A-Za-z0-9_-]{20,}"],
+      "timeout_s": 90.0
+    },
+    {
+      "provider_id": "anthropic",
+      "route_id": "anthropic-claude-3-7-fixture",
+      "mode": "fixture",
+      "command": ["python", "-m", "scripts.benchmarks.providers", "--fixture", "anthropic"],
+      "official_docs_url": "https://docs.anthropic.com",
+      "terms_url": "https://anthropic.com/terms",
+      "privacy_url": "https://anthropic.com/privacy",
+      "credential_boundary": "ANTHROPIC_API_KEY",
+      "redaction_patterns": ["sk-ant-[A-Za-z0-9_-]{20,}"],
+      "timeout_s": 30.0
+    },
+    {
+      "provider_id": "anthropic",
+      "route_id": "anthropic-claude-code-live",
+      "mode": "oauth_cli",
+      "command": ["claude", "-p", "--output-format", "json", "--max-turns", "1", "--permission-mode", "plan", "Reply with exactly BENCHMARK_OK. Do not use tools or modify state."],
+      "official_docs_url": "https://code.claude.com/docs/en/cli-usage",
+      "terms_url": "https://anthropic.com/terms",
+      "privacy_url": "https://anthropic.com/privacy",
+      "credential_boundary": "local Claude Code OAuth profile",
+      "redaction_patterns": ["sk-ant-[A-Za-z0-9_-]{20,}"],
+      "timeout_s": 90.0
+    },
+    {
+      "provider_id": "antigravity",
+      "route_id": "antigravity-agent-fixture",
+      "mode": "fixture",
+      "command": ["python", "-m", "scripts.benchmarks.providers", "--fixture", "antigravity"],
+      "official_docs_url": "https://antigravity.google/docs",
+      "terms_url": "https://policies.google.com/terms",
+      "privacy_url": "https://policies.google.com/privacy",
+      "credential_boundary": "GEMINI_API_KEY",
+      "redaction_patterns": ["AIzaSy[A-Za-z0-9_-]{33}"],
+      "timeout_s": 30.0
+    },
+    {
+      "provider_id": "antigravity",
+      "route_id": "antigravity-cli-presence",
+      "mode": "cli",
+      "command": ["agy", "--version"],
+      "official_docs_url": "https://antigravity.google/docs/cli/install/",
+      "terms_url": "https://policies.google.com/terms",
+      "privacy_url": "https://policies.google.com/privacy",
+      "credential_boundary": "local Antigravity OAuth keyring",
+      "redaction_patterns": ["AIzaSy[A-Za-z0-9_-]{33}"],
+      "timeout_s": 30.0
+    },
+    {
+      "provider_id": "antigravity",
+      "route_id": "antigravity-agy-oauth-cli-live",
+      "mode": "oauth_cli",
+      "command": ["agy", "-p", "Reply with exactly BENCHMARK_OK. Do not use tools, read files, or modify state.", "--output-format", "json", "--sandbox", "--print-timeout", "2m"],
+      "official_docs_url": "https://antigravity.google/docs/cli/headless/",
+      "terms_url": "https://policies.google.com/terms",
+      "privacy_url": "https://policies.google.com/privacy",
+      "credential_boundary": "local Antigravity OAuth profile",
+      "redaction_patterns": ["AIzaSy[A-Za-z0-9_-]{33}"],
+      "timeout_s": 150.0
+    },
+    {
+      "provider_id": "zai",
+      "route_id": "zai-claude-code-live",
+      "mode": "cli",
+      "command": ["claude", "-p", "--output-format", "json", "--max-turns", "1", "--permission-mode", "plan", "Reply with exactly BENCHMARK_OK. Do not use tools or modify state."],
+      "official_docs_url": "https://docs.z.ai/devpack/faq",
+      "terms_url": "https://z.ai/terms",
+      "privacy_url": "https://z.ai/privacy",
+      "credential_boundary": "user-configured ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL",
+      "redaction_patterns": ["zai_[A-Za-z0-9_-]{20,}", "sk-ant-[A-Za-z0-9_-]{20,}"],
+      "timeout_s": 90.0
+    },
+    {
+      "provider_id": "deepseek",
+      "route_id": "deepseek-r1-fixture",
+      "mode": "fixture",
+      "command": ["python", "-m", "scripts.benchmarks.providers", "--fixture", "deepseek"],
+      "official_docs_url": "https://api-docs.deepseek.com/guides/responses_api/",
+      "terms_url": "https://deepseek.com/terms",
+      "privacy_url": "https://deepseek.com/privacy",
+      "credential_boundary": "DEEPSEEK_API_KEY",
+      "redaction_patterns": ["sk-[A-Za-z0-9]{32,}"],
+      "timeout_s": 30.0
+    },
+    {
+      "provider_id": "deepseek",
+      "route_id": "deepseek-openai-api-live",
+      "mode": "api",
+      "command": [],
+      "official_docs_url": "https://api-docs.deepseek.com/guides/responses_api/",
+      "terms_url": "https://deepseek.com/terms",
+      "privacy_url": "https://deepseek.com/privacy",
+      "credential_boundary": "DEEPSEEK_API_KEY",
+      "redaction_patterns": ["sk-[A-Za-z0-9]{32,}"],
+      "timeout_s": 90.0
+    },
+    {
+      "provider_id": "mistral",
+      "route_id": "mistral-large-fixture",
+      "mode": "fixture",
+      "command": ["python", "-m", "scripts.benchmarks.providers", "--fixture", "mistral"],
+      "official_docs_url": "https://docs.mistral.ai",
+      "terms_url": "https://mistral.ai/terms",
+      "privacy_url": "https://mistral.ai/privacy",
+      "credential_boundary": "MISTRAL_API_KEY",
+      "redaction_patterns": ["[A-Za-z0-9]{32}"],
+      "timeout_s": 30.0
+    },
+    {
+      "provider_id": "openrouter",
+      "route_id": "openrouter-meta-fixture",
+      "mode": "fixture",
+      "command": ["python", "-m", "scripts.benchmarks.providers", "--fixture", "openrouter"],
+      "official_docs_url": "https://openrouter.ai/docs",
+      "terms_url": "https://openrouter.ai/terms",
+      "privacy_url": "https://openrouter.ai/privacy",
+      "credential_boundary": "OPENROUTER_API_KEY",
+      "redaction_patterns": ["sk-or-[A-Za-z0-9_-]{20,}"],
+      "timeout_s": 30.0
+    }
+  ]
+}

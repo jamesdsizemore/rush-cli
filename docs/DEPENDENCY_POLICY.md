@@ -29,8 +29,16 @@ Rush enforces a strict, reproducible dependency policy to maintain rock-solid st
 
 ## 3. Subprocess Safety Boundary
 
-When invoking discovered engine binaries:
-- `stdin=subprocess.DEVNULL` ensures external engines cannot consume or block MCP stdio JSON-RPC streams.
-- `shell=False` prevents shell injection vulnerabilities.
-- `timeout=120.0` prevents hung processes.
-- Output redaction strips credentials, tokens, and keys from findings before JSON emission.
+ When invoking discovered engine binaries:
+ - `stdin=subprocess.DEVNULL` ensures external engines cannot consume or block MCP stdio JSON-RPC streams.
+ - `shell=False` prevents shell injection vulnerabilities.
+ - `timeout=120.0` prevents hung processes.
+ - Output redaction strips credentials, tokens, and keys from findings before JSON emission.
+
+---
+
+## 4. Benchmark & Local Model Policy
+
+1. **Zero Unapproved Binaries**: Tools evaluated in the benchmark suite (e.g. Gitleaks, llama.cpp, ONNX Runtime) must have explicit license, version, and memory/timeout bounds declared in JSON descriptors (`CandidateBinary`).
+2. **Rejection of Ollama**: Rush explicitly rejects the `ollama` executable daemon and HTTP endpoints. Local model inference is strictly benchmarked using bounded argument arrays with `llama.cpp` or `onnxruntime`.
+3. **External Model Cache**: Model weights must reside in external user-specified caches via `--model-cache`. Storing model caches inside the repository tree is denied.

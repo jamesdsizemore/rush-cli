@@ -177,3 +177,25 @@ Statistical baselines are maintained in `.rush/baselines.json`:
 ```
 
 If any commit causes a metric to degrade by $>20\%$ beyond its moving average standard deviation, CI automatically fails the build and emits an actionable regression diagnosis.
+
+---
+
+## 6. Automated Benchmark Harness Execution (Phases B1–B6)
+
+The implemented benchmark harness in `scripts/benchmarks/` automates deterministic validation across 40 scenarios:
+
+```bash
+# Execute full benchmark suite and render summary table
+.venv/Scripts/python.exe -m scripts.benchmarks.run --all
+
+# Run offline regression test suites
+.venv/Scripts/python.exe -m pytest tests/test_benchmark_*.py -q
+```
+
+### Gate Decisions & Outcomes (`docs/reports/final-handoff.md`)
+* **`B-D01` / `B-D02`**: Harness foundation & control corpus (`pass`).
+* **`B-D03`**: Privacy secret redaction & parser bounds (`pass`).
+* **`B-D04` / `B-D05`**: ContextPacker token reduction & CCR byte restoration (`pass`).
+* **`B-D06`**: Local hardware capability profile & Ollama exclusion (`pass`).
+* **`B-D07` - `B-D10`**: Provider routes, router independence & protocol quarantine (`pass`).
+* **`B-D11`**: Multi-agent lock mesh & checkpoint replay (`pass`).

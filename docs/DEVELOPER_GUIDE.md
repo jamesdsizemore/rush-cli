@@ -45,6 +45,7 @@ For the completed Phases 01–30 implementations, read:
 - [Master PM Build Plan](developer/master-pm-build-plan.md): Complete specifications for Phases 21–30, incorporating the 7 Defensive Controls and 3 Architectural Recommendations.
 - [Phase 21–30 Implementation Plans](developer/): Individual phase-by-phase implementation plans and ledgers.
 - [Phase 09–19 coding-agent handoff](developer/phase-09-19-coding-agent-handoff.md), [Phase 07–08 coding-agent handoff](developer/phase-07-08-coding-agent-handoff.md), [Master Innovation & Remediation Plan](developer/innovation-remediation-plan.md), and [Vibecoder Toolkit Plan](developer/vibecoder-toolkit-plan.md).
+- [Benchmark Plan & Harness](reports/rush-benchmark-plan.md): Reproducible test and verification harness across Phases B1–B6.
 
 ## Testing and delivery
 
