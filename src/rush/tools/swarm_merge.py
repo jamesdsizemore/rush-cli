@@ -46,6 +46,26 @@ class SwarmMergeSolver:
                 merged_body.append(node)
 
         all_func_names = sorted(set(ours_funcs.keys()).union(set(theirs_funcs.keys())))
+        conflicts = [
+            name
+            for name in all_func_names
+            if name in base_funcs
+            and name in ours_funcs
+            and name in theirs_funcs
+            and ast.dump(ours_funcs[name], include_attributes=False)
+            != ast.dump(base_funcs[name], include_attributes=False)
+            and ast.dump(theirs_funcs[name], include_attributes=False)
+            != ast.dump(base_funcs[name], include_attributes=False)
+            and ast.dump(ours_funcs[name], include_attributes=False)
+            != ast.dump(theirs_funcs[name], include_attributes=False)
+        ]
+        if conflicts:
+            return {
+                "success": False,
+                "conflicts": conflicts,
+                "error": "Overlapping function edits require manual reconciliation.",
+                "merged_code": None,
+            }
         for fname in all_func_names:
             if fname in ours_funcs and fname not in base_funcs:
                 merged_body.append(ours_funcs[fname])

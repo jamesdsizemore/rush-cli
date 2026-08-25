@@ -6,6 +6,8 @@ Rush’s **Patch Remediation Subsystem** (`rush patch`) and **Session Memory Eng
 
 `rush session` handoff is deliberately narrower than conversational memory: it persists a redacted goal/frontier receipt, dependency snapshots, and a receipt-only failure pointer. It excludes raw transcripts, provider credentials, historic-instruction text, and failed patches; historic instruction presence is quarantined as non-actionable evidence.
 
+Coordination recovery is equally narrow: a replay is an event-count receipt, and a known failure is a redacted receipt. Neither is a runnable command, a patch source, or approval to retry.
+
 ---
 
 ## 1. Closed-Loop Patch Remediation

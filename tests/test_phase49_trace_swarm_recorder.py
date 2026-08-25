@@ -124,3 +124,110 @@ def test_failure_ledger_receipt_never_returns_failed_patch(tmp_path: Path):
     assert receipt is not None
     assert "failed_patch" not in receipt
     assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(receipt)
+
+
+def test_continuity_coordination_keeps_stale_lock_as_evidence(tmp_path: Path):
+    import json
+    import time
+
+    target = tmp_path / "stale.py"
+    target.write_text("value = 1\n")
+    locks = MeshLockManager(project_root=tmp_path)
+    locks._lock_file_for(target).write_text(
+        json.dumps({"agent_id": "agent-a", "acquired_at": time.time() - 600}),
+        encoding="utf-8",
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_check",
+        coordination_path="stale.py",
+        coordination_max_age_s=60,
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["coordination"] == {
+        "state": "stale",
+        "owner": "agent-a",
+        "action": "manual_recovery_required",
+    }
+    assert target.read_text() == "value = 1\n"
+
+
+def test_continuity_coordination_reports_merge_conflict_without_merging(tmp_path: Path):
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_merge_preview",
+        base_code="def shared():\n    return 1\n",
+        ours_code="def shared():\n    return 2\n",
+        theirs_code="def shared():\n    return 3\n",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["raw"] is None
+    assert result["metadata"]["coordination"] == {
+        "state": "merge_conflict",
+        "action": "manual_reconciliation_required",
+        "conflicts": ["shared"],
+    }
+
+
+def test_continuity_recovery_exposes_only_replay_and_failure_receipts(
+    tmp_path: Path,
+):
+    from rush.memory.failure_ledger import FailureLedger
+
+    FlightRecorder(tmp_path).record_event(
+        "session-a", "TOOL_RESULT", {"status": "fail"}
+    )
+    fingerprint = FailureLedger(tmp_path).record_failure(
+        "token=sk-ant-abcdefghijklmnopqrstuvwxyz012345", "patch failed"
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_recovery",
+        flight_session_id="session-a",
+        failure_fingerprint=fingerprint,
+    )
+
+    assert result["status"] == "ok"
+    recovery = result["metadata"]["coordination"]["recovery"]
+    assert recovery["replay"] == {
+        "state": "recorded",
+        "session_id": "session-a",
+        "event_count": 1,
+        "last_event_type": "TOOL_RESULT",
+    }
+    assert recovery["failure"]["fingerprint"] == fingerprint
+    assert "failed_patch" not in str(result)
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(result)
+
+
+def test_continuity_recovery_skips_missing_or_corrupt_replay_evidence(
+    tmp_path: Path,
+):
+    missing = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_recovery",
+        flight_session_id="missing",
+    )
+    assert missing["status"] == "skipped"
+    assert (
+        missing["metadata"]["coordination"]["recovery"]["replay"]["state"]
+        == "not_found"
+    )
+
+    flights = tmp_path / ".rush" / "sessions" / "flights"
+    flights.mkdir(parents=True)
+    (flights / "corrupt.jsonl").write_text("not JSON\n", encoding="utf-8")
+    corrupt = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_recovery",
+        flight_session_id="corrupt",
+    )
+    assert corrupt["status"] == "skipped"
+    assert (
+        corrupt["metadata"]["coordination"]["recovery"]["replay"]["state"]
+        == "unavailable"
+    )

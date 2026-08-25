@@ -10,6 +10,10 @@ This guide addresses common error messages, unexpected behaviors, and troublesho
 - **Cause**: A declared handoff dependency changed, disappeared, or left the repository boundary after save.
 - **Solution**: Inspect the redacted `metadata.handoff.dependencies`, re-check the changed source, then save a new checkpoint. Do not treat a stale receipt or quarantined historic instruction as a current directive.
 
+### Continuity coordination is `skipped`
+- **Cause**: A different agent holds a lock, the lock is stale, merge edits overlap, or replay evidence is missing/corrupt.
+- **Solution**: Inspect `metadata.coordination`; resolve ownership or the merge outside Rush and create a new handoff. Do not delete lock files or rerun a failed patch merely because a receipt exists.
+
 ### Tool Returns `status: "skipped"`
 - **Cause**: The external engine binary is not installed on your system or is missing from `PATH`.
 - **Solution**: Install the required engine locally (e.g. `npm install -g eslint`, `pip install semgrep`, `brew install trivy`). Run `rush capabilities . --json` to verify engine discovery.

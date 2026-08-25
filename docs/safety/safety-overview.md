@@ -10,6 +10,7 @@ Rush is designed to make the safe action the default.
 - **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` makes no provider call.
 - **No secrets in normalized logs/results.** Obvious secret assignments are redacted, but raw external tool behavior still deserves care.
 - **Continuity is receipt-based.** Save requires explicit cache-write permission; restore marks changed declared dependencies `stale`, keeps legacy checkpoints `unknown`, and never promotes historic instructions to authority.
+- **Coordination is evidence-only.** Held/stale locks, merge conflicts, and replay/failure receipts never authorize an unlock, merge, replay, or retry.
 
 ```mermaid
 flowchart TD

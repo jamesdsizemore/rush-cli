@@ -10,6 +10,8 @@ However, working with AI models without guardrails introduces common frustration
 
 Rush was designed from the ground up to be the ultimate companion and quality gate for AI coding workflows.
 
+When several agents touch a repository, use continuity coordination evidence before making another change. A held or stale lock and a merge conflict are stop-and-inspect signals, not permission for Rush to overwrite another agent’s work. Recovery receipts summarize prior events and failures without replaying them.
+
 ## Resuming work safely
 
 Use `rush session save NAME --allow-cache-write --goal "…" --open-work "…" --dependency PATH --json` to hand the next agent a bounded local receipt. Restore shows the goal/frontier and whether declared dependencies are current; historic instructions are quarantined evidence, not instructions to execute, and raw transcripts are not imported as memory.

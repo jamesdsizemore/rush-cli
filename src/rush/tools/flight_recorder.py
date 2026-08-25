@@ -9,10 +9,11 @@ from typing import Any
 class FlightRecorder:
     """Records session events and tool invocations into .rush/sessions/flights/ for deterministic replay."""
 
-    def __init__(self, project_root: Path | None = None):
+    def __init__(self, project_root: Path | None = None, *, create: bool = True):
         self.project_root = project_root or Path.cwd()
         self.flights_dir = self.project_root / ".rush" / "sessions" / "flights"
-        self.flights_dir.mkdir(parents=True, exist_ok=True)
+        if create:
+            self.flights_dir.mkdir(parents=True, exist_ok=True)
 
     def record_event(
         self, session_id: str, event_type: str, payload: dict[str, Any]

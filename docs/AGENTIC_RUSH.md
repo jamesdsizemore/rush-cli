@@ -4,6 +4,8 @@
 
 > **Phase 2 handoff:** save may carry a redacted current goal, open-work frontier, dependency hashes, and a failure receipt. Historic instructions are recorded only as quarantined `historical_evidence`, never as current authority.
 
+> **Phase 4 coordination:** continuity reports held or stale ownership, merge-preview conflicts, and replay/failure receipts as non-executable evidence. It never releases a lock, merges source, or retries a failed patch.
+
 Welcome to **Agentic Rush**. 
 
 Whether you are building with **Cursor, Claude Code, Cline, Windsurf, Roo Code, GitHub Copilot Workspace**, or custom autonomous agent frameworks, you've likely encountered the reality of AI coding assistants: they are incredibly fast, but without guardrails, they can introduce subtle bugs, hallucinatory code ("AI slop"), destructive commands, out-of-sync types, and bloated token context costs.

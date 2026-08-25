@@ -6,6 +6,8 @@ Rush protects source files, Git history, credentials, MCP protocol integrity, lo
 
 The continuity trust boundary accepts explicit CLI/MCP handoff fields only at `SessionContinuityTool`; save needs cache-write permission. Historic instructions are reduced to quarantined evidence, and failed attempts are surfaced only as redacted receipts/tombstones so a resumed agent cannot treat retained text as authority.
 
+Coordination inputs are bounded to repository-local targets and single session identifiers. Lock/replay inspection is read-only; stale ownership, merge conflicts, and malformed evidence resolve to structured non-authoritative states rather than a mutation or retry.
+
 ## Trust boundaries
 
 ```mermaid

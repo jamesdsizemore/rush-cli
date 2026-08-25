@@ -4,6 +4,8 @@ As autonomous agents generate, iterate on, and refactor features, repositories q
 
 Rush’s **Codebase Hygiene Subsystem** (`rush hygiene`) and **3-Way AST Merge Solver** (`rush conflict`) eliminate technical debt and automatically resolve semantic code conflicts.
 
+The continuity boundary does not apply a merge. It only previews independent edits; overlapping edits become a structured `merge_conflict` receipt for manual reconciliation.
+
 ---
 
 ## 1. Automated Dead Code & Unused Import Cleaning
