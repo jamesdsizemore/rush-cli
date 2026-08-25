@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Any, Literal
 
 from ..codegraph.context_packer import ContextPacker
+from ..mcp_mesh.lock_manager import MeshLockManager
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..memory.failure_ledger import FailureLedger
 from ..memory.merkle_invalidator import MerkleInvalidator
@@ -20,7 +21,7 @@ from ..token_economy.ccr_store import CCRStore
 from .base import ToolFn, ToolResult
 
 SessionOperation = Literal[
-    "save", "list", "restore", "context_pack", "context_retrieve"
+    "save", "list", "restore", "context_pack", "context_retrieve", "coordination_check"
 ]
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
 
@@ -53,6 +54,8 @@ class SessionContinuityTool(ToolFn):
         target_symbol: str = "",
         token_budget: int = 4000,
         context_handle: str | None = None,
+        coordination_path: str | None = None,
+        agent_id: str | None = None,
     ) -> ToolResult:
         return self.run(
             path,
@@ -71,6 +74,8 @@ class SessionContinuityTool(ToolFn):
             target_symbol=target_symbol,
             token_budget=token_budget,
             context_handle=context_handle,
+            coordination_path=coordination_path,
+            agent_id=agent_id,
         )
 
     def run(
@@ -85,6 +90,8 @@ class SessionContinuityTool(ToolFn):
         target_symbol: str = "",
         token_budget: int = 4000,
         context_handle: str | None = None,
+        coordination_path: str | None = None,
+        agent_id: str | None = None,
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
     ) -> ToolResult:
@@ -99,6 +106,7 @@ class SessionContinuityTool(ToolFn):
             "restore",
             "context_pack",
             "context_retrieve",
+            "coordination_check",
         }:
             return self._result(
                 started,
@@ -114,6 +122,23 @@ class SessionContinuityTool(ToolFn):
             )
         if operation == "context_retrieve":
             return self._context_retrieve(started, root, context_handle, granted)
+        if operation == "coordination_check":
+            target = (root / (coordination_path or "")).resolve()
+            owner = MeshLockManager(root).owner(target)
+            coordination = {
+                "state": "conflict" if owner and owner != agent_id else "available",
+                "owner": owner,
+            }
+            return self._result(
+                started,
+                "skipped" if coordination["state"] == "conflict" else "ok",
+                "Local ownership conflict; no change was made."
+                if coordination["state"] == "conflict"
+                else "No conflicting local owner.",
+                operation=operation,
+                granted=granted,
+                coordination=coordination,
+            )
 
         if operation in {"save", "restore"} and not self._valid_name(name):
             return self._result(
@@ -312,6 +337,7 @@ class SessionContinuityTool(ToolFn):
         artifacts: list[str] | None = None,
         handoff: dict[str, Any] | None = None,
         context_envelope: dict[str, Any] | None = None,
+        coordination: dict[str, Any] | None = None,
     ) -> ToolResult:
         return {
             "tool": self.name,
@@ -337,6 +363,7 @@ class SessionContinuityTool(ToolFn):
                     if context_envelope is not None
                     else {}
                 ),
+                **({"coordination": coordination} if coordination is not None else {}),
             },
         }
 

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from rush.tools.continuity import SessionContinuityTool
 from src.rush.mcp_mesh.lock_manager import MeshLockManager
 from src.rush.tools.flight_recorder import FlightRecorder
 from src.rush.tools.swarm_merge import SwarmMergeSolver
@@ -90,3 +91,36 @@ def test_flight_recorder(tmp_path: Path):
     assert len(events) == 2
     assert events[0]["event_type"] == "TOOL_CALL"
     assert events[1]["event_type"] == "TOOL_RESULT"
+
+
+def test_continuity_coordination_reports_held_lock_without_overwrite(tmp_path: Path):
+    target = tmp_path / "owned.py"
+    target.write_text("value = 1\n")
+    locks = MeshLockManager(project_root=tmp_path)
+    assert locks.acquire(target, agent_id="agent-a", timeout_s=0.1)
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_check",
+        coordination_path="owned.py",
+        agent_id="agent-b",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["coordination"]["state"] == "conflict"
+    assert result["metadata"]["coordination"]["owner"] == "agent-a"
+    assert target.read_text() == "value = 1\n"
+
+
+def test_failure_ledger_receipt_never_returns_failed_patch(tmp_path: Path):
+    from rush.memory.failure_ledger import FailureLedger
+
+    ledger = FailureLedger(tmp_path)
+    fingerprint = ledger.record_failure(
+        "api_key=sk-ant-abcdefghijklmnopqrstuvwxyz012345", "patch failed"
+    )
+    receipt = ledger.get_receipt(fingerprint)
+
+    assert receipt is not None
+    assert "failed_patch" not in receipt
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(receipt)
