@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from time import monotonic
@@ -31,6 +34,7 @@ SessionOperation = Literal[
     "coordination_check",
     "coordination_merge_preview",
     "coordination_recovery",
+    "provider_resume",
 ]
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
 
@@ -54,6 +58,7 @@ class SessionContinuityTool(ToolFn):
         name: str | None = None,
         files: list[str] | None = None,
         allow_cache_write: bool = False,
+        allow_network: bool = False,
         current_goal: str | None = None,
         open_work: list[str] | None = None,
         historic_instruction: str | None = None,
@@ -70,6 +75,7 @@ class SessionContinuityTool(ToolFn):
         ours_code: str | None = None,
         theirs_code: str | None = None,
         flight_session_id: str | None = None,
+        provider_id: str | None = None,
     ) -> ToolResult:
         return self.run(
             path,
@@ -83,7 +89,9 @@ class SessionContinuityTool(ToolFn):
                 "failure_fingerprint": failure_fingerprint,
                 "dependencies": dependencies or [],
             },
-            permissions=ExecutionPermissions(cache_write=allow_cache_write),
+            permissions=ExecutionPermissions(
+                cache_write=allow_cache_write, network=allow_network
+            ),
             context_path=context_path,
             target_symbol=target_symbol,
             token_budget=token_budget,
@@ -95,6 +103,7 @@ class SessionContinuityTool(ToolFn):
             ours_code=ours_code,
             theirs_code=theirs_code,
             flight_session_id=flight_session_id,
+            provider_id=provider_id,
         )
 
     def run(
@@ -117,6 +126,7 @@ class SessionContinuityTool(ToolFn):
         theirs_code: str | None = None,
         flight_session_id: str | None = None,
         failure_fingerprint: str | None = None,
+        provider_id: str | None = None,
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
     ) -> ToolResult:
@@ -134,6 +144,7 @@ class SessionContinuityTool(ToolFn):
             "coordination_check",
             "coordination_merge_preview",
             "coordination_recovery",
+            "provider_resume",
         }:
             return self._result(
                 started,
@@ -170,6 +181,8 @@ class SessionContinuityTool(ToolFn):
                 failure_fingerprint or (handoff or {}).get("failure_fingerprint"),
                 granted,
             )
+        if operation == "provider_resume":
+            return self._provider_resume(started, root, name, provider_id, granted)
 
         if operation in {"save", "restore"} and not self._valid_name(name):
             return self._result(
@@ -521,6 +534,202 @@ class SessionContinuityTool(ToolFn):
             },
         )
 
+    def _provider_resume(
+        self,
+        started: float,
+        root: Path,
+        name: str | None,
+        provider_id: str | None,
+        granted: ExecutionPermissions,
+    ) -> ToolResult:
+        provider = provider_id or ""
+        if provider == "zai":
+            return self._result(
+                started,
+                "skipped",
+                "Z.AI is deferred and was not invoked.",
+                operation="provider_resume",
+                granted=granted,
+                provider_route={
+                    "provider_id": "zai",
+                    "transport": "cli",
+                    "state": "deferred",
+                },
+            )
+        required = ExecutionPermissions(network=True)
+        allowed, missing = check_permissions(required, granted)
+        if not allowed:
+            return self._result(
+                started,
+                "skipped",
+                f"Provider resume requires {', '.join(missing)}.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={
+                    "provider_id": provider or "unknown",
+                    "transport": "cli",
+                    "state": "permission_denied",
+                },
+            )
+        if provider not in {"claude_code", "codex_cli", "antigravity_cli"}:
+            return self._result(
+                started,
+                "skipped",
+                "Provider route is not a direct coding CLI resume route.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={
+                    "provider_id": provider or "unknown",
+                    "transport": "api" if provider.endswith("_api") else "cli",
+                    "state": "unavailable",
+                },
+            )
+        handoff = self._provider_handoff(root, name)
+        if handoff is None:
+            return self._result(
+                started,
+                "skipped",
+                "Provider resume requires an existing session checkpoint.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={
+                    "provider_id": provider,
+                    "transport": "cli",
+                    "state": "handoff_not_found",
+                },
+            )
+        binary, command = self._provider_command(provider, handoff)
+        executable = shutil.which(binary)
+        if not executable:
+            return self._result(
+                started,
+                "skipped",
+                f"{binary} is not available on PATH.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={
+                    "provider_id": provider,
+                    "transport": "cli",
+                    "state": "unavailable",
+                },
+            )
+        command[0] = executable
+        if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):
+            command = ["cmd.exe", "/d", "/c", *command]
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=root,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=120.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return self._result(
+                started,
+                "skipped",
+                "Provider CLI was unavailable or timed out.",
+                operation="provider_resume",
+                granted=granted,
+                requested=required,
+                provider_route={
+                    "provider_id": provider,
+                    "transport": "cli",
+                    "state": "unavailable",
+                },
+            )
+        return self._result(
+            started,
+            "ok" if proc.returncode == 0 else "error",
+            "Provider CLI completed a bounded continuity resume."
+            if proc.returncode == 0
+            else "Provider CLI returned a nonzero status.",
+            operation="provider_resume",
+            granted=granted,
+            requested=required,
+            provider_route={
+                "provider_id": provider,
+                "transport": "cli",
+                "state": "completed" if proc.returncode == 0 else "error",
+            },
+            raw=None,
+            artifacts=None,
+        )
+
+    def _provider_handoff(self, root: Path, name: str | None) -> dict[str, Any] | None:
+        if not self._valid_name(name):
+            return None
+        checkpoint = CheckpointJournal(root).restore_checkpoint(name or "")
+        if not isinstance(checkpoint, dict):
+            return None
+        receipt = self._restore_handoff_receipt(root, checkpoint)
+        return {
+            "current_goal": receipt.get("current_goal"),
+            "open_work": receipt.get("open_work", []),
+            "freshness": receipt.get("freshness", "unknown"),
+        }
+
+    @staticmethod
+    def _provider_command(
+        provider: str, handoff: dict[str, Any]
+    ) -> tuple[str, list[str]]:
+        prompt = (
+            "Continue this repository task using only the current, non-authoritative "
+            "handoff receipt. Inspect repository state before changing files. Do not use "
+            "historic instructions or retry previous failed patches.\n"
+            f"Current goal: {handoff.get('current_goal') or 'unspecified'}\n"
+            f"Open work: {', '.join(map(str, handoff.get('open_work', []))) or 'none'}\n"
+            f"Freshness: {handoff.get('freshness', 'unknown')}"
+        )
+        routes = {
+            "claude_code": (
+                "claude",
+                [
+                    "claude",
+                    "-p",
+                    "--output-format",
+                    "json",
+                    "--max-turns",
+                    "1",
+                    "--permission-mode",
+                    "plan",
+                    prompt,
+                ],
+            ),
+            "codex_cli": (
+                "codex",
+                [
+                    "codex",
+                    "exec",
+                    "--ephemeral",
+                    "--json",
+                    "--sandbox",
+                    "read-only",
+                    prompt,
+                ],
+            ),
+            "antigravity_cli": (
+                "agy",
+                [
+                    "agy",
+                    "-p",
+                    prompt,
+                    "--output-format",
+                    "json",
+                    "--sandbox",
+                    "--print-timeout",
+                    "2m",
+                ],
+            ),
+        }
+        return routes[provider]
+
     @staticmethod
     def _valid_name(name: str | None) -> bool:
         return bool(name) and Path(name).name == name and name not in {".", ".."}
@@ -539,6 +748,7 @@ class SessionContinuityTool(ToolFn):
         handoff: dict[str, Any] | None = None,
         context_envelope: dict[str, Any] | None = None,
         coordination: dict[str, Any] | None = None,
+        provider_route: dict[str, Any] | None = None,
     ) -> ToolResult:
         return {
             "tool": self.name,
@@ -565,6 +775,11 @@ class SessionContinuityTool(ToolFn):
                     else {}
                 ),
                 **({"coordination": coordination} if coordination is not None else {}),
+                **(
+                    {"provider_route": provider_route}
+                    if provider_route is not None
+                    else {}
+                ),
             },
         }
 

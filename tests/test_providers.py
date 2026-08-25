@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from rush.providers import (
     AnthropicProvider,
     OpenAIProvider,
@@ -125,3 +127,114 @@ def test_openai_provider_allow_network_mock(monkeypatch):
     )
     assert res is not None
     assert "Resolved security vulnerability" in res.content
+
+
+def test_continuity_provider_resume_uses_a_user_owned_claude_cli_profile(
+    monkeypatch, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    saved = SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff.json",
+        handoff={
+            "current_goal": "finish the adapter",
+            "open_work": ["add a focused test"],
+            "historic_instruction": "do not expose this",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert saved["status"] == "ok"
+
+    class Process:
+        returncode = 0
+        stdout = '{"result":"BENCHMARK_OK","token":"sk-ant-abcdefghijklmnopqrstuvwxyz012345"}'
+        stderr = ""
+
+    calls = []
+    monkeypatch.setattr("shutil.which", lambda binary: "C:/tools/claude.cmd")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or Process(),
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff.json",
+        provider_id="claude_code",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "ok"
+    assert calls[0][0][:5] == [
+        "cmd.exe",
+        "/d",
+        "/c",
+        "C:/tools/claude.cmd",
+        "-p",
+    ]
+    assert calls[0][1]["shell"] is False
+    assert "do not expose this" not in str(calls[0][0])
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(result)
+    assert result["metadata"]["provider_route"] == {
+        "provider_id": "claude_code",
+        "transport": "cli",
+        "state": "completed",
+    }
+
+
+def test_continuity_provider_resume_defers_zai_without_starting_a_process(
+    monkeypatch, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    monkeypatch.setattr(
+        "subprocess.run", lambda *_args, **_kwargs: pytest.fail("must not run Z.AI")
+    )
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        provider_id="zai",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["provider_route"] == {
+        "provider_id": "zai",
+        "transport": "cli",
+        "state": "deferred",
+    }
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "binary", "required_args"),
+    [
+        (
+            "codex_cli",
+            "codex",
+            ["exec", "--ephemeral", "--json", "--sandbox", "read-only"],
+        ),
+        (
+            "antigravity_cli",
+            "agy",
+            ["-p", "--output-format", "json", "--sandbox", "--print-timeout", "2m"],
+        ),
+    ],
+)
+def test_continuity_provider_resume_uses_verified_cli_contracts(
+    provider_id, binary, required_args
+):
+    from rush.tools.continuity import SessionContinuityTool
+
+    command_binary, command = SessionContinuityTool._provider_command(
+        provider_id,
+        {"current_goal": "continue", "open_work": [], "freshness": "current"},
+    )
+
+    assert command_binary == binary
+    for argument in required_args:
+        assert argument in command

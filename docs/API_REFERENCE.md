@@ -6,6 +6,8 @@
 
 Coordination operations are `coordination_check`, `coordination_merge_preview`, and `coordination_recovery`. They return `metadata.coordination` evidence only: ownership state, manual-recovery/manual-reconciliation actions, conflict names, and bounded replay/failure receipt metadata. They do not write locks, merge code, execute a replay, or return a failed patch.
 
+`operation="provider_resume"` accepts a checkpoint `name` and `provider_id`. Enabled direct CLI IDs are `claude_code`, `codex_cli`, and `antigravity_cli`; it requires `ExecutionPermissions(network=True)`. The route receives a bounded goal/frontier/freshness projection, never a raw transcript, historic instruction, failed patch, provider credential, or returned model text. `zai` is deliberately `skipped` as deferred.
+
 Rush is packaged as a local CLI application and stdio Model Context Protocol (MCP) server. While Rush does not expose an external programmatic Python library, internal contributors and custom tool authors interact with the following stable core contracts in `src/rush/`.
 
 ---

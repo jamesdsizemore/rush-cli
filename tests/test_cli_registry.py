@@ -179,3 +179,18 @@ def test_context_cli_uses_shared_canonical_envelope(tmp_path: Path) -> None:
     assert packed.exit_code == recovered.exit_code == 0
     assert packed_payload["metadata"]["context_envelope"]["selected_evidence"]
     assert recovered_payload["raw"] == {"content": "recoverable context"}
+
+
+def test_session_resume_exposes_deferred_provider_state_without_invocation(
+    tmp_path: Path,
+) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["session", "resume", "handoff", "--provider", "zai", "--json"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "skipped"
+    assert payload["metadata"]["provider_route"]["state"] == "deferred"

@@ -8,6 +8,8 @@ For `context_pack` and `context_retrieve`, `metadata.context_envelope` contains 
 
 For coordination operations, `metadata.coordination` contains a state and only safe receipt fields. A stale lock includes `{state: "stale", owner, action: "manual_recovery_required"}`; an overlapping merge includes `{state: "merge_conflict", conflicts, action: "manual_reconciliation_required"}`. Recovery nests replay counts and a redacted failure receipt; it never includes replay payloads or failed patches.
 
+For `provider_resume`, `metadata.provider_route` is `{provider_id, transport, state}`. Direct CLI completion is `state: "completed"`; a missing profile, checkpoint, permission, unsupported route, or deferred route is structured `skipped`. Provider process output and credential values are never included in the `ToolResult`.
+
 Rush produces standardized, machine-readable JSON output for all 38 tools when invoked with `--json` or via FastMCP.
 
 ---

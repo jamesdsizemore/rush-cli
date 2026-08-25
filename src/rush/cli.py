@@ -2027,6 +2027,49 @@ def session_restore_cmd(name: str, as_json: bool) -> None:
     )
 
 
+@session_group.command(name="resume")
+@click.argument("name")
+@click.option(
+    "--provider",
+    "provider_id",
+    required=True,
+    help="Enabled route: claude_code, codex_cli, antigravity_cli, 9router_api, or omniroute_api.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def session_resume_cmd(
+    name: str,
+    provider_id: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Resume a checkpoint through an enabled user-owned provider route."""
+    from .tools.continuity import SessionContinuityTool
+
+    result = SessionContinuityTool().run(
+        Path.cwd(),
+        operation="provider_resume",
+        name=name,
+        provider_id=provider_id,
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(result, as_json)
+
+
 def _render_session_result(result: dict, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
