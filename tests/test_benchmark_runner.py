@@ -166,13 +166,9 @@ def test_runner_generates_all_decisions_and_handoff(tmp_path: Path):
     assert (out_dir / "B5/decision-B-D11.json").exists()
     assert (out_dir / "B6/decision-B-D06.json").exists()
 
-    # Assert decision JSONs also synced to canonical research/benchmark/
-    assert (Path("research/benchmark/B1/decision-B-D01-B-D02.json")).exists()
-    assert (Path("research/benchmark/B2/decision-B-D07-B-D10.json")).exists()
-    assert (Path("research/benchmark/B3/decision-B-D03.json")).exists()
-    assert (Path("research/benchmark/B4/decision-B-D04-B-D05.json")).exists()
-    assert (Path("research/benchmark/B5/decision-B-D11.json")).exists()
-    assert (Path("research/benchmark/B6/decision-B-D06.json")).exists()
+    # Evidence remains under the caller-selected output directory. This keeps
+    # benchmark runs reproducible in clean worktrees without writing ignored
+    # repository-local result directories.
 
     # Assert final-handoff.md and hardware-profile.json were written
     assert (out_dir / "final-handoff.md").exists()

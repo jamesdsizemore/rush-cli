@@ -1,5 +1,9 @@
 # Result and exit-code reference
 
+## Continuity outcome rules
+
+The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission.
+
 Every CLI and MCP operation returns the same canonical ToolResult shape.
 
 ```json

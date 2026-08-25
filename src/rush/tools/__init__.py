@@ -24,6 +24,7 @@ from .common import (
 )
 from .complexity import ComplexityTool
 from .containerfile import ContainerfileTool
+from .continuity import SessionContinuityTool
 from .contract import ContractTool
 from .coverage import CoverageTool
 from .dead import DeadTool
@@ -86,6 +87,7 @@ ALL_TOOLS: list[ToolFn] = [
     FuzzTool(),
     LoadTool(),
     CommitMsgTool(),
+    SessionContinuityTool(),
     CiTool(),
     ReleaseTool(),
     SemanticDriftTool(),
@@ -112,6 +114,7 @@ __all__ = [
     "ReviewTool",
     "SecurityTool",
     "SemanticDriftTool",
+    "SessionContinuityTool",
     "Severity",
     "SlopTool",
     "TestTool",

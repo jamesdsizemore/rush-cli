@@ -1,6 +1,10 @@
 # Model Context Protocol (MCP) Server Architecture & Development
 
-This guide explains how Rush exposes its 34 canonical tools as a Model Context Protocol (MCP) server over local standard input/output (`stdio`) for AI coding assistants.
+## Continuity registration
+
+`SessionContinuityTool` belongs in `ALL_TOOLS`; `_register_tools` exposes it as `rush_continuity` through its shared `__call__`. Do not add separate session-save MCP handlers, because they would bypass the common result and permission contract.
+
+This guide explains how Rush exposes its 38 catalogued tools as a Model Context Protocol (MCP) server over local standard input/output (`stdio`) for AI coding assistants.
 
 ---
 

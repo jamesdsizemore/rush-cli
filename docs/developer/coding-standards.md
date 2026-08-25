@@ -1,5 +1,9 @@
 # Contributor Coding Standards & Architecture Invariants
 
+## Continuity standard
+
+Any new session surface must call `SessionContinuityTool` and return `ToolResult`. Checkpoint writes require an explicit invocation permission and validation must reject a traversal-style checkpoint name before touching the filesystem.
+
 This guide defines the architectural rules, coding conventions, type safety standards, and security requirements for writing code in Rush CLI.
 
 ---

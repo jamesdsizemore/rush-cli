@@ -10,7 +10,9 @@ from click.testing import CliRunner
 from rush.catalog import TOOL_SPECS, ToolSpec
 from rush.cli import build_catalog_path_command, cli
 from rush.mcp import build_server_instructions
+from rush.permissions import ExecutionPermissions
 from rush.tools import LintTool
+from rush.tools.continuity import SessionContinuityTool
 
 
 def test_catalog_path_command_uses_the_tool_name_and_standard_options() -> None:
@@ -77,3 +79,75 @@ def test_mcp_instructions_are_generated_from_catalog(monkeypatch) -> None:
     )
 
     assert "rush_example" in build_server_instructions()
+
+
+def test_session_continuity_lifecycle_is_permission_gated_and_canonical(
+    tmp_path: Path,
+) -> None:
+    tool = SessionContinuityTool()
+
+    denied = tool.run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        files=["src/rush/cli.py"],
+        permissions=ExecutionPermissions(),
+    )
+
+    assert denied["tool"] == "continuity"
+    assert denied["status"] == "skipped"
+    assert denied["findings"] == []
+    assert "--allow-cache-write" in denied["summary"]
+    assert not (tmp_path / ".rush").exists()
+
+    saved = tool.run(
+        tmp_path,
+        operation="save",
+        name="handoff",
+        files=["src/rush/cli.py"],
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    listed = tool.run(tmp_path, operation="list")
+    restored = tool.run(tmp_path, operation="restore", name="handoff")
+    missing = tool.run(tmp_path, operation="restore", name="missing")
+
+    assert {result["status"] for result in (saved, listed, restored)} == {"ok"}
+    assert missing["status"] == "skipped"
+    assert saved["raw"]["name"] == restored["raw"]["name"] == "handoff"
+    assert listed["raw"] == [restored["raw"]]
+    invalid = tool.run(
+        tmp_path,
+        operation="save",
+        name="../escape",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert invalid["status"] == "error"
+    assert not (tmp_path.parent / "escape.json").exists()
+    for result in (denied, saved, listed, restored, missing):
+        assert {"tool", "status", "duration_ms", "summary", "findings"} <= result.keys()
+
+
+def test_session_cli_returns_the_same_canonical_lifecycle_result(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        save = runner.invoke(
+            cli,
+            [
+                "session",
+                "save",
+                "handoff",
+                "--file",
+                "src/rush/cli.py",
+                "--allow-cache-write",
+                "--json",
+            ],
+        )
+        listed = runner.invoke(cli, ["session", "list", "--json"])
+        restored = runner.invoke(cli, ["session", "restore", "handoff", "--json"])
+
+    payloads = [json.loads(result.output) for result in (save, listed, restored)]
+    assert all(result.exit_code == 0 for result in (save, listed, restored))
+    assert [payload["status"] for payload in payloads] == ["ok", "ok", "ok"]
+    assert payloads[0]["raw"]["name"] == payloads[2]["raw"]["name"] == "handoff"

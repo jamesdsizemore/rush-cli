@@ -95,7 +95,7 @@ At phase start mark scheduled work active and confirm blockers. Before an atomic
 
 These are the documents that must be changed when the corresponding phase ships. Their row in the audit matrix is **U-Pn**. No other document may be marked updated merely because it was read; any newly affected document requires a linked issue explaining the new effect and a matrix amendment.
 
-- **P1 — contract and controls:** docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/API_REFERENCE.md; docs/CLI_REFERENCE.md; docs/CLI_COOKBOOK.md; docs/MCP.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/CONFIG_SCHEMA.md; docs/JSON_SCHEMA.md; docs/TOOL_CATALOG.md; docs/DEVELOPER_GUIDE.md; docs/TESTING.md; docs/reference/cli-reference.md; docs/reference/configuration-reference.md; docs/reference/mcp-tool-reference.md; docs/reference/result-reference.md; docs/developer/architecture.md; docs/developer/configuration-development.md; docs/developer/mcp-development.md; docs/developer/coding-standards.md; docs/developer/backlog.md; docs/developer/issues.md; this plan.
+- **P1 — contract and controls:** docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/API_REFERENCE.md; docs/CLI_REFERENCE.md; docs/CLI_COOKBOOK.md; docs/MCP.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/CONFIG_SCHEMA.md; docs/JSON_SCHEMA.md; docs/TOOL_CATALOG.md; docs/DEVELOPER_GUIDE.md; docs/TESTING.md; docs/TROUBLESHOOTING.md; docs/reference/cli-reference.md; docs/reference/configuration-reference.md; docs/reference/mcp-tool-reference.md; docs/reference/result-reference.md; docs/developer/architecture.md; docs/developer/configuration-development.md; docs/developer/mcp-development.md; docs/developer/coding-standards.md; docs/developer/testing-guide.md; docs/developer/tool-development.md; docs/integrations/ci-overview.md; docs/integrations/mcp-client-setup.md; docs/developer/backlog.md; docs/developer/issues.md; this plan.
 - **P2 — handoff evidence:** docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/API_REFERENCE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/JSON_SCHEMA.md; docs/PRIVACY.md; docs/SECURITY.md; docs/SAFETY.md; docs/LIMITATIONS.md; docs/TROUBLESHOOTING.md; docs/user-guide/working-with-ai-agents.md; docs/user-guide/security-and-supply-chain.md; docs/user-guide/troubleshooting.md; docs/agentic-rush/patch-remediation-and-memory.md; docs/agentic-rush/anti-hallucination.md; docs/architecture/rush-epistemic-memory-and-agent-substrate.md; docs/safety/privacy-and-data-handling.md; docs/safety/security-model.md; docs/safety/safety-overview.md; docs/reference/result-reference.md; docs/developer/debugging-guide.md; docs/developer/backlog.md; docs/developer/issues.md; this plan.
 - **P3 — context envelope:** docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/API_REFERENCE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/JSON_SCHEMA.md; docs/agentic-rush/token-economy-and-context.md; docs/agentic-rush/token-efficiency.md; docs/workflows/context_packing_and_budgeting.md; docs/specs/context-compression-and-recovery-spec.md; docs/specs/prompt-cache-alignment-spec.md; docs/specs/stale-sweeper-spec.md; docs/specs/telemetry-ledger-spec.md; docs/architecture/rush-epistemic-memory-and-agent-substrate.md; docs/safety/privacy-and-data-handling.md; docs/reference/result-reference.md; docs/user-guide/working-with-ai-agents.md; docs/user-guide/understanding-results.md; docs/user-guide/troubleshooting.md; docs/developer/backlog.md; docs/developer/issues.md; this plan.
 - **P4 — coordination/recovery:** docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/API_REFERENCE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/JSON_SCHEMA.md; docs/SECURITY.md; docs/SAFETY.md; docs/TROUBLESHOOTING.md; docs/workflows/multi_agent_mesh_and_traceability.md; docs/workflows/bi-temporal-mistake-pre-mortem.md; docs/specs/flight-recorder-spec.md; docs/specs/swarm-3way-ast-merge-spec.md; docs/agentic-rush/codebase-hygiene-and-ast-merging.md; docs/agentic-rush/patch-remediation-and-memory.md; docs/agentic-rush/ai-safety-and-sandboxing.md; docs/safety/security-model.md; docs/safety/safety-overview.md; docs/reference/result-reference.md; docs/user-guide/working-with-ai-agents.md; docs/user-guide/troubleshooting.md; docs/developer/backlog.md; docs/developer/issues.md; this plan.
@@ -113,13 +113,13 @@ Dependency graph: P1-T00 -> P1-WP1 -> P1-WP2 -> P1 verification -> P1 commit.
 
 Checklist:
 
-- [ ] P1-T00 token-efficient discovery completed.
-- [ ] P1-WP1 shared contract package complete.
-- [ ] P1-WP2 tracker/workflow package complete.
-- [ ] P1-DOC full docs audit complete.
-- [ ] P1-BI backlog/issues reconciled.
-- [ ] P1-V verification complete.
-- [ ] P1-C commit recorded.
+- [x] P1-T00 token-efficient discovery completed.
+- [x] P1-WP1 shared contract package complete.
+- [x] P1-WP2 tracker/workflow package complete.
+- [x] P1-DOC full docs audit complete.
+- [x] P1-BI backlog/issues reconciled.
+- [x] P1-V verification complete.
+- [x] P1-C commit recorded.
 
 P1-WP1 — shared continuity command contract  
 Goal: move only the selected existing session/context wrappers to one ToolResult-backed implementation seam. Why now: every later phase needs CLI/MCP parity. Dependencies: P1-T00. Deliverable: approved shared implementation registration and parity tests. Stop: an existing registry/config pattern cannot represent the capability without breaking compatibility.
@@ -307,7 +307,7 @@ Every current docs/ file is listed below. **U-Pn** is an update required by the 
 | docs/SUPPORT.md | Support & Issue Triage Guidelines | R / R / R / R / R |
 | docs/TESTING.md | Testing Architecture & Verification Protocols | U-P1 / R / R / R / R |
 | docs/TOOL_CATALOG.md | Tool catalog | U-P1 / R / R / R / R |
-| docs/TROUBLESHOOTING.md | Troubleshooting Guide & Common Resolutions | R / U-P2 / R / U-P4 / R |
+| docs/TROUBLESHOOTING.md | Troubleshooting Guide & Common Resolutions | U-P1 / U-P2 / R / U-P4 / R |
 | docs/TROUBLESHOOTING_MATRIX.md | Troubleshooting matrix | R / R / R / R / R |
 | docs/TUTORIALS.md | Rush tutorials | R / R / R / R / R |
 | docs/USER_GUIDE.md | The Friendly Rush User Guide | R / R / R / R / R |
@@ -439,9 +439,9 @@ Every current docs/ file is listed below. **U-Pn** is an update required by the 
 | docs/developer/rush-token-innovation-enhancement-report-plan.md | Rush CLI: Master Token Reduction, Context Intelligence & Innovation Enhancement Implementa | R / R / R / R / R |
 | docs/developer/ship-readiness-deep-research-report.md | Deep Research Report: Open-Source GitHub Repositories & Architectural Blueprint for Rush S | R / R / R / R / R |
 | docs/developer/source-tree.md | Source tree responsibilities | R / R / R / R / R |
-| docs/developer/testing-guide.md | Developer Testing Guide & Test Architecture | R / R / R / R / R |
+| docs/developer/testing-guide.md | Developer Testing Guide & Test Architecture | U-P1 / R / R / R / R |
 | docs/developer/token-reduction-innovation-report.md | Rush CLI: Token Reduction & Context Intelligence Innovation Report | R / R / R / R / R |
-| docs/developer/tool-development.md | Tool Development & Registration Guide | R / R / R / R / R |
+| docs/developer/tool-development.md | Tool Development & Registration Guide | U-P1 / R / R / R / R |
 | docs/developer/vibecoder-toolkit-plan.md | Rush Vibe-Coder Toolkit Architecture Plan | R / R / R / R / R |
 | docs/developer/vibers-code-review.md | Vibers Comprehensive Code Review: Rush CLI & MCP Architecture | R / R / R / R / R |
 | docs/getting-started/first-run.md | Your first ten minutes with Rush | R / R / R / R / R |
@@ -449,9 +449,9 @@ Every current docs/ file is listed below. **U-Pn** is an update required by the 
 | docs/getting-started/installation.md | Install Rush | R / R / R / R / R |
 | docs/innovation-enhancement-funcionality-report.md | Rush CLI: Master Innovation, Functionality & Strategic Workflow Blueprint | R / R / R / R / R |
 | docs/innovation-enhancement-report.md | Rush CLI: Comprehensive Architectural Review & 28-Feature Innovation Blueprint | R / R / R / R / R |
-| docs/integrations/ci-overview.md | Continuous Integration (CI) Architecture & Strategy | R / R / R / R / R |
+| docs/integrations/ci-overview.md | Continuous Integration (CI) Architecture & Strategy | U-P1 / R / R / R / R |
 | docs/integrations/github-actions.md | GitHub Actions Integration Guide | R / R / R / R / R |
-| docs/integrations/mcp-client-setup.md | Model Context Protocol (MCP) Client Configuration Guide | R / R / R / R / U-P5 |
+| docs/integrations/mcp-client-setup.md | Model Context Protocol (MCP) Client Configuration Guide | U-P1 / R / R / R / U-P5 |
 | docs/integrations/mcp-overview.md | Model Context Protocol (MCP) Overview | R / R / R / R / U-P5 |
 | docs/integrations/scripts-and-automation.md | Shell Scripts, Automation & Tooling Integration | R / R / R / R / R |
 | docs/maintainers/adr/001-stdio-only-mcp.md | ADR-001: stdio-only MCP | R / R / R / R / R |

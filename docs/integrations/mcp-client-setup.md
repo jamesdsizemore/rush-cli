@@ -83,8 +83,8 @@ JSON-RPC responses on stdout (Diagnostics on stderr)
 ## 3. Verification Protocol
 
 1. Start your MCP client.
-2. Verify all **34 canonical tools** appear with the `rush_` prefix:
-   - `rush_review`, `rush_lint`, `rush_format`, `rush_test`, `rush_security`, `rush_typecheck`, `rush_dead`, `rush_complexity`, `rush_slop`, `rush_markdown`, `rush_actions`, `rush_yaml`, `rush_sql`, `rush_templates`, `rush_containerfile`, `rush_iac`, `rush_secrets`, `rush_sbom`, `rush_ai_eval`, `rush_codeql`, `rush_coverage`, `rush_pbt`, `rush_flaky`, `rush_contract`, `rush_snapshot`, `rush_visual`, `rush_mutation`, `rush_e2e`, `rush_fuzz`, `rush_load`, `rush_semantic_drift`, `rush_commit_msg`, `rush_ci`, `rush_release`.
+2. Verify the catalogued tools, including `rush_continuity`, appear with the `rush_` prefix:
+   - `rush_review`, `rush_lint`, `rush_format`, `rush_test`, `rush_security`, `rush_typecheck`, `rush_dead`, `rush_complexity`, `rush_slop`, `rush_markdown`, `rush_actions`, `rush_yaml`, `rush_sql`, `rush_templates`, `rush_containerfile`, `rush_iac`, `rush_secrets`, `rush_sbom`, `rush_ai_eval`, `rush_codeql`, `rush_coverage`, `rush_pbt`, `rush_flaky`, `rush_contract`, `rush_snapshot`, `rush_visual`, `rush_mutation`, `rush_e2e`, `rush_fuzz`, `rush_load`, `rush_semantic_drift`, `rush_commit_msg`, `rush_ci`, `rush_release`, `rush_continuity`.
 3. Invoke `rush_review` with `{"path": "."}` and verify structured `ToolResult` JSON output.
 
 See [MCP Overview](mcp-overview.md) and [MCP Reference](../MCP_REFERENCE.md).

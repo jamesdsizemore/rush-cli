@@ -45,3 +45,18 @@
 | **Phase 49** | Traceability, Flight Recorder & Swarm Merge | `rush trace`, `rush flight-recorder`, `rush swarm-merge`, `rush simulate-ci` | **Complete** |
 | **Phase 50** | SLSA Attestation, Security Suite & Flagship Release | `rush attest`, `rush license-matrix`, `rush iam-audit`, `rush dead-asset`, `rush pr-synthesize` | **Complete** |
 | **Benchmark Harness** | Reproducible Verification & Provider Routing (Phases B1–B6) | `scripts.benchmarks.run`, 40 declared scenarios, 11 decision records, CI harness | **Complete** |
+
+---
+
+## 2. Continuity implementation program
+
+| Backlog ID | Title | Status | Priority | Planned phase | Related tasks | Dependencies | User / agent value | Priority reason | Deferral rationale | Linked issues | Linked commit |
+|---|---|---|:---:|---|---|---|---|---|---|---|---|
+| BL-P1-00 | Phase 1 discovery and seam selection | Complete | P0 | P1 | P1-T00 | Clean worktree; local RTK/Graft/context-mode evidence | Grounds the shared continuity contract in existing code | All later phases require an exact parity seam | None | ISS-P1-00 | Phase 1 commit |
+| BL-P1-01 | Shared session continuity ToolResult seam | Complete | P0 | P1 | P1-T01 | BL-P1-00 | Gives CLI and MCP one canonical save/list/restore contract | Required base contract | None | ISS-P1-01 | Phase 1 commit |
+| BL-P1-02 | Continuity permission and catalog contract | Complete — existing contract used | P0 | P1 | P1-T02 | BL-P1-01 | Makes write behavior explicit, denied by default, and inspectable | Prevents unauthorised state writes | No configuration added: only invocation permission may grant persistence | ISS-P1-01 | Phase 1 commit |
+| BL-P1-03 | Phase 1 tracker and documentation reconciliation | Complete | P0 | P1 | P1-T03, P1-DOC, P1-V | BL-P1-01, BL-P1-02 | Keeps public contract, documentation, and implementation aligned | Required phase completion evidence | None | ISS-P1-00, ISS-P1-01, ISS-P1-DOC-COUNT, ISS-P1-VERIFY, ISS-PROGRAM-GATES | Phase 1 commit |
+| BL-P2-00 | Provenance-aware handoff | Blocked | P0 | P2 | P2-T00–P2-T03 | P1 commit; BG-AUTH; BG-PRIV | Gives a resumed agent redacted, authority-labelled evidence | Cannot safely persist new handoff schema without gate records | ISS-PROGRAM-GATES | Missing benchmark decision records and P1 predecessor | N/A |
+| BL-P3-00 | Grounded context envelope | Blocked | P0 | P3 | P3-T00–P3-T03 | P2 commit; BG-CTX | Gives agents bounded selected context and recovery handles | Context envelope semantics require an approved gate | ISS-PROGRAM-GATES | Missing decision record and P2 predecessor | N/A |
+| BL-P4-00 | Coordination and recovery evidence | Blocked | P0 | P4 | P4-T00–P4-T03 | P3 commit; BG-COORD | Prevents silent ownership conflicts and stale recovery | New coordination semantics require an approved gate | ISS-PROGRAM-GATES | Missing decision record and P3 predecessor | N/A |
+| BL-P5-00 | Approved provider interoperability | Blocked | P0 | P5 | P5-T00–P5-T03 | P4 commit; route-specific BG-PROV/BG-9R/BG-OMNI/BG-PROTO | Lets users deliberately select only validated provider/CLI routes | No adapter is permitted without its named route decision | ISS-PROGRAM-GATES | Missing canonical route records and P4 predecessor | N/A |

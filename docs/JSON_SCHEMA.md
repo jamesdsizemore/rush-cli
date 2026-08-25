@@ -1,6 +1,10 @@
 # JSON Schema & Output Specification
 
-Rush produces standardized, machine-readable JSON output for all 37 tools when invoked with `--json` or via FastMCP.
+## Continuity `ToolResult`
+
+`continuity` returns `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`, `artifacts`, and `metadata`. `metadata.operation` identifies `save`, `list`, or `restore`; `metadata.execution` records requested and granted permissions. Empty lists are `ok`; missing checkpoints and denied saves are `skipped`.
+
+Rush produces standardized, machine-readable JSON output for all 38 tools when invoked with `--json` or via FastMCP.
 
 ---
 

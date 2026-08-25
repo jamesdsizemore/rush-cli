@@ -1,6 +1,6 @@
 # Continuous Integration (CI) Architecture & Strategy
 
-Rush provides a unified, deterministic quality gateway for Continuous Integration pipelines across all 37 tools and 121 engines.
+Rush provides a unified, deterministic quality gateway for Continuous Integration pipelines across all 38 tools and 121 engines.
 
 ---
 

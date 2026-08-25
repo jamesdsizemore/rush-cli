@@ -1,5 +1,9 @@
 # Configuration Subsystem Development Guide
 
+## Continuity is intentionally not configuration
+
+Do not add a `rush.toml` flag that grants session writes. The existing invocation-scoped `ExecutionPermissions(cache_write=True)` contract is the authorization boundary and is tested as denied by default.
+
 This guide explains how configuration loading, dataclass parsing, discovery boundaries, and tool catalog validation are implemented in `src/rush/config.py`.
 
 ---

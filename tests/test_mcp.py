@@ -22,7 +22,6 @@ from rush.tools import ALL_TOOLS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
-    "rush_session_save",
     "rush_ship_clean",
     "rush_ship_env",
     "rush_ship_gate",
@@ -66,7 +65,13 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
     source.write_text("def example() -> int:\n    return 1\n")
 
     async def exercise() -> tuple[
-        str, set[str], dict[str, object], dict[str, object], dict[str, object], str
+        str,
+        set[str],
+        dict[str, object],
+        dict[str, object],
+        dict[str, object],
+        list[dict[str, object]],
+        str,
     ]:
         params = StdioServerParameters(
             command=sys.executable,
@@ -110,6 +115,37 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                 assert lint_response.content
                 lint_payload = json.loads(lint_response.content[0].text)
 
+                continuity_calls = [
+                    {
+                        "path": str(tmp_path),
+                        "operation": "save",
+                        "name": "handoff",
+                        "files": ["src/rush/cli.py"],
+                    },
+                    {
+                        "path": str(tmp_path),
+                        "operation": "save",
+                        "name": "handoff",
+                        "files": ["src/rush/cli.py"],
+                        "allow_cache_write": True,
+                    },
+                    {"path": str(tmp_path), "operation": "list"},
+                    {
+                        "path": str(tmp_path),
+                        "operation": "restore",
+                        "name": "handoff",
+                    },
+                ]
+                continuity_payloads = []
+                for arguments in continuity_calls:
+                    continuity_response = await session.call_tool(
+                        "rush_continuity", arguments
+                    )
+                    assert not continuity_response.isError
+                    continuity_payloads.append(
+                        json.loads(continuity_response.content[0].text)
+                    )
+
             server_stderr.seek(0)
             return (
                 initialized.protocolVersion,
@@ -117,10 +153,19 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                 schemas,
                 payload,
                 lint_payload,
+                continuity_payloads,
                 server_stderr.read(),
             )
 
-    protocol, names, schemas, payload, lint_payload, server_stderr = _run(exercise())
+    (
+        protocol,
+        names,
+        schemas,
+        payload,
+        lint_payload,
+        continuity_payloads,
+        server_stderr,
+    ) = _run(exercise())
 
     assert protocol
     assert names == EXPECTED_TOOLS
@@ -139,5 +184,19 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
     assert lint_payload["tool"] == "lint"
     assert lint_payload["status"] in {"ok", "warn", "fail", "skipped"}
     assert isinstance(lint_payload["findings"], list)
+    assert [item["status"] for item in continuity_payloads] == [
+        "skipped",
+        "ok",
+        "ok",
+        "ok",
+    ]
+    assert "--allow-cache-write" in continuity_payloads[0]["summary"]
+    assert continuity_payloads[1]["raw"]["name"] == "handoff"
+    assert continuity_payloads[2]["raw"] == [continuity_payloads[3]["raw"]]
+    for continuity_payload in continuity_payloads:
+        assert {"tool", "status", "duration_ms", "summary", "findings"} <= {
+            *continuity_payload
+        }
+        assert continuity_payload["tool"] == "continuity"
     assert '"logger": "rush.mcp"' in server_stderr
     assert '"msg": "starting rush stdio MCP server"' in server_stderr
