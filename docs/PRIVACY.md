@@ -2,7 +2,7 @@
 
 ## Provider-resume data boundary
 
-Only `current_goal`, `open_work`, and `freshness` are projected to a supported CLI or OmniRoute's fixed local API. Historic instructions, transcripts, failed patches, credentials, and provider output are excluded and no provider response is persisted. 9Router API transport remains inactive until its separately reviewed key/model contract exists.
+Only `current_goal`, `open_work`, and `freshness` are projected to a supported CLI or fixed local provider route. Historic instructions, transcripts, failed patches, credentials, and provider output are excluded and no provider response is persisted. `9router_cli` passes `RUSH_9ROUTER_API_KEY` only as its child Codex process's `OPENAI_API_KEY`, never records it, and sends no model argument.
 
 Rush is strictly local-first. It contains no telemetry, analytics tracking, external data collection, or remote reporting servers.
 

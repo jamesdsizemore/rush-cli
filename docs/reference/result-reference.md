@@ -6,7 +6,7 @@
 
 ## Provider-resume outcomes
 
-Provider resume returns canonical `ToolResult`: `ok` only for a successful supported CLI process; `skipped` for deferred, unavailable, or denied routes; and `error` for a failed process. The result metadata names only provider ID, transport, and state; it never includes provider stdout/stderr, credentials, or full historical handoff content.
+Provider resume returns canonical `ToolResult`: `ok` only for a successful supported CLI process; `skipped` for deferred, unavailable, denied, or `credential_unavailable` routes; and `error` for a failed process. The result metadata names only provider ID, transport, endpoint class where fixed, and state; it never includes provider stdout/stderr, credentials, a 9Router model, or full historical handoff content.
 
 ## Continuity outcome rules
 

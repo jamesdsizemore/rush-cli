@@ -2,7 +2,7 @@
 
 ## Provider-resume parity
 
-MCP `rush_continuity` `provider_resume` uses the same shared operation as the CLI. `claude_code`, `codex_cli`, `antigravity_cli`, and fixed-loopback `omniroute_api` are implemented, and network permission is explicit. `9router_api` remains a structured `skipped` result; Z.AI is deferred without process or credential access.
+MCP `rush_continuity` `provider_resume` uses the same shared operation as the CLI. `claude_code`, `codex_cli`, `antigravity_cli`, fixed-loopback `omniroute_api`, and `9router_cli` are implemented, and network permission is explicit. `9router_cli` runs Codex through fixed local 9Router with a child-process-only credential and no model argument. `9router_api` remains unavailable; Z.AI is deferred without process or credential access.
 
 ## Session continuity
 

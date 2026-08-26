@@ -2,7 +2,7 @@
 
 ## Provider continuation compatibility
 
-Installed, authenticated `claude`, `codex`, and `agy` profiles are supported direct continuation routes; OmniRoute is supported through its fixed localhost OpenAI-compatible API with `model: "auto"`. Rush does not launch OAuth/browser flows, invoke a shell, or mutate profiles. 9Router compatibility remains pending its explicit API key and selected-model contract.
+Installed, authenticated `claude`, `codex`, and `agy` profiles are supported direct continuation routes; OmniRoute is supported through its fixed localhost OpenAI-compatible API with `model: "auto"`. `9router_cli` runs the installed Codex CLI against fixed local 9Router using a per-process credential and no model argument; 9Router owns route/model selection. Rush does not launch OAuth/browser flows, invoke a shell, or mutate profiles.
 
 This document defines the platform, operating system, and language ecosystem compatibility boundaries for Rush CLI and its Model Context Protocol (MCP) server.
 

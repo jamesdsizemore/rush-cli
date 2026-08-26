@@ -2,7 +2,7 @@
 
 ## Provider continuation has no persistent configuration
 
-Rush does not store provider credentials, executable paths, OAuth profiles, endpoint URLs, or network grants in `rush.toml`. Each resume invocation supplies its own explicit `--allow-network`; installed CLI authentication stays owned by the CLI.
+Rush does not store provider credentials, executable paths, OAuth profiles, endpoint URLs, or network grants in `rush.toml`. Each resume invocation supplies its own explicit `--allow-network`; installed CLI authentication stays owned by the CLI. `9router_cli` reads `RUSH_9ROUTER_API_KEY` only from the invoking process and passes it only to its Codex child; it has no `rush.toml` setting and no Rush-selected model.
 
 ## Session continuity permissions
 

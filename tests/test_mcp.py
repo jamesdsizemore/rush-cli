@@ -173,6 +173,13 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                         "provider_id": "zai",
                         "allow_network": True,
                     },
+                    {
+                        "path": str(tmp_path),
+                        "operation": "provider_resume",
+                        "name": "handoff",
+                        "provider_id": "9router_cli",
+                        "allow_network": True,
+                    },
                 ]
                 continuity_payloads = []
                 for arguments in continuity_calls:
@@ -270,6 +277,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "ok",
         "ok",
         "skipped",
+        "skipped",
     ]
     assert "--allow-cache-write" in continuity_payloads[0]["summary"]
     assert continuity_payloads[1]["raw"]["name"] == "handoff"
@@ -296,6 +304,12 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "provider_id": "zai",
         "transport": "cli",
         "state": "deferred",
+    }
+    assert continuity_payloads[6]["metadata"]["provider_route"] == {
+        "provider_id": "9router_cli",
+        "transport": "codex-cli-via-9router",
+        "endpoint_class": "fixed-loopback",
+        "state": "credential_unavailable",
     }
     assert packed_payload["status"] == "skipped"
     assert packed_payload["metadata"]["context_envelope"]["recovery"]["state"] == (

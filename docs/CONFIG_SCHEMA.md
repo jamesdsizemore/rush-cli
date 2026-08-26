@@ -2,7 +2,7 @@
 
 ## Provider-continuation exclusion
 
-No `[tools.continuity]` credential, endpoint, executable, or persistent network-grant schema exists. OmniRoute uses its fixed local `127.0.0.1:20128` endpoint and no Rush credential store. A future 9Router route requires a reviewed key/model configuration contract and matching catalog/configuration tests before exposure.
+No `[tools.continuity]` credential, endpoint, executable, or persistent network-grant schema exists. OmniRoute uses its fixed local `127.0.0.1:20128` endpoint and no Rush credential store. `9router_cli` reads `RUSH_9ROUTER_API_KEY` only for its child Codex process, maps it to `OPENAI_API_KEY`, and never persists it; 9Router owns model selection.
 
 ## Continuity has no persistent configuration grant
 

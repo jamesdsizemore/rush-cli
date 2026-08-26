@@ -2,7 +2,7 @@
 
 ## Provider-backed checkpoint continuation
 
-Save a checkpoint, then run `rush session resume handoff --provider claude_code --allow-network --json` (or `codex_cli`, `antigravity_cli`, or `omniroute_api`). OmniRoute uses one fixed `127.0.0.1:20128/v1/chat/completions` request with `model: "auto"`; it stores neither a key nor provider output. A missing executable, timeout, nonsemantic response, or nonzero exit is structured. Z.AI is deferred and 9Router remains pending its key/model gateway contract.
+Save a checkpoint, then run `rush session resume handoff --provider claude_code --allow-network --json` (or `codex_cli`, `antigravity_cli`, `9router_cli`, or `omniroute_api`). `9router_cli` runs Codex through fixed local 9Router; set `RUSH_9ROUTER_API_KEY` in the invoking process and do not supply a model. OmniRoute uses one fixed `127.0.0.1:20128/v1/chat/completions` request with `model: "auto"`; it stores neither a key nor provider output. A missing executable, credential, timeout, nonsemantic response, or nonzero exit is structured. Z.AI is deferred.
 
 ## Save and resume a local session
 

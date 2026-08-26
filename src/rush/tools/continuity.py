@@ -669,7 +669,35 @@ class SessionContinuityTool(ToolFn):
                     },
                 )
             return self._omniroute_resume(started, handoff, granted, required)
-        if provider not in {"claude_code", "codex_cli", "antigravity_cli"}:
+        nine_router = provider == "9router_cli"
+        nine_router_route = {
+            "provider_id": "9router_cli",
+            "transport": "codex-cli-via-9router",
+            "endpoint_class": "fixed-loopback",
+        }
+        if nine_router:
+            nine_router_key = os.environ.get("RUSH_9ROUTER_API_KEY")
+            if not nine_router_key:
+                return self._result(
+                    started,
+                    "skipped",
+                    "9Router credential is unavailable; no provider was invoked.",
+                    operation="provider_resume",
+                    granted=granted,
+                    requested=required,
+                    provider_route={
+                        **nine_router_route,
+                        "state": "credential_unavailable",
+                    },
+                )
+        else:
+            nine_router_key = None
+        if provider not in {
+            "claude_code",
+            "codex_cli",
+            "antigravity_cli",
+            "9router_cli",
+        }:
             return self._result(
                 started,
                 "skipped",
@@ -698,7 +726,13 @@ class SessionContinuityTool(ToolFn):
                     "state": "handoff_not_found",
                 },
             )
-        binary, command = self._provider_command(provider, handoff)
+        command_provider = "codex_cli" if nine_router else provider
+        binary, command = self._provider_command(command_provider, handoff)
+        route = (
+            nine_router_route
+            if nine_router
+            else {"provider_id": provider, "transport": "cli"}
+        )
         executable = shutil.which(binary)
         if not executable:
             return self._result(
@@ -709,18 +743,31 @@ class SessionContinuityTool(ToolFn):
                 granted=granted,
                 requested=required,
                 provider_route={
-                    "provider_id": provider,
-                    "transport": "cli",
+                    **route,
                     "state": "unavailable",
                 },
             )
         command[0] = executable
         command_env = None
+        if nine_router:
+            command_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key
+                not in {"RUSH_9ROUTER_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY"}
+            }
+            command_env.update(
+                {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:20128",
+                    "OPENAI_API_KEY": nine_router_key or "",
+                }
+            )
         if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):
             command, command_env = self._windows_cmd_command(
                 executable,
                 command,
                 self._provider_prompt(handoff),
+                command_env,
             )
         try:
             proc = subprocess.run(
@@ -745,8 +792,7 @@ class SessionContinuityTool(ToolFn):
                 granted=granted,
                 requested=required,
                 provider_route={
-                    "provider_id": provider,
-                    "transport": "cli",
+                    **route,
                     "state": "unavailable",
                 },
             )
@@ -760,8 +806,7 @@ class SessionContinuityTool(ToolFn):
             granted=granted,
             requested=required,
             provider_route={
-                "provider_id": provider,
-                "transport": "cli",
+                **route,
                 "state": "completed" if proc.returncode == 0 else "error",
             },
             raw=None,
@@ -868,7 +913,10 @@ class SessionContinuityTool(ToolFn):
 
     @staticmethod
     def _windows_cmd_command(
-        executable: str, command: list[str], prompt: str
+        executable: str,
+        command: list[str],
+        prompt: str,
+        environment: dict[str, str] | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         """Run a batch launcher without placing checkpoint-controlled text in cmd syntax."""
         prompt_variable = "RUSH_CONTINUITY_PROMPT"
@@ -882,7 +930,7 @@ class SessionContinuityTool(ToolFn):
         command_text = f'""{executable_text}" {" ".join(rendered_args)}"'
         return (
             ["cmd.exe", "/d", "/v:on", "/s", "/c", command_text],
-            {**os.environ, prompt_variable: prompt},
+            {**(environment or os.environ), prompt_variable: prompt},
         )
 
     @staticmethod

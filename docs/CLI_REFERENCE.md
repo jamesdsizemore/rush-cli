@@ -10,6 +10,8 @@ Use `rush session save NAME --file PATH --allow-cache-write --json` to save a lo
 
 `rush context pack --path FILE [--symbol NAME] [--budget N] --json` and `rush context retrieve HASH --json` use the same canonical contract. A too-small budget or missing hash is structured `skipped`, never fabricated context.
 
+`rush session resume NAME --provider 9router_cli --allow-network --json` runs the installed Codex CLI through fixed local 9Router. Set `RUSH_9ROUTER_API_KEY` only in the invoking process; Rush copies it only into that child process and does not send a model argument.
+
 The catalogued `continuity` tool also accepts `coordination_check`, `coordination_merge_preview`, and `coordination_recovery` through its JSON/MCP contract. These are evidence-only operations: stale or held locks, merge conflicts, and failure/replay receipts require explicit human or agent follow-up; Rush does not unlock, merge, or retry automatically.
 
 Use `rush session resume NAME --provider claude_code|codex_cli|antigravity_cli --allow-network --json` to hand a saved checkpoint to an already-authenticated local coding CLI. Rush sends only the current goal, open work, and freshness—not historic instructions, credentials, raw transcript, failed patch, or provider output. Z.AI is explicitly deferred and returns `skipped` without process invocation.

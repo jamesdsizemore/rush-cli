@@ -2,7 +2,7 @@
 
 ## Provider resume is invocation-scoped
 
-There is no configuration table for provider executable paths, profiles, credentials, endpoints, or persistent network permission. Authentication is inherited from the already configured user-owned CLI, and `--allow-network` is required per invocation.
+There is no configuration table for provider executable paths, profiles, credentials, endpoints, or persistent network permission. Authentication is inherited from the already configured user-owned CLI, and `--allow-network` is required per invocation. `9router_cli` accepts only process environment `RUSH_9ROUTER_API_KEY`, maps it only to its Codex child, and never accepts a model setting.
 
 ## Continuity permissions
 

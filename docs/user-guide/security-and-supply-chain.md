@@ -2,7 +2,7 @@
 
 ## Provider-continuation boundary
 
-Provider continuation is an explicit local process invocation with no shell, no package installation, no profile mutation, and no retained provider output. Permission is per invocation. Unsupported router routes are skipped rather than guessed or redirected.
+Provider continuation is an explicit local process invocation with no shell, no package installation, no profile mutation, and no retained provider output. Permission is per invocation. `9router_cli` uses a fixed local Codex bridge, child-process-only `RUSH_9ROUTER_API_KEY`, and no model argument; unsupported router routes are skipped rather than guessed or redirected.
 
 Security shouldn't be an afterthought that only happens once a year during an external audit. In high-velocity development, security checks need to happen continuously as code is written.
 

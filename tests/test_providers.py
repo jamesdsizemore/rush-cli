@@ -262,6 +262,83 @@ def test_continuity_provider_resume_does_not_invoke_unimplemented_router_routes(
     assert result["metadata"]["provider_route"]["state"] == "unavailable"
 
 
+def test_continuity_provider_resume_uses_codex_through_9router_without_model(
+    monkeypatch, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff.json",
+        handoff={
+            "current_goal": "continue the bounded route",
+            "open_work": ["run the focused checks"],
+            "historic_instruction": "do not expose this",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    monkeypatch.setenv("RUSH_9ROUTER_API_KEY", "test-9router-key")
+    calls = []
+    monkeypatch.setattr("shutil.which", lambda binary: "C:/tools/codex.exe")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **kwargs: (
+            calls.append((command, kwargs)) or type("Process", (), {"returncode": 0})()
+        ),
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff.json",
+        provider_id="9router_cli",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "ok"
+    assert calls[0][0][0] == "C:/tools/codex.exe"
+    assert "--model" not in calls[0][0]
+    assert "do not expose this" not in str(calls[0][0])
+    assert calls[0][1]["env"]["OPENAI_BASE_URL"] == "http://127.0.0.1:20128"
+    assert calls[0][1]["env"]["OPENAI_API_KEY"] == "test-9router-key"
+    assert "RUSH_9ROUTER_API_KEY" not in calls[0][1]["env"]
+    assert "test-9router-key" not in str(result)
+    assert result["metadata"]["provider_route"] == {
+        "provider_id": "9router_cli",
+        "transport": "codex-cli-via-9router",
+        "endpoint_class": "fixed-loopback",
+        "state": "completed",
+    }
+
+
+def test_continuity_provider_resume_skips_9router_without_credential(
+    monkeypatch, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    monkeypatch.delenv("RUSH_9ROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "subprocess.run", lambda *_args, **_kwargs: pytest.fail("must not invoke")
+    )
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        provider_id="9router_cli",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["provider_route"] == {
+        "provider_id": "9router_cli",
+        "transport": "codex-cli-via-9router",
+        "endpoint_class": "fixed-loopback",
+        "state": "credential_unavailable",
+    }
+
+
 def test_continuity_provider_resume_posts_only_bounded_handoff_to_omniroute(
     monkeypatch, tmp_path
 ):

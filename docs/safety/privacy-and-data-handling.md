@@ -6,7 +6,7 @@ Before an omitted context payload is retained for CCR recovery, Rush applies the
 
 ## Provider-resume projection
 
-Continuity sends only current goal, open work, and freshness to a supported CLI or OmniRoute's fixed local API. It excludes historical instructions, transcripts, failed patches, credentials, and provider output; those values are neither returned nor persisted. Z.AI is never invoked, and 9Router transport remains inactive pending its own key/model contract.
+Continuity sends only current goal, open work, and freshness to a supported CLI or fixed local provider route. It excludes historical instructions, transcripts, failed patches, credentials, and provider output; those values are neither returned nor persisted. `9router_cli` uses `RUSH_9ROUTER_API_KEY` only as a child-process `OPENAI_API_KEY` and sends no model argument. Z.AI is never invoked.
 
 ## Local behavior
 

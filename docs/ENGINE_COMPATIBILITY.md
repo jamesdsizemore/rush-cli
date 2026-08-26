@@ -2,7 +2,7 @@
 
 ## Continuity route engines
 
-The supported direct engines are Claude Code (`claude_code`), Codex CLI (`codex_cli`), and Antigravity CLI (`antigravity_cli`); OmniRoute (`omniroute_api`) is supported through its fixed local OpenAI-compatible endpoint. Z.AI is deferred; 9Router remains an inventory entry pending its explicit API key and model contract.
+The supported direct engines are Claude Code (`claude_code`), Codex CLI (`codex_cli`), and Antigravity CLI (`antigravity_cli`); OmniRoute (`omniroute_api`) is supported through its fixed local OpenAI-compatible endpoint. `9router_cli` runs Codex CLI through fixed local 9Router with a child-process-only credential and no model argument. Z.AI is deferred.
 
 A catalog command is not automatically a live scanner. Rush labels every tool with one maturity:
 

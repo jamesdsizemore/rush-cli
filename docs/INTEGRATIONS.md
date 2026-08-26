@@ -2,7 +2,7 @@
 
 ## Coding-provider continuity
 
-Implemented continuation integrations are user-owned Claude Code, Codex, and Antigravity (`agy`) CLIs plus OmniRoute's fixed localhost OpenAI-compatible API. Z.AI is deferred. 9Router is a CLI/gateway whose actual continuation route still needs its explicit API key and selected model.
+Implemented continuation integrations are user-owned Claude Code, Codex, and Antigravity (`agy`) CLIs plus OmniRoute's fixed localhost OpenAI-compatible API. `9router_cli` runs the installed Codex CLI through fixed local 9Router, copying `RUSH_9ROUTER_API_KEY` only into the child process; it does not choose or send a model. Z.AI is deferred.
 
 Rush integrates cleanly into your existing developer workflows, AI coding assistants, continuous integration pipelines, and editor task runners.
 

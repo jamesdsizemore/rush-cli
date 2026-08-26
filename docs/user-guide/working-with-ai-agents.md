@@ -6,7 +6,7 @@ If `rush context pack` reports `recovery.state: "available"`, use its CCR handle
 
 ## Continue work with another agent CLI
 
-Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI, or through OmniRoute's fixed local API, with explicit `--allow-network`. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred; 9Router is not a resume choice yet.
+Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI, through `9router_cli`, or through OmniRoute's fixed local API, with explicit `--allow-network`. `9router_cli` uses the installed Codex CLI and fixed local 9Router; set `RUSH_9ROUTER_API_KEY` in the invoking process and do not provide a model. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred.
 
 AI coding assistants like **Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
 
