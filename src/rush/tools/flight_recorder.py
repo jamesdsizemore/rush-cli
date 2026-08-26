@@ -35,5 +35,12 @@ class FlightRecorder:
         with open(flight_file, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    events.append(json.loads(line.strip()))
+                    event = json.loads(line.strip())
+                    if (
+                        not isinstance(event, dict)
+                        or not isinstance(event.get("event_type"), str)
+                        or not isinstance(event.get("payload"), dict)
+                    ):
+                        raise ValueError("flight event has an invalid schema")
+                    events.append(event)
         return events

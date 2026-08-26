@@ -181,6 +181,29 @@ def test_context_cli_uses_shared_canonical_envelope(tmp_path: Path) -> None:
     assert recovered_payload["raw"] == {"content": "recoverable context"}
 
 
+def test_context_cli_opt_in_enables_recoverable_overflow(tmp_path: Path) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path("service.py").write_text("def answer() -> int:\n    return 42\n")
+        packed = runner.invoke(
+            cli,
+            [
+                "context",
+                "pack",
+                "--path",
+                "service.py",
+                "--budget",
+                "1",
+                "--allow-cache-write",
+                "--json",
+            ],
+        )
+
+    payload = json.loads(packed.output)
+    assert packed.exit_code == 0
+    assert payload["metadata"]["context_envelope"]["recovery"]["state"] == "available"
+
+
 def test_context_pack_stores_redacted_omission_under_a_recoverable_handle(
     tmp_path: Path,
 ) -> None:

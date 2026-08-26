@@ -160,7 +160,13 @@ def _register_tools(server) -> None:
     )
 
     # Phase 44 Tools
-    def mcp_rush_context_pack(path: str, symbol: str = "", budget: int = 4000) -> dict:
+    def mcp_rush_context_pack(
+        path: str,
+        symbol: str = "",
+        budget: int = 4000,
+        allow_cache_write: bool = False,
+    ) -> dict:
+        from rush.permissions import ExecutionPermissions
         from rush.tools.continuity import SessionContinuityTool
 
         target = Path(path)
@@ -170,6 +176,7 @@ def _register_tools(server) -> None:
             context_path=target.name if target.is_absolute() else path,
             target_symbol=symbol,
             token_budget=budget,
+            permissions=ExecutionPermissions(cache_write=allow_cache_write),
         )
 
     server.add_tool(

@@ -294,3 +294,20 @@ def test_continuity_recovery_handles_corrupt_failure_ledger_as_evidence(
         "fingerprint": "a" * 64,
         "state": "unavailable",
     }
+
+
+def test_continuity_recovery_skips_schema_invalid_replay_evidence(tmp_path: Path):
+    flights = tmp_path / ".rush" / "sessions" / "flights"
+    flights.mkdir(parents=True)
+    (flights / "invalid-shape.jsonl").write_text('"not an event"\n', encoding="utf-8")
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_recovery",
+        flight_session_id="invalid-shape",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["coordination"]["recovery"]["replay"]["state"] == (
+        "unavailable"
+    )

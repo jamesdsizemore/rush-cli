@@ -194,6 +194,18 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                     },
                 )
                 packed_payload = json.loads(packed_response.content[0].text)
+                legacy_packed_response = await session.call_tool(
+                    "rush_context_pack",
+                    {
+                        "path": str(tmp_path / "review_target.py"),
+                        "budget": 1,
+                        "allow_cache_write": True,
+                    },
+                )
+                assert not legacy_packed_response.isError
+                legacy_packed_payload = json.loads(
+                    legacy_packed_response.content[0].text
+                )
                 recovery_handle = packed_payload["metadata"]["context_envelope"][
                     "recovery"
                 ]["handle"]
@@ -216,6 +228,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
                 lint_payload,
                 continuity_payloads,
                 packed_payload,
+                legacy_packed_payload,
                 retrieved_payload,
                 server_stderr.read(),
             )
@@ -228,6 +241,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         lint_payload,
         continuity_payloads,
         packed_payload,
+        legacy_packed_payload,
         retrieved_payload,
         server_stderr,
     ) = _run(exercise())
@@ -288,6 +302,11 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "available"
     )
     assert retrieved_payload["status"] == "ok"
+    assert legacy_packed_payload["status"] == "skipped"
+    assert (
+        legacy_packed_payload["metadata"]["context_envelope"]["recovery"]["state"]
+        == "available"
+    )
     assert "review_target.py" in retrieved_payload["raw"]["content"]
     for continuity_payload in continuity_payloads:
         assert {"tool", "status", "duration_ms", "summary", "findings"} <= {

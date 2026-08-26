@@ -27,7 +27,6 @@ from ..permissions import (
 )
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
-from ..token_economy.telemetry import TelemetryStore
 from ..tools.flight_recorder import FlightRecorder
 from .base import ToolFn, ToolResult
 
@@ -341,11 +340,6 @@ class SessionContinuityTool(ToolFn):
                 json.dumps(safe_packed, sort_keys=True, default=str)
             )
             handle = tag.removeprefix("<!-- ccr:chunk:").removesuffix(" -->")
-            TelemetryStore(project_root).record_savings(
-                "continuity_context_pack",
-                raw_tokens=estimated,
-                compressed_tokens=token_budget,
-            )
             envelope = {
                 "selected_evidence": selected_evidence,
                 "tokens": {
@@ -356,10 +350,8 @@ class SessionContinuityTool(ToolFn):
                 "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
                 "recovery": {"state": "available", "handle": handle},
                 "telemetry": {
-                    "state": "recorded",
-                    "source": "local_estimate",
-                    "raw_tokens": estimated,
-                    "compressed_tokens": token_budget,
+                    "state": "not_measured",
+                    "reason": "omitted_context_not_delivered",
                     "provider_cost": None,
                 },
                 "redaction_count": redactions,
@@ -404,6 +396,9 @@ class SessionContinuityTool(ToolFn):
             if handle and database.is_file()
             else None
         )
+        safe_content, redactions = (
+            SecretRedactor.redact_value(content) if content is not None else (None, 0)
+        )
         recovery = {
             "state": "recovered" if content is not None else "not_found",
             "handle": handle,
@@ -416,12 +411,13 @@ class SessionContinuityTool(ToolFn):
             else "Context handle was not found.",
             operation="context_retrieve",
             granted=granted,
-            raw={"content": content} if content is not None else None,
+            raw={"content": safe_content} if safe_content is not None else None,
             context_envelope={
                 "selected_evidence": [],
                 "tokens": {"estimated": None, "actual": None, "budget": None},
                 "omissions": [],
                 "recovery": recovery,
+                "redaction_count": redactions,
             },
         )
 
@@ -719,8 +715,13 @@ class SessionContinuityTool(ToolFn):
                 },
             )
         command[0] = executable
+        command_env = None
         if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):
-            command = ["cmd.exe", "/d", "/c", *command]
+            command, command_env = self._windows_cmd_command(
+                executable,
+                command,
+                self._provider_prompt(handoff),
+            )
         try:
             proc = subprocess.run(
                 command,
@@ -731,6 +732,7 @@ class SessionContinuityTool(ToolFn):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 text=True,
+                env=command_env,
                 timeout=120.0,
                 check=False,
             )
@@ -863,6 +865,25 @@ class SessionContinuityTool(ToolFn):
             "open_work": receipt.get("open_work", []),
             "freshness": receipt.get("freshness", "unknown"),
         }
+
+    @staticmethod
+    def _windows_cmd_command(
+        executable: str, command: list[str], prompt: str
+    ) -> tuple[list[str], dict[str, str]]:
+        """Run a batch launcher without placing checkpoint-controlled text in cmd syntax."""
+        prompt_variable = "RUSH_CONTINUITY_PROMPT"
+        rendered_args = [
+            f'"!{prompt_variable}!"'
+            if argument == prompt
+            else f'"{argument.replace(chr(34), chr(34) * 2)}"'
+            for argument in command[1:]
+        ]
+        executable_text = executable.replace('"', '""')
+        command_text = f'""{executable_text}" {" ".join(rendered_args)}"'
+        return (
+            ["cmd.exe", "/d", "/v:on", "/s", "/c", command_text],
+            {**os.environ, prompt_variable: prompt},
+        )
 
     @staticmethod
     def _provider_command(

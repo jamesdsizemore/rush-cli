@@ -2,7 +2,7 @@
 
 ## Provider resume
 
-Resume requires `--allow-network`. CLI routes use typed argv with no shell and discard provider stdout/stderr; OmniRoute uses one fixed localhost HTTP request and discards the response after semantic validation. Rush does not read/write credentials or change provider profiles.
+Resume requires `--allow-network`. Native CLI routes use typed argv and discard provider stdout/stderr. Windows batch launchers use a fixed `cmd.exe` profile whose checkpoint-controlled projection is carried only in a per-process delayed-expansion environment variable, never in CMD syntax. OmniRoute uses one fixed localhost HTTP request and discards the response after semantic validation. Rush does not read/write credentials or change provider profiles.
 
 Rush prioritizes code security, execution isolation, and responsible disclosure.
 

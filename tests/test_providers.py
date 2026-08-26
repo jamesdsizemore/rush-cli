@@ -169,21 +169,53 @@ def test_continuity_provider_resume_uses_a_user_owned_claude_cli_profile(
     )
 
     assert result["status"] == "ok"
-    assert calls[0][0][:5] == [
-        "cmd.exe",
-        "/d",
-        "/c",
-        "C:/tools/claude.cmd",
-        "-p",
-    ]
+    assert calls[0][0][:5] == ["cmd.exe", "/d", "/v:on", "/s", "/c"]
     assert calls[0][1]["shell"] is False
     assert "do not expose this" not in str(calls[0][0])
+    assert "finish the adapter" in calls[0][1]["env"]["RUSH_CONTINUITY_PROMPT"]
     assert "sk-ant-abcdefghijklmnopqrstuvwxyz012345" not in str(result)
     assert result["metadata"]["provider_route"] == {
         "provider_id": "claude_code",
         "transport": "cli",
         "state": "completed",
     }
+
+
+def test_continuity_cmd_provider_keeps_checkpoint_text_out_of_command_line(
+    monkeypatch, tmp_path
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    injection = "finish safely & whoami > injected.txt"
+    SessionContinuityTool().run(
+        tmp_path,
+        operation="save",
+        name="handoff.json",
+        handoff={"current_goal": injection},
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    calls = []
+    monkeypatch.setattr("shutil.which", lambda _binary: "C:/tools/claude.cmd")
+    monkeypatch.setattr("rush.tools.continuity.os.name", "nt")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **kwargs: (
+            calls.append((command, kwargs)) or type("Process", (), {"returncode": 0})()
+        ),
+    )
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="provider_resume",
+        name="handoff.json",
+        provider_id="claude_code",
+        permissions=ExecutionPermissions(network=True),
+    )
+
+    assert result["status"] == "ok"
+    assert injection not in str(calls[0][0])
+    assert injection in calls[0][1]["env"]["RUSH_CONTINUITY_PROMPT"]
 
 
 def test_continuity_provider_resume_defers_zai_without_starting_a_process(

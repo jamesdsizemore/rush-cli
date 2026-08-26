@@ -2263,8 +2263,15 @@ def context_mistakes_cmd() -> None:
 @click.option("--path", "-p", required=True, help="Target file path to pack.")
 @click.option("--symbol", "-s", default="", help="Focus symbol to keep verbatim.")
 @click.option("--budget", "-b", default=4000, type=int, help="Maximum token budget.")
+@click.option(
+    "--allow-cache-write",
+    is_flag=True,
+    help="Explicitly authorize local recovery-cache persistence.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit canonical ToolResult JSON.")
-def context_pack_cmd(path: str, symbol: str, budget: int, as_json: bool) -> None:
+def context_pack_cmd(
+    path: str, symbol: str, budget: int, allow_cache_write: bool, as_json: bool
+) -> None:
     """Pack bounded context through the shared continuity contract."""
     from rush.tools.continuity import SessionContinuityTool
 
@@ -2275,6 +2282,7 @@ def context_pack_cmd(path: str, symbol: str, budget: int, as_json: bool) -> None
             context_path=path,
             target_symbol=symbol,
             token_budget=budget,
+            permissions=ExecutionPermissions(cache_write=allow_cache_write),
         ),
         as_json,
     )

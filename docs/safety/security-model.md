@@ -2,7 +2,7 @@
 
 ## Provider process boundary
 
-Supported continuation CLIs use typed argv, `shell=False`, a timeout, and discarded stdout/stderr. OmniRoute uses one fixed localhost HTTP request, a timeout, semantic response validation, and no credential/header handling. Rush does not request OAuth, inspect keychains, retain process output, or route a handoff to 9Router until a reviewed adapter exists.
+Supported continuation CLIs use typed argv, a timeout, and discarded stdout/stderr. For Windows `.cmd`/`.bat` launchers, Rush uses one fixed `cmd.exe` profile and carries checkpoint-controlled text only in a per-process delayed-expansion environment variable, never in CMD syntax. OmniRoute uses one fixed localhost HTTP request, a timeout, semantic response validation, and no credential/header handling. Rush does not request OAuth, inspect keychains, retain process output, or route a handoff to 9Router until a reviewed adapter exists.
 
 ## Protected assets
 

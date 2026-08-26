@@ -8,6 +8,7 @@ from src.rush.codegraph.context_packer import ContextPacker
 from src.rush.token_economy.cache_aligner import CacheAligner
 from src.rush.token_economy.ccr_store import CCRStore
 from src.rush.token_economy.stale_sweeper import StaleSweeper
+from src.rush.token_economy.telemetry import TelemetryStore
 
 
 def test_stale_sweeper():
@@ -166,7 +167,7 @@ def test_continuity_overflow_requires_cache_write_and_preserves_target_evidence(
     assert not (tmp_path / ".rush" / "cache" / "ccr.db").exists()
 
 
-def test_continuity_overflow_records_local_token_telemetry_without_provider_cost(
+def test_continuity_overflow_does_not_claim_or_record_unmeasured_token_savings(
     tmp_path: Path,
 ):
     target = tmp_path / "service.py"
@@ -186,9 +187,24 @@ def test_continuity_overflow_records_local_token_telemetry_without_provider_cost
     assert result["status"] == "skipped"
     assert envelope["recovery"]["state"] == "available"
     assert envelope["telemetry"] == {
-        "state": "recorded",
-        "source": "local_estimate",
-        "raw_tokens": envelope["tokens"]["estimated"],
-        "compressed_tokens": 1,
+        "state": "not_measured",
+        "reason": "omitted_context_not_delivered",
         "provider_cost": None,
     }
+    assert TelemetryStore(tmp_path).get_summary()["events_count"] == 0
+
+
+def test_continuity_context_retrieve_redacts_preexisting_ccr_content(tmp_path: Path):
+    secret = "sk-ant-abcdefghijklmnopqrstuvwxyz012345"
+    handle = CCRStore(tmp_path).store_chunk(f"legacy source contained {secret}")
+    chunk_hash = handle.removeprefix("<!-- ccr:chunk:").removesuffix(" -->")
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="context_retrieve",
+        context_handle=chunk_hash,
+    )
+
+    assert result["status"] == "ok"
+    assert secret not in str(result)
+    assert "[REDACTED" in result["raw"]["content"]
