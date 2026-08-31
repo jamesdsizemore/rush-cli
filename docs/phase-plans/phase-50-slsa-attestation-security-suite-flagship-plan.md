@@ -5,7 +5,7 @@
 - Operation: Revise this plan only; do not implement Phase 50.
 - Output: docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md.
 - Scope: all fourteen named families I13–I22, I24, I26–I28 plus shared/delivery; no reductions.
-- Status: Implementation-ready task structure; execution/readiness remains UNVERIFIED until the one-revision gates pass and every missing/failed/blocked/unknown state is recorded.
+- Status: Implementation plan under contract remediation; implementation may start only after the structural and adversarial checks in Sections 10–11 pass. Execution/readiness remains UNVERIFIED until the one-revision gates pass and every missing/failed/blocked/unknown state is recorded.
 - Counts: 14 capability families; 15 scope-ledger/applicability rows including SHARED/DELIVERY; 219 ordered task IDs and 219 complete blocks.
 - Lifecycle authority: no commit, merge, tag, push, upload, publish, deploy, version edit, hook, history rewrite, or worktree removal.
 - Acceptance summary: current integration is 38 current capability rows + 14 Phase 50 rows = 52; the historical all-42 subset is separate evidence, not additional current rows.
@@ -25,11 +25,12 @@
 | Conflict | Resolution |
 |---|---|
 | D50-02 | Reject unsigned provenance; I16 retains signed Statement v1/SLSA v1 and hosted-builder Level 3 evidence. |
+| Attestation format authority | Preserve both signed authorities through an explicit compatibility matrix: the default profile emits a verified DSSE envelope containing in-toto Statement v1/SLSA Provenance v1 with Cosign v3 or Git-SSH/Ed25519 signing, while the explicit legacy-compatibility profile emits verified in-toto v0.1/SLSA v0.2 signed with ECDSA or RSA. Unsigned output, silent downgrade, and treating either profile as evidence for the other are failures. |
 | D50-04 | Reject ONNX-only/user-supplied-weights reduction; I24 retains ONNX/GGUF, CPU/CUDA, signed registry/acquisition, license/checksum, and zero-socket review. |
 | D50-07/08/10–18 | Reject provider/language/runtime/effect/UI/statistics/asset/PR reductions; Section 9 restores every original variant. |
 | Integration arithmetic | Current matrix is exactly 38 + 14 = 52; historical all-42 baseline is a separate subset; any source label that says all-42+14=52 is a contradiction to record and block, not silently reinterpret. |
 | Documentation sync | scripts/sync_docs.py --check across 226 docs remains required source behavior; its absence is a blocker, and scripts/update_phase_docs.py is not a substitute. |
-| MCP applicability | I13 has no Rush MCP route; I22 MCP is raw data-only; I24 model download is CLI-only; each negative applicability check remains explicit. |
+| MCP applicability | I13 has no public Rush MCP route but must execute controlled target FastMCP servers internally; I22 MCP is raw data-only; I24 model download is CLI-only; each negative applicability check remains explicit. |
 | Missing remediation source | docs/developer/repository-remediation-plan.md is absent from the isolated planning worktree; no requirement is invented from it and no source requirement is reduced. |
 
 ## 3. Goals, verified outcomes, exclusions, and inherited invariants
@@ -52,7 +53,7 @@ P50-001 alone owns admission. It records Phase 49 close evidence, the designated
 | I13-F/S/E/V | Innovation I13 | Live multi-model FastMCP golden tasks, order/AST patch, EM/CodeBLEU, token/cost/pass/latency, isolation, telemetry, CLI-only. | PRESERVED | P50-020–P50-031 | Core/effect/CLI/applicability/docs/installed evidence. |
 | I14-F/S/E/V | I14 | Python/TS/Rust extraction, hierarchy, deterministic codes, typed catalogs, RFC7807, generated docs, CLI/MCP. | PRESERVED | P50-032–P50-043 | Language/generation/effect/transport/docs/installed evidence. |
 | I15-F/S/E/V | I15 | Trailer/session attribution, 30/60/90 survival, curves, defects, shallow/incomplete evidence, CLI/MCP. | PRESERVED | P50-044–P50-055 | Controlled Git/effect/transport/docs/installed evidence. |
-| I16-F/S/E/V | I16; ADR-0036 | Signed artifact/commit/quality provenance, DSSE/Cosign, verifier, refusal, trust policy, hosted-builder-only L3. | PRESERVED | P50-056–P50-067 | Signature/policy/interop/transport/docs/installed/builder evidence. |
+| I16-F/S/E/V | I16; ADR-0036; companion Phase 50 plan | Signed artifact/commit/quality provenance across the explicit modern Statement v1/SLSA v1 and legacy-compatible in-toto v0.1/SLSA v0.2 profiles, DSSE/Cosign/Git-SSH/Ed25519/ECDSA/RSA verification, refusal, trust policy, hosted-builder-only L3. | PRESERVED | P50-056–P50-067 | Signature/profile/policy/interop/transport/docs/installed/builder evidence. |
 | I17-F/S/E/V | I17 | Polyglot manifests/metadata, link mechanics, SPDX conclusions, copyleft risk, genuine unknown/manual review. | PRESERVED | P50-068–P50-079 | Polyglot/link/SPDX/effect/transport/docs/installed evidence. |
 | I18-F/S/E/V | I18 | AWS/GCP/Azure SDK+Terraform/CDK, wildcard/unused, resources, minimal policies, CLI/MCP. | PRESERVED | P50-080–P50-091 | Three-provider/IaC/effect/transport/docs/installed evidence. |
 | I19-F/S/E/V | I19 | Static lifecycle plus dynamic pytest/Vitest RSS/heap/retention and platform/child failures. | PRESERVED | P50-092–P50-103 | Static/dynamic/effect/transport/docs/installed evidence. |
@@ -79,6 +80,8 @@ Scope reconciliation: 15 ledger rows; 15 PRESERVED; 0 ADDITIVE; 0 VIOLATION. Exe
 | Compatibility | Existing five Phase 50 CLI and MCP contracts remain invocable through canonical objects; aliases contain no business logic. |
 | Handoff | Every task retains exact evidence and names one successor; integration consumers never mutate producer evidence. |
 
+Task-local path evidence is measured against a SHA-256/status manifest captured immediately before each task, not against the cumulative worktree diff. Each task records the pre-task manifest, post-task manifest, and their path delta in its owned evidence fragment when one exists, otherwise in its required handoff transcript. Previously changed paths remain untouched unless the current task explicitly owns them.
+
 ## 7. Contract-test inventory
 
 | Family | Core contract tests | Effect / transport / installed proof |
@@ -86,8 +89,8 @@ Scope reconciliation: 15 ledger rows; 15 PRESERVED; 0 ADDITIVE; 0 VIOLATION. Exe
 | I13 | tests/test_prompt_eval.py: live matrix, order/patch, EM/CodeBLEU, metrics/partial failures | permission/telemetry; CLI route; MCP absence; installed prompt-eval |
 | I14 | tests/test_error_catalog.py: Python/TS/Rust hierarchy, typed/RFC/docs generation | dry-run/export; CLI/MCP; installed error-catalog |
 | I15 | tests/test_provenance_ai.py: attribution, 30/60/90 KM, defects, shallow unknown | cache secrecy; CLI/MCP; installed provenance |
-| I16 | tests/test_attest.py and test_slsa_policy.py: Statement v1, DSSE, refusal, trust | secret/effect; CLI/MCP/alias; installed signer/verifier/hosted bundle |
-| I17 | tests/test_license_matrix.py: polyglot metadata, links, SPDX/manual review | read-only; CLI/MCP; installed matrix |
+| I16 | tests/test_attest.py and test_slsa_policy.py: signed modern Statement v1/SLSA v1 and signed legacy-compatible in-toto v0.1/SLSA v0.2 profiles, DSSE, refusal, trust | secret/effect; CLI/MCP/alias; installed ECDSA/RSA/Cosign/Git-SSH/Ed25519 signer/verifier/hosted bundle |
+| I17 | tests/test_license_matrix.py: polyglot metadata, links, SPDX/manual review, Permissive/Weak Copyleft/Strong Copyleft/Proprietary categories, dual-license conflict | read-only; CLI/MCP; installed matrix |
 | I18 | tests/test_iam_audit.py: AWS/GCP/Azure and Terraform/CDK/resource policies | export; CLI/MCP; installed providers |
 | I19 | tests/test_mem_profile.py: static lifecycle and pytest/Vitest RSS/heap/slope | slow/process tree; CLI/MCP; installed runtimes |
 | I20 | tests/test_cold_start.py: Python/Node waterfalls and validated patches | slow/artifact; CLI/MCP; installed runtimes |
@@ -108,7 +111,7 @@ Inventory reconciliation: 15 rows; every family has core, effect/security, trans
 - Shared production: src/rush/tools/base.py; src/rush/tools/common.py; src/rush/tools/parser_pack.py; src/rush/tools/statistics.py; src/rush/catalog.py; src/rush/config.py; src/rush/permissions.py; src/rush/tools/__init__.py; src/rush/cli.py; src/rush/mcp.py.
 - Feature production: src/rush/tools/prompt_eval.py; src/rush/tools/error_catalog.py; src/rush/tools/provenance_ai.py; src/rush/tools/attest.py; src/rush/tools/license_matrix.py; src/rush/tools/iam_audit.py; src/rush/tools/mem_profile.py; src/rush/tools/cold_start.py; src/rush/tools/media_opt.py; src/rush/tools/tui_diff.py; src/rush/tools/offline_runner.py; src/rush/tools/benchmark.py; src/rush/tools/dead_asset.py; src/rush/tools/pr_synthesize.py; src/rush/tui.py; src/rush/providers/offline.py; src/rush/model_registry.py.
 - Resources: src/rush/resources/iam/aws.json; src/rush/resources/iam/gcp.json; src/rush/resources/iam/azure.json; src/rush/resources/models/registry.json; src/rush/resources/models/registry.sigstore.json; src/rush/resources/slsa/trust-policy-v1.json.
-- Dependencies: codebleu>=0.7,<0.8; tree-sitter-language-pack>=1.15,<2; license-expression>=30.4,<31; python-hcl2 with its exact admitted version/range recorded by the dependency task; psutil>=7.2,<8; textual>=8.2,<9; scipy>=1.18,<2; optional onnxruntime; mutually exclusive onnxruntime-gpu and llama-cpp-python; external Node>=22.15; Cosign; slsa-verifier.
+- Dependencies: codebleu>=0.7,<0.8; tree-sitter-language-pack>=1.15,<2 subject to an explicit 0.4.0-to-1.x API/grammar/platform/license migration proof; license-expression>=30.4,<31; python-hcl2>=8.1,<9; psutil>=7.2,<8; textual>=8.2,<9; scipy>=1.18,<2; pillow==12.3.0; optional offline-onnx with onnxruntime>=1.22,<2; mutually exclusive offline-onnx-cuda with onnxruntime-gpu>=1.22,<2; optional offline-gguf with llama-cpp-python>=0.3,<1; external Node>=22.15; Cosign>=3.1,<4; slsa-verifier>=2.7,<3. P50-002/P50-019 must pin resolved versions, hashes, licenses, Python 3.12/platform support, extra isolation, and external-tool identities before admission.
 - Feature docs: docs/tools/prompt_eval.md; docs/tools/error_catalog.md; docs/tools/provenance_ai.md; docs/tools/attest.md; docs/tools/license_matrix.md; docs/tools/iam_audit.md; docs/tools/mem_profile.md; docs/tools/cold_start.md; docs/tools/media_opt.md; docs/tools/tui_diff.md; docs/tools/offline_review.md; docs/tools/benchmark.md; docs/tools/dead_asset.md; docs/tools/pr_synthesize.md.
 - Delivery docs/references: docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/developer/benchmarking-report.md; docs/developer/phase-50-implementation-evidence.md; examples/rush.toml; docs/README.md where navigation requires it; scripts/sync_docs.py --check across 226 docs.
 - Governance: each task may write only its literal allowed paths; newly discovered writes stop for amendment; historical requirements/ADRs remain read-only; scripts/update_phase_docs.py cannot satisfy the scripts/sync_docs.py requirement.
@@ -117,7 +120,7 @@ Inventory reconciliation: 15 rows; every family has core, effect/security, trans
 
 | Family | Exact task owners | CLI | MCP | Documentation | Installed/readiness |
 |---|---|---|---|---|---|
-| I13 | P50-020–P50-031 | REQUIRED | NOT APPLICABLE — no Rush MCP route; target FastMCP servers are evaluated clients | REQUIRED | REQUIRED |
+| I13 | P50-020–P50-031 | REQUIRED | NOT APPLICABLE — no public Rush MCP route; internal target FastMCP execution is REQUIRED | REQUIRED | REQUIRED |
 | I14 | P50-032–P50-043 | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
 | I15 | P50-044–P50-055 | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
 | I16 | P50-056–P50-067 | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
@@ -133,16 +136,16 @@ Inventory reconciliation: 15 rows; every family has core, effect/security, trans
 | I28 | P50-176–P50-187 | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
 | Shared/delivery | P50-001–P50-019; P50-188–P50-219 | REQUIRED | REQUIRED where a public MCP surface exists | REQUIRED | REQUIRED |
 
-Only three transport operations are not applicable: a Rush MCP route for I13, full-screen terminal launch through I22 MCP, and model download through I24 MCP. Their required CLI/data/review behavior and explicit negative applicability checks remain owned by the listed task ranges. Matrix reconciliation: 15 rows; current matrix 38 + 14 = 52; historical all-42 is separate; no required capability is blocked, deferred, substituted, or omitted.
+Only three transport operations are not applicable: a public Rush MCP route for I13, full-screen terminal launch through I22 MCP, and model download through I24 MCP. I13 internal target FastMCP execution remains required. Their required CLI/data/review behavior and explicit negative applicability checks remain owned by the listed task ranges. Matrix reconciliation: 15 rows; current-plan accounting is 38 existing rows + 14 Phase 50 rows = 52 current rows, while the authoritative historical all-42 acceptance ledger is verified separately; neither ledger may be called source-defined for the other, and any unresolved mapping difference blocks final readiness.
 
 ### 8.3 Exhaustive executable-task registry
 
-The registry retains every task P50-001 through P50-219 exactly once and in numeric order. These five fields are the compact index; each linked Section 9 block contains the binding preamble, reads, four-field heading, transition, four Required behavior instructions, typed Deliverables, typed Constraints, executable Checks, Completion, and Handoff. Do not duplicate task prose here or collapse rows into family cards.
+The registry retains every task P50-001 through P50-219 exactly once and in numeric order. These five fields are the compact index; each linked Section 9 block contains the binding preamble, reads, four-field heading, a literal outcome/transition sentence (the `Transition:` label itself is optional), four Required behavior instructions, typed Deliverables, typed Constraints, executable Checks, Completion, and Handoff. Do not duplicate task prose here or collapse rows into family cards.
 
 | ID | Requirement | Kind | Outcome | Binding proof location |
 |---|---|---|---|---|
 | P50-001 | P50-SHARED | EVIDENCE | establish the implementation baseline | Section 9 `P50-001` block: literal checks, completion, and handoff. |
-| P50-002 | P50-SHARED | RED | pin immutable typed option declarations | Section 9 `P50-002` block: literal checks, completion, and handoff. |
+| P50-002 | P50-SHARED | RED | pin shared option, result, effect, process, parser, and statistics contracts | Section 9 `P50-002` block: literal checks, completion, and handoff. |
 | P50-003 | P50-SHARED | GREEN | implement immutable typed option declarations | Section 9 `P50-003` block: literal checks, completion, and handoff. |
 | P50-004 | P50-SHARED | RED | pin declared-option parsing and rejection | Section 9 `P50-004` block: literal checks, completion, and handoff. |
 | P50-005 | P50-SHARED | GREEN | validate and preserve declared options | Section 9 `P50-005` block: literal checks, completion, and handoff. |
@@ -159,11 +162,11 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-016 | P50-SHARED | GREEN | polyglot parser pack | Section 9 `P50-016` block: literal checks, completion, and handoff. |
 | P50-017 | P50-SHARED | GREEN | statistical measurement primitives | Section 9 `P50-017` block: literal checks, completion, and handoff. |
 | P50-018 | P50-SHARED | EVIDENCE | capture legacy public contracts | Section 9 `P50-018` block: literal checks, completion, and handoff. |
-| P50-019 | P50-SHARED | EVIDENCE | predecessor admission and dependency capability proof | Section 9 `P50-019` block: literal checks, completion, and handoff. |
+| P50-019 | P50-SHARED | DEPENDENCY-GREEN | admit the exact shared dependency set | Section 9 `P50-019` block: literal checks, completion, and handoff. |
 | P50-020 | P50-I13 | RED | pin deterministic prompt-evaluation result math | Section 9 `P50-020` block: literal checks, completion, and handoff. |
 | P50-021 | P50-I13 | GREEN | implement deterministic evaluation scoring core | Section 9 `P50-021` block: literal checks, completion, and handoff. |
 | P50-022 | P50-I13 | RED | pin prompt-eval catalog, CLI, and MCP absence | Section 9 `P50-022` block: literal checks, completion, and handoff. |
-| P50-023 | P50-I13 | GREEN | register prompt-eval CLI and verify MCP absence | Section 9 `P50-023` block: literal checks, completion, and handoff. |
+| P50-023 | P50-I13 | GREEN | register prompt-eval CLI and preserve public MCP absence | Section 9 `P50-023` block: literal checks, completion, and handoff. |
 | P50-024 | P50-I13 | DOCS | document complete live prompt evaluation | Section 9 `P50-024` block: literal checks, completion, and handoff. |
 | P50-025 | P50-I13-EXEC | RED | pin live FastMCP target execution | Section 9 `P50-025` block: literal checks, completion, and handoff. |
 | P50-026 | P50-I13-EXEC | GREEN | implement live FastMCP target execution | Section 9 `P50-026` block: literal checks, completion, and handoff. |
@@ -171,7 +174,7 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-028 | P50-I13-SCORE | GREEN | implement CodeBLEU score fields | Section 9 `P50-028` block: literal checks, completion, and handoff. |
 | P50-029 | P50-I13-OPS | EFFECT-RED | pin prompt-eval effect permissions | Section 9 `P50-029` block: literal checks, completion, and handoff. |
 | P50-030 | P50-I13-OPS | EFFECT-GREEN | implement prompt-eval permission and telemetry effects | Section 9 `P50-030` block: literal checks, completion, and handoff. |
-| P50-031 | P50-I13-INSTALLED | RED | pin installed prompt-eval acceptance | Section 9 `P50-031` block: literal checks, completion, and handoff. |
+| P50-031 | P50-I13-INSTALLED | INSTALLED | verify installed prompt-eval acceptance | Section 9 `P50-031` block: literal checks, completion, and handoff. |
 | P50-032 | P50-I14 | RED | pin deterministic Python, TypeScript, and Rust extraction | Section 9 `P50-032` block: literal checks, completion, and handoff. |
 | P50-033 | P50-I14 | GREEN | implement deterministic polyglot error extraction | Section 9 `P50-033` block: literal checks, completion, and handoff. |
 | P50-034 | P50-I14 | RED | pin typed catalogs, RFC 7807, and generated documentation | Section 9 `P50-034` block: literal checks, completion, and handoff. |
@@ -183,7 +186,7 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-040 | P50-I14-S | GREEN-MCP | register rush_error_catalog | Section 9 `P50-040` block: literal checks, completion, and handoff. |
 | P50-041 | P50-I14-GEN | RED | pin typed RFC7807 generation | Section 9 `P50-041` block: literal checks, completion, and handoff. |
 | P50-042 | P50-I14-GEN | GREEN | implement typed RFC7807 generation | Section 9 `P50-042` block: literal checks, completion, and handoff. |
-| P50-043 | P50-I14-INSTALLED | RED | pin installed error-catalog acceptance | Section 9 `P50-043` block: literal checks, completion, and handoff. |
+| P50-043 | P50-I14-INSTALLED | INSTALLED | verify installed error-catalog acceptance | Section 9 `P50-043` block: literal checks, completion, and handoff. |
 | P50-044 | P50-I15 | RED | pin trailer and session attribution evidence | Section 9 `P50-044` block: literal checks, completion, and handoff. |
 | P50-045 | P50-I15 | GREEN | implement grounded attribution evidence | Section 9 `P50-045` block: literal checks, completion, and handoff. |
 | P50-046 | P50-I15 | RED | pin provenance-ai registration and public route equality | Section 9 `P50-046` block: literal checks, completion, and handoff. |
@@ -195,17 +198,17 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-052 | P50-I15-ATTR | GREEN | implement defect correlation | Section 9 `P50-052` block: literal checks, completion, and handoff. |
 | P50-053 | P50-I15-OPS | EFFECT-RED | pin provenance cache telemetry boundary | Section 9 `P50-053` block: literal checks, completion, and handoff. |
 | P50-054 | P50-I15-OPS | EFFECT-GREEN | implement provenance cache telemetry boundary | Section 9 `P50-054` block: literal checks, completion, and handoff. |
-| P50-055 | P50-I15-INSTALLED | RED | pin installed provenance acceptance | Section 9 `P50-055` block: literal checks, completion, and handoff. |
-| P50-056 | P50-I16 | RED | pin signed artifact-bound Statement v1 and SLSA Provenance v1 | Section 9 `P50-056` block: literal checks, completion, and handoff. |
-| P50-057 | P50-I16 | GREEN | implement signed Statement v1 and SLSA Provenance v1 core | Section 9 `P50-057` block: literal checks, completion, and handoff. |
+| P50-055 | P50-I15-INSTALLED | INSTALLED | verify installed provenance acceptance | Section 9 `P50-055` block: literal checks, completion, and handoff. |
+| P50-056 | P50-I16 | RED | pin signed modern and legacy artifact-bound provenance profiles | Section 9 `P50-056` block: literal checks, completion, and handoff. |
+| P50-057 | P50-I16 | GREEN | implement signed modern and legacy artifact-bound provenance core | Section 9 `P50-057` block: literal checks, completion, and handoff. |
 | P50-058 | P50-I16 | RED | pin permissioned attestation export | Section 9 `P50-058` block: literal checks, completion, and handoff. |
 | P50-059 | P50-I16 | GREEN | add guarded signed-envelope export | Section 9 `P50-059` block: literal checks, completion, and handoff. |
 | P50-060 | P50-I16 | RED | pin attest catalog, CLI, canonical MCP, and deprecated alias | Section 9 `P50-060` block: literal checks, completion, and handoff. |
 | P50-061 | P50-I16 | GREEN | migrate attest routes to one ToolFn | Section 9 `P50-061` block: literal checks, completion, and handoff. |
-| P50-062 | P50-I16 | DEPENDENCY | pin signing dependencies and external verifier policy | Section 9 `P50-062` block: literal checks, completion, and handoff. |
+| P50-062 | P50-I16 | DEPENDENCY-VERIFY | verify signing dependencies and external verifier policy | Section 9 `P50-062` block: literal checks, completion, and handoff. |
 | P50-063 | P50-I16 | DOCS | document exact signed provenance and assurance limits | Section 9 `P50-063` block: literal checks, completion, and handoff. |
-| P50-064 | P50-I16-SIGN | RED | pin DSSE Ed25519 and Cosign interoperability | Section 9 `P50-064` block: literal checks, completion, and handoff. |
-| P50-065 | P50-I16-SIGN | GREEN | implement DSSE Ed25519 and Cosign interoperability | Section 9 `P50-065` block: literal checks, completion, and handoff. |
+| P50-064 | P50-I16-SIGN | RED | pin modern and legacy signed-profile interoperability | Section 9 `P50-064` block: literal checks, completion, and handoff. |
+| P50-065 | P50-I16-SIGN | GREEN | implement modern and legacy signed-profile interoperability | Section 9 `P50-065` block: literal checks, completion, and handoff. |
 | P50-066 | P50-I16-GATE | RED | pin hosted-builder Level 3 trust policy | Section 9 `P50-066` block: literal checks, completion, and handoff. |
 | P50-067 | P50-I16-GATE | GREEN | implement hosted-builder Level 3 trust policy and installed readiness | Section 9 `P50-067` block: literal checks, completion, and handoff. |
 | P50-068 | P50-I17 | RED | pin polyglot dependency license evidence | Section 9 `P50-068` block: literal checks, completion, and handoff. |
@@ -219,7 +222,7 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-076 | P50-I17-LINK | GREEN | implement dependency link edge analysis | Section 9 `P50-076` block: literal checks, completion, and handoff. |
 | P50-077 | P50-I17-INPUT | RED | pin SPDX compatibility evaluation | Section 9 `P50-077` block: literal checks, completion, and handoff. |
 | P50-078 | P50-I17-INPUT | GREEN | implement SPDX compatibility evaluation | Section 9 `P50-078` block: literal checks, completion, and handoff. |
-| P50-079 | P50-I17-INSTALLED | RED | pin installed license acceptance | Section 9 `P50-079` block: literal checks, completion, and handoff. |
+| P50-079 | P50-I17-INSTALLED | INSTALLED | verify installed license acceptance | Section 9 `P50-079` block: literal checks, completion, and handoff. |
 | P50-080 | P50-I18-CONFIG | GREEN | declare three-cloud IAM-audit inputs and bundled mappings | Section 9 `P50-080` block: literal checks, completion, and handoff. |
 | P50-081 | P50-I18 | RED | pin exact SDK-to-action and IaC comparison behavior | Section 9 `P50-081` block: literal checks, completion, and handoff. |
 | P50-082 | P50-I18 | GREEN | extract exact actions, resources, wildcards, unused grants, and unknowns | Section 9 `P50-082` block: literal checks, completion, and handoff. |
@@ -229,20 +232,20 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-086 | I18 IAM-audit CLI route | GREEN | GREEN shared ToolResult route | Section 9 `P50-086` block: literal checks, completion, and handoff. |
 | P50-087 | I18 IAM-audit MCP contract | RED | expose the missing shared-object seam | Section 9 `P50-087` block: literal checks, completion, and handoff. |
 | P50-088 | I18 IAM-audit MCP route | GREEN | GREEN shared implementation parity | Section 9 `P50-088` block: literal checks, completion, and handoff. |
-| P50-089 | I18 IAM-audit documentation | DOCS | document three-provider least privilege | Section 9 `P50-089` block: literal checks, completion, and handoff. |
-| P50-090 | I18 IAM-audit installed artifact | GREEN | verify three-provider resources from wheel and sdist | Section 9 `P50-090` block: literal checks, completion, and handoff. |
+| P50-089 | I18 IAM-audit documentation | DOCS-VERIFY | verify three-provider least-privilege documentation | Section 9 `P50-089` block: literal checks, completion, and handoff. |
+| P50-090 | I18 IAM-audit installed artifact | INSTALLED | verify three-provider resources from wheel and sdist | Section 9 `P50-090` block: literal checks, completion, and handoff. |
 | P50-091 | I18 IAM-audit readiness evidence | EVIDENCE | record auditable P12 fragment | Section 9 `P50-091` block: literal checks, completion, and handoff. |
 | P50-092 | P50-I19 | RED | pin dependency-free static potential-resource findings | Section 9 `P50-092` block: literal checks, completion, and handoff. |
 | P50-093 | P50-I19 | GREEN | implement static potential-resource findings | Section 9 `P50-093` block: literal checks, completion, and handoff. |
 | P50-094 | P50-I19 | EVIDENCE | pin dynamic pytest and Vitest runtime matrix | Section 9 `P50-094` block: literal checks, completion, and handoff. |
 | P50-095 | P50-I19 | RED | pin slow permission, required sampling, retention, and child failure | Section 9 `P50-095` block: literal checks, completion, and handoff. |
-| P50-096 | P50-I19 | DEPENDENCY | add the required psutil sampling runtime | Section 9 `P50-096` block: literal checks, completion, and handoff. |
+| P50-096 | P50-I19 | DEPENDENCY-VERIFY | verify the admitted psutil sampling runtime | Section 9 `P50-096` block: literal checks, completion, and handoff. |
 | P50-097 | P50-I19 | GREEN | implement required pytest and Vitest dynamic profiling | Section 9 `P50-097` block: literal checks, completion, and handoff. |
 | P50-098 | P50-I19 | RED | pin mem-profile registration and public modes | Section 9 `P50-098` block: literal checks, completion, and handoff. |
 | P50-099 | P50-I19 | GREEN | register complete static and dynamic mem-profile modes | Section 9 `P50-099` block: literal checks, completion, and handoff. |
 | P50-100 | P50-I19 | DOCS | document static findings and dynamic memory measurements | Section 9 `P50-100` block: literal checks, completion, and handoff. |
-| P50-101 | I19 memory-profile documentation | DOCS | document static and dynamic leak analysis | Section 9 `P50-101` block: literal checks, completion, and handoff. |
-| P50-102 | I19 memory-profile installed artifact | GREEN | run real Python and Node probes from wheel and sdist | Section 9 `P50-102` block: literal checks, completion, and handoff. |
+| P50-101 | I19 memory-profile documentation | DOCS-VERIFY | verify static and dynamic leak-analysis documentation | Section 9 `P50-101` block: literal checks, completion, and handoff. |
+| P50-102 | I19 memory-profile installed artifact | INSTALLED | run real Python and Node probes from wheel and sdist | Section 9 `P50-102` block: literal checks, completion, and handoff. |
 | P50-103 | I19 memory-profile readiness evidence | EVIDENCE | record auditable P12 fragment | Section 9 `P50-103` block: literal checks, completion, and handoff. |
 | P50-104 | P50-I20 | RED | pin deterministic Python import inventory without execution | Section 9 `P50-104` block: literal checks, completion, and handoff. |
 | P50-105 | P50-I20 | GREEN | implement Python import inventory without execution | Section 9 `P50-105` block: literal checks, completion, and handoff. |
@@ -253,8 +256,8 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-110 | P50-I20 | DOCS | document Python and Node waterfalls and validated patches | Section 9 `P50-110` block: literal checks, completion, and handoff. |
 | P50-111 | I20 cold-start MCP contract | RED | expose the missing shared-object seam | Section 9 `P50-111` block: literal checks, completion, and handoff. |
 | P50-112 | I20 cold-start MCP route | GREEN | GREEN shared implementation parity | Section 9 `P50-112` block: literal checks, completion, and handoff. |
-| P50-113 | I20 cold-start documentation | DOCS | document measured waterfalls and safe lazy-load patches | Section 9 `P50-113` block: literal checks, completion, and handoff. |
-| P50-114 | I20 cold-start installed artifact | GREEN | prove Python and Node probes and exact patches from packaged artifacts | Section 9 `P50-114` block: literal checks, completion, and handoff. |
+| P50-113 | I20 cold-start documentation | DOCS-VERIFY | verify measured waterfalls and safe lazy-load patch documentation | Section 9 `P50-113` block: literal checks, completion, and handoff. |
+| P50-114 | I20 cold-start installed artifact | INSTALLED | prove Python and Node probes and exact patches from packaged artifacts | Section 9 `P50-114` block: literal checks, completion, and handoff. |
 | P50-115 | I20 cold-start readiness evidence | EVIDENCE | record auditable P12 fragment | Section 9 `P50-115` block: literal checks, completion, and handoff. |
 | P50-116 | P50-I21 | RED | pin byte-identical SVG, CLS, and raster audit | Section 9 `P50-116` block: literal checks, completion, and handoff. |
 | P50-117 | P50-I21 | GREEN | implement deterministic read-only media audit | Section 9 `P50-117` block: literal checks, completion, and handoff. |
@@ -265,8 +268,8 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-122 | P50-I21 | RED | pin media-opt registration and public operations | Section 9 `P50-122` block: literal checks, completion, and handoff. |
 | P50-123 | P50-I21 | GREEN | register media-opt with thin CLI routing | Section 9 `P50-123` block: literal checks, completion, and handoff. |
 | P50-124 | P50-I21 | DOCS | document lossless formats, SVG safety, dimensions, and savings | Section 9 `P50-124` block: literal checks, completion, and handoff. |
-| P50-125 | I21 media-optimization documentation | DOCS | document lossless media, SVG, and markup safety | Section 9 `P50-125` block: literal checks, completion, and handoff. |
-| P50-126 | I21 media-optimization installed artifact | GREEN | prove media equivalence and safe patches from packaged artifacts | Section 9 `P50-126` block: literal checks, completion, and handoff. |
+| P50-125 | I21 media-optimization documentation | DOCS-VERIFY | verify lossless media, SVG, and markup-safety documentation | Section 9 `P50-125` block: literal checks, completion, and handoff. |
+| P50-126 | I21 media-optimization installed artifact | INSTALLED | prove media equivalence and safe patches from packaged artifacts | Section 9 `P50-126` block: literal checks, completion, and handoff. |
 | P50-127 | I21 media-optimization readiness evidence | EVIDENCE | record auditable P12 fragment | Section 9 `P50-127` block: literal checks, completion, and handoff. |
 | P50-128 | P50-I22 | RED | pin canonical commit/finding deltas | Section 9 `P50-128` block: literal checks, completion, and handoff. |
 | P50-129 | P50-I22 | GREEN | implement canonical delta data | Section 9 `P50-129` block: literal checks, completion, and handoff. |
@@ -277,12 +280,12 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-134 | P50-I22 | DOCS | document full-screen TUI, fallback, and data-only MCP | Section 9 `P50-134` block: literal checks, completion, and handoff. |
 | P50-135 | I22 TUI-diff MCP contract | RED | expose raw data parity without terminal controls | Section 9 `P50-135` block: literal checks, completion, and handoff. |
 | P50-136 | I22 TUI-diff MCP route | GREEN | GREEN raw data parity and terminal isolation | Section 9 `P50-136` block: literal checks, completion, and handoff. |
-| P50-137 | I22 TUI-diff documentation | DOCS | document interactive, CI, Git, and cache evidence | Section 9 `P50-137` block: literal checks, completion, and handoff. |
-| P50-138 | I22 TUI-diff installed artifact | GREEN | prove pilot and CI fallback outside a checkout | Section 9 `P50-138` block: literal checks, completion, and handoff. |
+| P50-137 | I22 TUI-diff documentation | DOCS-VERIFY | verify interactive, CI, Git, and cache documentation | Section 9 `P50-137` block: literal checks, completion, and handoff. |
+| P50-138 | I22 TUI-diff installed artifact | INSTALLED | prove pilot and CI fallback outside a checkout | Section 9 `P50-138` block: literal checks, completion, and handoff. |
 | P50-139 | I22 TUI-diff readiness evidence | EVIDENCE | record auditable P12 fragment | Section 9 `P50-139` block: literal checks, completion, and handoff. |
 | P50-140 | P50-I24 | RED | pin ONNX and GGUF runtimes, devices, grammar, and zero-network review | Section 9 `P50-140` block: literal checks, completion, and handoff. |
 | P50-141 | P50-I24 | GREEN | implement ONNX and GGUF offline review adapters | Section 9 `P50-141` block: literal checks, completion, and handoff. |
-| P50-142 | P50-I24 | DEPENDENCY | add isolated ONNX, CUDA, and GGUF optional extras | Section 9 `P50-142` block: literal checks, completion, and handoff. |
+| P50-142 | P50-I24 | DEPENDENCY-VERIFY | verify isolated ONNX, CUDA, and GGUF optional extras | Section 9 `P50-142` block: literal checks, completion, and handoff. |
 | P50-143 | P50-I24 | RED | pin offline-review registry, CLI adapter, and MCP equality | Section 9 `P50-143` block: literal checks, completion, and handoff. |
 | P50-144 | P50-I24 | GREEN | register offline-review and adapt `review --offline` | Section 9 `P50-144` block: literal checks, completion, and handoff. |
 | P50-145 | P50-I24 | DOCS | document complete air-gapped offline review and model lifecycle | Section 9 `P50-145` block: literal checks, completion, and handoff. |
@@ -291,7 +294,7 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-148 | P50-I24-AIRGAP | GREEN | OS-enforced air-gap and connection denial | Section 9 `P50-148` block: literal checks, completion, and handoff. |
 | P50-149 | P50-I24-INFERENCE | GREEN | bounded grammar-constrained local inference | Section 9 `P50-149` block: literal checks, completion, and handoff. |
 | P50-150 | P50-I24-TRANSPORT | GREEN | offline review public surfaces and compatibility routing | Section 9 `P50-150` block: literal checks, completion, and handoff. |
-| P50-151 | P50-I24-ACCEPTANCE | GREEN | installed offline review acceptance and documentation | Section 9 `P50-151` block: literal checks, completion, and handoff. |
+| P50-151 | P50-I24-ACCEPTANCE | INSTALLED | installed offline review acceptance and documentation verification | Section 9 `P50-151` block: literal checks, completion, and handoff. |
 | P50-152 | P50-I26 | RED | pin benchmark sample and descriptive statistics | Section 9 `P50-152` block: literal checks, completion, and handoff. |
 | P50-153 | P50-I26 | GREEN | implement deterministic benchmark statistics core | Section 9 `P50-153` block: literal checks, completion, and handoff. |
 | P50-154 | P50-I26 | RED | pin permissioned atomic baseline storage | Section 9 `P50-154` block: literal checks, completion, and handoff. |
@@ -303,7 +306,7 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-160 | P50-I26-STATISTICS | GREEN | benchmark statistics and significance analysis | Section 9 `P50-160` block: literal checks, completion, and handoff. |
 | P50-161 | P50-I26-BASELINE | GREEN | benchmark baseline persistence and recovery | Section 9 `P50-161` block: literal checks, completion, and handoff. |
 | P50-162 | P50-I26-TRANSPORT | GREEN | benchmark public surfaces and typed configuration | Section 9 `P50-162` block: literal checks, completion, and handoff. |
-| P50-163 | P50-I26-ACCEPTANCE | GREEN | installed benchmark acceptance and performance evidence | Section 9 `P50-163` block: literal checks, completion, and handoff. |
+| P50-163 | P50-I26-ACCEPTANCE | INSTALLED | installed benchmark acceptance and performance evidence | Section 9 `P50-163` block: literal checks, completion, and handoff. |
 | P50-164 | P50-I27-PARSE | RED | pin the complete polyglot asset, CSS, and design-token reference graph | Section 9 `P50-164` block: literal checks, completion, and handoff. |
 | P50-165 | P50-I27-GRAPH | GREEN | complete dead-asset and CSS-token reference graph | Section 9 `P50-165` block: literal checks, completion, and handoff. |
 | P50-166 | P50-I27-PARSE | GREEN | implement the complete read-only polyglot asset, CSS, and design-token graph | Section 9 `P50-166` block: literal checks, completion, and handoff. |
@@ -315,7 +318,7 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-172 | P50-I27-MCP | GREEN | register canonical dead-asset MCP data routing | Section 9 `P50-172` block: literal checks, completion, and handoff. |
 | P50-173 | P50-I27 | DOCS | document the two-step prune protocol | Section 9 `P50-173` block: literal checks, completion, and handoff. |
 | P50-174 | P50-I27-EFFECT | GREEN | dead-asset effect protocol and guarded prune | Section 9 `P50-174` block: literal checks, completion, and handoff. |
-| P50-175 | P50-I27-ACCEPTANCE | GREEN | dead-asset public surfaces and installed evidence | Section 9 `P50-175` block: literal checks, completion, and handoff. |
+| P50-175 | P50-I27-ACCEPTANCE | INSTALLED | verify dead-asset public surfaces and installed evidence | Section 9 `P50-175` block: literal checks, completion, and handoff. |
 | P50-176 | P50-I28 | RED | pin verified Git and ToolResult evidence aggregation | Section 9 `P50-176` block: literal checks, completion, and handoff. |
 | P50-177 | P50-I28 | GREEN | aggregate verified Git and ToolResult evidence | Section 9 `P50-177` block: literal checks, completion, and handoff. |
 | P50-178 | P50-I28 | RED | pin permissioned contained PR Markdown export | Section 9 `P50-178` block: literal checks, completion, and handoff. |
@@ -327,39 +330,39 @@ The registry retains every task P50-001 through P50-219 exactly once and in nume
 | P50-184 | P50-I28-RISK | GREEN | PR risk tiers, ownership, blame, and reviewer evidence | Section 9 `P50-184` block: literal checks, completion, and handoff. |
 | P50-185 | P50-I28-RENDER | GREEN | deterministic dual-format PR card rendering | Section 9 `P50-185` block: literal checks, completion, and handoff. |
 | P50-186 | P50-I28-TRANSPORT | GREEN | PR synthesis public surfaces and compatibility | Section 9 `P50-186` block: literal checks, completion, and handoff. |
-| P50-187 | P50-I28-ACCEPTANCE | GREEN | installed PR synthesis and source-bound delivery evidence | Section 9 `P50-187` block: literal checks, completion, and handoff. |
+| P50-187 | P50-I28-ACCEPTANCE | INSTALLED | installed PR synthesis and source-bound delivery evidence | Section 9 `P50-187` block: literal checks, completion, and handoff. |
 | P50-188 | P50-INTEGRATION | EVIDENCE | prove one object per tool and preserve the explicit compatibility alias | Section 9 `P50-188` block: literal checks, completion, and handoff. |
 | P50-189 | P50-INTEGRATION | ACCEPTANCE-PROBE | author installed-artifact acceptance probes | Section 9 `P50-189` block: literal checks, completion, and handoff. |
 | P50-190 | P50-INTEGRATION | EVIDENCE | independently reproduce and record installed-artifact behavior | Section 9 `P50-190` block: literal checks, completion, and handoff. |
 | P50-191 | P50-INTEGRATION | HANDOFF | run the exact phase gate and freeze evidence | Section 9 `P50-191` block: literal checks, completion, and handoff. |
-| P50-192 | P50-INTEGRATION-ADMISSION | GREEN | Phase 49 admission and all-42 baseline | Section 9 `P50-192` block: literal checks, completion, and handoff. |
-| P50-193 | P50-INTEGRATION-MATRIX | GREEN | 38-current-plus-14 matrix with separate historical subset | Section 9 `P50-193` block: literal checks, completion, and handoff. |
-| P50-194 | P50-INTEGRATION-TRANSPORT | GREEN | transport identity and legacy parity | Section 9 `P50-194` block: literal checks, completion, and handoff. |
-| P50-195 | P50-INTEGRATION-ATTESTATION | GREEN | quality evidence to SLSA attestation | Section 9 `P50-195` block: literal checks, completion, and handoff. |
-| P50-196 | P50-INTEGRATION-ATTRIBUTION | GREEN | attribution and TUI correlation | Section 9 `P50-196` block: literal checks, completion, and handoff. |
-| P50-197 | P50-INTEGRATION-PR | GREEN | complete I28 evidence integration | Section 9 `P50-197` block: literal checks, completion, and handoff. |
-| P50-198 | P50-INTEGRATION-PERFORMANCE | GREEN | performance corpus manifest and coverage | Section 9 `P50-198` block: literal checks, completion, and handoff. |
-| P50-199 | P50-INTEGRATION-PERFORMANCE-EVIDENCE | GREEN | measured performance evidence and release decisions | Section 9 `P50-199` block: literal checks, completion, and handoff. |
+| P50-192 | P50-INTEGRATION-ADMISSION | VERIFY | Phase 49 admission and all-42 baseline | Section 9 `P50-192` block: literal checks, completion, and handoff. |
+| P50-193 | P50-INTEGRATION-MATRIX | VERIFY | 38-current-plus-14 matrix with separate historical subset | Section 9 `P50-193` block: literal checks, completion, and handoff. |
+| P50-194 | P50-INTEGRATION-TRANSPORT | VERIFY | transport identity and legacy parity | Section 9 `P50-194` block: literal checks, completion, and handoff. |
+| P50-195 | P50-INTEGRATION-ATTESTATION | VERIFY | quality evidence to SLSA attestation | Section 9 `P50-195` block: literal checks, completion, and handoff. |
+| P50-196 | P50-INTEGRATION-ATTRIBUTION | VERIFY | attribution and TUI correlation | Section 9 `P50-196` block: literal checks, completion, and handoff. |
+| P50-197 | P50-INTEGRATION-PR | VERIFY | complete I28 evidence integration | Section 9 `P50-197` block: literal checks, completion, and handoff. |
+| P50-198 | P50-INTEGRATION-PERFORMANCE | VERIFY | performance corpus manifest and coverage | Section 9 `P50-198` block: literal checks, completion, and handoff. |
+| P50-199 | P50-INTEGRATION-PERFORMANCE-EVIDENCE | VERIFY | measured performance evidence and release decisions | Section 9 `P50-199` block: literal checks, completion, and handoff. |
 | P50-200 | P50-INTEGRATION-PACKAGING | RED | packaging contract | Section 9 `P50-200` block: literal checks, completion, and handoff. |
 | P50-201 | P50-INTEGRATION-PACKAGING | GREEN | package-data-only installation | Section 9 `P50-201` block: literal checks, completion, and handoff. |
 | P50-202 | P50-INTEGRATION-DOCS | RED | documentation claim contract | Section 9 `P50-202` block: literal checks, completion, and handoff. |
 | P50-203 | P50-INTEGRATION-DOCS | GREEN | source-bound documentation claims | Section 9 `P50-203` block: literal checks, completion, and handoff. |
 | P50-204 | P50-INTEGRATION-RELEASE | RED | release workflow contract | Section 9 `P50-204` block: literal checks, completion, and handoff. |
 | P50-205 | P50-INTEGRATION-RELEASE | GREEN | release workflow and ship-boundary verification | Section 9 `P50-205` block: literal checks, completion, and handoff. |
-| P50-206 | P50-INTEGRATION-INSTALLED | GREEN | installed public behavior matrix | Section 9 `P50-206` block: literal checks, completion, and handoff. |
-| P50-207 | P50-INTEGRATION-REGRESSION | GREEN | full regression gate | Section 9 `P50-207` block: literal checks, completion, and handoff. |
+| P50-206 | P50-INTEGRATION-INSTALLED | INSTALLED | installed public behavior matrix | Section 9 `P50-206` block: literal checks, completion, and handoff. |
+| P50-207 | P50-INTEGRATION-SHIP | RED | pin seven-vector ship gate against the full-regression baseline | Section 9 `P50-207` block: literal checks, completion, and handoff. |
 | P50-208 | P50-INTEGRATION-SHIP | GREEN | ship gate and no-release boundary | Section 9 `P50-208` block: literal checks, completion, and handoff. |
 | P50-209 | P50-INTEGRATION-EVIDENCE | RED | evidence ledger contract | Section 9 `P50-209` block: literal checks, completion, and handoff. |
 | P50-210 | P50-INTEGRATION-EVIDENCE | GREEN | evidence ledger and reproducibility | Section 9 `P50-210` block: literal checks, completion, and handoff. |
-| P50-211 | P50-INTEGRATION-CONSISTENCY | GREEN | release-note and architecture consistency | Section 9 `P50-211` block: literal checks, completion, and handoff. |
-| P50-212 | P50-INTEGRATION-SECURITY | GREEN | security claim review | Section 9 `P50-212` block: literal checks, completion, and handoff. |
-| P50-213 | P50-INTEGRATION-CONFIG | GREEN | v0.2 config migration and compatibility | Section 9 `P50-213` block: literal checks, completion, and handoff. |
-| P50-214 | P50-INTEGRATION-REFERENCES | GREEN | public reference parity | Section 9 `P50-214` block: literal checks, completion, and handoff. |
-| P50-215 | P50-INTEGRATION-SCOPE | GREEN | scope fidelity and path ownership audit | Section 9 `P50-215` block: literal checks, completion, and handoff. |
-| P50-216 | P50-INTEGRATION-REVISION | GREEN | one-revision ledger and artifact identity | Section 9 `P50-216` block: literal checks, completion, and handoff. |
-| P50-217 | P50-INTEGRATION-FINAL | GREEN | final verification gate | Section 9 `P50-217` block: literal checks, completion, and handoff. |
-| P50-218 | P50-INTEGRATION-HANDOFF | GREEN | flagship readiness handoff | Section 9 `P50-218` block: literal checks, completion, and handoff. |
-| P50-219 | P50-INTEGRATION-LIFECYCLE | GREEN | lifecycle boundary and clean worktree audit | Section 9 `P50-219` block: literal checks, completion, and handoff. |
+| P50-211 | P50-INTEGRATION-CONSISTENCY | VERIFY | release-note and architecture consistency | Section 9 `P50-211` block: literal checks, completion, and handoff. |
+| P50-212 | P50-INTEGRATION-SECURITY | VERIFY | security claim review | Section 9 `P50-212` block: literal checks, completion, and handoff. |
+| P50-213 | P50-INTEGRATION-CONFIG | VERIFY | v0.2 config migration and compatibility | Section 9 `P50-213` block: literal checks, completion, and handoff. |
+| P50-214 | P50-INTEGRATION-REFERENCES | VERIFY | public reference parity | Section 9 `P50-214` block: literal checks, completion, and handoff. |
+| P50-215 | P50-INTEGRATION-SCOPE | VERIFY | scope fidelity and path ownership audit | Section 9 `P50-215` block: literal checks, completion, and handoff. |
+| P50-216 | P50-INTEGRATION-REVISION | VERIFY | one-revision ledger and artifact identity | Section 9 `P50-216` block: literal checks, completion, and handoff. |
+| P50-217 | P50-INTEGRATION-FINAL | VERIFY | final verification gate | Section 9 `P50-217` block: literal checks, completion, and handoff. |
+| P50-218 | P50-INTEGRATION-HANDOFF | HANDOFF | flagship readiness handoff | Section 9 `P50-218` block: literal checks, completion, and handoff. |
+| P50-219 | P50-INTEGRATION-LIFECYCLE | VERIFY | lifecycle boundary and clean worktree audit | Section 9 `P50-219` block: literal checks, completion, and handoff. |
 
 Registry accounting: 219 registry rows; IDs P50-001..P50-219 contiguous, unique, and ordered; 219 Section 9 headings; 219 each of Implement/Read/Required behavior/Deliverables/Constraints/Checks/Completion/Handoff; every heading has four fields; 0 missing, duplicate, dangling, malformed, out-of-order, or unpaired task IDs. Scope accounting remains 15 PRESERVED, 0 ADDITIVE, 0 VIOLATION; execution status remains UNVERIFIED until evidence gates run.
 
@@ -380,13 +383,13 @@ Prove checkout, revision, dirty state, interpreter, existing Phase 50 behavior, 
 ## Required behavior
 
 1. Run `git status --short --branch`, `git rev-parse HEAD`, `git log -1 --oneline`, `git worktree list`, `.venv/Scripts/python.exe --version`, `.venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q`, `.venv/Scripts/ruff.exe check src tests scripts`, and `.venv/Scripts/ruff.exe format --check src tests scripts`. Record each exit and failure without repair.
-2. Make this exact change in only docs/developer/phase-50-implementation-evidence.md: record timestamp, checkout, branch, HEAD, dirty paths, Python version, each command/exit, each pre-existing failure, approver, I24 authoritative scope state, and every Phase 50 source/test/doc path classified as existing or absent.
-3. Run `git status --short`. The evidence file must be the only new path. Compare its inventory to the repository and retain the command transcripts.
+2. Create only .rush/phase50-evidence/P50-001.json with timestamp, checkout, branch, HEAD, dirty paths, Python version, each command/exit, each pre-existing failure, approver, I24 authoritative scope state, and every Phase 50 source/test/doc path classified as existing or absent. docs/developer/phase-50-implementation-evidence.md remains read-only until sole aggregator P50-210.
+3. Run git status --short. The one owned evidence fragment must be the only task-local path change relative to the pre-task manifest; compare its inventory to the repository and retain command transcripts.
 4. Stop and report a blocker if creating a branch/worktree; code, test, dependency, config, or guide edits; using main; repairing or hiding baseline failures.
 
 ## Deliverables
 
-- Documentation: docs/developer/phase-50-implementation-evidence.md only; create it for evidence only.
+- Documentation: Read-only input docs/developer/phase-50-implementation-evidence.md; P50-210 is its sole writer.
 - Evidence: .rush/phase50-evidence/P50-001.json; Literal commands, exits, SHA, dirty paths, path classification, I24 authoritative scope status, timestamp, approver.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
@@ -398,8 +401,8 @@ Prove checkout, revision, dirty state, interpreter, existing Phase 50 behavior, 
 
 - Task kind: EVIDENCE.
 - Prerequisites: Explicit user authority for a non-main implementation worktree. This planning worktree does not grant implementation authority..
-- Allowed reads: AGENTS.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; AGENTS.md; pyproject.toml; uv.lock; docs/developer/repository-remediation-plan.md; docs/developer/rush-token-innovation-enhancement-report-plan.md; this plan; git/worktree metadata; paths named in this plan..
-- Allowed writes: docs/developer/phase-50-implementation-evidence.md only; create ignored .rush/phase50-evidence/P50-001.json.
+- Allowed reads: AGENTS.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; pyproject.toml; uv.lock; docs/developer/rush-token-innovation-enhancement-report-plan.md; this plan; git/worktree metadata; paths named in this plan. The absent docs/developer/repository-remediation-plan.md is recorded as absent and is not a required read.
+- Allowed writes: create ignored .rush/phase50-evidence/P50-001.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: AGENTS.md; pyproject.toml; uv.lock; docs/developer/repository-remediation-plan.md; docs/developer/rush-token-innovation-enhancement-report-plan.md; this plan; git/worktree metadata; paths named in this plan. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Creating a branch/worktree; code, test, dependency, config, or guide edits; using main; repairing or hiding baseline failures.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -416,7 +419,7 @@ Prove checkout, revision, dirty state, interpreter, existing Phase 50 behavior, 
 - Broader command: .venv/Scripts/ruff.exe format --check src tests scripts; expected exit 0.
 - Broader command: git status --short; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: only paths named under Allowed writes differ.
 
 ## Completion
 
@@ -432,20 +435,20 @@ Implement pin immutable typed option declarations in rush-cli in the current wor
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-002 | P50-SHARED | RED | pin immutable typed option declarations
+# Feature: P50-002 | P50-SHARED | RED | pin shared option, result, effect, process, parser, and statistics contracts
 
-Pin the declaration schema without changing TOML parsing.
+Create the complete shared semantic RED packet before any shared GREEN implementation changes production.
 
 ## Required behavior
 
 1. Run `graft ask "ToolSpec constructions and positional callers" --source`; if Graft is unavailable, run `rg -n "ToolSpec\\(" src tests`. Inspect src/rush/catalog.py:36-47 and tests/test_catalog.py. Proceed only when `ToolOptionSpec`, `ToolOptionValue`, and `option_specs` are absent and all current positional fields can remain in place.
-2. Make this exact change in only tests/test_catalog.py: add the two named tests. Arrange `ToolOptionSpec` declarations for string, integer, float, boolean, string-tuple, and contained-path kinds; assert frozen instances, closed type vocabulary, validated defaults/choices/ranges/path kind, immutable tuple ownership on `ToolSpec`, and unchanged positional construction for existing fields.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_tool_option_spec_declares_closed_types_and_constraints tests/test_catalog.py::test_tool_spec_exposes_immutable_option_specs -q`. Retain ordinary assertion/import failures naming the absent declarations; then run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py -q` and record the same defect without collection failure.
-4. Stop and report a blocker if production/configuration/docs edits; Phase 50 ToolSpecs; parser assertions; arbitrary option values.
+2. Create the shared RED assertions in tests/test_catalog.py, tests/test_tool_options.py, tests/test_tool_common.py, tests/test_output_containment.py, tests/test_redaction_boundary.py, tests/test_subprocess_profile.py, tests/test_parser_pack.py, tests/test_statistics.py, and tests/test_phase50_dependencies.py. Cover immutable option types, canonical ToolResult/ToolFn, deny-default independent effects, no-follow identity-checked atomic output, wrapper/env/tree-kill/redaction subprocess behavior, recursive allowlisted redaction, real language-pack parsing, verified descriptive/significance statistics, and every exact required dependency/extra/API/version/license/platform contract. The dependency test must cover pillow==12.3.0; onnxruntime>=1.22,<2; onnxruntime-gpu>=1.22,<2; llama-cpp-python>=0.3,<1; Node>=22.15; Cosign>=3.1,<4; slsa-verifier>=2.7,<3; mutual exclusion of CPU/CUDA extras; and the tree-sitter-language-pack 0.4.0-to->=1.15,<2 migration across required grammars. Name and implement test_output_rejects_hard_link_escape, test_output_rejects_identity_swap_between_validation_and_replace, and test_atomic_output_recovers_after_crash, with before/after file identity and containment evidence.
+3. Resolve future modules/symbols inside test bodies with `importlib.util.find_spec` or existing public seams so collection succeeds. Run the exact focused shared RED suite and require exit 1 only at named missing-behavior assertions; import/collection error, skip, XFAIL, or unrelated failure is invalid.
+4. Stop and report a blocker if production/configuration/docs edits, Phase 50 feature ToolSpecs, fixture-only or weakened parser/statistics/dependency assertions, or arbitrary option values.
 
 ## Deliverables
 
-- Tests: tests/test_catalog.py only; implement the exact tests and assertions named in Required behavior 2.
+- Tests: tests/test_catalog.py; tests/test_tool_options.py; tests/test_tool_common.py; tests/test_output_containment.py; tests/test_redaction_boundary.py; tests/test_subprocess_profile.py; tests/test_parser_pack.py; tests/test_statistics.py; tests/test_phase50_dependencies.py. These files become immutable inputs to P50-003, P50-010–P50-017, and P50-019.
 - Evidence: .rush/phase50-evidence/P50-002.json; Two named RED results, caller inventory, and unchanged-field observation under `RED observations / P50-002`.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
@@ -457,24 +460,22 @@ Pin the declaration schema without changing TOML parsing.
 
 - Task kind: RED.
 - Prerequisites: P50-001
-- Allowed reads: AGENTS.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; src/rush/catalog.py; tests/test_catalog.py; every `ToolSpec(` construction returned by `rg -n "ToolSpec\\(" src tests`..
-- Allowed writes: tests/test_catalog.py only; create ignored .rush/phase50-evidence/P50-002.json.
-- Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: src/rush/catalog.py; tests/test_catalog.py; every `ToolSpec(` construction returned by `rg -n "ToolSpec\\(" src tests`. remains read-only.
-- Prohibited files, changes, and lifecycle actions: Production/configuration/docs edits; Phase 50 ToolSpecs; parser assertions; arbitrary option values.
+- Allowed reads: AGENTS.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; src/rush/tools/base.py; src/rush/tools/common.py; src/rush/catalog.py; src/rush/config.py; src/rush/permissions.py; pyproject.toml; uv.lock; existing parser/statistics seams; every `ToolSpec(` construction returned by `rg -n "ToolSpec\\(" src tests`; the nine owned shared test paths.
+- Allowed writes: tests/test_catalog.py; tests/test_tool_options.py; tests/test_tool_common.py; tests/test_output_containment.py; tests/test_redaction_boundary.py; tests/test_subprocess_profile.py; tests/test_parser_pack.py; tests/test_statistics.py; tests/test_phase50_dependencies.py; create ignored .rush/phase50-evidence/P50-002.json.
+- Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: src/rush/tools/base.py; src/rush/tools/common.py; src/rush/catalog.py; src/rush/config.py; src/rush/permissions.py; pyproject.toml; uv.lock; every production path and every pre-existing test assertion outside the literal RED additions remain read-only.
+- Prohibited files, changes, and lifecycle actions: production/configuration/docs edits; Phase 50 feature ToolSpecs; fixture-only or weakened parser/statistics/dependency assertions; arbitrary option values.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_tool_option_spec_declares_closed_types_and_constraints tests/test_catalog.py::test_tool_spec_exposes_immutable_option_specs -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_tool_option_spec_declares_closed_types_and_constraints tests/test_catalog.py::test_tool_spec_exposes_immutable_option_specs -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Baseline command before editing: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_config.py tests/test_tool_common.py tests/test_mcp.py -q; expected exit 0 or an explicitly admitted pre-existing blocker from P50-001.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_tool_options.py tests/test_tool_common.py tests/test_output_containment.py tests/test_redaction_boundary.py tests/test_subprocess_profile.py tests/test_parser_pack.py tests/test_statistics.py tests/test_phase50_dependencies.py -q; expected exit 1 with successful collection and only named missing shared/dependency behavior.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_tool_options.py tests/test_tool_common.py tests/test_output_containment.py tests/test_redaction_boundary.py tests/test_subprocess_profile.py tests/test_parser_pack.py tests/test_statistics.py tests/test_phase50_dependencies.py -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For RED, the task is complete only when the named focused test executes and fails solely at the named assertion for `test_tool_option_spec_declares_closed_types_and_constraints` and `test_tool_spec_exposes_immutable_option_specs` fail because typed option declarations do not exist., the baseline command passes, and only literal allowed test, fixture, and ignored evidence paths changed.
+For RED, the task is complete only when the complete shared suite collects; every asserted missing option, result, effect, process, filesystem, redaction, parser, statistics, and dependency behavior has an ordinary semantic failure; the pre-edit baseline is recorded; and no production path changed.
 
 ## Handoff
 
@@ -526,7 +527,7 @@ Add only the shared declaration types; do not change parsing.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_tool_option_spec_declares_closed_types_and_constraints tests/test_catalog.py::test_tool_spec_exposes_immutable_option_specs -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -578,7 +579,7 @@ Pin parser behavior separately from the declaration type.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_config.py::test_tool_config_preserves_declared_typed_options tests/test_config.py::test_tool_config_rejects_undeclared_option tests/test_config.py::test_tool_config_rejects_wrong_type_range_choice_and_path -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_config.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_config.py::test_tool_config_preserves_declared_typed_options tests/test_config.py::test_tool_config_rejects_undeclared_option tests/test_config.py::test_tool_config_rejects_wrong_type_range_choice_and_path -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -633,7 +634,7 @@ Satisfy only the P50-004 parser contract.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_config.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_config.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_config.py::test_tool_config_preserves_declared_typed_options tests/test_config.py::test_tool_config_rejects_undeclared_option tests/test_config.py::test_tool_config_rejects_wrong_type_range_choice_and_path -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -687,7 +688,7 @@ Give every later artifact/store effect one tested filesystem primitive instead o
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py::test_resolve_contained_output_rejects_absolute_parent_and_symlink tests/test_tool_common.py::test_atomic_write_replaces_only_contained_target_and_is_deterministic tests/test_tool_common.py::test_atomic_write_preserves_existing_target_and_removes_temp_on_failure -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -742,7 +743,7 @@ Implement only the shared primitive; permission selection and feature semantics 
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py::test_resolve_contained_output_rejects_absolute_parent_and_symlink tests/test_tool_common.py::test_atomic_write_replaces_only_contained_target_and_is_deterministic tests/test_tool_common.py::test_atomic_write_preserves_existing_target_and_removes_temp_on_failure -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -796,7 +797,7 @@ Pin one shared naming rule before any new tool is registered.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_mcp_catalog_names_normalize_toolfn_hyphens_to_underscores tests/test_phase50_slsa_attestation.py::test_phase50_manual_mcp_names_contain_no_business_implementations -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -850,7 +851,7 @@ Change only shared naming and the temporary manual routes; do not migrate featur
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py tests/test_phase50_slsa_attestation.py tests/test_cli_registry.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py tests/test_phase50_slsa_attestation.py tests/test_cli_registry.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_mcp_catalog_names_normalize_toolfn_hyphens_to_underscores tests/test_phase50_slsa_attestation.py::test_phase50_manual_mcp_names_contain_no_business_implementations -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -880,7 +881,7 @@ Transition: RED → GREEN; every Phase 50 tool must return the canonical structu
 ## Deliverables
 
 - Production: Modify src/rush/tools/base.py only.
-- Tests: Create tests/test_tool_common.py with canonical-field, status, and serialization assertions.
+- Tests: Run unchanged producer-owned verification from tests/test_tool_common.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-010.json with command exits and result-schema evidence.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -892,7 +893,7 @@ Transition: RED → GREEN; every Phase 50 tool must return the canonical structu
 - Task kind: GREEN.
 - Prerequisites: P50-009 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/base.py; tests/test_tool_common.py; .rush/phase50-evidence/P50-010.json; tests/test_catalog.py; tests/test_config.py; tests/test_cli_registry.py; tests/test_mcp.py.
-- Allowed writes: src/rush/tools/base.py; tests/test_tool_common.py; .rush/phase50-evidence/P50-010.json.
+- Allowed writes: src/rush/tools/base.py; .rush/phase50-evidence/P50-010.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -907,7 +908,7 @@ Transition: RED → GREEN; every Phase 50 tool must return the canonical structu
 - .venv/Scripts/ruff.exe check src/rush/tools/base.py tests/test_tool_common.py
 - .venv/Scripts/ruff.exe format --check src/rush/tools/base.py tests/test_tool_common.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -937,9 +938,9 @@ Transition: RED → GREEN; reject undeclared or incompatible options before Tool
 ## Deliverables
 
 - Configuration: Modify src/rush/catalog.py, src/rush/config.py, and src/rush/tools/__init__.py.
-- Tests: Create tests/test_tool_options.py and extend tests/test_catalog.py and tests/test_config.py.
+- Tests: Run unchanged producer-owned verification from tests/test_tool_options.py; tests/test_catalog.py; tests/test_config.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-011.json.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/catalog.py, src/rush/config.py, and src/rush/tools/__init__.py immutable option/catalog/config registration only; no feature logic.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -949,7 +950,7 @@ Transition: RED → GREEN; reject undeclared or incompatible options before Tool
 - Task kind: GREEN.
 - Prerequisites: P50-010 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/catalog.py; src/rush/config.py; src/rush/tools/__init__.py; tests/test_tool_options.py; tests/test_catalog.py; tests/test_config.py; .rush/phase50-evidence/P50-011.json.
-- Allowed writes: src/rush/catalog.py; src/rush/config.py; src/rush/tools/__init__.py; tests/test_tool_options.py; tests/test_catalog.py; tests/test_config.py; .rush/phase50-evidence/P50-011.json.
+- Allowed writes: src/rush/catalog.py; src/rush/config.py; src/rush/tools/__init__.py; .rush/phase50-evidence/P50-011.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -963,7 +964,7 @@ Transition: RED → GREEN; reject undeclared or incompatible options before Tool
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe format --check src/rush/catalog.py src/rush/config.py src/rush/tools/__init__.py tests/test_tool_options.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tool_options.py tests/test_catalog.py tests/test_config.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -993,7 +994,7 @@ Transition: RED → GREEN; deny effects before network, process, cache, model, a
 ## Deliverables
 
 - Production: Modify src/rush/permissions.py.
-- Tests: Extend tests/test_tool_common.py and tests/test_output_containment.py with every permission/effect denial.
+- Tests: Run unchanged producer-owned verification from tests/test_tool_common.py; tests/test_output_containment.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-012.json.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -1005,7 +1006,7 @@ Transition: RED → GREEN; deny effects before network, process, cache, model, a
 - Task kind: GREEN.
 - Prerequisites: P50-011 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/permissions.py; tests/test_tool_common.py; tests/test_output_containment.py; .rush/phase50-evidence/P50-012.json.
-- Allowed writes: src/rush/permissions.py; tests/test_tool_common.py; tests/test_output_containment.py; .rush/phase50-evidence/P50-012.json.
+- Allowed writes: src/rush/permissions.py; .rush/phase50-evidence/P50-012.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -1019,7 +1020,7 @@ Transition: RED → GREEN; deny effects before network, process, cache, model, a
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe format --check src/rush/permissions.py tests/test_tool_common.py tests/test_output_containment.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_output_containment.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1041,15 +1042,15 @@ Transition: RED → GREEN; ensure generated outputs cannot escape their authoriz
 
 ## Required behavior
 
-1. Reject traversal, symlink, junction, reparse-point, and hard-link escapes.
-2. Write through a sibling temporary file, flush and fsync when supported, then atomically replace.
+1. Reject traversal, symlink, junction, reparse-point, hard-link escape, and replaced-inode/identity-swap TOCTOU cases by validating root containment and target identity before open and immediately before replace.
+2. Write through a sibling no-follow temporary file, flush and fsync when supported, recheck root/target identity, then atomically replace and prove crash recovery.
 3. Record before/after hashes and retain recoverable backups for replacement or deletion.
 4. Require artifact_write or the applicable source/destructive permission before mutation.
 
 ## Deliverables
 
 - Production: Modify src/rush/tools/common.py.
-- Tests: Extend tests/test_output_containment.py with traversal, link escape, atomicity, hashes, backups, and denied-write cases.
+- Tests: Run unchanged producer-owned verification from tests/test_output_containment.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-013.json.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -1061,7 +1062,7 @@ Transition: RED → GREEN; ensure generated outputs cannot escape their authoriz
 - Task kind: GREEN.
 - Prerequisites: P50-012 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/common.py; tests/test_output_containment.py; .rush/phase50-evidence/P50-013.json.
-- Allowed writes: src/rush/tools/common.py; tests/test_output_containment.py; .rush/phase50-evidence/P50-013.json.
+- Allowed writes: src/rush/tools/common.py; .rush/phase50-evidence/P50-013.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -1075,7 +1076,7 @@ Transition: RED → GREEN; ensure generated outputs cannot escape their authoriz
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe format --check src/rush/tools/common.py tests/test_output_containment.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_output_containment.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1097,15 +1098,15 @@ Transition: RED → GREEN; make run_subprocess and run_engine the only Phase 50 
 
 ## Required behavior
 
-1. Use argv lists with option terminators, fixed contained cwd, stdin=DEVNULL, sanitized credential-free environment, bounded output, and timeouts.
-2. Terminate the complete process tree on timeout or cancellation.
+1. Use argv lists with option terminators, fixed contained cwd, stdin=DEVNULL, a sanitized credential-free environment by default, bounded output, and timeouts; reject `.cmd`/`.bat` wrapper shell semantics unless an explicitly trusted wrapper policy proves literal argv preservation.
+2. Terminate the complete process tree on timeout or cancellation, using process groups on POSIX and a Windows Job Object or equivalent verified tree boundary on Windows.
 3. Preserve nonzero exits and child errors in canonical results.
 4. Redact child output before logs, telemetry, cache, evidence, or ToolResult emission.
 
 ## Deliverables
 
-- Production: Modify src/rush/tools/common.py and src/rush/core/subprocess.py.
-- Tests: Create tests/test_subprocess_profile.py.
+- Production: Modify src/rush/tools/common.py only; do not invent a nonexistent src/rush/core/subprocess.py seam.
+- Tests: Run unchanged producer-owned verification from tests/test_subprocess_profile.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-014.json.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -1116,8 +1117,8 @@ Transition: RED → GREEN; make run_subprocess and run_engine the only Phase 50 
 
 - Task kind: GREEN.
 - Prerequisites: P50-013 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; src/rush/tools/common.py; src/rush/core/subprocess.py; tests/test_subprocess_profile.py; .rush/phase50-evidence/P50-014.json; tests/test_tool_common.py.
-- Allowed writes: src/rush/tools/common.py; src/rush/core/subprocess.py; tests/test_subprocess_profile.py; .rush/phase50-evidence/P50-014.json.
+- Allowed reads: AGENTS.md; this plan; src/rush/tools/common.py; tests/test_subprocess_profile.py; tests/test_subprocess_contract.py; .rush/phase50-evidence/P50-014.json; tests/test_tool_common.py.
+- Allowed writes: src/rush/tools/common.py; .rush/phase50-evidence/P50-014.json. The paired tests created by the RED owner remain read-only during GREEN.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -1129,9 +1130,9 @@ Transition: RED → GREEN; make run_subprocess and run_engine the only Phase 50 
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_subprocess_profile.py tests/test_tool_common.py -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: git diff --check; expected exit 0.
-- .venv/Scripts/ruff.exe format --check src/rush/tools/common.py src/rush/core/subprocess.py tests/test_subprocess_profile.py
+- .venv/Scripts/ruff.exe format --check src/rush/tools/common.py tests/test_subprocess_profile.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_subprocess_profile.py tests/test_tool_common.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1161,7 +1162,7 @@ Transition: RED → GREEN; prevent secrets and arbitrary metadata from entering 
 ## Deliverables
 
 - Production: Modify src/rush/tools/common.py.
-- Tests: Create tests/test_redaction_boundary.py with nested, stderr, telemetry, cache, and evidence fixtures.
+- Tests: Run unchanged producer-owned verification from tests/test_redaction_boundary.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-015.json.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -1173,7 +1174,7 @@ Transition: RED → GREEN; prevent secrets and arbitrary metadata from entering 
 - Task kind: GREEN.
 - Prerequisites: P50-014 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/common.py; tests/test_redaction_boundary.py; .rush/phase50-evidence/P50-015.json; tests/test_tool_common.py.
-- Allowed writes: src/rush/tools/common.py; tests/test_redaction_boundary.py; .rush/phase50-evidence/P50-015.json.
+- Allowed writes: src/rush/tools/common.py; .rush/phase50-evidence/P50-015.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -1187,7 +1188,7 @@ Transition: RED → GREEN; prevent secrets and arbitrary metadata from entering 
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe format --check src/rush/tools/common.py tests/test_redaction_boundary.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_redaction_boundary.py tests/test_tool_common.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1217,7 +1218,7 @@ Transition: RED → GREEN; provide structured parsing instead of regex-only AST 
 ## Deliverables
 
 - Production: Create src/rush/tools/parser_pack.py.
-- Tests: Create tests/test_parser_pack.py with Python, TypeScript, TSX, Rust, HTML, CSS, Vue, and Svelte fixtures.
+- Tests: Run unchanged producer-owned verification from tests/test_parser_pack.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-016.json.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -1229,7 +1230,7 @@ Transition: RED → GREEN; provide structured parsing instead of regex-only AST 
 - Task kind: GREEN.
 - Prerequisites: P50-015 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/parser_pack.py; tests/test_parser_pack.py; .rush/phase50-evidence/P50-016.json.
-- Allowed writes: src/rush/tools/parser_pack.py; tests/test_parser_pack.py; .rush/phase50-evidence/P50-016.json.
+- Allowed writes: src/rush/tools/parser_pack.py; .rush/phase50-evidence/P50-016.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -1243,7 +1244,7 @@ Transition: RED → GREEN; provide structured parsing instead of regex-only AST 
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe format --check src/rush/tools/parser_pack.py tests/test_parser_pack.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_parser_pack.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1273,7 +1274,7 @@ Transition: RED → GREEN; make statistical results deterministic and preserve i
 ## Deliverables
 
 - Production: Create src/rush/tools/statistics.py.
-- Tests: Create tests/test_statistics.py with fixed vectors for every named calculation and state.
+- Tests: Run unchanged producer-owned verification from tests/test_statistics.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Create ignored .rush/phase50-evidence/P50-017.json.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -1285,7 +1286,7 @@ Transition: RED → GREEN; make statistical results deterministic and preserve i
 - Task kind: GREEN.
 - Prerequisites: P50-016 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/statistics.py; tests/test_statistics.py; .rush/phase50-evidence/P50-017.json.
-- Allowed writes: src/rush/tools/statistics.py; tests/test_statistics.py; .rush/phase50-evidence/P50-017.json.
+- Allowed writes: src/rush/tools/statistics.py; .rush/phase50-evidence/P50-017.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -1299,7 +1300,7 @@ Transition: RED → GREEN; make statistical results deterministic and preserve i
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe format --check src/rush/tools/statistics.py tests/test_statistics.py
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_statistics.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1356,7 +1357,7 @@ Transition: RED → GREEN; freeze existing behavior before replacing adapters or
 - .venv/Scripts/ruff.exe check tests/test_phase50_public_compatibility.py
 - .venv/Scripts/ruff.exe format --check tests/test_phase50_public_compatibility.py
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1372,7 +1373,7 @@ Implement predecessor admission and dependency capability proof in rush-cli in t
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-019 | P50-SHARED | EVIDENCE | predecessor admission and dependency capability proof
+# Feature: P50-019 | P50-SHARED | DEPENDENCY-GREEN | admit the exact shared dependency set
 
 Transition: RED → GREEN; block Phase 50 readiness until predecessor and dependency evidence is immutable.
 
@@ -1380,13 +1381,13 @@ Transition: RED → GREEN; block Phase 50 readiness until predecessor and depend
 
 1. Record the accepted Phase 49 implementation-close SHA; a plan, branch tip, current HEAD, or evidence-only commit is not a substitute.
 2. Verify Python 3.12, uv, lock identity, package version, clean authorized non-main worktree, and passing baselines.
-3. Admit codebleu>=0.7,<0.8, tree-sitter-language-pack>=1.15,<2, license-expression>=30.4,<31, python-hcl2, psutil>=7.2,<8, textual>=8.2,<9, scipy>=1.18,<2, optional ONNX/GGUF runtimes, Node>=22.15, Cosign, and slsa-verifier with versions, licenses, and platform support.
-4. Record transitive deltas and why existing dependencies are insufficient.
+3. Admit codebleu>=0.7,<0.8, tree-sitter-language-pack>=1.15,<2, license-expression>=30.4,<31, python-hcl2>=8.1,<9, psutil>=7.2,<8, textual>=8.2,<9, scipy>=1.18,<2, pillow==12.3.0, retained cryptography==50.0.0, optional extra offline-onnx with onnxruntime>=1.22,<2, mutually exclusive offline-onnx-cuda with onnxruntime-gpu>=1.22,<2, optional offline-gguf with llama-cpp-python>=0.3,<1, external Node>=22.15, Cosign>=3.1,<4, and slsa-verifier>=2.7,<3. Record every resolved lock/binary version and SHA-256, license, supported Python 3.12 OS/architecture matrix, and extra isolation. Record the python-hcl2 8.x API migration and the tree-sitter-language-pack 0.4.0-to-1.x API/grammar migration; any unsupported required grammar/platform or incompatible 0.4.0 behavior is a blocker, not an implicit upgrade.
+4. Record transitive deltas, official per-package/tool source anchors, exact governing headings/line spans/SHA-256 from the innovation report, companion Phase 50 plan, and ADR-0036, why existing dependencies are insufficient, and Python 3.12 OS/architecture/license support. Prove isolated acceptance for each optional backend and external binary without installing mutually exclusive extras together.
 
 ## Deliverables
 
-- Tests: Create tests/test_phase50_admission.py.
-- Dependencies: Modify pyproject.toml and uv.lock only in the dependency GREEN transition.
+- Tests: Run unchanged tests/test_phase50_dependencies.py owned by P50-002; do not edit the dependency RED contract.
+- Dependencies: Modify pyproject.toml and uv.lock in this dependency admission transition; this task is the sole shared lock owner, while later feature tasks may consume but not rewrite the admitted ranges.
 - Evidence: Create ignored .rush/phase50-evidence/P50-019.json.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
@@ -1395,29 +1396,31 @@ Transition: RED → GREEN; block Phase 50 readiness until predecessor and depend
 
 ## Constraints
 
-- Task kind: EVIDENCE.
-- Prerequisites: P50-018 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_admission.py; .rush/phase50-evidence/P50-019.json.
-- Allowed writes: tests/test_phase50_admission.py; .rush/phase50-evidence/P50-019.json.
+- Task kind: DEPENDENCY-GREEN.
+- Prerequisites: P50-002 dependency RED contract and P50-018 compatibility capture complete with their named evidence.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; pyproject.toml; uv.lock; tests/test_phase50_dependencies.py; tests/test_parser_pack.py; .rush/phase50-evidence/P50-002.json; .rush/phase50-evidence/P50-018.json; .rush/phase50-evidence/P50-019.json. Record exact dependency/extra headings, line spans, SHA-256, official package/tool metadata, and per-package Python 3.12 OS/architecture/license evidence.
+- Allowed writes: pyproject.toml; uv.lock; create ignored .rush/phase50-evidence/P50-019.json. tests/test_phase50_dependencies.py and tests/test_parser_pack.py are unchanged RED contracts owned by P50-002.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Do not install, lock, or mutate dependencies during RED.
+- Do not alter release versions or admit a dependency outside the exact tested ranges; lock only through `uv lock` and synchronize through `uv sync --locked --python 3.12`.
 - Do not accept missing Phase 49 evidence or substitute mock-only capability.
 - Do not alter release versions or Git lifecycle state.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe --version
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_phase50_admission.py -q
-- uv lock --check
-- .venv/Scripts/ruff.exe check tests/test_phase50_admission.py
-- Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Baseline command before dependency edits: .venv/Scripts/python.exe -m pytest tests/test_phase50_dependencies.py -q; expected exit 1 only at the named missing dependency, extra, resolved-version/hash, API migration, grammar, license, Python 3.12 platform, mutual-exclusion, or external-tool assertion.
+- Focused command: uv lock; expected exit 0 with only the admitted dependency and extra delta.
+- Broader command: uv sync --locked --python 3.12; expected exit 0.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_phase50_dependencies.py tests/test_parser_pack.py -q; expected exit 0 with both P50-002 RED contracts unchanged.
+- Broader command: uv lock --check; expected exit 0.
+- Broader command: .venv/Scripts/ruff.exe check tests/test_phase50_dependencies.py tests/test_parser_pack.py; expected exit 0.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_phase50_dependencies.py -q; expected exit 0 with the P50-002 RED assertions unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-Complete only when predecessor acceptance and every dependency capability have immutable evidence; otherwise retain the exact blocker.
+Complete only when predecessor acceptance and every exact dependency/extra/API/version/hash/license/platform capability, including Pillow, isolated ONNX CPU/CUDA and GGUF extras, Node, Cosign, slsa-verifier, and the tree-sitter-language-pack migration, have immutable evidence; uv lock --check passes; and the unchanged P50-002 dependency RED contract is green. Any unresolved version, grammar, platform, license, or external-binary identity remains a blocker.
 
 ## Handoff
 
@@ -1437,9 +1440,9 @@ Pin the deterministic fixture-result contract that the live multi-model harness 
 
 ## Required behavior
 
-1. Run `graft ask "AiEvalTool ToolFn result construction" --source`; if unavailable, run `rg -n "class AiEvalTool|class ToolFn|ToolResult" src/rush/tools tests`. Inspect the exact result/finding constructors. Confirm `src/rush/tools/prompt_eval.py` is absent and import it only inside each test body so collection succeeds.
+1. Run `graft ask "AiEvalTool ToolFn result construction" --source`; if unavailable, run `rg -n "class AiEvalTool|class ToolFn|ToolResult" src/rush/tools tests`. Inspect the exact result/finding constructors. Resolve `rush.tools.prompt_eval` with `importlib.util.find_spec` inside each test body before importing it; when absent, fail an ordinary named assertion (`assert spec is not None, "PromptEvalTool module is absent"`) so collection succeeds and `ModuleNotFoundError` is never accepted as RED evidence.
 2. Make this exact change in only tests/test_prompt_eval.py: add `test_prompt_eval_scores_normalized_fixture_runs_without_network`, arranging two contained task records and recorded runs with model, task_id, expected/observed tool sequence, patch_match, input_tokens, output_tokens, and cost_usd; instantiate `PromptEvalTool` directly with a socket-denial spy; assert exact ToolResult fields and per-model matrix calculations. Add `test_prompt_eval_retains_failed_cases_and_reports_matrix`, arranging one pass/one fail and asserting warn plus the exact failed task/model/reason finding. Do not invoke CLI, MCP, catalog, or ALL_TOOLS.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_scores_normalized_fixture_runs_without_network tests/test_prompt_eval.py::test_prompt_eval_retains_failed_cases_and_reports_matrix -q`, then `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q`. Both test bodies must execute and fail only because the named module/class/behavior is absent.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_scores_normalized_fixture_runs_without_network tests/test_prompt_eval.py::test_prompt_eval_retains_failed_cases_and_reports_matrix -q`, then `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q`. Both commands must collect successfully and exit 1 only at the named module-presence or core-behavior assertion.
 4. Stop and report a blocker if collection-time import of a missing module, production edits, invented provider output, or weakening any live-harness requirement.
 
 ## Deliverables
@@ -1465,11 +1468,9 @@ Pin the deterministic fixture-result contract that the live multi-model harness 
 ## Checks to run before reporting
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_scores_normalized_fixture_runs_without_network tests/test_prompt_eval.py::test_prompt_eval_retains_failed_cases_and_reports_matrix -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 1 with successful collection and only the named missing module/core behavior.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_scores_normalized_fixture_runs_without_network tests/test_prompt_eval.py::test_prompt_eval_retains_failed_cases_and_reports_matrix -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1487,12 +1488,12 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 
 # Feature: P50-021 | P50-I13 | GREEN | implement deterministic evaluation scoring core
 
-Implement only recorded input; live evaluation is excluded.
+Implement the deterministic scoring core consumed by P50-025/P50-026 live FastMCP execution; recorded fixtures are test inputs, never a substitute for live target execution.
 
 ## Required behavior
 
 1. Inspect only the named helper/result constructors and unchanged RED assertions. Confirm the class can accept injected filesystem/socket boundaries and typed options without transport imports.
-2. Make this exact change in only src/rush/tools/prompt_eval.py: create `PromptEvalTool` named `prompt-eval`; resolve the two configured contained paths; validate exact record fields and unique model/task pairs; compute exact sequence match, patch_match, token/cost totals, pass rates, and baseline deltas; retain every failed case as a Finding; return error for malformed/escaping data, warn for failures, ok when all pass, and skipped when records are absent. Include no registry object or transport code.
+2. Make this exact change in only src/rush/tools/prompt_eval.py: create `PromptEvalTool` named `prompt-eval`; resolve the two configured contained paths; validate exact record fields and unique model/task pairs; compute exact sequence match, patch_match, token/cost totals, pass rates, and baseline deltas for both fixture and live-cell inputs; retain every failed case as a Finding; return error for malformed/escaping data, warn for failures, ok when all pass, and skipped when records are absent. Include no registry object or transport code and no recorded-response fallback for live mode.
 3. Run `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_scores_normalized_fixture_runs_without_network tests/test_prompt_eval.py::test_prompt_eval_retains_failed_cases_and_reports_matrix -q`, `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/prompt_eval.py tests/test_prompt_eval.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/prompt_eval.py tests/test_prompt_eval.py`. Reinspect with `rg -n "socket|subprocess|telemetry|ALL_TOOLS|TOOL_SPECS|click|FastMCP" src/rush/tools/prompt_eval.py`; only type/import strings explicitly permitted by the card may appear.
 4. Stop and report a blocker if test, registry, catalog, CLI, MCP, configuration, docs, dependency, socket, subprocess, write, CodeBLEU, or telemetry changes.
 
@@ -1524,11 +1525,11 @@ Implement only recorded input; live evaluation is excluded.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_scores_normalized_fixture_runs_without_network tests/test_prompt_eval.py::test_prompt_eval_retains_failed_cases_and_reports_matrix -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when one private, read-only PromptEvalTool computes the pinned recorded-run matrix and passes both direct-tool tests; public registration remains absent.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when one private, read-only PromptEvalTool computes the pinned deterministic matrix for fixture and live-cell inputs, rejects recorded-response fallback in live mode, and passes both direct-tool tests; public registration remains owned by P50-023 and live execution by P50-025/P50-026.
 
 ## Handoff
 
@@ -1578,7 +1579,7 @@ Pin integration only after core behavior is green.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_live_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_models_tasks_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_is_absent_from_rush_mcp -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1594,7 +1595,7 @@ Implement register prompt-eval CLI and verify MCP absence in rush-cli in the cur
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-023 | P50-I13 | GREEN | register prompt-eval CLI and verify MCP absence
+# Feature: P50-023 | P50-I13 | GREEN | register prompt-eval CLI and preserve public MCP absence
 
 Satisfy only the integration RED.
 
@@ -1602,7 +1603,7 @@ Satisfy only the integration RED.
 
 1. Reinspect object construction, ToolSpec ordering, CLI discovery, and the I13 MCP exclusion assertion.
 2. Make this exact change in only the two allowed files: export/register one PromptEvalTool instance and add one ToolSpec with exact live models/tasks/metrics/telemetry options; mark MCP applicability false so generic MCP registration omits this tool.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_path_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_mcp_uses_canonical_name_and_matches_cli -q`, `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/prompt_eval.py src/rush/tools/__init__.py src/rush/catalog.py tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/prompt_eval.py src/rush/tools/__init__.py src/rush/catalog.py tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py`. Reinspect object identity and server names.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_path_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_public_mcp_absence_is_preserved -q`, `.venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/prompt_eval.py src/rush/tools/__init__.py src/rush/catalog.py tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/prompt_eval.py src/rush/tools/__init__.py src/rush/catalog.py tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py`. Reinspect object identity, CLI discovery, and the explicit absence of `rush_prompt_eval` from Rush MCP discovery.
 4. Stop and report a blocker if core/test/MCP/docs edits, aliases, manual CLI business logic, or reduced recorded-only descriptions.
 
 ## Deliverables
@@ -1627,12 +1628,12 @@ Satisfy only the integration RED.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_path_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_mcp_uses_canonical_name_and_matches_cli -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_path_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_public_mcp_absence_is_preserved -q; expected exit 0 with the paired RED tests unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_path_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_mcp_uses_canonical_name_and_matches_cli -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_prompt_eval_catalog_declares_typed_options_and_single_object tests/test_cli_registry.py::test_prompt_eval_cli_forwards_path_and_returns_tool_result tests/test_mcp.py::test_prompt_eval_public_mcp_absence_is_preserved -q; expected exit 0 with the preceding RED assertions unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1675,21 +1676,21 @@ Document the complete live multi-model FastMCP evaluation, deterministic fixture
 - Task kind: DOCS.
 - Prerequisites: P50-023 green..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I13; PromptEvalTool, ToolSpec, its tests..
-- Allowed writes: The six named paths only; create ignored .rush/phase50-evidence/P50-024.json.
+- Allowed writes: docs/tools/prompt_eval.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; examples/rush.toml; .rush/phase50-evidence/P50-024.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: PromptEvalTool, ToolSpec, its tests. remains read-only.
-- Prohibited files, changes, and lifecycle actions: Live execution/FastMCP replay/CodeBLEU/telemetry/performance claims.
+- Prohibited files, changes, and lifecycle actions: implementation during this documentation task; executing or replaying live targets; unsupported claims. Document only completed source/evidence-backed behavior required by P50-025–P50-030; do not invent CodeBLEU, telemetry, performance, or route results.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
-- Broader command: rg -n "prompt-eval|rush_prompt_eval|benchmark_tasks_dir|recorded_runs_file"; expected exit 0.
-- Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Broader command: rg -n "prompt-eval|rush_prompt_eval|benchmark_tasks_dir|recorded_runs_file|FastMCP|CodeBLEU|telemetry" docs/tools/prompt_eval.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md examples/rush.toml; expected exit 0 with public `rush_prompt_eval` documented as absent, never registered.
+- Paired RED command: N/A for this documentation task; consume completed source/test evidence without claiming a new RED/GREEN transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when exact record schema, routes, config, statuses, and exclusions are documented.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when live internal FastMCP execution, deterministic fixtures, EM/CodeBLEU, token/cost/pass/latency metrics, telemetry/effects, typed config, CLI route, and public Rush MCP absence are source-bound and documented; every command has its stated exit and only Allowed writes paths changed.
 
 ## Handoff
 
@@ -1739,13 +1740,13 @@ The repository must expose a semantic RED assertion for live stdio FastMCP execu
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 1 with successful collection and only the named live execution seam missing.
 - Named assertion that must fail: `assert result["execution"]["mode"] == "live_fastmcp"`.
 - Expected failure: `AssertionError: PromptEvalTool live FastMCP execution matrix is absent`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1774,7 +1775,7 @@ The evaluator must execute the declared model/task matrix through live stdio Fas
 ## Deliverables
 
 - Production: `src/rush/tools/prompt_eval.py; PromptEvalTool, FastMCPModelRunner, PromptEvalTask, PromptEvalCell, PromptEvalMatrix`; change: add live execution, bounded cell failure capture, deterministic aggregation, canonical ToolResult.
-- Tests: `tests/test_prompt_eval.py; test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu`; fixture: the three prompt-eval fixtures; arrange: live model-a/model-b stdio targets; action: call `PromptEvalTool`; assert: live mode, cell identity, order, patch, and retained successes.
+- Tests: Run unchanged producer-owned verification from tests/test_prompt_eval.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: `docs/tools/prompt_eval.md; Live execution`; claim: document live stdio execution, per-cell failure retention, and stderr diagnostics.
 - Dependencies: `pyproject.toml; use the shared CodeBLEU constraint`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: no unapproved runtime package or credential-bearing fixture.
 - Transport: internal FastMCP client protocol; `PromptEvalTool`; request: fixture target command, model, task, timeout; response assertion: canonical `ToolResult` with per-cell matrix metadata and no public Rush MCP registration.
@@ -1786,7 +1787,7 @@ The evaluator must execute the declared model/task matrix through live stdio Fas
 - Task kind: GREEN.
 - Prerequisites: `P50-025`; shared CodeBLEU dependency admission; retained RED output.
 - Allowed reads: `src/rush/tools/base.py`; `src/rush/tools/common.py`; `src/rush/token_economy/counter.py`; `src/rush/config.py`; `src/rush/catalog.py`; `src/rush/tools/__init__.py`; `src/rush/cli.py`; `src/rush/mcp.py`; prompt-eval fixtures; paired RED test.
-- Allowed writes: src/rush/tools/prompt_eval.py; tests/test_prompt_eval.py; tests/fixtures/phase50/prompt_eval; .rush/phase50-evidence/P50-026.json.
+- Allowed writes: src/rush/tools/prompt_eval.py; .rush/phase50-evidence/P50-026.json. Paired RED tests and fixtures remain read-only.
 - Preserve JSON-RPC framing, stderr logging, argv-only subprocesses, timeout and redaction behavior, current routes, and public MCP policy.
 - Do not record secrets, send uncontrolled network traffic, mutate Git, install hooks, publish artifacts, alter release versions, or substitute snapshots for live execution.
 - Temporary files must remain contained; target processes require bounded output, sanitized environment, timeout cleanup, and atomic artifact writes.
@@ -1803,7 +1804,7 @@ For every non-RED task:
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
 - Changed-path inspection command and allowed result: `git diff -- src/rush/tools/prompt_eval.py tests/test_prompt_eval.py tests/fixtures/phase50/prompt_eval .rush/phase50-evidence/P50-026.json`; only literal allowed paths may appear.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1856,13 +1857,13 @@ The live evaluation result must expose deterministic tool accuracy, exact-match,
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_reports_tool_accuracy_tokens_pass_rate_cost_and_latency_per_model -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_reports_tool_accuracy_tokens_pass_rate_cost_and_latency_per_model -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 0 as the unchanged live-matrix baseline.
 - Named assertion that must fail: `assert report["codebleu"] == expected["codebleu"]`.
 - Expected failure: `AssertionError: CodeBLEU score projection is absent or differs from the fixture-defined value`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_reports_tool_accuracy_tokens_pass_rate_cost_and_latency_per_model -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1891,7 +1892,7 @@ The evaluator must calculate and report fixture-consistent score, token, pass-ra
 ## Deliverables
 
 - Production: `src/rush/tools/prompt_eval.py; PromptEvalResult, PromptEvalCell, PromptEvalMatrix`; change: add CodeBLEU invocation, score projection, deterministic per-model aggregation.
-- Tests: `tests/test_prompt_eval.py; test_prompt_eval_reports_tool_accuracy_tokens_pass_rate_cost_and_latency_per_model`; fixture: the three prompt-eval fixture files; arrange: live outputs and expected scores; action: call `PromptEvalTool`; assert: all named fields match.
+- Tests: Run unchanged producer-owned verification from tests/test_prompt_eval.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: `docs/tools/prompt_eval.md; Score fields`; claim: document names, units, aggregation, CodeBLEU language selection, and partial failure.
 - Dependencies: `pyproject.toml; `codebleu>=0.7,<0.8``; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: approved reproducible lock; no focused-test download.
 - Transport: internal FastMCP client protocol; `PromptEvalTool`; request: live matrix; response assertion: `ToolResult.findings["models"]` has complete score schema.
@@ -1903,7 +1904,7 @@ The evaluator must calculate and report fixture-consistent score, token, pass-ra
 - Task kind: GREEN.
 - Prerequisites: `P50-027`; shared CodeBLEU dependency task; retained RED output.
 - Allowed reads: `src/rush/tools/prompt_eval.py`; `src/rush/token_economy/counter.py`; `pyproject.toml`; `uv.lock`; fixtures; paired RED test.
-- Allowed writes: modify `src/rush/tools/prompt_eval.py`; modify prompt-eval test only to preserve paired assertions; create `.rush/phase50-evidence/P50-028.json`.
+- Allowed writes: modify `src/rush/tools/prompt_eval.py`; create `.rush/phase50-evidence/P50-028.json`. The P50-027 tests and fixtures are read-only and must remain byte-for-byte unchanged.
 - Preserve ToolResult, token semantics, cost redaction, deterministic ordering, live protocol, routes, and tests.
 - Do not substitute metrics, query external services, expose credentials, mutate Git, publish packages, install hooks, or alter release versions.
 - CodeBLEU inputs and outputs must be bounded, contained, deterministic, and explicit on failure.
@@ -1918,9 +1919,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_reports_tool_accuracy_tokens_pass_rate_cost_and_latency_per_model -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/prompt_eval.py tests/test_prompt_eval.py .rush/phase50-evidence/P50-028.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare pre/post SHA-256 manifests for tests/test_prompt_eval.py and tests/fixtures/phase50/prompt_eval; expected zero delta. Only src/rush/tools/prompt_eval.py and .rush/phase50-evidence/P50-028.json may be newly changed.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_reports_tool_accuracy_tokens_pass_rate_cost_and_latency_per_model -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -1952,7 +1953,7 @@ Prompt evaluation must refuse unapproved slow-network, cache-write, telemetry, a
 - Tests: `tests/test_prompt_eval.py; test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry`; fixture: `tests/fixtures/phase50/prompt_eval/model-a.json`; arrange: denied permissions plus secret endpoint; action: invoke tool; assert: structured refusal, no writes, no secret.
 - Documentation: `docs/tools/prompt_eval.md; Permissions and telemetry`; claim: document exact permission flags, refusal, redaction, atomic output, and SARIF behavior.
 - Dependencies: `pyproject.toml; no new dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: existing permission/logging packages remain locked.
-- Transport: internal FastMCP client protocol; `PromptEvalTool`; request: matrix plus denied permissions; response assertion: `status == "refused"` with redacted finding.
+- Transport: internal FastMCP client protocol; `PromptEvalTool`; request: matrix plus denied permissions; response assertion: canonical `status == "error"` with a permission-denied code and redacted finding.
 - Configuration: `TOOL_SPECS.prompt_eval`; `[tools.prompt_eval]`; parser assertion: slow-network, network, cache-write, telemetry, and SARIF options are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
 - Evidence: `.rush/phase50-evidence/P50-029.json`; denial JSON, redacted logs, absent-output checks, focused failure; producing command: `uv run pytest tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry -q`.
 
@@ -1973,13 +1974,13 @@ Prompt evaluation must refuse unapproved slow-network, cache-write, telemetry, a
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 0.
 - Named assertion that must fail: `assert not output_root.joinpath("telemetry.jsonl").exists()`.
 - Expected failure: `AssertionError: prompt-eval wrote telemetry without cache-write permission`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, network failure, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_executes_live_fastmcp_multi_model_matrix_and_scores_order_patch_exact_match_codebleu -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2000,15 +2001,15 @@ Prompt evaluation must enforce permission-gated live network, cache, telemetry, 
 
 ## Required behavior
 
-1. Gate slow-network, network, cache-write, and artifact-write effects through `src/rush/permissions.py::PermissionSet`; refuse before side effects when grants are absent.
+1. Gate slow-network, network, cache-write, and artifact-write effects through `src/rush/permissions.py::ExecutionPermissions`; return a canonical permission-denied error before side effects when grants are absent.
 2. Redact endpoint credentials, authorization headers, API keys, and private paths in ToolResult, stderr, cache, telemetry, SARIF, and evidence.
 3. Write granted telemetry and SARIF atomically inside the approved root; retain successful in-memory cells after effect refusal or target failure.
 4. Preserve permission names, subprocess containment, ToolResult, live execution, registration policy, and tests.
 
 ## Deliverables
 
-- Production: `src/rush/tools/prompt_eval.py; PromptEvalTool`; change: add preflight permission checks, redaction, atomic telemetry/SARIF writes, partial-effect status.
-- Tests: `tests/test_prompt_eval.py; test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry`; fixture: prompt-eval model descriptor; arrange: denied/granted matrices and secret endpoint; action: invoke tool; assert: denied no-write, granted redacted atomic files.
+- Production: `src/rush/tools/prompt_eval.py; PromptEvalTool`; add preflight permission checks, redaction, atomic telemetry/SARIF writes, and canonical `error` or `warn` status with denial/partial-effect detail in findings and metadata; never invent a new top-level status.
+- Tests: Run unchanged `tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry`; the paired EFFECT-RED task owns this test and fixture.
 - Documentation: `docs/tools/prompt_eval.md; Permissions and telemetry`; claim: document permission flags, refusal, redaction, atomicity, and SARIF.
 - Dependencies: `pyproject.toml; no new dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: locked existing runtime only.
 - Transport: internal FastMCP client protocol; `PromptEvalTool`; request: matrix, permissions, telemetry path, SARIF path; response assertion: canonical status plus redacted artifact metadata.
@@ -2020,7 +2021,7 @@ Prompt evaluation must enforce permission-gated live network, cache, telemetry, 
 - Task kind: EFFECT-GREEN.
 - Prerequisites: `P50-029`; retained RED output; `src/rush/permissions.py`.
 - Allowed reads: permissions, common, prompt-eval, paired effect test, docs, configuration anchors.
-- Allowed writes: modify `src/rush/tools/prompt_eval.py`; modify the prompt-eval effect test only; create contained outputs and `.rush/phase50-evidence/P50-030.json`.
+- Allowed writes: modify `src/rush/tools/prompt_eval.py`; create contained outputs and `.rush/phase50-evidence/P50-030.json`. The P50-029 effect test and fixture remain unchanged.
 - Preserve `[REDACTED]`, stderr-only diagnostics, atomicity, containment, live targets, routes, and tests.
 - Do not grant effects by default, leak secrets, write outside approved roots, use unsafe shell strings, mutate Git, publish artifacts, install hooks, or alter release versions.
 - Network remains explicit, allowlisted, bounded, and disabled in unit tests; cache/artifacts require explicit grants.
@@ -2035,9 +2036,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/prompt_eval.py tests/test_prompt_eval.py .rush/phase50-evidence/P50-030.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare the P50-030 post-task manifest to its pre-task manifest; only `src/rush/tools/prompt_eval.py`, contained runtime outputs, and `.rush/phase50-evidence/P50-030.json` may differ, and the P50-029 test/fixture hashes must remain identical.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py::test_prompt_eval_requires_slow_network_and_cache_permissions_redacts_endpoint_secrets_and_writes_atomic_telemetry -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2052,7 +2053,7 @@ Implement pin installed prompt-eval acceptance in rush-cli in the current workin
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-031 | P50-I13-INSTALLED | RED | pin installed prompt-eval acceptance
+# Feature: P50-031 | P50-I13-INSTALLED | INSTALLED | verify installed prompt-eval acceptance
 
 A fresh installed artifact must execute the live stdio prompt-eval fixture without importing from the source checkout.
 
@@ -2060,22 +2061,22 @@ A fresh installed artifact must execute the live stdio prompt-eval fixture witho
 
 1. Build and install the wheel into a fresh temporary environment; remove the source checkout from import resolution; launch the installed stdio fixture.
 2. Invoke installed prompt-eval against the controlled FastMCP fixture; assert canonical JSON-RPC framing, live mode, score fields, partial-failure retention, and source exclusion.
-3. The named installed test must fail solely at the missing installed behavior; build failure, import failure, missing dependency, skipped target, or route-not-found is not valid RED.
+3. The named installed test must pass against the implemented live behavior; build failure, source fallback, import failure, missing dependency, skipped required target, public-route substitution, or route-not-found is an explicit blocker.
 4. Preserve source tests, package metadata, stdout JSON-RPC purity, stderr diagnostics, secret redaction, and installed commands.
 
 ## Deliverables
 
 - Production: `src/rush/tools/prompt_eval.py` and package registration seam; change: no production modification in RED; identify the installed import/registration failure.
 - Tests: `tests/test_phase50_installed_prompt_eval.py; test_phase50_installed_prompt_eval_runs_live_stdio_fixture_without_source_checkout`; fixture: the three prompt-eval fixtures; arrange: fresh venv, wheel, and controlled targets; action: installed CLI/MCP invocation; assert: module path, JSON-RPC, live matrix, scores, redaction.
-- Documentation: `docs/INSTALLATION.md; Installed artifact acceptance`; claim: prompt-eval is validated from a fresh installation without source-checkout imports.
+- Documentation: Read-only verification of P50-203-owned docs/INSTALLATION.md; this installed task records pending/verified claims in P50-031 evidence and does not edit documentation.
 - Dependencies: `pyproject.toml; all prompt-eval runtime dependencies are wheel-installable`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: no undeclared dependency or credential in wheel evidence.
-- Transport: installed `rush mcp serve` stdio endpoint; shared prompt-eval symbol; request: fixture matrix; response assertion: stdout only valid JSON-RPC/ToolResult, stderr diagnostics only.
+- Transport: installed `PromptEvalTool` and `FastMCPModelRunner` communicating with the controlled target FastMCP fixture over stdio; response assertion: canonical ToolResult data and stderr-only diagnostics, plus explicit absence of `rush_prompt_eval` from installed public Rush MCP discovery.
 - Configuration: installed `TOOL_SPECS.prompt_eval`; `[tools.prompt_eval]`; parser assertion: model, task, budget, telemetry, and SARIF options remain typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
 - Evidence: `.rush/phase50-evidence/P50-031.json`; wheel hash, import paths, stdio transcript, source exclusion, secret scan, focused failure; producing command: `uv run pytest tests/test_phase50_installed_prompt_eval.py::test_phase50_installed_prompt_eval_runs_live_stdio_fixture_without_source_checkout -q`.
 
 ## Constraints
 
-- Task kind: RED.
+- Task kind: INSTALLED.
 - Prerequisites: `P50-030`; retained source-tree output; locked dependencies.
 - Allowed reads: `pyproject.toml`; `uv.lock`; prompt-eval module; package registry; CLI/MCP entry points; fixtures; installation docs.
 - Allowed writes: create `tests/test_phase50_installed_prompt_eval.py`; create `.rush/phase50-evidence/P50-031.json`; create temporary venv/build outputs beneath pytest roots.
@@ -2088,19 +2089,18 @@ A fresh installed artifact must execute the live stdio prompt-eval fixture witho
 
 ## Checks to run before reporting
 
-For a `RED` or `EFFECT-RED` task:
+For this installed-acceptance task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_prompt_eval.py::test_phase50_installed_prompt_eval_runs_live_stdio_fixture_without_source_checkout -q; expected exit 0.
-- Named assertion that must fail: `assert response["execution"]["mode"] == "live_fastmcp"`.
-- Expected failure: `AssertionError: installed prompt-eval did not execute the live FastMCP matrix`.
-- Confirm that wheel-build failure, import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_prompt_eval.py::test_phase50_installed_prompt_eval_runs_live_stdio_fixture_without_source_checkout -q; expected exit 0.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_prompt_eval.py -q; expected exit 0.
+- Required assertion: `response["execution"]["mode"] == "live_fastmcp"`, with explicit absence of `rush_prompt_eval` from public Rush MCP discovery.
+- Confirm that wheel-build failure, source fallback, import failure, missing dependency, skip, XFAIL, XPASS, route-not-found, or unrelated failure blocks acceptance.
+- Paired RED command: N/A for this installed-acceptance task; it verifies the completed P50-020–P50-030 implementation without creating a new RED transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For `RED` and `EFFECT-RED`, the task is complete only when the named focused test executes and fails solely at the named assertion for the named missing behavior, the baseline command passes, and only the literal allowed test and evidence paths changed.
+The task is complete only when the installed wheel executes the controlled live FastMCP matrix outside the checkout, the public Rush MCP route remains absent, the focused and baseline commands pass, and only the literal installed-test/evidence paths changed.
 
 ## Handoff
 
@@ -2151,7 +2151,7 @@ Define Python and literal TypeScript exception extraction without rewriting appl
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_extracts_stable_codes_without_writing -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2206,7 +2206,7 @@ Satisfy P50-032 using stdlib parsing.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_extracts_stable_codes_without_writing -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2258,7 +2258,7 @@ Pin writes independently from extraction.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generate_requires_permission tests/test_error_catalog.py::test_error_catalog_generate_is_contained_atomic_and_idempotent tests/test_error_catalog.py::test_error_catalog_generate_rejects_escape_and_preserves_existing_files -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generate_requires_permission tests/test_error_catalog.py::test_error_catalog_generate_is_contained_atomic_and_idempotent tests/test_error_catalog.py::test_error_catalog_generate_rejects_escape_and_preserves_existing_files -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2312,7 +2312,7 @@ Satisfy only effect tests.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generate_requires_permission tests/test_error_catalog.py::test_error_catalog_generate_is_contained_atomic_and_idempotent tests/test_error_catalog.py::test_error_catalog_generate_rejects_escape_and_preserves_existing_files tests/test_error_catalog.py::test_error_catalog_extracts_stable_codes_without_writing -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2364,7 +2364,7 @@ Pin public exposure without changing core behavior.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_error_catalog_catalog_declares_generation_options tests/test_cli_registry.py::test_error_catalog_cli_forwards_guarded_generation_arguments tests/test_mcp.py::test_error_catalog_mcp_matches_cli_and_uses_canonical_name -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_error_catalog_catalog_declares_generation_options tests/test_cli_registry.py::test_error_catalog_cli_forwards_guarded_generation_arguments tests/test_mcp.py::test_error_catalog_mcp_matches_cli_and_uses_canonical_name -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2418,7 +2418,7 @@ Satisfy integration RED only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_error_catalog_catalog_declares_generation_options tests/test_cli_registry.py::test_error_catalog_cli_forwards_guarded_generation_arguments tests/test_mcp.py::test_error_catalog_mcp_matches_cli_and_uses_canonical_name -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2441,13 +2441,13 @@ Prevent generated previews from being represented as automatic remediation.
 ## Required behavior
 
 1. Inspect the `error-catalog` command, MCP tool, config table, catalog row, generated-artifact security rule, and example anchors in the six existing allowed files; record the pre-edit claim at each changed anchor.
-2. Make this exact change only at those anchors and in docs/tools/error_catalog.md: document the audit default, explicit generate operation plus `artifact_write`, supported Python/literal-TypeScript forms, deterministic ID inputs, RFC 7807 preview fields, contained atomic output, unsupported-expression warnings, and manual deletion of generated artifacts as rollback.
+2. Make this exact change only at those anchors and in docs/tools/error_catalog.md and docs/specs/error-catalog.md: document audit default, explicit generate plus artifact_write, supported Python/literal-TypeScript/Rust forms, deterministic IDs, RFC 7807 fields, contained atomic output, unsupported warnings, and rollback. P50-038 is the sole writer of docs/specs/error-catalog.md.
 3. Run `.venv/Scripts/python.exe -m pytest tests/test_error_catalog.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q`; then run `rg -n "error-catalog|rush_error_catalog|generate-catalog|output_module|export_docs|allow-artifact-write" docs/tools/error_catalog.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml` and record every exact changed anchor.
 4. Stop and report a blocker if full-polyglot, application-rewrite, API-correctness, sync-script, or implicit-write claims.
 
 ## Deliverables
 
-- Documentation: docs/tools/error_catalog.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml.: Create docs/tools/error_catalog.md; modify CLI/MCP/CONFIGURATION/TOOL_CATALOG/SECURITY references and examples/rush.toml.
+- Documentation: docs/tools/error_catalog.md; docs/specs/error-catalog.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml. P50-038 is the sole writer of the error-catalog specification and public references.
 - Evidence: .rush/phase50-evidence/P50-038.json; Tests and docs search.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
@@ -2460,7 +2460,7 @@ Prevent generated previews from being represented as automatic remediation.
 - Task kind: DOCS.
 - Prerequisites: P50-037 green..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I14; src/rush/tools/error_catalog.py; tests/test_error_catalog.py; tests/test_catalog.py; tests/test_cli_registry.py; tests/test_mcp.py; the seven allowed documentation/configuration paths..
-- Allowed writes: docs/tools/error_catalog.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml.; create ignored .rush/phase50-evidence/P50-038.json.
+- Allowed writes: docs/tools/error_catalog.md; docs/specs/error-catalog.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; create ignored .rush/phase50-evidence/P50-038.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: src/rush/tools/error_catalog.py; tests/test_error_catalog.py; tests/test_catalog.py; tests/test_cli_registry.py; tests/test_mcp.py; the seven allowed documentation/configuration paths. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Full-polyglot, application-rewrite, API-correctness, sync-script, or implicit-write claims.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -2470,11 +2470,11 @@ Prevent generated previews from being represented as automatic remediation.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "error-catalog|rush_error_catalog|generate-catalog|output_module|export_docs|allow-artifact-write" docs/tools/error_catalog.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when supported forms, preview semantics, explicit writes, and limits are documented.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when supported forms, preview semantics, explicit writes, RFC7807 generation, and limits are documented and P50-038 alone owns docs/specs/error-catalog.md; every command passes and only Allowed writes changed.
 
 ## Handoff
 
@@ -2522,7 +2522,7 @@ The MCP contract must expose the missing shared-object seam before registrar wor
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_mcp_matches_cli_and_core_result -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_mcp_matches_cli_and_core_result -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: tests/test_error_catalog.py only.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2572,7 +2572,7 @@ Register the data-only MCP route through the same object used by core and CLI.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_mcp_matches_cli_and_core_result -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_mcp_matches_cli_and_core_result -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: src/rush/mcp.py only.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2601,7 +2601,7 @@ The catalog must generate type-safe builders, RFC7807 problem details, and deter
 
 - Production: `src/rush/tools/error_catalog.py; TypedBuilderGenerator, ProblemDetailsGenerator, ErrorCatalog`; change: no production modification in RED; identify missing projections.
 - Tests: `tests/test_error_catalog.py; test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently`; fixtures: the three error files; arrange: catalog plus two generation requests; action: invoke dry-run generation; assert: builder symbols, RFC fields, byte identity.
-- Documentation: `docs/specs/error-catalog.md; RFC7807 and generated builders`; claim: define fields, languages, deterministic output, and dry-run.
+- Documentation: Read-only verification of P50-038-owned docs/specs/error-catalog.md; this RED task does not edit documentation.
 - Dependencies: `pyproject.toml; no new generator dependency beyond shared parser task`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: locked dependencies only.
 - Transport: direct `ErrorCatalogTool` invocation; `ErrorCatalogTool`; request: fixtures, `format=rfc7807`, dry-run; response assertion: canonical artifact metadata and digests.
 - Configuration: `TOOL_SPECS.error_catalog`; `[tools.error_catalog]`; parser assertion: generate, format, and export-docs values are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -2624,13 +2624,13 @@ The catalog must generate type-safe builders, RFC7807 problem details, and deter
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_extracts_python_typescript_and_rust_hierarchies_with_stable_codes -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_extracts_python_typescript_and_rust_hierarchies_with_stable_codes -q; expected exit 0 as the unchanged extraction baseline.
 - Named assertion that must fail: `assert {"type", "title", "status", "code", "detail"} <= problem.keys()`.
 - Expected failure: `AssertionError: RFC7807 problem-details fields are absent from generated output`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_extracts_python_typescript_and_rust_hierarchies_with_stable_codes -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2659,8 +2659,8 @@ The catalog must generate deterministic type-safe builders, RFC7807 problem deta
 ## Deliverables
 
 - Production: `src/rush/tools/error_catalog.py; ErrorCatalogTool, TypedBuilderGenerator, ProblemDetailsGenerator, ErrorCatalog`; change: add builders, RFC7807, deterministic docs, dry-run, permission-gated atomic outputs.
-- Tests: `tests/test_error_catalog.py; test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently`; fixtures: the three error files; arrange: dry-run and explicit-write requests; action: invoke twice; assert: builders, RFC fields, hashes, containment.
-- Documentation: `docs/specs/error-catalog.md; RFC7807 and generated builders`; claim: document fields, languages, dry-run, permission, atomicity, and idempotence.
+- Tests: Run unchanged producer-owned verification from tests/test_error_catalog.py; this GREEN task may not modify paired tests or fixtures.
+- Documentation: Read-only verification of P50-038-owned docs/specs/error-catalog.md; this GREEN task does not edit documentation.
 - Dependencies: `pyproject.toml; shared parser/grammar constraint only`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: no unapproved generator package.
 - Transport: direct `ErrorCatalogTool` invocation; `ErrorCatalogTool`; request: fixtures, RFC7807 format, generation flags, artifact root; response assertion: canonical metadata or refusal without permission.
 - Configuration: `TOOL_SPECS.error_catalog`; `[tools.error_catalog]`; parser assertion: generation, format, docs, and output-root options are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -2671,7 +2671,7 @@ The catalog must generate deterministic type-safe builders, RFC7807 problem deta
 - Task kind: GREEN.
 - Prerequisites: `P50-041`; retained RED output; shared parser/grammar task.
 - Allowed reads: error-catalog module; permissions; fixtures; paired RED test; docs/configuration.
-- Allowed writes: modify `src/rush/tools/error_catalog.py`; modify test only to preserve paired assertions; create contained outputs and `.rush/phase50-evidence/P50-042.json`.
+- Allowed writes: modify `src/rush/tools/error_catalog.py`; create contained temporary outputs and `.rush/phase50-evidence/P50-042.json`. Paired RED tests and fixtures are read-only and must remain byte-for-byte unchanged.
 - Preserve dry-run, RFC fields, stable codes, deterministic bytes, containment, routes, and tests.
 - Do not write without explicit permission, follow escape paths, query network, mutate Git, publish packages, install hooks, or alter release versions.
 - Use sibling temporary files, atomic replacement, bounded output, sanitized environment, and clear refusal results.
@@ -2686,9 +2686,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/error_catalog.py tests/test_error_catalog.py .rush/phase50-evidence/P50-042.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare pre/post SHA-256 manifests for tests/test_error_catalog.py and its fixtures; expected zero delta. Only src/rush/tools/error_catalog.py, contained temporary outputs, and .rush/phase50-evidence/P50-042.json may be newly changed.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py::test_error_catalog_generates_type_safe_builders_rfc7807_and_docs_idempotently -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2703,7 +2703,7 @@ Implement pin installed error-catalog acceptance in rush-cli in the current work
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-043 | P50-I14-INSTALLED | RED | pin installed error-catalog acceptance
+# Feature: P50-043 | P50-I14-INSTALLED | INSTALLED | verify installed error-catalog acceptance
 
 A fresh installed artifact must parse Python, TypeScript, and Rust fixtures while loading the locked grammar package without source-checkout imports.
 
@@ -2711,14 +2711,14 @@ A fresh installed artifact must parse Python, TypeScript, and Rust fixtures whil
 
 1. Build/install the wheel in a fresh temporary environment; remove checkout imports; load all three fixtures through the installed command or MCP endpoint.
 2. Assert three language entries, stable codes, unsupported findings, grammar availability, JSON-RPC framing, and source-checkout exclusion.
-3. The named installed test must fail solely at missing installed behavior; wheel/grammar/import/route/collection failure is not valid RED.
+3. The named installed test must pass against the implemented behavior; wheel failure, grammar download/fallback, checkout import, missing route, collection failure, skip, or XFAIL is an explicit blocker.
 4. Preserve source-tree catalog behavior, dry-run, stdout JSON-RPC purity, stderr diagnostics, metadata, and installed commands.
 
 ## Deliverables
 
 - Production: `src/rush/tools/error_catalog.py` and package registration seam; change: no production modification in RED; identify the absent installed path.
 - Tests: `tests/test_phase50_installed_error_catalog.py; test_phase50_installed_error_catalog_parses_all_three_languages_and_loads_grammars`; fixtures: `tests/fixtures/phase50/error_catalog/errors.py`, `errors.ts`, `errors.rs`; arrange: fresh wheel/venv; action: installed CLI/MCP invocation; assert: languages, codes, grammar load, source exclusion, JSON-RPC purity.
-- Documentation: `docs/INSTALLATION.md; Installed artifact acceptance`; claim: document offline grammar loading and polyglot catalog validation from installation.
+- Documentation: Read-only verification of P50-203-owned docs/INSTALLATION.md; this installed task records pending/verified claims in P50-043 evidence and does not edit documentation.
 - Dependencies: `pyproject.toml; locked tree-sitter-language-pack constraint`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: approved wheel, no focused-test download, unknown constructs remain findings.
 - Transport: installed `rush mcp serve` stdio endpoint; shared error-catalog symbol; request: three fixtures plus dry-run; response assertion: stdout contains canonical JSON-RPC only.
 - Configuration: installed `TOOL_SPECS.error_catalog`; `[tools.error_catalog]`; parser assertion: languages and format remain typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -2726,7 +2726,7 @@ A fresh installed artifact must parse Python, TypeScript, and Rust fixtures whil
 
 ## Constraints
 
-- Task kind: RED.
+- Task kind: INSTALLED.
 - Prerequisites: `P50-042`; locked parser/grammar dependencies; retained source-tree output.
 - Allowed reads: packaging metadata; lockfile; error-catalog module; package registry; CLI/MCP entry points; fixtures; installation docs.
 - Allowed writes: create `tests/test_phase50_installed_error_catalog.py`; create `.rush/phase50-evidence/P50-043.json`; temporary wheel/venv/output paths beneath pytest roots.
@@ -2739,19 +2739,18 @@ A fresh installed artifact must parse Python, TypeScript, and Rust fixtures whil
 
 ## Checks to run before reporting
 
-For a `RED` or `EFFECT-RED` task:
+For this installed-acceptance task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_error_catalog.py::test_phase50_installed_error_catalog_parses_all_three_languages_and_loads_grammars -q; expected exit 0.
-- Named assertion that must fail: `assert set(result["languages"]) >= {"python", "typescript", "rust"}`.
-- Expected failure: `AssertionError: installed error catalog did not load all three language grammars`.
-- Confirm that wheel-build failure, grammar download failure, import failure, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_error_catalog.py::test_phase50_installed_error_catalog_parses_all_three_languages_and_loads_grammars -q; expected exit 0.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_error_catalog.py -q; expected exit 0.
+- Required assertion: `set(result["languages"]) >= {"python", "typescript", "rust"}` with installed grammar resources and no checkout import.
+- Confirm that wheel-build failure, grammar download/fallback, import failure, collection failure, skip, XFAIL, XPASS, or route-not-found blocks acceptance.
+- Paired RED command: N/A for this installed-acceptance task; it verifies the completed P50-032–P50-042 implementation without creating a new RED transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For `RED` and `EFFECT-RED`, the task is complete only when the named focused test executes and fails solely at the named assertion for the named missing behavior, the baseline command passes, and only the literal allowed test and evidence paths changed.
+The task is complete only when the installed wheel loads every required grammar, parses all three language fixtures outside the checkout, passes focused and baseline commands, and only the literal installed-test/evidence paths changed.
 
 ## Handoff
 
@@ -2800,7 +2799,7 @@ Attribute only exact configured trailers; shallow or insufficient history must n
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_uses_commit_trailers_and_reports_shallow_history tests/test_provenance_ai.py::test_provenance_ai_does_not_claim_unobserved_survival_or_defect_correlation -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_uses_commit_trailers_and_reports_shallow_history tests/test_provenance_ai.py::test_provenance_ai_does_not_claim_unobserved_survival_or_defect_correlation -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2854,7 +2853,7 @@ Implement only evidence pinned by P50-044
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_uses_commit_trailers_and_reports_shallow_history tests/test_provenance_ai.py::test_provenance_ai_does_not_claim_unobserved_survival_or_defect_correlation -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2907,7 +2906,7 @@ Pin only public exposure and typed options.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_provenance_ai_catalog_declares_trailers_and_since_days tests/test_cli_registry.py::test_provenance_ai_cli_uses_registered_tool tests/test_mcp.py::test_provenance_ai_mcp_matches_cli_and_uses_canonical_name -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -2961,7 +2960,7 @@ Satisfy integration tests only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_provenance_ai_catalog_declares_trailers_and_since_days tests/test_cli_registry.py::test_provenance_ai_cli_uses_registered_tool tests/test_mcp.py::test_provenance_ai_mcp_matches_cli_and_uses_canonical_name -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3013,7 +3012,7 @@ Prevent causal or authorship claims from entering downstream PR cards.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "provenance-ai|rush_provenance_ai|ai_commit_trailers|since_days|unknown|shallow" docs/tools/provenance_ai.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3067,13 +3066,13 @@ The provenance report must compute separate 30-day, 60-day, and 90-day Kaplan–
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_uses_commit_trailers_and_reports_shallow_history tests/test_provenance_ai.py::test_provenance_ai_does_not_claim_unobserved_survival_or_defect_correlation -q; expected exit 0.
 - Named assertion that must fail: `assert {"30d", "60d", "90d"} <= survival.keys()`.
 - Expected failure: `AssertionError: 30-day, 60-day, and 90-day Kaplan–Meier curves are absent`.
 - Confirm that import failure, Git setup failure, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3102,7 +3101,7 @@ The provenance report must calculate deterministic 30-day, 60-day, and 90-day li
 ## Deliverables
 
 - Production: `src/rush/tools/provenance_ai.py; ProvenanceAITool, LineCohort, KaplanMeierCurve`; change: add cohort construction, KM calculation, three-window projection, censoring, unknown state.
-- Tests: `tests/test_provenance_ai.py; test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival`; fixture: deterministic temporary Git/session repository; arrange: full and shallow histories; action: invoke tool; assert: curves, fields, probabilities, censoring, unknown.
+- Tests: Run unchanged producer-owned verification from tests/test_provenance_ai.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: `docs/tools/provenance_ai.md; Survival analysis`; claim: document windows, fields, censoring, deterministic dates, and unknown behavior.
 - Dependencies: `pyproject.toml; no new runtime dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: existing locked runtime and Git seam.
 - Transport: direct `ProvenanceAITool` invocation; `ProvenanceAITool`; request: repository, `since=90d`, session evidence; response assertion: canonical report has all three curves.
@@ -3114,7 +3113,7 @@ The provenance report must calculate deterministic 30-day, 60-day, and 90-day li
 - Task kind: GREEN.
 - Prerequisites: `P50-049`; retained RED output; `FlightRecorder`.
 - Allowed reads: flight recorder; provenance module; Git helpers; paired test; docs/configuration.
-- Allowed writes: modify `src/rush/tools/provenance_ai.py`; modify test only for paired assertions; create temporary fixtures and `.rush/phase50-evidence/P50-050.json`.
+- Allowed writes: modify `src/rush/tools/provenance_ai.py`; create `.rush/phase50-evidence/P50-050.json`. Paired RED tests and fixtures are read-only and must remain byte-for-byte unchanged; task-local temporary repositories stay under pytest temp roots.
 - Preserve attribution, shallow unknown, defect inputs, cache policy, ToolResult, routes, and tests.
 - Do not use nondeterministic wall time, query network, log commit content/secrets, rewrite history, publish, install hooks, or alter versions.
 - Use explicit Git argv, deterministic dates, contained cwd, sanitized environment, bounded output, and cleanup.
@@ -3129,9 +3128,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/provenance_ai.py tests/test_provenance_ai.py .rush/phase50-evidence/P50-050.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare pre/post SHA-256 manifests for tests/test_provenance_ai.py and its fixtures; expected zero delta. Only src/rush/tools/provenance_ai.py and .rush/phase50-evidence/P50-050.json may be newly changed.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3184,13 +3183,13 @@ The provenance report must correlate attributed AI line exposure with defect den
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_correlates_attributed_line_exposure_with_defect_density -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_correlates_attributed_line_exposure_with_defect_density -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_uses_commit_trailers_and_reports_shallow_history tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 0.
 - Named assertion that must fail: `assert "defect_correlation" in result`.
 - Expected failure: `AssertionError: attributed-line defect correlation is absent`.
 - Confirm that import failure, Git setup failure, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_correlates_attributed_line_exposure_with_defect_density -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3219,7 +3218,7 @@ The provenance report must correlate attributed AI line exposure with defect den
 ## Deliverables
 
 - Production: `src/rush/tools/provenance_ai.py; DefectCorrelation, ProvenanceAITool, ProvenanceReport`; change: add marker parsing, cohort matching, density, confidence, provenance, unknown output.
-- Tests: `tests/test_provenance_ai.py; test_provenance_ai_correlates_attributed_line_exposure_with_defect_density`; fixture: deterministic temporary repository; arrange: trailers, fixes, markers, incomplete history; action: invoke report; assert: fields and unknown-not-zero.
+- Tests: Run unchanged producer-owned verification from tests/test_provenance_ai.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: `docs/tools/provenance_ai.md; Defect correlation`; claim: document fields, markers, confidence, provenance, and unknown state.
 - Dependencies: `pyproject.toml; no new runtime dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: existing locked runtime only.
 - Transport: direct `ProvenanceAITool` invocation; `ProvenanceAITool`; request: repository, markers, observation period; response assertion: canonical `defect_correlation` section.
@@ -3231,7 +3230,7 @@ The provenance report must correlate attributed AI line exposure with defect den
 - Task kind: GREEN.
 - Prerequisites: `P50-051`; retained RED output; `FlightRecorder`.
 - Allowed reads: flight recorder; provenance module; Git fixtures; paired RED test; docs/configuration.
-- Allowed writes: modify provenance module; modify test only for paired assertions; create temporary fixtures and `.rush/phase50-evidence/P50-052.json`.
+- Allowed writes: modify `src/rush/tools/provenance_ai.py`; create `.rush/phase50-evidence/P50-052.json`. Paired RED tests and fixtures are read-only and must remain byte-for-byte unchanged; task-local temporary repositories stay under pytest temp roots.
 - Preserve attribution, survival, unknown, marker semantics, cache, routes, ToolResult, and tests.
 - Do not count missing evidence as zero, log commit content/secrets, query network, rewrite history, publish, install hooks, or alter versions.
 - Use explicit argv, deterministic dates, contained cwd, sanitized environment, bounded output, and cleanup.
@@ -3246,9 +3245,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_correlates_attributed_line_exposure_with_defect_density -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/provenance_ai.py tests/test_provenance_ai.py .rush/phase50-evidence/P50-052.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare pre/post SHA-256 manifests for tests/test_provenance_ai.py and its fixtures; expected zero delta. Only src/rush/tools/provenance_ai.py and .rush/phase50-evidence/P50-052.json may be newly changed.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_correlates_attributed_line_exposure_with_defect_density -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3301,13 +3300,13 @@ Provenance caching and telemetry must require explicit cache-write permission wh
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_cache_and_telemetry_require_cache_write_and_never_log_commit_content_or_secrets -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_cache_and_telemetry_require_cache_write_and_never_log_commit_content_or_secrets -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_uses_commit_trailers_and_reports_shallow_history tests/test_provenance_ai.py::test_provenance_ai_computes_30_60_90_day_kaplan_meier_survival tests/test_provenance_ai.py::test_provenance_ai_correlates_attributed_line_exposure_with_defect_density -q; expected exit 0.
 - Named assertion that must fail: `assert not cache_path.exists()`.
 - Expected failure: `AssertionError: provenance cache was written without cache-write permission`.
 - Confirm that import failure, Git setup failure, collection failure, skip, XFAIL, XPASS, route-not-found, network failure, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_cache_and_telemetry_require_cache_write_and_never_log_commit_content_or_secrets -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3335,8 +3334,8 @@ Provenance caching and telemetry must be permission-gated, atomic, contained, re
 
 ## Deliverables
 
-- Production: `src/rush/tools/provenance_ai.py; ProvenanceAITool`; change: add permission preflight, redacted metadata, contained atomic writes, refusal status.
-- Tests: `tests/test_provenance_ai.py; test_provenance_ai_cache_and_telemetry_require_cache_write_and_never_log_commit_content_or_secrets`; fixture: temporary Git/session repository; arrange: denied/granted permissions and secret-like values; action: invoke; assert: no denied files, atomic redacted granted outputs, intact analysis.
+- Production: `src/rush/tools/provenance_ai.py; ProvenanceAITool`; change: add permission preflight, redacted metadata, contained atomic writes, and canonical `status="error"` with a typed refusal finding.
+- Tests: Run unchanged producer-owned verification from tests/test_provenance_ai.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: `docs/tools/provenance_ai.md; Cache and telemetry`; claim: document permission, atomicity, containment, redaction, and content exclusion.
 - Dependencies: `pyproject.toml; no new runtime dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: existing locked runtime only.
 - Transport: direct `ProvenanceAITool` invocation; `ProvenanceAITool`; request: repository, paths, permissions; response assertion: canonical report plus redacted metadata or refusal.
@@ -3348,7 +3347,7 @@ Provenance caching and telemetry must be permission-gated, atomic, contained, re
 - Task kind: EFFECT-GREEN.
 - Prerequisites: `P50-053`; retained RED output; permissions module.
 - Allowed reads: permissions; common; flight recorder; provenance module; paired effect test.
-- Allowed writes: src/rush/tools/provenance_ai.py; tests/test_provenance_ai.py; tests/fixtures/phase50/provenance; .rush/phase50-evidence/P50-054.json.
+- Allowed writes: src/rush/tools/provenance_ai.py; .rush/phase50-evidence/P50-054.json. Paired RED tests and fixtures remain read-only.
 - Preserve all analytical sections, unknown states, redaction, stderr contract, routes, and tests.
 - Do not log content/secrets, grant implicitly, escape roots, query network, mutate Git, publish, install hooks, or alter versions.
 - Use sibling temp files, atomic replacement, containment, explicit argv, bounded output, and cleanup.
@@ -3365,7 +3364,7 @@ For every non-RED task:
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
 - Changed-path inspection command and allowed result: `git diff -- src/rush/tools/provenance_ai.py tests/test_provenance_ai.py .rush/phase50-evidence/P50-054.json`; only literal allowed paths may appear.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py::test_provenance_ai_cache_and_telemetry_require_cache_write_and_never_log_commit_content_or_secrets -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3380,7 +3379,7 @@ Implement pin installed provenance acceptance in rush-cli in the current working
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-055 | P50-I15-INSTALLED | RED | pin installed provenance acceptance
+# Feature: P50-055 | P50-I15-INSTALLED | INSTALLED | verify installed provenance acceptance
 
 A fresh installed artifact must run provenance analysis against a fixture Git repository while preserving full-history and shallow-history unknown states.
 
@@ -3388,14 +3387,14 @@ A fresh installed artifact must run provenance analysis against a fixture Git re
 
 1. Build/install the wheel in a fresh environment; remove checkout imports; invoke installed provenance against fixture repositories containing trailers, sessions, survival events, and defect markers.
 2. Assert attribution, 30/60/90 curves, defect correlation, cache policy, canonical output, redaction, and explicit shallow/incomplete unknown state.
-3. The named installed test must fail solely at missing installed behavior; wheel, Git, import, collection, or route failure is not valid RED.
+3. The named installed test must pass against the implemented behavior; wheel, Git setup, checkout import, collection, route, skip, XFAIL, or source-fallback failure is an explicit blocker.
 4. Preserve source behavior, stdout JSON-RPC purity, stderr diagnostics, no-content/no-secret logging, metadata, and installed commands.
 
 ## Deliverables
 
 - Production: `src/rush/tools/provenance_ai.py` and package registration seam; change: no production modification in RED; identify the absent installed path.
 - Tests: `tests/test_phase50_installed_provenance_ai.py; test_phase50_installed_provenance_ai_runs_against_fixture_git_repository`; fixture: full and shallow temporary Git/session repositories; arrange: wheel plus histories; action: installed CLI/MCP invocation; assert: attribution, survival, defect, unknown, redaction.
-- Documentation: `docs/INSTALLATION.md; Installed artifact acceptance`; claim: document fixture-Git validation from fresh installation and unknown-not-zero behavior.
+- Documentation: Read-only verification of P50-203-owned docs/INSTALLATION.md; this installed task records pending/verified claims in P50-055 evidence and does not edit documentation.
 - Dependencies: `pyproject.toml; provenance runtime remains wheel-installable`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: no undeclared dependency or secret in wheel evidence.
 - Transport: installed CLI/MCP provenance endpoint; shared `ProvenanceAITool`; request: fixture repository, `since=90d`, markers; response assertion: canonical attribution, survival, defect, unknown sections.
 - Configuration: installed `TOOL_SPECS.provenance_ai`; `[tools.provenance_ai]`; parser assertion: windows, markers, sessions, cache, telemetry options remain typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -3403,7 +3402,7 @@ A fresh installed artifact must run provenance analysis against a fixture Git re
 
 ## Constraints
 
-- Task kind: RED.
+- Task kind: INSTALLED.
 - Prerequisites: `P50-054`; retained source-tree output; locked dependencies.
 - Allowed reads: package metadata; lockfile; provenance module; flight recorder; package registry; CLI/MCP entry points; installation docs.
 - Allowed writes: create `tests/test_phase50_installed_provenance_ai.py`; temporary Git/session/wheel/venv files beneath pytest roots; create `.rush/phase50-evidence/P50-055.json`.
@@ -3416,19 +3415,18 @@ A fresh installed artifact must run provenance analysis against a fixture Git re
 
 ## Checks to run before reporting
 
-For a `RED` or `EFFECT-RED` task:
+For this installed-acceptance task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_provenance_ai.py::test_phase50_installed_provenance_ai_runs_against_fixture_git_repository -q; expected exit 0.
-- Named assertion that must fail: `assert {"attribution", "survival", "defect_correlation"} <= result.keys()`.
-- Expected failure: `AssertionError: installed provenance report lacks one or more required sections`.
-- Confirm that wheel-build failure, Git setup failure, import failure, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_provenance_ai.py::test_phase50_installed_provenance_ai_runs_against_fixture_git_repository -q; expected exit 0.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py -q; expected exit 0.
+- Required assertion: `{"attribution", "survival", "defect_correlation"} <= result.keys()` with explicit shallow/incomplete unknown state.
+- Confirm that wheel-build failure, Git setup failure, checkout import, collection failure, skip, XFAIL, XPASS, or route-not-found blocks acceptance.
+- Paired RED command: N/A for this installed-acceptance task; it verifies completed P50-044–P50-054 behavior without creating a new RED transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For `RED` and `EFFECT-RED`, the task is complete only when the named focused test executes and fails solely at the named assertion for the named missing behavior, the baseline command passes, and only the literal allowed test and evidence paths changed.
+The task is complete only when the installed wheel reports attribution, survival, defect correlation, cache/redaction behavior, and explicit shallow/incomplete unknown states outside the checkout; focused and baseline commands pass and only installed-test/evidence paths changed.
 
 ## Handoff
 
@@ -3437,19 +3435,19 @@ Evidence: `.rush/phase50-evidence/P50-055.json`; retain wheel/import/full/shallo
 ### 9.5 I16 signed in-toto Statement v1 and SLSA Provenance v1
 
 Successor: P50-056. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
-Implement pin signed artifact-bound Statement v1 and SLSA Provenance v1 in rush-cli in the current working directory.
+Implement pin signed modern and legacy artifact-bound provenance profiles in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-056 | P50-I16 | RED | pin signed artifact-bound Statement v1 and SLSA Provenance v1
+# Feature: P50-056 | P50-I16 | RED | pin signed modern and legacy artifact-bound provenance profiles
 
 Pin the complete signed provenance contract before changing attestation code.
 
 ## Required behavior
 
 1. Inspect current generator/routes/descriptions and run the existing weak test.
-2. Make this exact change in only tests/test_attest.py: add `test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence` with known artifact bytes, injected HEAD, passing canonical quality evidence, and an ephemeral protected Ed25519 key; assert exact subject and evidence digests, DSSE payload type, signature verification, and no raw logs. Add `test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder` for absent/escaping/directory targets, fail/warn required gates, altered payload/signature, and untrusted builder claims. Import the production module inside each test body.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q`, then `.venv/Scripts/python.exe -m pytest tests/test_attest.py -q`; retain only direct-tool failures from old v0.1/v0.2 fields, fallback subject, or unsupported assurance.
+2. Make this exact change in only tests/test_attest.py: add test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence for the default modern profile with protected Ed25519/Git-SSH and Cosign-compatible signing; add test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade for the explicit legacy-compatibility profile; assert exact subject/evidence digests, predicate/profile identifiers, signer algorithm, DSSE payload type where applicable, cryptographic verification, and no raw logs. Add test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder for missing/escaping/directory targets, failed/warned gates, altered payload/signature, untrusted builder, unsupported profile/backend pairs, unsigned output, and silent downgrade. Import production only inside each test.
+3. Run the exact modern-profile, legacy-profile, unsupported-assurance, and refusal tests named above, then .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; retain only direct-tool failures at missing profile schema, artifact/commit/quality binding, ECDSA/RSA/Cosign/Git-SSH/Ed25519 signature, verification, downgrade refusal, or unsupported-assurance assertions.
 4. Stop and report a blocker if production, documentation, dependency, transport, unsigned-substitute, commit-as-artifact, or false Level 3 changes.
 
 ## Deliverables
@@ -3474,14 +3472,14 @@ Pin the complete signed provenance contract before changing attestation code.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q; expected exit 1 for the named semantic RED assertion.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q; expected exit 1 for the named signed-DSSE semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q; expected exit 1 with successful collection and the named missing signed-DSSE behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For RED, the task is complete only when the named focused test executes and fails solely at the named assertion for both direct-tool tests execute and fail only where the current statement schema, artifact subject, or unsigned-assurance behavior violates the pinned contract., the baseline command passes, and only literal allowed test, fixture, and ignored evidence paths changed.
+For RED, the task is complete only when the focused tests collect and fail solely because either the verified signed modern Statement v1/SLSA Provenance v1 profile, the verified signed legacy-compatible in-toto v0.1/SLSA v0.2 ECDSA/RSA profile, exact artifact/commit/quality binding, signer interoperability, or the refusal/no-downgrade contract is absent; unsigned output is always failure.
 
 ## Handoff
 
@@ -3493,21 +3491,21 @@ Implement signed Statement v1 and SLSA Provenance v1 core in rush-cli in the cur
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-057 | P50-I16 | GREEN | implement signed Statement v1 and SLSA Provenance v1 core
+# Feature: P50-057 | P50-I16 | GREEN | implement signed modern and legacy artifact-bound provenance core
 
 Implement the complete private signing and verification core while leaving public-route migration to P50-060–P50-061.
 
 ## Required behavior
 
 1. Inspect unchanged statement RED assertions and the current generator only. Confirm target API `AttestationTool.run(path, target_artifact)` can be implemented without export or transport branches.
-2. Make this exact change in only src/rush/tools/attest.py: replace the legacy generator with `AttestationTool` named `attest`; require a contained regular artifact; stream SHA-256; build Statement v1 with SLSA Provenance v1 from observed subject, Git HEAD, builder identity, and normalized quality-evidence digests; sign a DSSE envelope through protected local Ed25519 or Cosign-compatible injected backend; verify before returning success; refuse failed/warned required gates, bad signatures, and untrusted builder claims; include no export, registry, or transport code.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q`, `.venv/Scripts/python.exe -m pytest tests/test_attest.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/attest.py tests/test_attest.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/attest.py tests/test_attest.py`. Reinspect the emitted predicate keys and search for `sign`, `level`, `builder`, `reproduc`, `complete`, `quality`, `git note`, and commit-subject fallback.
+2. Make this exact change in only src/rush/tools/attest.py: replace the weak generator with AttestationTool named attest; require a contained regular artifact and stream SHA-256; select an explicit typed predicate_version and signing_backend; implement the default signed Statement v1/SLSA Provenance v1 profile with protected Ed25519/Git-SSH or Cosign v3 backend and the explicit signed in-toto v0.1/SLSA v0.2 compatibility profile with ECDSA or RSA; bind observed subject, Git HEAD, builder identity, and normalized quality-evidence digests; verify before success; refuse failed/warned gates, unsupported profile/backend combinations, bad signatures, untrusted builders, unsigned output, and silent downgrade; include no export, registry, or transport code.
+3. Run the unchanged modern-profile, legacy-profile, unsupported-assurance, and refusal tests plus the full tests/test_attest.py and Ruff check/format commands. Reinspect profile identifiers, predicate keys, signer algorithms, exact subject/evidence digests, verification results, and refusal paths.
 4. Stop and report a blocker if test, registry, CLI, MCP, export, dependency, docs, release/version, commit-fallback, raw-log, or false hosted-builder/Level 3 changes.
 
 ## Deliverables
 
 - Production: src/rush/tools/attest.py only.
-- Dependencies: src/rush/tools/attest.py only.
+- Dependencies: N/A; consume the P50-019/P50-062 signing dependency policy without changing pyproject.toml or uv.lock.
 - Evidence: .rush/phase50-evidence/P50-057.json; P50-056 RED link, artifact digest/schema assertions, private ToolFn identity, assurance-term search, and one-file production diff.; produced by the literal commands below.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
@@ -3526,17 +3524,16 @@ Implement the complete private signing and verification core while leaving publi
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q; expected exit 0 with the paired RED tests unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Broader command: .venv/Scripts/ruff.exe check src/rush/tools/attest.py tests/test_attest.py; expected exit 0.
+- Broader command: .venv/Scripts/ruff.exe format --check src/rush/tools/attest.py tests/test_attest.py; expected exit 0.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q; expected exit 0 with the preceding RED assertions unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when the private AttestationTool produces only the pinned unsigned Statement v1 draft for a real artifact; export and public-route behavior remain unchanged.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when the private AttestationTool produces and verifies both the default signed Statement v1/SLSA Provenance v1 profile and the explicit signed in-toto v0.1/SLSA v0.2 ECDSA/RSA compatibility profile for real artifacts, binds exact artifact/commit/quality evidence, rejects unsigned, unverifiable, incompatible, or silently downgraded output, and leaves export/public-route work to P50-058–P50-061.
 
 ## Handoff
 
@@ -3584,7 +3581,7 @@ Pin artifact effects separately from statement construction.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3608,7 +3605,7 @@ Satisfy only P50-058
 
 1. Reinspect unchanged effect assertions and helper signatures.
 2. Add optional `export_path`/permissions branch: deny without artifact_write; resolve/no-follow contained path; serialize the verified DSSE envelope as deterministic UTF-8 JSON; temp-write then replace; return artifact and signature metadata; never alter payload or signature bytes.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q`, `.venv/Scripts/python.exe -m pytest tests/test_attest.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/attest.py tests/test_attest.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/attest.py tests/test_attest.py`; trace every write to its guard.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q`, `.venv/Scripts/python.exe -m pytest tests/test_attest.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/attest.py tests/test_attest.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/attest.py tests/test_attest.py`; trace every write to its guard.
 4. Stop and report a blocker if test/route/docs/dependency changes, unsigned output, signature mutation, or implicit writes.
 
 ## Deliverables
@@ -3633,12 +3630,12 @@ Satisfy only P50-058
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q; expected exit 0 with the paired RED tests unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error tests/test_attest.py::test_attest_emits_unsigned_v1_draft_for_real_artifact tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_export_requires_artifact_permission tests/test_attest.py::test_attest_export_is_contained_atomic_and_preserves_existing_file_on_error tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade tests/test_attest.py::test_attest_rejects_missing_artifact_and_unsupported_assurance tests/test_attest.py::test_attest_refuses_missing_artifact_failed_quality_bad_signature_and_untrusted_builder -q; expected exit 0 with the preceding RED assertions unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3661,8 +3658,8 @@ Pin one-object route migration and compatibility.
 ## Required behavior
 
 1. Inspect exact current command/wrapper source and record false descriptions/signatures.
-2. Add `test_attest_catalog_declares_signing_verification_and_evidence_options`, `test_attest_cli_and_canonical_mcp_share_registered_tool`, and `test_attest_generate_alias_is_deprecated_and_uses_registered_tool`; assert one ToolSpec/object, `rush attest PATH --target-artifact FILE --signing-backend local_key|cosign [--key FILE] [--quality-evidence FILE] [--export-intoto FILE]`, canonical `rush_attest`, deprecated `rush_attest_generate`, permission forwarding, ToolResult equality, deprecation metadata, and absence of old generator construction/business logic.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_statement_v1_slsa_v1_signing_and_verification_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q`, then `.venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q`; retain route, description, or object failures.
+2. Add test_attest_catalog_declares_signed_modern_and_legacy_profiles_and_signer_options, test_attest_cli_and_canonical_mcp_share_registered_tool, and test_attest_generate_alias_is_deprecated_and_uses_registered_tool; assert one ToolSpec/object; typed predicate_version=statement-v1-slsa-v1|intoto-v0.1-slsa-v0.2 and signing_backend=ed25519|git_ssh|cosign|ecdsa|rsa; canonical rush attest/rush_attest; deprecated rush_attest_generate; protected key, quality evidence, verifier policy, export, permission, ToolResult parity, deprecation, and no transport-local signing logic.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_signed_modern_and_legacy_profiles_and_signer_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q`, then `.venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q`; retain route, description, or object failures.
 4. Stop and report a blocker if production/core/docs/dependency edits; alias removal.
 
 ## Deliverables
@@ -3687,11 +3684,11 @@ Pin one-object route migration and compatibility.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_statement_v1_slsa_v1_signing_and_verification_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 1 for the named semantic RED assertion.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_signed_modern_and_legacy_profiles_and_signer_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_statement_v1_slsa_v1_signing_and_verification_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_signed_modern_and_legacy_profiles_and_signer_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3714,42 +3711,42 @@ Satisfy integration only.
 ## Required behavior
 
 1. Reinspect `_run_tool`, shared MCP lookup, and legacy signature.
-2. Export/register one object; add exact ToolSpec for target artifact, signing backend, protected key, quality evidence, verifier policy, and export path; replace CLI body with options plus one `_run_tool` call; make `rush_attest_generate` normalize its arguments, call the same object, return ToolResult, and expose deprecation text. Remove old generator construction and false descriptions.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_statement_v1_slsa_v1_signing_and_verification_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q`, `.venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/attest.py src/rush/tools/__init__.py src/rush/catalog.py src/rush/cli.py src/rush/mcp.py tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/attest.py src/rush/tools/__init__.py src/rush/catalog.py src/rush/cli.py src/rush/mcp.py tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py`; reinspect source for duplicate implementation.
+2. Export/register one object; add exact ToolSpec and closed config keys for target artifact, predicate_version, signing_backend, protected key reference, quality evidence, verifier policy, and export path; enforce allowed profile/backend combinations; replace CLI body with parsing plus one _run_tool call; make rush_attest_generate normalize arguments, call the same object, return ToolResult, and expose deprecation text. Remove old generator construction and false descriptions.
+3. Run the named catalog/CLI/MCP tests, the full attestation/catalog/transport files, and Ruff check/format over `src/rush/tools/attest.py`, `src/rush/tools/__init__.py`, `src/rush/catalog.py`, `src/rush/config.py`, `src/rush/cli.py`, `src/rush/mcp.py`, and the unchanged producer tests; reinspect source for duplicate implementation.
 4. Stop and report a blocker if core/test/docs/dependency edits; unrelated route cleanup.
 
 ## Deliverables
 
-- Production: src/rush/tools/__init__.py; src/rush/catalog.py; src/rush/cli.py; src/rush/mcp.py.
+- Production: src/rush/tools/__init__.py; src/rush/catalog.py; src/rush/config.py; src/rush/cli.py; src/rush/mcp.py.
 - Evidence: .rush/phase50-evidence/P50-061.json; Object identity, route equality, deprecation result, green outputs.; produced by the literal commands below.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
-- Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
-- Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
+- Transport: src/rush/cli.py and src/rush/mcp.py parsing/serialization adapters over the same registered AttestationTool; no feature logic.
+- Configuration: src/rush/catalog.py and src/rush/config.py closed typed keys/defaults/validation for both provenance profiles and permitted signer backends.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-060 RED..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I16; integration tests; AttestationTool..
-- Allowed writes: src/rush/tools/__init__.py; src/rush/catalog.py; src/rush/cli.py; src/rush/mcp.py.; create ignored .rush/phase50-evidence/P50-061.json.
+- Allowed writes: src/rush/tools/__init__.py; src/rush/catalog.py; src/rush/config.py; src/rush/cli.py; src/rush/mcp.py; create ignored .rush/phase50-evidence/P50-061.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: integration tests; AttestationTool. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Core/test/docs/dependency edits; unrelated route cleanup.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_statement_v1_slsa_v1_signing_and_verification_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_signed_modern_and_legacy_profiles_and_signer_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_statement_v1_slsa_v1_signing_and_verification_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Lint command: .venv/Scripts/ruff.exe check src/rush/tools/attest.py src/rush/tools/__init__.py src/rush/catalog.py src/rush/config.py src/rush/cli.py src/rush/mcp.py tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py; expected exit 0.
+- Format command: .venv/Scripts/ruff.exe format --check src/rush/tools/attest.py src/rush/tools/__init__.py src/rush/catalog.py src/rush/config.py src/rush/cli.py src/rush/mcp.py tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py; expected exit 0.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_attest_catalog_declares_signed_modern_and_legacy_profiles_and_signer_options tests/test_cli_registry.py::test_attest_cli_and_canonical_mcp_share_registered_tool tests/test_mcp.py::test_attest_generate_alias_is_deprecated_and_uses_registered_tool -q; expected exit 0 with the preceding RED assertion unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when one AttestationTool backs catalog, CLI, canonical MCP, and deprecated alias.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when one AttestationTool backs catalog, CLI, canonical MCP, and deprecated alias; every transport forwards the same typed modern/legacy profile and signer options to the same object; every command has its stated exit; unchanged paired RED tests pass; and only Allowed writes paths changed.
 
 ## Handoff
 
@@ -3761,22 +3758,22 @@ Implement pin signing dependencies and external verifier policy in rush-cli in t
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-062 | P50-I16 | DEPENDENCY | pin signing dependencies and external verifier policy
+# Feature: P50-062 | P50-I16 | DEPENDENCY-VERIFY | verify signing dependencies and external verifier policy
 
 Isolate dependency mutation from behavior and routes.
 
 ## Required behavior
 
 1. Run `rg -n "(^|[^A-Za-z])cryptography([^A-Za-z]|$)|from cryptography|import cryptography" src tests scripts pyproject.toml`. Record every owner. Stop removal on any owner outside deleted attest behavior.
-2. If no owner remains, remove only the exact direct constraint and run `uv lock`; otherwise change only the evidence file and retain the dependency with owner paths.
+2. Verify the P50-019-owned lock retains `cryptography==50.0.0` for signed DSSE work and records Cosign/slsa-verifier policy; this task may record only evidence and must not mutate the shared dependency lock.
 3. Run `uv lock --check`, `.venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q`, `.venv/Scripts/ruff.exe check src tests scripts`, `.venv/Scripts/ruff.exe format --check src tests scripts`, and `rg -n "(^|[^A-Za-z])cryptography([^A-Za-z]|$)|from cryptography|import cryptography" src tests scripts pyproject.toml`. Record manifest/lock diff or retained-owner evidence.
 4. Stop and report a blocker if source/test/public-doc/version edits; silent dependency removal; bundled signer/verifier binaries; unrelated package changes.
 
 ## Deliverables
 
-- Production: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.
-- Documentation: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.: Record only in implementation evidence.
-- Dependencies: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.; retain exact `cryptography==50.0.0`; record version/license/platform evidence for external Cosign and slsa-verifier; run `uv lock` and `uv lock --check` with no unrelated drift.
+- Production: N/A; dependency verification must not modify production.
+- Documentation: N/A; dependency verification is recorded only in the owned evidence fragment.
+- Dependencies: Read-only proof that the P50-019 lock retains exact `cryptography==50.0.0`, plus version/license/platform evidence for external Cosign and slsa-verifier.
 - Evidence: .rush/phase50-evidence/P50-062.json; Exact search, owner disposition, lock command/exits.; produced by the literal commands below.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -3784,10 +3781,10 @@ Isolate dependency mutation from behavior and routes.
 
 ## Constraints
 
-- Task kind: DEPENDENCY.
+- Task kind: DEPENDENCY-VERIFY.
 - Prerequisites: P50-061
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I16; src; tests; scripts; pyproject.toml; uv.lock..
-- Allowed writes: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.; create ignored .rush/phase50-evidence/P50-062.json.
+- Allowed writes: .rush/phase50-evidence/P50-062.json only; pyproject.toml and uv.lock remain read-only and owned by P50-019.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: src; tests; scripts; pyproject.toml; uv.lock. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Source/test/public-doc/version edits; dependency removal; bundled signer/verifier binaries; unrelated packages.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -3795,17 +3792,16 @@ Isolate dependency mutation from behavior and routes.
 ## Checks to run before reporting
 
 - Focused command: rg -n "(^|[^A-Za-z])cryptography([^A-Za-z]|$)|from cryptography|import cryptography" src tests scripts pyproject.toml; expected exit 0.
-- Broader command: uv lock; expected exit 0.
 - Broader command: uv lock --check; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Broader command: .venv/Scripts/ruff.exe check src tests scripts; expected exit 0.
 - Broader command: .venv/Scripts/ruff.exe format --check src tests scripts; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when cryptography remains with a named owner or is removed with a frozen lock, never by assumption.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when the unchanged P50-019 lock retains cryptography with the signed-attestation owner and external verifier policy is recorded with exact evidence; no dependency mutation occurs in this verification task.
 
 ## Handoff
 
@@ -3824,13 +3820,13 @@ Correct public R-013 claims.
 ## Required behavior
 
 1. Inspect only the exact active anchors recorded in the documentation claim-correction inventory: README badge/summary/Pillar 9/command/MCP/score rows; equivalent README2/3 anchors; docs/README Phase 50 list; docs/ARCHITECTURE generator entry; CLI/MCP command entries; SECURITY Phase 50 heading/body; GLOSSARY generator term; user-guide FAQ and AI-agent entries; pre-PR tutorial. Stop if an unlisted active file requires correction.
-2. Make this exact change in only the allowed files: document mandatory real artifact, Statement v1, SLSA Provenance v1, DSSE signature, protected local Ed25519 and Cosign-compatible backends, quality-gate refusal, guarded export, `rush_attest`, deprecated `rush_attest_generate`, standard verification, and hosted-builder-only Level 3 policy. Remove any false badge or unsupported completeness/reproducibility claim. Historical roadmaps/ADRs/specs/plans remain untouched.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q`; then run `rg -n "SLSA Level 3|cryptographic build provenance|signed build provenance|verified.*provenance|trusted builder|reproducible" docs/tools/attest.md README.md README2.md README3.md docs/README.md docs/ARCHITECTURE.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md docs/GLOSSARY.md docs/user-guide/faq.md docs/user-guide/working-with-ai-agents.md docs/tutorials/before-a-pull-request.md examples/rush.toml`. Every remaining hit must be an explicit non-goal sentence in docs/tools/attest.md; record each hit.
+2. Make this exact change only at the allowed anchors and in docs/tools/attest.md, docs/security/slsa_attestation.md, and docs/security/trust-policy.md: document the default signed Statement v1/SLSA Provenance v1 profile, explicit signed in-toto v0.1/SLSA v0.2 compatibility profile, predicate_version, ECDSA/RSA/Cosign v3/Git-SSH/Ed25519 signing_backend matrix, verification and no-downgrade rules, real artifact and quality-gate refusal, guarded export, rush_attest, deprecated rush_attest_generate, and hosted-builder-only Level 3 policy. Remove false completeness/reproducibility claims. Historical roadmaps/ADRs/plans remain untouched.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q`; then run `rg -n "Statement v1|SLSA Provenance v1|in-toto v0.1|SLSA v0.2|predicate_version|signing_backend|ECDSA|RSA|Cosign v3|Git-SSH|Ed25519|verified|no-downgrade|hosted-builder|Level 3|unsigned|reproducible" docs/tools/attest.md docs/security/slsa_attestation.md docs/security/trust-policy.md README.md README2.md README3.md docs/README.md docs/ARCHITECTURE.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md docs/GLOSSARY.md docs/user-guide/faq.md docs/user-guide/working-with-ai-agents.md docs/tutorials/before-a-pull-request.md examples/rush.toml`. Every required profile/backend/policy term must be present at its owned anchor and every completeness/reproducibility/unsigned hit must be an explicit refusal or non-goal; record each hit.
 4. Stop and report a blocker if roadmap/ADR/remediation/changelog/version/release metadata edits; unsupported reproducibility/completeness/Level 3 claims.
 
 ## Deliverables
 
-- Documentation: docs/tools/attest.md; README.md; README2.md; README3.md; docs/README.md; docs/ARCHITECTURE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/GLOSSARY.md; docs/user-guide/faq.md; docs/user-guide/working-with-ai-agents.md; docs/tutorials/before-a-pull-request.md; examples/rush.toml.: Create docs/tools/attest.md; correct all named public references.
+- Documentation: docs/tools/attest.md; docs/security/slsa_attestation.md; docs/security/trust-policy.md; README.md; README2.md; README3.md; docs/README.md; docs/ARCHITECTURE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/GLOSSARY.md; docs/user-guide/faq.md; docs/user-guide/working-with-ai-agents.md; docs/tutorials/before-a-pull-request.md; examples/rush.toml. P50-063 is the sole writer of the two docs/security attestation policy pages and all listed active claim corrections.
 - Dependencies: docs/tools/attest.md; README.md; README2.md; README3.md; docs/README.md; docs/ARCHITECTURE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/GLOSSARY.md; docs/user-guide/faq.md; docs/user-guide/working-with-ai-agents.md; docs/tutorials/before-a-pull-request.md; examples/rush.toml.
 - Evidence: .rush/phase50-evidence/P50-063.json; Green tests and before/after claim inventory.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
@@ -3843,7 +3839,7 @@ Correct public R-013 claims.
 - Task kind: DOCS.
 - Prerequisites: P50-062 complete..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I16; Green tool/tests, R-013, dependency evidence..
-- Allowed writes: docs/tools/attest.md; README.md; README2.md; README3.md; docs/README.md; docs/ARCHITECTURE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/GLOSSARY.md; docs/user-guide/faq.md; docs/user-guide/working-with-ai-agents.md; docs/tutorials/before-a-pull-request.md; examples/rush.toml.; create ignored .rush/phase50-evidence/P50-063.json.
+- Allowed writes: docs/tools/attest.md; docs/security/slsa_attestation.md; docs/security/trust-policy.md; README.md; README2.md; README3.md; docs/README.md; docs/ARCHITECTURE.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/GLOSSARY.md; docs/user-guide/faq.md; docs/user-guide/working-with-ai-agents.md; docs/tutorials/before-a-pull-request.md; examples/rush.toml; create ignored .rush/phase50-evidence/P50-063.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: Green tool/tests, R-013, dependency evidence. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Roadmap/ADR/remediation/changelog/version/release metadata edits; unsupported reproducibility/completeness/Level 3 claims; unsigned substitutes.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -3851,13 +3847,13 @@ Correct public R-013 claims.
 ## Checks to run before reporting
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_attest.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
-- Broader command: rg -n "SLSA Level 3|cryptographic build provenance|signed build provenance|verified.*provenance|trusted builder|reproducible" docs/tools/attest.md README.md README2.md README3.md docs/README.md docs/ARCHITECTURE.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md docs/GLOSSARY.md docs/user-guide/faq.md docs/user-guide/working-with-ai-agents.md docs/tutorials/before-a-pull-request.md examples/rush.toml; expected exit 0.
+- Broader command: rg -n "Statement v1|SLSA Provenance v1|in-toto v0.1|SLSA v0.2|predicate_version|signing_backend|ECDSA|RSA|Cosign v3|Git-SSH|Ed25519|verified|no-downgrade|hosted-builder|Level 3|unsigned|reproducible" docs/tools/attest.md docs/security/slsa_attestation.md docs/security/trust-policy.md README.md README2.md README3.md docs/README.md docs/ARCHITECTURE.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md docs/GLOSSARY.md docs/user-guide/faq.md docs/user-guide/working-with-ai-agents.md docs/tutorials/before-a-pull-request.md examples/rush.toml; expected exit 0 with both profiles, the full signer matrix, verification/no-downgrade, and hosted-builder-only Level 3 language present in the three owned attestation docs.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when every named active reference describes signed Statement v1/SLSA v1 provenance, verification, refusal, and exact assurance limits.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when every named active reference describes both signed provenance profiles, the exact signer compatibility matrix, verification, refusal/no-downgrade behavior, and assurance limits, and P50-063 alone owns docs/security/slsa_attestation.md and docs/security/trust-policy.md; every command passes and only Allowed writes changed.
 
 ## Handoff
 
@@ -3865,35 +3861,35 @@ Evidence: .rush/phase50-evidence/P50-063.json; Green tests and before/after clai
 Stop condition: False active claim remains or unlisted file is required.
 Successor: P50-064. Report exact changed paths, commands, exits, evidence, blockers, and the successor; claim no later task complete.
 
-Implement pin DSSE Ed25519 and Cosign interoperability in rush-cli in the current working directory.
+Implement pin modern and legacy signed-profile interoperability in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-064 | P50-I16-SIGN | RED | pin DSSE Ed25519 and Cosign interoperability
+# Feature: P50-064 | P50-I16-SIGN | RED | pin modern and legacy signed-profile interoperability
 
-Attestation must produce an artifact-bound in-toto Statement v1 with SLSA Provenance v1 payload, sign it in DSSE, and verify it through Ed25519 and Cosign-compatible envelopes.
+Attestation must verify the explicit modern and legacy signed profiles across ECDSA, RSA, Cosign v3, Git-SSH, and Ed25519 without unsigned or silent-downgrade substitutes.
 
 ## Required behavior
 
-1. Arrange a real digest-bearing artifact, Git revision, quality result, local Ed25519 key reference, and a Cosign-compatible DSSE envelope fixture.
-2. Assert payload type, in-toto Statement v1 subject digest, SLSA Provenance v1 predicate, DSSE pre-authenticated encoding, Ed25519 signature verification, and verifier interoperability.
+1. Arrange a real digest-bearing artifact, Git revision, quality result, opaque ECDSA/RSA/Ed25519/Git-SSH key references, a Cosign v3-compatible bundle, and deterministic fixtures for both the default Statement v1/SLSA v1 profile and explicit in-toto v0.1/SLSA v0.2 compatibility profile.
+2. Assert exact profile/payload type, subject and evidence digests, predicate version, signer algorithm, DSSE PAE/bundle semantics where applicable, ECDSA/RSA/Ed25519/Git-SSH signature verification, Cosign v3 and slsa-verifier interoperability, and refusal of every unsupported profile/backend pair.
 3. Assert failed quality, missing subject, altered payload, invalid signature, inline private material, and unsigned output are refused; unsigned output is never a substitute.
 4. Preserve existing `SLSAAttestationGenerator` compatibility, canonical ToolResult, current CLI/MCP aliases, secret redaction, and existing tests.
 
 ## Deliverables
 
-- Production: `src/rush/tools/attest.py; InTotoStatementBuilder, SLSAProvenanceBuilder, DSSESigner, SignatureVerifier`; change: no production modification in RED; identify absent v1/DSSE/interoperability seams.
-- Tests: `tests/test_attest.py; test_attest_ed25519_signs_and_verifies_dsse_envelope`; fixture: `tests/fixtures/phase50/slsa/local-signed-only.json`; arrange: artifact bytes, digest, Git/quality evidence, opaque key reference, altered envelope; action: invoke generator/verifier; assert: valid v1 DSSE and refusal cases.
-- Documentation: `docs/security/slsa_attestation.md; DSSE and interoperability`; claim: document Statement v1, SLSA v1, Ed25519, Cosign-compatible verification, refusal, and no unsigned substitute.
+- Production: src/rush/tools/attest.py; InTotoStatementBuilder, SLSAProvenanceBuilder, LegacyProvenanceBuilder, DSSESigner, SignatureVerifier; no production modification in RED; identify absent dual-profile and five-backend interoperability seams.
+- Tests: tests/test_attest.py; test_attest_signer_profile_interoperability_matrix; fixtures: tests/fixtures/phase50/slsa/local-signed-only.json and deterministic legacy/modern signer bundles; arrange artifact/Git/quality evidence and altered envelopes; assert both verified profiles, ECDSA/RSA/Cosign/Git-SSH/Ed25519, incompatible-pair refusal, and no downgrade.
+- Documentation: Read-only verification of P50-063-owned docs/security/slsa_attestation.md and docs/security/trust-policy.md; this RED task does not edit documentation.
 - Dependencies: `pyproject.toml; `cryptography==50.0.0` remains locked`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: private material is opaque and never supplied in argv, TOML, environment, result, logs, cache, or evidence.
 - Transport: direct `AttestTool` invocation; `AttestTool`; request: artifact, opaque key reference, verify input; response assertion: canonical signed envelope metadata or refusal.
 - Configuration: `TOOL_SPECS.attest`; `[tools.attest]`; parser assertion: subject, quality, builder, signer, opaque key reference, bundle, and verify options reject inline secrets; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
-- Evidence: `.rush/phase50-evidence/P50-064.json`; envelope bytes, payload digest, verifier results, refusal cases, focused failure; producing command: `uv run pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q`.
+- Evidence: .rush/phase50-evidence/P50-064.json; profile/signer matrix, envelope bytes, payload digests, verifier results, refusal cases, and focused failure; producing command: .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signer_profile_interoperability_matrix -q.
 
 ## Constraints
 
 - Task kind: RED.
-- Prerequisites: `P50-063`; cryptography/cosign shared dependency task; retained Statement v1 draft output.
+- Prerequisites: P50-063; P50-019 cryptography/Cosign/slsa-verifier admission; retained signed modern and legacy core output.
 - Allowed reads: `src/rush/tools/attest.py`; `src/rush/engines/cosign.py`; `src/rush/engines/slsa_verifier.py`; attestation fixtures; paired quality/refusal tests.
 - Allowed writes: modify `tests/test_attest.py`; modify only literal local-signed fixture if necessary; create `.rush/phase50-evidence/P50-064.json`; create temporary key/artifact files under pytest roots.
 - Preserve artifact digest, quality refusal, ToolResult, aliases, redaction, and existing tests.
@@ -3907,13 +3903,13 @@ Attestation must produce an artifact-bound in-toto Statement v1 with SLSA Proven
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signer_profile_interoperability_matrix -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade -q; expected exit 0.
 - Named assertion that must fail: `assert verifier.verify(envelope) is True`.
-- Expected failure: `AssertionError: DSSE Ed25519/Cosign-compatible signature verification is absent`.
+- Expected failure: `AssertionError: modern and legacy signer/profile verification is absent`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signer_profile_interoperability_matrix -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -3921,29 +3917,29 @@ For `RED` and `EFFECT-RED`, the task is complete only when the named focused tes
 
 ## Handoff
 
-Evidence: `.rush/phase50-evidence/P50-064.json`; retain envelope, digest, verifier, refusal, and command output; successor: `P50-065`; final message must report Statement/SLSA versions, DSSE interoperability, no-unsigned checks, named assertion, and changed paths.
+Evidence: .rush/phase50-evidence/P50-064.json; retain profile/signer matrix, envelope/digest/verifier/refusal outputs; successor P50-065; report both Statement/SLSA versions, ECDSA/RSA/Cosign/Git-SSH/Ed25519 interoperability, no-unsigned/no-downgrade checks, named assertion, and changed paths.
 
 Successor: P50-065. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
-Implement DSSE Ed25519 and Cosign interoperability in rush-cli in the current working directory.
+Implement modern and legacy signed-profile interoperability in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-065 | P50-I16-SIGN | GREEN | implement DSSE Ed25519 and Cosign interoperability
+# Feature: P50-065 | P50-I16-SIGN | GREEN | implement modern and legacy signed-profile interoperability
 
-Attestation must sign and verify an artifact-bound in-toto Statement v1 with SLSA Provenance v1 through a DSSE envelope without an unsigned substitute.
+Attestation must sign and verify both artifact-bound provenance profiles through their explicit compatible signers without unsigned or silent-downgrade substitutes.
 
 ## Required behavior
 
-1. Implement `InTotoStatementBuilder` and `SLSAProvenanceBuilder` in `src/rush/tools/attest.py`; bind the subject to the real artifact digest, Git revision, and quality results.
-2. Implement `DSSESigner` and `SignatureVerifier`; produce DSSE PAE-compatible Ed25519 envelopes; verify local signatures plus Cosign-compatible envelope fixtures.
+1. Implement InTotoStatementBuilder and SLSAProvenanceBuilder for the default Statement v1/SLSA v1 profile plus LegacyProvenanceBuilder for explicit in-toto v0.1/SLSA v0.2 compatibility; bind each subject to the real artifact digest, Git revision, and quality results.
+2. Implement DSSESigner and SignatureVerifier dispatch for protected ECDSA, RSA, Ed25519/Git-SSH, and Cosign v3 backends; verify deterministic local fixtures, Cosign bundles, and slsa-verifier output; reject unsupported profile/backend combinations.
 3. Refuse failed quality, missing subject, altered payload, invalid signature, inline private material, and unsigned export; preserve opaque key-reference handling.
 4. Preserve existing generator compatibility, canonical ToolResult, current aliases/routes, engine boundaries, redaction, and tests.
 
 ## Deliverables
 
-- Production: `src/rush/tools/attest.py; AttestTool, InTotoStatementBuilder, SLSAProvenanceBuilder, DSSESigner, SignatureVerifier`; change: add Statement v1/SLSA v1, DSSE signing, Ed25519 verification, Cosign-compatible interoperability, refusal.
-- Tests: `tests/test_attest.py; test_attest_ed25519_signs_and_verifies_dsse_envelope`; fixture: local-signed DSSE/Cosign-compatible fixture; arrange: real artifact and opaque key reference; action: generate then verify; assert: payload, PAE, signatures, interoperability, refusal.
-- Documentation: `docs/security/slsa_attestation.md; DSSE and interoperability`; claim: document versions, signing, verification, Cosign compatibility, refusal, no unsigned substitute.
+- Production: src/rush/tools/attest.py; AttestTool, InTotoStatementBuilder, SLSAProvenanceBuilder, LegacyProvenanceBuilder, DSSESigner, SignatureVerifier; add both signed profiles, five-backend verification/interoperability, no-downgrade validation, and refusal.
+- Tests: Run unchanged producer-owned verification from tests/test_attest.py; this GREEN task may not modify paired tests or fixtures.
+- Documentation: Read-only verification of P50-063-owned docs/security/slsa_attestation.md and docs/security/trust-policy.md; this GREEN task does not edit documentation.
 - Dependencies: `pyproject.toml; `cryptography==50.0.0``; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: opaque key reference only; no private material in process inputs or outputs.
 - Transport: direct `AttestTool` invocation; `AttestTool`; request: artifact, key reference, generate/verify mode; response assertion: canonical signed envelope metadata with subject digest and verifier result.
 - Configuration: `TOOL_SPECS.attest`; `[tools.attest]`; parser assertion: key reference, bundle, verify, subject, quality, and builder options are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -3954,7 +3950,7 @@ Attestation must sign and verify an artifact-bound in-toto Statement v1 with SLS
 - Task kind: GREEN.
 - Prerequisites: `P50-064`; locked cryptography/Cosign seams; retained RED output.
 - Allowed reads: attest module; Cosign engine; SLSA verifier engine; fixtures; paired RED test; docs/configuration.
-- Allowed writes: modify `src/rush/tools/attest.py`; modify `tests/test_attest.py` only for paired assertions; create contained key/artifact fixtures and `.rush/phase50-evidence/P50-065.json`.
+- Allowed writes: modify `src/rush/tools/attest.py`; create `.rush/phase50-evidence/P50-065.json`. Paired RED tests and fixtures remain read-only.
 - Preserve artifact binding, quality refusal, aliases, ToolResult, engine contracts, redaction, and tests.
 - Do not emit unsigned success, expose private material, use argv/TOML/environment key bytes, query uncontrolled network, mutate Git, publish, install hooks, or alter versions.
 - Signing/verifying requires deterministic payload bytes, bounded inputs, explicit subprocess argv, sanitized environment, and contained paths.
@@ -3966,16 +3962,16 @@ Attestation must sign and verify an artifact-bound in-toto Statement v1 with SLS
 
 For every non-RED task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signer_profile_interoperability_matrix -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
 - Changed-path inspection command and allowed result: `git diff -- src/rush/tools/attest.py tests/test_attest.py .rush/phase50-evidence/P50-065.json`; only literal allowed paths may appear.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signer_profile_interoperability_matrix -q; expected exit 0 with the preceding RED assertion unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For every non-RED task, the task is complete only when the exact behavior or artifact exists, every required command passes, the paired RED tests pass unchanged when applicable, and only the literal allowed paths changed.
+The task is complete only when both signed profiles and every ECDSA/RSA/Cosign/Git-SSH/Ed25519 compatibility case verify, unsupported pairs and silent downgrade fail, unchanged RED tests pass, and only src/rush/tools/attest.py plus P50-065 evidence changed.
 
 ## Handoff
 
@@ -4001,7 +3997,7 @@ Level 3 must be claimed only for a verified hosted builder satisfying the curren
 
 - Production: `src/rush/tools/attest.py; BuilderAssuranceEvaluator`; change: no production modification in RED; identify absent trust-policy and hosted-builder gate.
 - Tests: `tests/test_attest.py; test_attest_claims_level3_only_when_verified_builder_evidence_satisfies_current_slsa_requirements`; fixtures: `tests/fixtures/phase50/slsa/trusted-builder.json`, `altered-builder.json`, `local-signed-only.json`; arrange: policy cases; action: verify assurance; assert: Level 3 only for trusted hosted evidence.
-- Documentation: `docs/security/trust-policy.md; Hosted-builder Level 3`; claim: Level 3 requires verified hosted-builder evidence; local signing is insufficient.
+- Documentation: Read-only verification of P50-063-owned docs/security/trust-policy.md; this RED task does not edit documentation.
 - Dependencies: `pyproject.toml; no new trust dependency beyond locked cryptography/Cosign`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: policy data is versioned, signed, and no private material is included.
 - Transport: direct `AttestTool` verification; `AttestTool`; request: DSSE envelope plus builder bundle; response assertion: assurance level, policy decision, reason, and evidence provenance.
 - Configuration: `TOOL_SPECS.attest`; `[tools.attest]`; parser assertion: builder, signer, bundle, trust-policy, and verification options reject inline secrets; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -4024,13 +4020,13 @@ Level 3 must be claimed only for a verified hosted builder satisfying the curren
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_claims_level3_only_when_verified_builder_evidence_satisfies_current_slsa_requirements -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_claims_level3_only_when_verified_builder_evidence_satisfies_current_slsa_requirements -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q; expected exit 0.
 - Named assertion that must fail: `assert trusted["assurance_level"] == "slsa_l3"`.
 - Expected failure: `AssertionError: hosted-builder trust policy does not produce a verified Level 3 decision`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, network failure, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_ed25519_signs_and_verifies_dsse_envelope -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_claims_level3_only_when_verified_builder_evidence_satisfies_current_slsa_requirements -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4053,17 +4049,17 @@ Attestation must claim Level 3 only after policy-verified hosted-builder evidenc
 
 1. Implement `BuilderAssuranceEvaluator` in `src/rush/tools/attest.py`; load the versioned trust policy; require hosted workflow identity, source digest, signed bundle, builder provenance, and verified DSSE.
 2. Return `slsa_l3` only for policy-satisfying hosted evidence; return explicit non-Level-3 refusal for local-signed-only, altered, stale, missing, or invalid evidence; never emit an unsigned substitute.
-3. Run `tests/test_phase50_installed_attest.py; test_phase50_installed_attest_signs_and_verifies_without_secret_in_argv_result_log_cache_or_evidence` against a fresh wheel; record `ready` or `blocked` hosted-builder readiness with the exact reason.
-4. Preserve Statement v1/SLSA v1, DSSE Ed25519/Cosign verification, quality refusal, opaque key references, current aliases/routes, and existing tests.
+3. Run `tests/test_phase50_installed_attest.py; test_phase50_installed_attest_verifies_both_profiles_and_signer_matrix_without_secret_leakage` against a fresh wheel; record `ready` or `blocked` hosted-builder readiness with the exact reason.
+4. Preserve both signed provenance profiles, ECDSA/RSA/Cosign/Git-SSH/Ed25519 verification, quality refusal, opaque key references, current aliases/routes, and existing tests.
 
 ## Deliverables
 
 - Production: `src/rush/tools/attest.py; AttestTool, BuilderAssuranceEvaluator`; change: add policy evaluation, hosted-builder-only Level 3, explicit non-Level-3 decisions, installed readiness metadata.
 - Tests: `tests/test_attest.py; test_attest_claims_level3_only_when_verified_builder_evidence_satisfies_current_slsa_requirements`; fixture: trusted/altered/local-only builder bundles; arrange: policy cases; action: verify; assert: trusted Level 3, all refusals, no unsigned output.
-- Documentation: `docs/security/trust-policy.md; Hosted-builder Level 3` and `docs/INSTALLATION.md; Installed attestation`; claim: document policy inputs, local-only refusal, readiness `ready`/`blocked`, and secret exclusion.
-- Dependencies: `pyproject.toml; locked cryptography/Cosign dependencies only`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: no private key material in configuration, argv, environment, output, logs, cache, or evidence.
-- Transport: direct `AttestTool` plus installed `rush mcp serve`; `AttestTool`; request: signed statement, builder bundle, verify mode; response assertion: canonical assurance decision, policy version, readiness state, and redacted evidence.
-- Configuration: `TOOL_SPECS.attest`; `[tools.attest]`; parser assertion: subject, quality, builder, signer, opaque key reference, bundle, policy, and verify options are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
+- Documentation: Read-only verification of P50-063-owned trust-policy, installation, configuration, and example claims; this task does not edit documentation.
+- Dependencies: Read-only verification of the P50-019-owned cryptography/Cosign/slsa-verifier lock and policy; this task does not edit dependency files.
+- Transport: Read-only installed CLI/MCP verification of the P50-061-owned shared AttestTool route; no transport source change is owned here.
+- Configuration: Read-only verification of the P50-061-owned ToolSpec and typed configuration; no configuration source change is owned here.
 - Evidence: `.rush/phase50-evidence/P50-067.json`; trust matrix, installed wheel hash, secret scan, readiness decision, focused/broader/paired output; producing command: `uv run pytest tests/test_attest.py tests/test_phase50_installed_attest.py -q`.
 
 ## Constraints
@@ -4071,8 +4067,8 @@ Attestation must claim Level 3 only after policy-verified hosted-builder evidenc
 - Task kind: GREEN.
 - Prerequisites: `P50-066`; P50-066/P50-067 trust-policy tasks; retained DSSE output; installed acceptance environment.
 - Allowed reads: attest module; Cosign engine; SLSA verifier; trust-policy resource/fixtures; paired tests; installation/security docs.
-- Allowed writes: modify `src/rush/tools/attest.py`; modify tests for paired assertions; create `tests/test_phase50_installed_attest.py`; create contained fixtures and `.rush/phase50-evidence/P50-067.json`.
-- Preserve v1 payloads, DSSE interoperability, quality/refusal behavior, local-only non-Level-3, no unsigned substitute, aliases, ToolResult, and tests.
+- Allowed writes: modify `src/rush/tools/attest.py`; create the distinct installed acceptance test `tests/test_phase50_installed_attest.py`; create contained installed-only fixtures and `.rush/phase50-evidence/P50-067.json`. Paired RED tests/test_attest.py and trust-policy fixtures remain read-only.
+- Preserve both modern and legacy signed payloads, the complete signer interoperability matrix, quality/refusal behavior, local-only non-Level-3, no unsigned or silent-downgrade substitute, aliases, ToolResult, and tests.
 - Do not claim hosted Level 3 from local evidence, hide unavailable hosted evidence, expose private keys, query uncontrolled network, mutate Git, publish, install hooks, or alter versions.
 - Hosted verification must use allowlisted signed evidence; absent evidence yields `blocked`, never `pass`; wheel checks use fresh environments without checkout imports.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not named under Allowed writes remains read-only and every public result/route contract remains unchanged.
@@ -4088,11 +4084,11 @@ For every non-RED task:
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
 - Changed-path inspection command and allowed result: `git diff -- src/rush/tools/attest.py tests/test_attest.py tests/test_phase50_installed_attest.py .rush/phase50-evidence/P50-067.json`; only literal allowed paths may appear.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_claims_level3_only_when_verified_builder_evidence_satisfies_current_slsa_requirements -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For every non-RED task, the task is complete only when the exact behavior or artifact exists, every required command passes, the paired RED tests pass unchanged when applicable, and only the literal allowed paths changed.
+This task is complete only when hosted-builder Level 3 policy and fresh installed-wheel acceptance preserve and verify both signed provenance profiles and all supported signer backends, every command passes, unchanged producer tests pass, and only the literal Allowed writes changed.
 
 ## Handoff
 
@@ -4112,8 +4108,8 @@ Pin exact manifest/metadata evidence, unknown states, and policy behavior before
 ## Required behavior
 
 1. Inspect LicenseMatrixScanner.scan_licenses and its callers. Run the current smoke test and record that every dependency becomes MIT / Apache-2.0 (Dual).
-2. Make this exact change in only tests/test_license_matrix.py: add `test_license_matrix_reports_fixture_metadata_without_inventing_licenses`, arranging pyproject.toml, package.json, and Cargo.toml fixtures plus injected metadata for MIT, GPL-3.0-only, and missing license; instantiate the tool directly and assert normalized dependency/specifier plus exact evidence string/source, with missing evidence unknown. Do not assert policy, CLI, MCP, public-route, or smoke behavior; P50-067 owns route migration.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses -q`, then `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q`. Retain only direct extraction failures for invented licenses, lost evidence, or wrong canonical shape.
+2. Make this exact change in only tests/test_license_matrix.py: add test_license_matrix_reports_fixture_metadata_without_inventing_licenses and test_license_matrix_classifies_permissive_weak_strong_and_proprietary_evidence; arrange pyproject.toml, package.json, Cargo.toml, and injected/local metadata for MIT, MPL-2.0, LGPL-3.0-only, GPL-3.0-only, LicenseRef-Proprietary, a dual-license expression, and missing license; assert normalized dependency/specifier, exact evidence/source, the four literal evidence categories Permissive/Weak Copyleft/Strong Copyleft/Proprietary, and unknown when absent. A category is descriptive evidence, never a compatibility or legal verdict.
+3. Run .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_classifies_permissive_weak_strong_and_proprietary_evidence -q, then the full tests/test_license_matrix.py; retain only direct extraction/category failures for invented licenses, lost evidence, wrong category, or wrong canonical shape.
 4. Stop and report a blocker if live registry queries, legal conclusions, inferred linking mechanics, broad SPDX compatibility algebra, production/docs edits.
 
 ## Deliverables
@@ -4138,10 +4134,10 @@ Pin exact manifest/metadata evidence, unknown states, and policy behavior before
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses -q; expected exit 1 for the named semantic RED assertion.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_classifies_permissive_weak_strong_and_proprietary_evidence -q; expected exit 1 for the named semantic RED assertions.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_classifies_permissive_weak_strong_and_proprietary_evidence -q; expected exit 1 with successful collection and only the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4164,8 +4160,8 @@ Remove false permissive classification without pretending to decide license comp
 ## Required behavior
 
 1. Inspect current parser implementation/callers and exact fixture syntaxes; confirm extraction can be isolated from policy.
-2. Make this exact change in only src/rush/tools/license_matrix.py: implement `LicenseMatrixTool` named `license-matrix`; extract normalized dependency names/specifiers from the three fixture syntaxes using stdlib parsing; obtain evidence only from manifest fields or injected/local metadata; retain exact value/source; return unknown when absent. Include no allowlist verdict, registration, or transports.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses -q`, `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/license_matrix.py tests/test_license_matrix.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/license_matrix.py tests/test_license_matrix.py`. Search the module for constant or fallback license strings and network calls.
+2. Make this exact change in only src/rush/tools/license_matrix.py: implement LicenseMatrixTool named license-matrix; extract normalized dependency names/specifiers from all fixture syntaxes using local parsing; obtain evidence only from manifest fields or injected/local metadata; retain exact value/source; deterministically map evidenced SPDX identifiers into the literal descriptive categories Permissive, Weak Copyleft, Strong Copyleft, or Proprietary; retain dual expressions as compound evidence; return unknown when absent. Include no allowlist verdict, registration, transport, guessed license, compatibility conclusion, or legal advice.
+3. Run the unchanged metadata and four-category tests, the full tests/test_license_matrix.py, Ruff check, and Ruff format check; search the module for fallback license strings, network calls, or category-to-compatibility shortcuts.
 4. Stop and report a blocker if test, registry, CLI, MCP, docs, dependency, network, policy-verdict, legal-advice, license-guessing, linking-classification changes.
 
 ## Deliverables
@@ -4195,11 +4191,11 @@ Remove false permissive classification without pretending to decide license comp
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when the private scanner returns deterministic local metadata evidence without policy classification, fallback licenses, network access, or public registration.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when the private scanner returns deterministic local metadata evidence and the four required descriptive categories without policy classification, fallback licenses, compatibility/legal verdicts, network access, or public registration; every command passes, paired RED tests remain unchanged, and only Allowed writes changed.
 
 ## Handoff
 
@@ -4218,8 +4214,8 @@ Separate policy state from extraction.
 ## Required behavior
 
 1. Reinspect extracted evidence records and I17 authoritative scope. Confirm exact-match allowlist is the only admitted pass rule.
-2. Add `test_license_matrix_exact_allowlist_match_is_allowed` and `test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review`; arrange MIT, GPL, `MIT OR Apache-2.0`, classifier text, and missing evidence; assert only exact configured match is allowed, every other state is manual_review/warn, and no legal/viral/compatible verdict appears.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review -q`, then `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q`; retain absent-policy failures.
+2. Add test_license_matrix_exact_allowlist_match_is_allowed, test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review, and test_license_matrix_dual_license_conflict_never_collapses_to_allowed; arrange MIT, MPL/LGPL/GPL/Proprietary evidence, MIT OR Apache-2.0, a conflicting permissive OR strong-copyleft expression, classifier text, and missing evidence; assert the four descriptive categories are preserved, only exact configured evidence match is allowed, dual/compound/conflicting/unknown states are manual_review or warn, and no legal/viral/compatible verdict appears.
+3. Run the three exact policy tests named above, then the full tests/test_license_matrix.py; retain only absent category/policy/dual-conflict failures.
 4. Stop and report a blocker if production/routes/docs edits; legal/linking assertions.
 
 ## Deliverables
@@ -4244,10 +4240,10 @@ Separate policy state from extraction.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review -q; expected exit 1 for the named semantic RED assertion.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review tests/test_license_matrix.py::test_license_matrix_dual_license_conflict_never_collapses_to_allowed -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review tests/test_license_matrix.py::test_license_matrix_dual_license_conflict_never_collapses_to_allowed -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4270,8 +4266,8 @@ Satisfy policy tests only.
 ## Required behavior
 
 1. Reinspect unchanged assertions and extraction record fields.
-2. Add project_license/allowed_licenses semantic handling: exact evidence/allowlist equality may produce allowed; all other values produce manual_review/warn findings; missing project policy never becomes pass/fail.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review -q`, `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/license_matrix.py tests/test_license_matrix.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/license_matrix.py tests/test_license_matrix.py`; search for `viral`, `contamination`, `compatible`, and guessed fallback values.
+2. Add project_license/allowed_licenses semantic handling: preserve the four descriptive evidence categories; exact evidence/allowlist equality may produce allowed; dual-license expressions with conflicting category/policy outcomes, compound/free-text/unrecognized/missing evidence, and every nonexact value produce manual_review or warn; missing project policy never becomes pass/fail.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review tests/test_license_matrix.py::test_license_matrix_dual_license_conflict_never_collapses_to_allowed -q`, `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/license_matrix.py tests/test_license_matrix.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/license_matrix.py tests/test_license_matrix.py`; search for `viral`, `contamination`, `compatible`, and guessed fallback values.
 4. Stop and report a blocker if test/routes/docs/dependency/linking/legal changes.
 
 ## Deliverables
@@ -4296,16 +4292,16 @@ Satisfy policy tests only.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review tests/test_license_matrix.py::test_license_matrix_dual_license_conflict_never_collapses_to_allowed -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses tests/test_license_matrix.py::test_license_matrix_exact_allowlist_match_is_allowed tests/test_license_matrix.py::test_license_matrix_marks_missing_compound_free_text_and_unrecognized_for_manual_review tests/test_license_matrix.py::test_license_matrix_dual_license_conflict_never_collapses_to_allowed -q; expected exit 0 with the preceding RED assertion unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when exact allowlist matches are distinguished from manual review with no legal conclusion.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when Permissive, Weak Copyleft, Strong Copyleft, and Proprietary evidence categories remain distinct, exact allowlist matches are separated from manual review, dual-license conflicts cannot collapse to allowed, and no legal conclusion appears; every command passes, unchanged RED tests pass, and only Allowed writes changed.
 
 ## Handoff
 
@@ -4353,7 +4349,7 @@ Pin one-object public behavior.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_license_matrix_catalog_declares_evidence_policy_options tests/test_cli_registry.py::test_license_matrix_cli_and_mcp_return_same_tool_result tests/test_mcp.py::test_license_matrix_transports_do_not_construct_scanner -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_license_matrix_catalog_declares_evidence_policy_options tests/test_cli_registry.py::test_license_matrix_cli_and_mcp_return_same_tool_result tests/test_mcp.py::test_license_matrix_transports_do_not_construct_scanner -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4407,7 +4403,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_license_matrix_catalog_declares_evidence_policy_options tests/test_cli_registry.py::test_license_matrix_cli_and_mcp_return_same_tool_result tests/test_mcp.py::test_license_matrix_transports_do_not_construct_scanner -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4430,13 +4426,13 @@ Remove existing claims of copyleft compliance certainty.
 ## Required behavior
 
 1. Inspect these exact active anchors and no others: the Pillar 9 and command-list entries in README.md, README2.md, and README3.md; the Phase 50 list in docs/README.md; the `license-matrix` entries in docs/CLI_REFERENCE.md, docs/CLI_COOKBOOK.md, docs/MCP_REFERENCE.md, docs/CONFIGURATION.md, docs/TOOL_CATALOG.md, docs/USER_GUIDE.md, docs/VIBECODING.md, docs/user-guide/advanced-checks.md, docs/user-guide/checking-code.md, docs/user-guide/everyday-workflow.md, docs/user-guide/faq.md, docs/workflows/supply_chain_security_and_flagship_release.md, and examples/rush.toml. Record the pre-edit claim at each changed anchor.
-2. Make this exact change only at those anchors and in the new guide: document manifest/metadata evidence sources, exact allowlist match, `manual_review`, no-network/no-legal-advice boundaries, canonical CLI/MCP names, typed keys, and missing-evidence behavior. Replace any claim of compatibility, copyleft safety, viral-risk detection, or complete detection; do not alter unrelated prose in the same file.
+2. Make this exact change only at those anchors and in docs/tools/license_matrix.md and docs/security/license_compliance.md: document local manifest/metadata evidence, Permissive/Weak Copyleft/Strong Copyleft/Proprietary descriptive categories, dual-license conflict/manual_review behavior, exact allowlist match, no-network/no-legal-advice boundaries, canonical CLI/MCP names, typed keys, and missing evidence. Replace claims of compatibility, copyleft safety, viral-risk detection, or complete detection; do not alter unrelated prose.
 3. Run `.venv/Scripts/python.exe -m pytest tests/test_license_matrix.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q`; then run `rg -n "license-matrix|rush_license_matrix|viral|contamination|zero-risk|100% detection|manual_review" docs/tools/license_matrix.md README.md README2.md README3.md docs/README.md docs/CLI_REFERENCE.md docs/CLI_COOKBOOK.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/USER_GUIDE.md docs/VIBECODING.md docs/user-guide/advanced-checks.md docs/user-guide/checking-code.md docs/user-guide/everyday-workflow.md docs/user-guide/faq.md docs/workflows/supply_chain_security_and_flagship_release.md examples/rush.toml`; record each remaining hit and prove that it is the explicit nonlegal limitation rather than an active capability claim.
 4. Stop and report a blocker if legal-safe, contamination, viral, zero-risk, complete detection, or linking-mechanics claims.
 
 ## Deliverables
 
-- Documentation: docs/tools/license_matrix.md; README.md; README2.md; README3.md; docs/README.md; docs/CLI_REFERENCE.md; docs/CLI_COOKBOOK.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/USER_GUIDE.md; docs/VIBECODING.md; docs/user-guide/advanced-checks.md; docs/user-guide/checking-code.md; docs/user-guide/everyday-workflow.md; docs/user-guide/faq.md; docs/workflows/supply_chain_security_and_flagship_release.md; examples/rush.toml.: Create docs/tools/license_matrix.md; correct exact public references.
+- Documentation: docs/tools/license_matrix.md; docs/security/license_compliance.md; README.md; README2.md; README3.md; docs/README.md; docs/CLI_REFERENCE.md; docs/CLI_COOKBOOK.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/USER_GUIDE.md; docs/VIBECODING.md; docs/user-guide/advanced-checks.md; docs/user-guide/checking-code.md; docs/user-guide/everyday-workflow.md; docs/user-guide/faq.md; docs/workflows/supply_chain_security_and_flagship_release.md; examples/rush.toml. P50-074 is the sole writer of docs/security/license_compliance.md.
 - Evidence: .rush/phase50-evidence/P50-074.json; Tests and claim inventory.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
@@ -4449,7 +4445,7 @@ Remove existing claims of copyleft compliance certainty.
 - Task kind: DOCS.
 - Prerequisites: P50-073 green..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I17; src/rush/tools/license_matrix.py; tests/test_license_matrix.py; tests/test_catalog.py; tests/test_cli_registry.py; tests/test_mcp.py; the eighteen allowed documentation/configuration paths..
-- Allowed writes: docs/tools/license_matrix.md; README.md; README2.md; README3.md; docs/README.md; docs/CLI_REFERENCE.md; docs/CLI_COOKBOOK.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/USER_GUIDE.md; docs/VIBECODING.md; docs/user-guide/advanced-checks.md; docs/user-guide/checking-code.md; docs/user-guide/everyday-workflow.md; docs/user-guide/faq.md; docs/workflows/supply_chain_security_and_flagship_release.md; examples/rush.toml.; create ignored .rush/phase50-evidence/P50-074.json.
+- Allowed writes: docs/tools/license_matrix.md; docs/security/license_compliance.md; README.md; README2.md; README3.md; docs/README.md; docs/CLI_REFERENCE.md; docs/CLI_COOKBOOK.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/USER_GUIDE.md; docs/VIBECODING.md; docs/user-guide/advanced-checks.md; docs/user-guide/checking-code.md; docs/user-guide/everyday-workflow.md; docs/user-guide/faq.md; docs/workflows/supply_chain_security_and_flagship_release.md; examples/rush.toml; create ignored .rush/phase50-evidence/P50-074.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: src/rush/tools/license_matrix.py; tests/test_license_matrix.py; tests/test_catalog.py; tests/test_cli_registry.py; tests/test_mcp.py; the eighteen allowed documentation/configuration paths. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Legal-safe, contamination, viral, zero-risk, complete detection, or linking-mechanics claims.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -4459,11 +4455,11 @@ Remove existing claims of copyleft compliance certainty.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "license-matrix|rush_license_matrix|viral|contamination|zero-risk|100% detection|manual_review" docs/tools/license_matrix.md README.md README2.md README3.md docs/README.md docs/CLI_REFERENCE.md docs/CLI_COOKBOOK.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/USER_GUIDE.md docs/VIBECODING.md docs/user-guide/advanced-checks.md docs/user-guide/checking-code.md docs/user-guide/everyday-workflow.md docs/user-guide/faq.md docs/workflows/supply_chain_security_and_flagship_release.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when users can distinguish evidence, policy match, and manual review.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when users can distinguish the four descriptive evidence categories, exact policy match, dual-license conflict, and manual review; P50-074 alone owns docs/security/license_compliance.md; every command passes and only Allowed writes changed.
 
 ## Handoff
 
@@ -4490,7 +4486,7 @@ The license matrix must classify Python, npm, and Cargo dependency edges as stat
 
 - Production: `src/rush/tools/license_matrix.py; DependencyLinkAnalyzer, LicenseMatrixTool`; change: no production modification in RED; identify absent link classification.
 - Tests: `tests/test_license_matrix.py; test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges`; fixtures: `tests/fixtures/phase50/licenses/pyproject.toml`, `package.json`, `Cargo.toml`, `installed-metadata.json`; arrange: manifests plus temporary source snippets; action: invoke scanner; assert: link types, evidence, confidence, unresolved state.
-- Documentation: `docs/security/license_compliance.md; Linking evidence`; claim: define static, dynamic, RPC categories, evidence, confidence, and unknown handling.
+- Documentation: Read-only verification of P50-074-owned docs/security/license_compliance.md; this RED task does not edit documentation.
 - Dependencies: `pyproject.toml; no new link-analysis dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: existing approved runtime only.
 - Transport: direct `LicenseMatrixTool` invocation; `LicenseMatrixTool`; request: manifest/source roots; response assertion: canonical matrix includes typed link edges.
 - Configuration: `TOOL_SPECS.license_matrix`; `[tools.license_matrix]`; parser assertion: targets, linking policy, SPDX policy, and unknown handling are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -4513,13 +4509,13 @@ The license matrix must classify Python, npm, and Cargo dependency edges as stat
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_reports_fixture_metadata_without_inventing_licenses -q; expected exit 0.
 - Named assertion that must fail: `assert {edge["link_type"] for edge in result["edges"]} >= {"static", "dynamic", "rpc"}`.
 - Expected failure: `AssertionError: dependency link edges lack static, dynamic, or RPC classification`.
 - Confirm that import failure, missing fixture, collection failure, skip, XFAIL, XPASS, route-not-found, network failure, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4548,8 +4544,8 @@ The license matrix must classify static, dynamic, and RPC dependency edges with 
 ## Deliverables
 
 - Production: `src/rush/tools/license_matrix.py; LicenseMatrixTool, DependencyLinkAnalyzer`; change: add bounded polyglot edge extraction, classifications, evidence, confidence, unknown state.
-- Tests: `tests/test_license_matrix.py; test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges`; fixtures: four license fixtures plus contained source snippets; arrange: static, dynamic, RPC, incomplete cases; action: invoke matrix; assert: edge fields.
-- Documentation: `docs/security/license_compliance.md; Linking evidence`; claim: document edge categories, evidence requirements, confidence, unknown handling, and no-manifest inference.
+- Tests: Run unchanged producer-owned verification from tests/test_license_matrix.py; this GREEN task may not modify paired tests or fixtures.
+- Documentation: Read-only verification of P50-074-owned docs/security/license_compliance.md; this GREEN task does not edit documentation.
 - Dependencies: `pyproject.toml; no new link-analysis dependency`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: existing locked runtime only.
 - Transport: direct `LicenseMatrixTool` invocation; `LicenseMatrixTool`; request: manifest/source roots; response assertion: canonical matrix with typed edges and provenance.
 - Configuration: `TOOL_SPECS.license_matrix`; `[tools.license_matrix]`; parser assertion: linking and target options remain typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -4560,7 +4556,7 @@ The license matrix must classify static, dynamic, and RPC dependency edges with 
 - Task kind: GREEN.
 - Prerequisites: `P50-075`; retained RED output; read-only scanner seam.
 - Allowed reads: license matrix; manifest fixtures; source fixtures; paired RED test; docs/configuration.
-- Allowed writes: modify `src/rush/tools/license_matrix.py`; modify test only for paired assertions; create contained source snippets and `.rush/phase50-evidence/P50-076.json`.
+- Allowed writes: modify `src/rush/tools/license_matrix.py`; create `.rush/phase50-evidence/P50-076.json`. Paired RED tests and fixtures are read-only and must remain byte-for-byte unchanged; contained source snippets are created only beneath pytest temp roots.
 - Preserve license evidence, manifest collection, read-only behavior, ToolResult, routes, and tests.
 - Do not execute package managers or dependency code, query network, mutate manifests, infer unsupported edges, mutate Git, publish, install hooks, or alter versions.
 - Parsing must be bounded, deterministic, path-contained, symlink-safe, and explicit about unknown evidence.
@@ -4575,9 +4571,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/license_matrix.py tests/test_license_matrix.py .rush/phase50-evidence/P50-076.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare pre/post SHA-256 manifests for tests/test_license_matrix.py and its fixtures; expected zero delta. Only src/rush/tools/license_matrix.py and .rush/phase50-evidence/P50-076.json may be newly changed.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4607,7 +4603,7 @@ The license matrix must evaluate SPDX expressions, report incompatible or unknow
 
 - Production: `src/rush/tools/license_matrix.py; SPDXCompatibilityEvaluator, LicenseRisk, LicenseMatrixTool`; change: no production modification in RED; identify absent SPDX evaluation.
 - Tests: `tests/test_license_matrix.py; test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses`; fixtures: the four license fixture paths; arrange: permissive, copyleft, composite, absent, conflicting evidence; action: invoke matrix; assert: status, risk, unknown, evidence, resolution.
-- Documentation: `docs/security/license_compliance.md; SPDX compatibility`; claim: document expression evaluation, incompatible/unknown states, provenance, manual review, and resolution paths.
+- Documentation: Read-only verification of P50-074-owned docs/security/license_compliance.md; this RED task does not edit documentation.
 - Dependencies: `pyproject.toml; `license-expression>=30.4,<31` supplied by shared dependency task`; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: approved locked parser; no focused-test network.
 - Transport: direct `LicenseMatrixTool` invocation; `LicenseMatrixTool`; request: manifests, installed metadata, project license, copyleft policy; response assertion: canonical risk and resolution evidence.
 - Configuration: `TOOL_SPECS.license_matrix`; `[tools.license_matrix]`; parser assertion: project license, fail-on-copyleft, SPDX policy, and unknown handling are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -4630,13 +4626,13 @@ The license matrix must evaluate SPDX expressions, report incompatible or unknow
 
 For a `RED` or `EFFECT-RED` task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses -q; expected exit 0.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 0.
 - Named assertion that must fail: `assert any(item["status"] == "incompatible" for item in result["licenses"])`.
 - Expected failure: `AssertionError: SPDX compatibility evaluator did not report the incompatible expression`.
 - Confirm that import failure, missing dependency, collection failure, skip, XFAIL, XPASS, route-not-found, network failure, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_classifies_static_dynamic_and_rpc_linking_edges -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4665,8 +4661,8 @@ The license matrix must evaluate SPDX expressions against the project license an
 ## Deliverables
 
 - Production: `src/rush/tools/license_matrix.py; LicenseMatrixTool, SPDXCompatibilityEvaluator, LicenseRisk`; change: add normalization, compatibility, risk, provenance, manual review, and resolution output.
-- Tests: `tests/test_license_matrix.py; test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses`; fixtures: four license files; arrange: permissive, copyleft, composite, absent, conflicting metadata; action: invoke matrix; assert: exact statuses, evidence, rationale, resolution, no invention.
-- Documentation: `docs/security/license_compliance.md; SPDX compatibility`; claim: document expressions, policy outcomes, provenance, unknown/manual review, and resolution.
+- Tests: Run unchanged producer-owned verification from tests/test_license_matrix.py; this GREEN task may not modify paired tests or fixtures.
+- Documentation: Read-only verification of P50-074-owned docs/security/license_compliance.md; this GREEN task does not edit documentation.
 - Dependencies: `pyproject.toml; `license-expression>=30.4,<31``; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: approved locked parser; no network during focused tests.
 - Transport: direct `LicenseMatrixTool` invocation; `LicenseMatrixTool`; request: manifests, installed metadata, project license, copyleft policy; response assertion: canonical risk/status/evidence/resolution fields.
 - Configuration: `TOOL_SPECS.license_matrix`; `[tools.license_matrix]`; parser assertion: project license and policy options are typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -4677,7 +4673,7 @@ The license matrix must evaluate SPDX expressions against the project license an
 - Task kind: GREEN.
 - Prerequisites: `P50-077`; shared SPDX dependency task; retained RED output.
 - Allowed reads: license matrix; license fixtures; `pyproject.toml`; `uv.lock`; paired RED test; policy docs.
-- Allowed writes: modify `src/rush/tools/license_matrix.py`; modify test only for paired assertions; modify fixtures only for declared cases; create `.rush/phase50-evidence/P50-078.json`.
+- Allowed writes: modify `src/rush/tools/license_matrix.py`; create `.rush/phase50-evidence/P50-078.json`. Paired RED tests and fixtures are read-only and must remain byte-for-byte unchanged; pyproject.toml and uv.lock remain owned by P50-019.
 - Preserve raw metadata, provenance, read-only behavior, link edges, ToolResult, routes, and tests.
 - Do not infer licenses, query registries, run package managers, mutate manifests, write outside roots, mutate Git, publish, install hooks, or alter versions.
 - SPDX parsing must be bounded, deterministic, explicit about invalid/unknown expressions, and clear about manual review.
@@ -4692,9 +4688,9 @@ For every non-RED task:
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
 - For GREEN tasks: the paired RED command must now exit zero without changing the paired tests or fixtures.
-- Changed-path inspection command and allowed result: `git diff -- src/rush/tools/license_matrix.py tests/test_license_matrix.py pyproject.toml uv.lock .rush/phase50-evidence/P50-078.json`; only literal allowed paths may appear.
+- Changed-path inspection: compare pre/post SHA-256 manifests for tests/test_license_matrix.py, its fixtures, pyproject.toml, and uv.lock; expected zero delta. Only src/rush/tools/license_matrix.py and .rush/phase50-evidence/P50-078.json may be newly changed.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py::test_license_matrix_evaluates_spdx_expressions_and_reports_incompatible_unknown_and_resolution_paths_without_invented_licenses -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4709,22 +4705,22 @@ Implement pin installed license acceptance in rush-cli in the current working di
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-079 | P50-I17-INSTALLED | RED | pin installed license acceptance
+# Feature: P50-079 | P50-I17-INSTALLED | INSTALLED | verify installed license acceptance
 
 A fresh installed artifact must scan Python, npm, and Cargo manifests plus installed metadata using locked SPDX data without source-checkout imports.
 
 ## Required behavior
 
 1. Build/install the wheel in a fresh environment; remove checkout imports; invoke the installed license matrix against the four polyglot fixtures.
-2. Assert manifest/metadata collection, static/dynamic/RPC links, SPDX status/risk, unknown/manual review, evidence provenance, ship gate, JSON-RPC purity, and source exclusion.
-3. The named test must fail solely at missing installed behavior; wheel, parser, package download, collection, or route failure is not valid RED.
+2. Assert manifest/metadata collection, static/dynamic/RPC links, Permissive/Weak Copyleft/Strong Copyleft/Proprietary categories, dual-license conflict/manual review, SPDX status/risk, unknown evidence provenance, ship gate, JSON-RPC purity, and source exclusion.
+3. The named installed test must pass against the implemented behavior; wheel/parser failure, package download, checkout import, collection failure, skip, XFAIL, or route failure is an explicit blocker.
 4. Preserve source-tree read-only behavior, stdout JSON-RPC purity, stderr diagnostics, no manifest mutation, metadata, routes, and installed commands.
 
 ## Deliverables
 
 - Production: `src/rush/tools/license_matrix.py` and package registration seam; change: no production modification in RED; identify the absent installed path.
 - Tests: `tests/test_phase50_installed_license_matrix.py; test_phase50_installed_license_matrix_loads_spdx_data_and_scans_polyglot_fixture`; fixtures: `tests/fixtures/phase50/licenses/pyproject.toml`, `package.json`, `Cargo.toml`, `installed-metadata.json`; arrange: fresh venv, wheel, fixture root; action: installed CLI/MCP invocation; assert: target collection, links, risk, evidence, ship gate, source exclusion.
-- Documentation: `docs/INSTALLATION.md; Installed artifact acceptance`; claim: document installed polyglot scanning, locked SPDX data, read-only behavior, and source exclusion.
+- Documentation: Read-only verification of P50-074-owned docs/security/license_compliance.md and P50-203-owned docs/INSTALLATION.md; this installed task does not edit documentation.
 - Dependencies: `pyproject.toml; `license-expression>=30.4,<31``; lockfile: `uv.lock`; resolution command: `uv sync --locked`; license/security condition: approved locked wheel; absent metadata remains unknown.
 - Transport: installed `rush mcp serve` stdio endpoint; shared `LicenseMatrixTool`; request: fixture root, project license, copyleft policy; response assertion: stdout only canonical JSON-RPC/ToolResult, stderr diagnostics only.
 - Configuration: installed `TOOL_SPECS.license_matrix`; `[tools.license_matrix]`; parser assertion: targets, project license, link policy, SPDX policy, unknown handling remain typed; documentation/example anchors: `docs/CONFIGURATION.md`, `examples/rush.toml`.
@@ -4732,7 +4728,7 @@ A fresh installed artifact must scan Python, npm, and Cargo manifests plus insta
 
 ## Constraints
 
-- Task kind: RED.
+- Task kind: INSTALLED.
 - Prerequisites: `P50-078`; retained source-tree matrix; locked SPDX dependency.
 - Allowed reads: packaging metadata; lockfile; license matrix; package registry; CLI/MCP entry points; four fixtures; installation docs.
 - Allowed writes: create `tests/test_phase50_installed_license_matrix.py`; temporary wheel/venv/output beneath pytest `tmp_path`; create `.rush/phase50-evidence/P50-079.json`; no production writes.
@@ -4745,19 +4741,18 @@ A fresh installed artifact must scan Python, npm, and Cargo manifests plus insta
 
 ## Checks to run before reporting
 
-For a `RED` or `EFFECT-RED` task:
+For this installed-acceptance task:
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_license_matrix.py::test_phase50_installed_license_matrix_loads_spdx_data_and_scans_polyglot_fixture -q; expected exit 0.
-- Named assertion that must fail: `assert {"python", "node", "rust"} <= set(result["targets"])`.
-- Expected failure: `AssertionError: installed license matrix did not scan all polyglot targets`.
-- Confirm that wheel-build failure, missing dependency, package download, import failure, collection failure, skip, XFAIL, XPASS, route-not-found, or unrelated failure does not satisfy RED.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_license_matrix.py::test_phase50_installed_license_matrix_loads_spdx_data_and_scans_polyglot_fixture -q; expected exit 0.
+- Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_license_matrix.py -q; expected exit 0.
+- Required assertion: `{"python", "node", "rust"} <= set(result["targets"])` with locked SPDX data, link/risk evidence, and explicit unknown/manual-review states.
+- Confirm that wheel-build failure, missing dependency, package download, checkout import, collection failure, skip, XFAIL, XPASS, or route-not-found blocks acceptance.
+- Paired RED command: N/A for this installed-acceptance task; it verifies completed P50-068–P50-078 behavior without creating a new RED transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-For `RED` and `EFFECT-RED`, the task is complete only when the named focused test executes and fails solely at the named assertion for the named missing behavior, the baseline command passes, and only the literal allowed test and evidence paths changed.
+The task is complete only when the installed wheel scans every polyglot target with locked SPDX data, all four descriptive categories, dual-license conflict/manual-review behavior, link/risk provenance, explicit unknowns, and no checkout/network fallback; focused and baseline commands pass and only installed-test/evidence paths changed.
 
 ## Handoff
 
@@ -4783,7 +4778,7 @@ The configuration contract must declare the complete AWS, GCP, Azure, Terraform,
 
 ## Deliverables
 
-- Tests: tests/test_iam_audit.py::test_iam_audit_catalog_declares_all_three_providers_source_iac_base_revision_resource_policy_and_export.
+- Tests: Run unchanged producer-owned verification from tests/test_iam_audit.py; this GREEN task may not modify paired tests or fixtures.
 - Configuration: Production declarations: src/rush/catalog.py, src/rush/config.py, and src/rush/tools/__init__.py only.
 - Production: Resource contract: src/rush/resources/iam/aws.json, src/rush/resources/iam/gcp.json, and src/rush/resources/iam/azure.json are named as required P50-082 deliverables; this task does not fabricate their data.
 - Evidence: ignored .rush/phase50-evidence/P50-080.json with the focused failure/pass state, option table, dependency owner, resource contract, and exact blockers.
@@ -4796,7 +4791,7 @@ The configuration contract must declare the complete AWS, GCP, Azure, Terraform,
 - Task kind: GREEN.
 - Prerequisites: P50-079 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_iam_audit.py; src/rush/catalog.py; src/rush/config.py; src/rush/tools/__init__.py; src/rush/resources/iam/aws.json; src/rush/resources/iam/gcp.json; src/rush/resources/iam/azure.json; .rush/phase50-evidence/P50-080.json; tests/core; tests/test_catalog.py; tests/test_config.py.
-- Allowed writes: tests/test_iam_audit.py; src/rush/catalog.py; src/rush/config.py; src/rush/tools/__init__.py; src/rush/resources/iam/aws.json; src/rush/resources/iam/gcp.json; src/rush/resources/iam/azure.json; .rush/phase50-evidence/P50-080.json.
+- Allowed writes: src/rush/catalog.py; src/rush/config.py; src/rush/tools/__init__.py; src/rush/resources/iam/aws.json; src/rush/resources/iam/gcp.json; src/rush/resources/iam/azure.json; .rush/phase50-evidence/P50-080.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -4817,7 +4812,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_catalog_declares_all_three_providers_source_iac_base_revision_resource_policy_and_export -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_config.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_catalog_declares_all_three_providers_source_iac_base_revision_resource_policy_and_export -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4868,7 +4863,7 @@ Pin complete extraction/classification from the bundled versioned AWS, GCP, and 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_maps_only_approved_fixture_calls_without_defaults tests/test_iam_audit.py::test_iam_audit_reports_unsupported_calls_resources_and_infrastructure_truthfully -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_maps_only_approved_fixture_calls_without_defaults tests/test_iam_audit.py::test_iam_audit_reports_unsupported_calls_resources_and_infrastructure_truthfully -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4923,7 +4918,7 @@ Replace heuristic method-prefix mapping and defaults with the finite approved co
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_maps_only_approved_fixture_calls_without_defaults tests/test_iam_audit.py::test_iam_audit_reports_unsupported_calls_resources_and_infrastructure_truthfully -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -4975,7 +4970,7 @@ Pin one-object public evidence behavior.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_iam_audit_catalog_declares_only_approved_scope tests/test_cli_registry.py::test_iam_audit_cli_and_mcp_return_same_tool_result tests/test_mcp.py::test_iam_audit_transports_contain_no_policy_synthesis -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_iam_audit_catalog_declares_only_approved_scope tests/test_cli_registry.py::test_iam_audit_cli_and_mcp_return_same_tool_result tests/test_mcp.py::test_iam_audit_transports_contain_no_policy_synthesis -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5029,7 +5024,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_iam_audit_catalog_declares_only_approved_scope tests/test_cli_registry.py::test_iam_audit_cli_and_mcp_return_same_tool_result tests/test_mcp.py::test_iam_audit_transports_contain_no_policy_synthesis -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5081,7 +5076,7 @@ Remove “synthesized least privilege” claims not supported by the tool.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "iam-audit|rush_iam_audit|least-privilege|deployable|Resource.*\\*" docs/tools/iam_audit.md README.md README2.md README3.md docs/AGENTIC_RUSH.md docs/ARCHITECTURE.md docs/developer/architecture.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5111,24 +5106,24 @@ The iam-audit CLI command must expose the complete three-provider and IaC-diff a
 ## Deliverables
 
 - Production: the iam-audit CLI registration and argument/result adapter in src/rush/cli.py, calling IAMAuditTool, SDKCallExtractor, IaCDiffExtractor, ProviderPermissionCatalog, and LeastPrivilegeSynthesizer from src/rush/tools/iam_audit.py.
-- Tests: tests/test_iam_audit.py::test_iam_audit_cli_supports_aws_gcp_azure_and_iac_diff plus direct assertions for all options, canonical fields, provider resource scope, policy export permission, and unchanged legacy behavior.
-- Tests: Fixtures: tests/fixtures/phase50/iam/aws.py, tests/fixtures/phase50/iam/gcp.ts, tests/fixtures/phase50/iam/azure.py, tests/fixtures/phase50/iam/main.tf, and tests/fixtures/phase50/iam/app.ts.
+- Tests: Run unchanged producer-owned verification from tests/test_iam_audit.py; this GREEN task may not modify paired tests or fixtures.
+- Tests: Run unchanged producer-owned verification from tests/fixtures/phase50/iam/aws.py; tests/fixtures/phase50/iam/gcp.ts; tests/fixtures/phase50/iam/azure.py; tests/fixtures/phase50/iam/main.tf; tests/fixtures/phase50/iam/app.ts; this GREEN task may not modify paired tests or fixtures.
 - Dependencies: the CLI must use the versioned bundled AWS/GCP/Azure call-action/resource catalogs and the python-hcl2 dependency through the tool implementation without introducing a network dependency.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: Command transcript and task-local manifest only; no separate evidence file is written by this route task.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-085 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/cli.py; src/rush/tools/base.py; tests/fixtures/phase50/iam/aws.py; src/rush/tools/iam_audit.py; tests/test_iam_audit.py; tests/fixtures/phase50/iam/gcp.ts; tests/fixtures/phase50/iam/azure.py; tests/fixtures/phase50/iam/main.tf; tests/fixtures/phase50/iam/app.ts; tests/fixtures.
-- Allowed writes: src/rush/cli.py; src/rush/tools/iam_audit.py; tests/test_iam_audit.py; tests/fixtures/phase50/iam/aws.py; tests/fixtures/phase50/iam/gcp.ts; tests/fixtures/phase50/iam/azure.py; tests/fixtures/phase50/iam/main.tf; tests/fixtures/phase50/iam/app.ts.
+- Allowed writes: src/rush/cli.py; src/rush/tools/iam_audit.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Scope: modify only the CLI seam and its named tests/fixtures for this task; do not implement the MCP transport, documentation, packaging, or readiness fragment here.
+- Scope: modify only the CLI seam; run the unchanged named RED tests/fixtures owned by predecessor tasks, and do not implement MCP, documentation, packaging, or readiness work here.
 - Safety: no cloud calls, network access, source mutation, or policy artifact writes without explicit contained artifact-write permission.
 - Compatibility: retain the canonical ToolResult fields tool, engine/version, status, duration, summary, and findings and preserve valid existing iam_audit invocations.
 - Prohibited: do not duplicate policy synthesis in src/rush/cli.py, guess unmapped permissions, or treat a skipped/unknown result as a successful audit.
@@ -5143,7 +5138,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_cli_supports_aws_gcp_azure_and_iac_diff -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_cli_supports_aws_gcp_azure_and_iac_diff -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5204,7 +5199,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_mcp_matches_cli_without_transport_policy_synthesis -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_mcp_matches_cli_without_transport_policy_synthesis -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5233,7 +5228,7 @@ The rush_iam_audit MCP registration must call the same IAM-audit implementation 
 ## Deliverables
 
 - Production: the rush_iam_audit registration and shared-call adapter in src/rush/mcp.py; no duplicate IAM policy logic in the transport layer.
-- Tests: tests/test_iam_audit.py::test_iam_audit_mcp_matches_cli_without_transport_policy_synthesis and the existing MCP test coverage with direct equality, no-side-effect, and stdio framing assertions.
+- Tests: Run unchanged producer-owned verification from tests/test_iam_audit.py; this GREEN task may not modify paired tests or fixtures.
 - Transport: Integration: route metadata and callable wiring must resolve IAMAuditTool, SDKCallExtractor, IaCDiffExtractor, ProviderPermissionCatalog, and LeastPrivilegeSynthesizer without importing network clients.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -5245,7 +5240,7 @@ The rush_iam_audit MCP registration must call the same IAM-audit implementation 
 - Task kind: GREEN.
 - Prerequisites: P50-087 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/mcp.py; tests/test_iam_audit.py; tests/test_mcp.py.
-- Allowed writes: src/rush/mcp.py; tests/test_iam_audit.py.
+- Allowed writes: src/rush/mcp.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -5264,7 +5259,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_mcp_matches_cli_without_transport_policy_synthesis -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py::test_iam_audit_mcp_matches_cli_without_transport_policy_synthesis -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5279,38 +5274,37 @@ Implement document three-provider least privilege in rush-cli in the current wor
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-089 | I18 IAM-audit documentation | DOCS | document three-provider least privilege
+# Feature: P50-089 | I18 IAM-audit documentation | DOCS-VERIFY | verify three-provider least-privilege documentation
 
 The user-facing IAM-audit documentation must make provider catalogs, IaC diffs, permission effects, and evidence requirements executable and auditable.
 
 ## Required behavior
 
-1. Create docs/tools/iam_audit.md with the iam-audit CLI route, rush_iam_audit MCP route, provider=aws/gcp/azure, mapping_revision, terraform_paths, cdk_paths, generate_minimal_policy, and policy_output options and their defaults, outputs, and canonical ToolResult fields.
-2. Document SDKCallExtractor and IaCDiffExtractor inputs, ProviderPermissionCatalog source/revision/checksum semantics, LeastPrivilegeSynthesizer behavior, resource scope preservation, wildcard/unused/unmapped action reporting, and the no-guessing failure behavior for unknown mappings.
-3. Document read-only defaults, explicit contained artifact-write permission for policy export, network/cloud denial, redaction, stderr/stdout rules, dependency python-hcl2, bundled catalog provenance, deterministic examples for AWS/GCP/Azure and Terraform/CDK, and errors/partial results/skipped dependency behavior.
-4. Include measured or explicitly blocked performance/evidence guidance for tests/test_iam_audit.py and tests/test_phase50_installed_iam_audit.py, artifact hashes, mapping revision, route parity, and the exact conditions that block release evidence.
+1. Verify the P50-085-owned docs/tools/iam_audit.md contains the iam-audit CLI route, rush_iam_audit MCP route, provider=aws/gcp/azure, mapping_revision, terraform_paths, cdk_paths, generate_minimal_policy, and policy_output options with actual defaults, outputs, and canonical ToolResult fields.
+2. Verify it documents SDKCallExtractor, IaCDiffExtractor, ProviderPermissionCatalog source/revision/checksum semantics, LeastPrivilegeSynthesizer behavior, resource scope, wildcard/unused/unmapped reporting, and no-guessing failures.
+3. Verify it states read-only defaults, contained artifact-write permission, network/cloud denial, redaction, stderr/stdout rules, the admitted python-hcl2 range, bundled-catalog provenance, deterministic provider/IaC examples, and explicit error/partial/skipped states.
+4. Record pass or blocker evidence for every required anchor and for measured-or-explicitly-blocked performance, installed-artifact, route-parity, and release evidence; do not edit the producer documentation in this verification task.
 
 ## Deliverables
 
-- Documentation: docs/tools/iam_audit.md with headings and examples covering CLI, MCP, providers, SDK/IaC inputs, result contract, safety, dependencies, provenance, evidence, errors, and performance.
-- Documentation: References: update only the directly required tool/reference documentation links if docs/tools/iam_audit.md is not discoverable from the existing docs navigation; preserve existing documentation structure.
+- Documentation: Read-only verification of docs/tools/iam_audit.md and the P50-085-owned reference anchors.
+- Evidence: .rush/phase50-evidence/P50-089.json with anchor, search, route, dependency, permission, performance, installed-evidence, and blocker results.
 - Tests: Verification: literal route names, option names, test paths, and source/revision/checksum terminology must be searchable in the rendered source.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
 
 ## Constraints
 
-- Task kind: DOCS.
+- Task kind: DOCS-VERIFY.
 - Prerequisites: P50-088 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; docs/tools/iam_audit.md; tests/test_iam_audit.py; tests/test_phase50_installed_iam_audit.py.
-- Allowed writes: docs/tools/iam_audit.md.
+- Allowed reads: AGENTS.md; this plan; docs/tools/iam_audit.md; README.md; README2.md; README3.md; docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/developer/architecture.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; tests/test_iam_audit.py; tests/test_phase50_installed_iam_audit.py.
+- Allowed writes: .rush/phase50-evidence/P50-089.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Scope: documentation only, plus the minimum existing documentation reference needed to make docs/tools/iam_audit.md discoverable.
+- Scope: documentation verification and evidence only; P50-085 remains the sole documentation producer.
 - Safety: never place credentials, cloud responses, secrets, or unredacted source content in examples; mark unknown mapping and missing dependency cases as failures or explicit skips.
 - Compatibility: describe the actual canonical ToolResult shape and both CLI/MCP routes without inventing transport-only behavior or undocumented defaults.
 - Prohibited: do not claim installed-artifact validation, release readiness, or performance success without recorded evidence; do not change production code or tests in this task.
@@ -5325,11 +5319,11 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when docs/tools/iam_audit.md is present, all required routes/options/symbols/safety/provenance/evidence semantics are stated literally, examples are redacted and deterministic, discoverability is verified, and no unsupported readiness claim appears.
+The task is complete only when the unchanged P50-085 documentation and references pass every literal route/option/symbol/safety/provenance/evidence check, the P50-089 evidence records pass or exact blocker states, and no unsupported readiness claim appears.
 
 ## Handoff
 
@@ -5340,7 +5334,7 @@ Implement verify three-provider resources from wheel and sdist in rush-cli in th
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-090 | I18 IAM-audit installed artifact | GREEN | verify three-provider resources from wheel and sdist
+# Feature: P50-090 | I18 IAM-audit installed artifact | INSTALLED | verify three-provider resources from wheel and sdist
 
 The installed-artifact test must prove that a fresh package installation exposes verified AWS, GCP, and Azure IAM catalogs and runs outside the source checkout.
 
@@ -5364,10 +5358,10 @@ The installed-artifact test must prove that a fresh package installation exposes
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-089 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_iam_audit.py; src/rush/resources/iam/aws.json; tests/fixtures/phase50/iam/aws.py; tests/test_iam_audit.py.
-- Allowed writes: tests/test_phase50_installed_iam_audit.py; src/rush/resources/iam/aws.json; tests/fixtures/phase50/iam/aws.py.
+- Allowed writes: tests/test_phase50_installed_iam_audit.py; contained ignored .rush/phase50-dist/P50-090 only. Provider resources, source tests, and all AWS/GCP/Azure/Terraform/CDK fixtures are read-only producer outputs.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -5384,11 +5378,12 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 
 Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q
 
-uv build --wheel --sdist
+- Contained build command: `$phase50Dist = '.rush/phase50-dist/P50-090'; New-Item -ItemType Directory -Force -Path $phase50Dist | Out-Null; uv build --wheel --sdist --out-dir $phase50Dist`; expected exit 0.
+- Installed acceptance: The named installed test must install the exact wheel and sdist from this directory into separate fresh venvs with `--no-index` and no source fallback.
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_iam_audit.py::test_phase50_installed_iam_audit_contains_verified_three_provider_catalogs -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_iam_audit.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_iam_audit.py::test_phase50_installed_iam_audit_contains_verified_three_provider_catalogs -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5409,16 +5404,17 @@ The ignored Phase 50 evidence fragment must record reproducible IAM-audit implem
 
 ## Required behavior
 
-1. Create only .rush/phase50-evidence/P50-090 as an ignored, schema-valid fragment containing requirement IDs P50-I18-CLI, P50-I18-MCP, P50-I18-CATALOG, and P50-I18-INSTALLED plus implementation revision, test commands/exits, route names, permissions, docs anchors, dependency/runtime versions, and artifact hashes.
+1. Create only .rush/phase50-evidence/P50-091.json as an ignored, schema-valid fragment containing requirement IDs P50-I18-CLI, P50-I18-MCP, P50-I18-CATALOG, and P50-I18-INSTALLED plus implementation revision, test commands/exits, route names, permissions, docs anchors, dependency/runtime versions, and artifact hashes.
 2. Record AWS, GCP, Azure, Terraform, and CDK fixture coverage, canonical ToolResult and finding semantics, provider catalog source/mapping/base revisions, resource-scope preservation, wildcard/unused/unmapped outcomes, read-only/default effects, explicit policy-export permission, and redaction status.
 3. Record measured performance or an explicit blocked/unknown state for any unmeasured criterion, installed wheel/sdist evidence, external-CWD/offline evidence, and all missing dependency, checksum, source-fallback, platform, or route blockers with exact evidence references.
 4. Keep the fragment ignored and machine-readable, do not infer PASS from a partial test run, and do not alter lifecycle status, ShipGateVerdict, release workflow, tags, packages, or other files.
 
 ## Deliverables
 
-- Evidence: .rush/phase50-evidence/P50-090 with stable requirement IDs, revision, tests and exit codes, permissions, CLI/MCP routes, docs anchors, dependencies/runtimes, wheel/sdist hashes, performance, redaction, and blockers.
+- Evidence: .rush/phase50-evidence/P50-091.json with stable requirement IDs, revision, tests and exit codes, permissions, CLI/MCP routes, docs anchors, dependencies/runtimes, wheel/sdist hashes, performance, redaction, and blockers.
+- Tests: N/A; this readiness task consumes captured P50-080–P50-090 test output without editing tests.
 - Evidence: Schema proof: a JSON parse check and a diff/status check showing the fragment is ignored and no unrelated file changed.
-- Tests: Traceability: evidence values must point to tests/test_iam_audit.py, tests/test_phase50_installed_iam_audit.py, docs/tools/iam_audit.md, src/rush/tools/iam_audit.py, src/rush/cli.py, and src/rush/mcp.py without embedding secrets.
+- Traceability: evidence values must point to tests/test_iam_audit.py, tests/test_phase50_installed_iam_audit.py, docs/tools/iam_audit.md, src/rush/tools/iam_audit.py, src/rush/cli.py, and src/rush/mcp.py without embedding secrets; all producer paths are read-only.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -5429,8 +5425,8 @@ The ignored Phase 50 evidence fragment must record reproducible IAM-audit implem
 
 - Task kind: EVIDENCE.
 - Prerequisites: P50-090 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-090; tests/test_iam_audit.py; tests/test_phase50_installed_iam_audit.py; docs/tools/iam_audit.md; src/rush/tools/iam_audit.py; src/rush/cli.py; src/rush/mcp.py; docs/dependency/artifact/performance/redaction/blocker; docs/dependency/runtime.
-- Allowed writes: .rush/phase50-evidence/P50-090; tests/test_iam_audit.py; tests/test_phase50_installed_iam_audit.py; docs/tools/iam_audit.md; src/rush/tools/iam_audit.py; src/rush/cli.py; src/rush/mcp.py.
+- Allowed reads: AGENTS.md; this plan; tests/test_iam_audit.py; tests/test_phase50_installed_iam_audit.py; docs/tools/iam_audit.md; src/rush/tools/iam_audit.py; src/rush/cli.py; src/rush/mcp.py; captured P50-090 command output and dependency/artifact/performance/redaction evidence.
+- Allowed writes: .rush/phase50-evidence/P50-091.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -5443,19 +5439,19 @@ The ignored Phase 50 evidence fragment must record reproducible IAM-audit implem
 
 All of these must pass with exit code 0:
 
-.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-090
+.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-091.json
 
-git status --short --ignored -- .rush/phase50-evidence/P50-090
+git status --short --ignored -- .rush/phase50-evidence/P50-091.json
 
 git diff --check
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when .rush/phase50-evidence/P50-090 parses, is ignored, contains every required I18 requirement and evidence field with exact test/route/docs/dependency/artifact/performance/redaction/blocker values, and makes no unsupported readiness or lifecycle claim.
+The task is complete only when .rush/phase50-evidence/P50-091.json parses, is ignored, contains every required I18 requirement and evidence field with exact test/route/docs/dependency/artifact/performance/redaction/blocker values, leaves every producer unchanged, and makes no unsupported readiness or lifecycle claim.
 
 ## Handoff
 
@@ -5504,7 +5500,7 @@ Pin static evidence without any dynamic or dependency behavior.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py::test_mem_profile_flags_potential_unclosed_resources_statically tests/test_mem_profile.py::test_mem_profile_static_excludes_proven_with_finally_and_close_paths -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py::test_mem_profile_flags_potential_unclosed_resources_statically tests/test_mem_profile.py::test_mem_profile_static_excludes_proven_with_finally_and_close_paths -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5558,7 +5554,7 @@ Implement static behavior only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py::test_mem_profile_flags_potential_unclosed_resources_statically tests/test_mem_profile.py::test_mem_profile_static_excludes_proven_with_finally_and_close_paths -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5587,8 +5583,8 @@ Freeze the required Python/Node runtime matrix and measurement semantics before 
 
 ## Deliverables
 
-- Documentation: docs/developer/phase-50-implementation-evidence.md only; record evidence only.
-- Dependencies: record the exact psutil>=7.2,<8, external Node>=22.15, and project-local Vitest facts in docs/developer/phase-50-implementation-evidence.md; install nothing in this evidence task.
+- Documentation: Read-only input docs/developer/phase-50-implementation-evidence.md; record all task-local facts only in P50-094.json for later P50-210 aggregation.
+- Dependencies: Record exact psutil>=7.2,<8, Node>=22.15, and project-local Vitest facts in .rush/phase50-evidence/P50-094.json; install nothing.
 - Evidence: .rush/phase50-evidence/P50-094.json; Complete I19 authoritative scope record or blocker.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
@@ -5600,7 +5596,7 @@ Freeze the required Python/Node runtime matrix and measurement semantics before 
 - Task kind: EVIDENCE.
 - Prerequisites: P50-001 and the authoritative I19 requirement.
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I19; pyproject.toml; uv.lock; primary psutil API/platform evidence supplied for decision..
-- Allowed writes: docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-094.json.
+- Allowed writes: .rush/phase50-evidence/P50-094.json only; docs/developer/phase-50-implementation-evidence.md is read-only and solely owned by P50-210.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: pyproject.toml; uv.lock; primary psutil API/platform evidence supplied for decision. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Test/source/manifest edits or partial approval.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -5610,7 +5606,7 @@ Freeze the required Python/Node runtime matrix and measurement semantics before 
 - Focused command: rg -n "I19|psutil|Node|Vitest|sample interval|RSS|heap|descendant" docs/developer/rush-token-innovation-enhancement-report-plan.md pyproject.toml uv.lock; expected exit 0 with every authoritative runtime fact captured.
 - Paired RED command: N/A for this evidence task; no RED result may be claimed.
 - Broader command: git diff --check; expected exit 0.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5662,7 +5658,7 @@ Pin dynamic behavior without running a real suite.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py::test_mem_profile_dynamic_denied_without_slow_permission tests/test_mem_profile.py::test_mem_profile_dynamic_missing_psutil_is_skipped_without_runner tests/test_mem_profile.py::test_mem_profile_dynamic_uses_approved_samples_and_child_policy tests/test_mem_profile.py::test_mem_profile_dynamic_preserves_nonzero_child_failure -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py::test_mem_profile_dynamic_denied_without_slow_permission tests/test_mem_profile.py::test_mem_profile_dynamic_missing_psutil_is_skipped_without_runner tests/test_mem_profile.py::test_mem_profile_dynamic_uses_approved_samples_and_child_policy tests/test_mem_profile.py::test_mem_profile_dynamic_preserves_nonzero_child_failure -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5678,22 +5674,22 @@ Implement add the required psutil sampling runtime in rush-cli in the current wo
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-096 | P50-I19 | DEPENDENCY | add the required psutil sampling runtime
+# Feature: P50-096 | P50-I19 | DEPENDENCY-VERIFY | verify the admitted psutil sampling runtime
 
 Isolate dependency mutation from sampler behavior.
 
 ## Required behavior
 
 1. Compare the exact package name, constraint, extra name, supported platforms, and import name to I19 authoritative scope and the current optional-extra syntax. Stop on any mismatch.
-2. Make this exact change in only pyproject.toml, uv.lock, and the evidence file: add the single approved optional constraint/extra, run `uv lock`, and record the exact added/changed lock nodes plus proof that the default dependency set is unchanged.
-3. Run `uv lock --check`; run `git diff -- pyproject.toml uv.lock`; and run `rg -n "psutil|mem-profile|mem_profile" pyproject.toml uv.lock`. Record every changed lock node and stop if any is unrelated to the approved constraint.
+2. Verify the P50-019-owned pyproject.toml and uv.lock contain the single approved psutil>=7.2,<8 constraint and record the exact lock nodes plus proof that the default dependency set is unchanged; do not mutate the shared lock.
+3. Run `uv lock --check`, inspect `git diff -- pyproject.toml uv.lock`, and run `rg -n "psutil|mem-profile|mem_profile" pyproject.toml uv.lock`. Record any unrelated or missing node as a blocker.
 4. Stop and report a blocker if source/test/public-doc/version edits; alternate sampler packages; default dependency; unrelated lock update.
 
 ## Deliverables
 
-- Production: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.
-- Documentation: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.: Append dependency evidence only.
-- Dependencies: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.; add exactly required `psutil>=7.2,<8`, refresh `uv.lock`, and record license/platform/API evidence.
+- Production: N/A; dependency verification must not modify production.
+- Documentation: N/A; dependency verification is recorded only in the owned evidence fragment.
+- Dependencies: Read-only proof that the P50-019 lock contains exactly required `psutil>=7.2,<8`, with license/platform/API evidence.
 - Evidence: .rush/phase50-evidence/P50-096.json; Complete I19 authoritative scope link, manifest/lock diff, frozen constraint/extra, commands/exits under `Dependency and lock evidence / P50-095`.; produced by the literal commands below.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -5701,26 +5697,26 @@ Isolate dependency mutation from sampler behavior.
 
 ## Constraints
 
-- Task kind: DEPENDENCY.
+- Task kind: DEPENDENCY-VERIFY.
 - Prerequisites: Complete P50-095 and intended RED from P50-095
 - Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md section I19; pyproject.toml; uv.lock; current dependency tables.
-- Allowed writes: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.; create ignored .rush/phase50-evidence/P50-096.json.
+- Allowed writes: .rush/phase50-evidence/P50-096.json only; pyproject.toml and uv.lock remain read-only and owned by P50-019.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: full I19 authority; pyproject.toml; uv.lock; current optional-extra tables. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Source/test/public-doc/version edits; alternate sampler packages; default dependency; unrelated lock update.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
 
-- Focused command: uv lock; expected exit 0.
+- Focused command: uv lock --check; expected exit 0.
 - Broader command: uv lock --check; expected exit 0.
 - Broader command: git diff -- pyproject.toml uv.lock; expected exit 0.
 - Broader command: rg -n "psutil|mem-profile|mem_profile" pyproject.toml uv.lock; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when pyproject.toml and uv.lock contain exactly the required psutil>=7.2,<8 constraint and no default/runtime alternative, or dynamic implementation remains blocked.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when the unchanged P50-019 lock contains exactly psutil>=7.2,<8 with no unrelated/default-runtime alternative and P50-096 records the verification; otherwise dynamic implementation remains blocked.
 
 ## Handoff
 
@@ -5745,9 +5741,9 @@ Satisfy dynamic behavior without changing dependency, tests, routes, or docs.
 
 ## Deliverables
 
-- Production: src/rush/tools/mem_profile.py; docs/developer/phase-50-implementation-evidence.md.
-- Documentation: src/rush/tools/mem_profile.py; docs/developer/phase-50-implementation-evidence.md.: Append GREEN evidence only.
-- Dependencies: src/rush/tools/mem_profile.py; docs/developer/phase-50-implementation-evidence.md.
+- Production: src/rush/tools/mem_profile.py only.
+- Documentation: N/A; record GREEN evidence only in .rush/phase50-evidence/P50-097.json for P50-210 aggregation.
+- Dependencies: Read-only verification of P50-019-owned dependency admission; no dependency write.
 - Evidence: .rush/phase50-evidence/P50-097.json; P50-096 RED link, exact runtime import, runner call trace, static regression result, and green commands under `GREEN observations / P50-096`.; produced by the literal commands below.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -5758,7 +5754,7 @@ Satisfy dynamic behavior without changing dependency, tests, routes, or docs.
 - Task kind: GREEN.
 - Prerequisites: P50-096 RED and P50-096 complete..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I19; tests/test_mem_profile.py; src/rush/tools/common.py; src/rush/permissions.py; full I19 authority; pyproject.toml; uv.lock..
-- Allowed writes: src/rush/tools/mem_profile.py; docs/developer/phase-50-implementation-evidence.md.; create ignored .rush/phase50-evidence/P50-097.json.
+- Allowed writes: src/rush/tools/mem_profile.py; create ignored .rush/phase50-evidence/P50-097.json. docs/developer/phase-50-implementation-evidence.md is read-only and solely owned by P50-210.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: tests/test_mem_profile.py; src/rush/tools/common.py; src/rush/permissions.py; full I19 authority; pyproject.toml; uv.lock. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Test/registry/transport/public-doc/manifest/lock edits; direct subprocess; alternate package/provider; network; unapproved child or metric semantics.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -5772,7 +5768,7 @@ Satisfy dynamic behavior without changing dependency, tests, routes, or docs.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py::test_mem_profile_dynamic_denied_without_slow_permission tests/test_mem_profile.py::test_mem_profile_dynamic_missing_psutil_is_skipped_without_runner tests/test_mem_profile.py::test_mem_profile_dynamic_uses_approved_samples_and_child_policy tests/test_mem_profile.py::test_mem_profile_dynamic_preserves_nonzero_child_failure -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5824,7 +5820,7 @@ Pin public options/routes without production edits.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_mem_profile_catalog_exposes_only_admitted_options tests/test_cli_registry.py::test_mem_profile_cli_forwards_admitted_mode_and_permission tests/test_mcp.py::test_mem_profile_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_mem_profile_catalog_exposes_only_admitted_options tests/test_cli_registry.py::test_mem_profile_cli_forwards_admitted_mode_and_permission tests/test_mcp.py::test_mem_profile_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5879,7 +5875,7 @@ Satisfy integration RED only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_mem_profile_catalog_exposes_only_admitted_options tests/test_cli_registry.py::test_mem_profile_cli_forwards_admitted_mode_and_permission tests/test_mcp.py::test_mem_profile_mcp_uses_canonical_name_and_matches_cli -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5931,7 +5927,7 @@ Prevent static heuristics and optional samples from becoming production leak cla
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "mem-profile|rush_mem_profile|potential|allow-slow|psutil|peak_rss_mb" docs/tools/mem_profile.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -5947,38 +5943,37 @@ Implement document static and dynamic leak analysis in rush-cli in the current w
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-101 | I19 memory-profile documentation | DOCS | document static and dynamic leak analysis
+# Feature: P50-101 | I19 memory-profile documentation | DOCS-VERIFY | verify static and dynamic leak-analysis documentation
 
 The user-facing memory-profile documentation must make static patterns, pytest/Vitest probes, retention slopes, permissions, and partial-failure semantics executable and auditable.
 
 ## Required behavior
 
-1. Create docs/tools/mem_profile.md with the mem-profile CLI route, rush_mem_profile MCP route, mode, test_runner, sample_interval_ms, retention_window_s, heap_threshold_mb, and timeout_s options, defaults, accepted values, output fields, and canonical ToolResult shape.
-2. Document MemProfileTool, StaticResourceScanner, PytestMemoryProbe, VitestMemoryProbe, ProcessMemorySampler, and RetentionSlope, including unclosed/unbounded resource patterns, listener lifecycle patterns, RSS/heap deltas, retention slopes, thresholds, timeout, crash, permission, and platform errors.
-3. Document static, dynamic, and both modes; project-local Vitest with external Node >=22.15; psutil>=7.2,<8; unavailable Node as an explicit skipped result; slow permission, argument-vector process execution, process-tree termination, no-network behavior, redaction, and partial-result preservation.
-4. Include deterministic CLI/MCP examples and measured-or-explicitly-blocked evidence guidance for tests/test_mem_profile.py and tests/test_phase50_installed_mem_profile.py, including actual timing, probe availability, route parity, artifacts, and release blockers.
+1. Verify the P50-100-owned docs/tools/mem_profile.md contains the mem-profile CLI route, rush_mem_profile MCP route, all declared options with actual defaults, accepted values, output fields, and canonical ToolResult shape.
+2. Verify it documents MemProfileTool, StaticResourceScanner, PytestMemoryProbe, VitestMemoryProbe, ProcessMemorySampler, RetentionSlope, static lifecycle patterns, real RSS/heap deltas, slopes, thresholds, timeout/crash/permission/platform errors, and partial results.
+3. Verify static/dynamic/both modes, project-local Vitest, external Node >=22.15, psutil>=7.2,<8, explicit unavailable-Node skipped state, slow permission, argv-only process execution, process-tree termination, no network, and redaction.
+4. Record pass or exact blocker evidence for every anchor, deterministic CLI/MCP example, timing, probe availability, route parity, installed artifact, and release claim without editing the producer documentation.
 
 ## Deliverables
 
-- Documentation: docs/tools/mem_profile.md with literal routes, symbols, options, result contract, static/dynamic behavior, failure semantics, safety, dependency/runtime requirements, examples, evidence, and performance criteria.
-- Documentation: References: update only the direct documentation link needed to make docs/tools/mem_profile.md discoverable, preserving the existing documentation navigation.
+- Documentation: Read-only verification of docs/tools/mem_profile.md and the P50-100-owned reference anchors.
+- Evidence: .rush/phase50-evidence/P50-101.json with anchor, runtime, permission, route, performance, installed-evidence, and blocker results.
 - Tests: Verification: searchable command, option, test-path, dependency, permission, no-network, process-tree, skipped, partial, and evidence terminology.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
 
 ## Constraints
 
-- Task kind: DOCS.
+- Task kind: DOCS-VERIFY.
 - Prerequisites: P50-100 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; docs/tools/mem_profile.md; tests/test_mem_profile.py; tests/test_phase50_installed_mem_profile.py.
-- Allowed writes: docs/tools/mem_profile.md.
+- Allowed writes: .rush/phase50-evidence/P50-101.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Scope: documentation only, plus the minimum direct docs reference needed for discovery; do not change production, tests, packaging, or evidence in this task.
+- Scope: documentation verification and evidence only; P50-100 remains the sole documentation producer.
 - Safety: examples must contain no secrets or unredacted process output; document process-tree termination and no-network requirements as mandatory.
 - Compatibility: describe actual canonical ToolResult fields and CLI/MCP behavior without inventing a dynamic runner, fallback, or timing result.
 - Prohibited: do not call missing Node a general skip, claim measurements without evidence, claim installed-artifact success, or claim release readiness.
@@ -5993,11 +5988,11 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when docs/tools/mem_profile.md is present and discoverable, every static/dynamic option and failure/effect/dependency/evidence rule is stated literally, examples are deterministic and redacted, and no unsupported readiness claim appears.
+The task is complete only when the unchanged P50-100 documentation passes every literal static/dynamic option, effect, dependency, example, and evidence check, P50-101 records pass or exact blockers, and no unsupported readiness claim appears.
 
 ## Handoff
 
@@ -6008,7 +6003,7 @@ Implement run real Python and Node probes from wheel and sdist in rush-cli in th
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-102 | I19 memory-profile installed artifact | GREEN | run real Python and Node probes from wheel and sdist
+# Feature: P50-102 | I19 memory-profile installed artifact | INSTALLED | run real Python and Node probes from wheel and sdist
 
 The installed-artifact test must prove that memory-profile executes real static and dynamic Python/Node fixture probes from fresh packages outside the source checkout.
 
@@ -6032,10 +6027,10 @@ The installed-artifact test must prove that memory-profile executes real static 
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-101 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_mem_profile.py; tests/fixtures/phase50/memory/leak.py; tests/fixtures/phase50/memory/leak.test.ts; tests/fixtures/phase50/memory/vitest.config.ts; tests/test_mem_profile.py.
-- Allowed writes: tests/test_phase50_installed_mem_profile.py; tests/fixtures/phase50/memory/leak.py; tests/fixtures/phase50/memory/leak.test.ts; tests/fixtures/phase50/memory/vitest.config.ts.
+- Allowed writes: tests/test_phase50_installed_mem_profile.py; contained ignored .rush/phase50-dist/P50-102 only. Python/Node probe fixtures and production paths remain read-only producer outputs.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -6052,11 +6047,12 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 
 Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q
 
-uv build --wheel --sdist
+- Contained build command: `$phase50Dist = '.rush/phase50-dist/P50-102'; New-Item -ItemType Directory -Force -Path $phase50Dist | Out-Null; uv build --wheel --sdist --out-dir $phase50Dist`; expected exit 0.
+- Installed acceptance: The named installed test must install the exact wheel and sdist from this directory into separate fresh venvs with `--no-index` and no source fallback.
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_mem_profile.py::test_phase50_installed_mem_profile_runs_python_and_node_fixture_probes -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_mem_profile.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_mem_profile.py::test_phase50_installed_mem_profile_runs_python_and_node_fixture_probes -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6077,16 +6073,17 @@ The ignored Phase 50 evidence fragment must record reproducible memory-profile i
 
 ## Required behavior
 
-1. Create only .rush/phase50-evidence/P50-102 as an ignored, schema-valid fragment containing requirement IDs P50-I19-STATIC and P50-I19-DYNAMIC, implementation revision, test commands/exits, CLI/MCP routes, permissions, docs anchors, dependencies/runtime versions, wheel/sdist hashes, and probe artifacts.
+1. Create only .rush/phase50-evidence/P50-103.json as an ignored, schema-valid fragment containing requirement IDs P50-I19-STATIC and P50-I19-DYNAMIC, implementation revision, test commands/exits, CLI/MCP routes, permissions, docs anchors, dependencies/runtime versions, wheel/sdist hashes, and probe artifacts.
 2. Record fixture coverage for leak.py, leak.test.ts, and vitest.config.ts; static lifecycle findings; pytest/Vitest runs; RSS/heap deltas; retention slopes; thresholds, intervals, windows, timeout; canonical ToolResult and partial-error semantics; and process-tree/no-network/redaction evidence.
 3. Record actual performance measurements or explicit blocked/unknown values, Node/Vitest/psutil availability, external-CWD/offline installation evidence, unavailable-runtime skip rationale if applicable, and every missing dependency, permission, packaging, metric, or runtime blocker with exact evidence references.
 4. Keep the fragment ignored and machine-readable, distinguish pass, skipped, blocked, and unknown, and do not alter ShipGateVerdict, lifecycle status, release workflow, tags, packages, or any other file.
 
 ## Deliverables
 
-- Evidence: .rush/phase50-evidence/P50-102 with stable requirement IDs, revision, tests/exits, permissions, routes, docs anchors, dependencies/runtimes, artifact hashes, metrics, performance, redaction, and blockers.
+- Evidence: .rush/phase50-evidence/P50-103.json with stable requirement IDs, revision, tests/exits, permissions, routes, docs anchors, dependencies/runtimes, artifact hashes, metrics, performance, redaction, and blockers.
+- Tests: N/A; this readiness task consumes captured P50-092–P50-102 test output without editing tests.
 - Evidence: Schema proof: JSON parse output and ignored-status/diff output showing only the intended fragment is present.
-- Tests: Traceability: evidence values must point to tests/test_mem_profile.py, tests/test_phase50_installed_mem_profile.py, docs/tools/mem_profile.md, src/rush/tools/mem_profile.py, src/rush/cli.py, and src/rush/mcp.py without embedding secrets or raw process output.
+- Traceability: evidence values must point to tests/test_mem_profile.py, tests/test_phase50_installed_mem_profile.py, docs/tools/mem_profile.md, src/rush/tools/mem_profile.py, src/rush/cli.py, and src/rush/mcp.py without embedding secrets or raw process output; all producer paths are read-only.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -6097,8 +6094,8 @@ The ignored Phase 50 evidence fragment must record reproducible memory-profile i
 
 - Task kind: EVIDENCE.
 - Prerequisites: P50-102 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-102; tests/exits; tests/test_mem_profile.py; tests/test_phase50_installed_mem_profile.py; docs/tools/mem_profile.md; src/rush/tools/mem_profile.py; src/rush/cli.py; src/rush/mcp.py; docs/dependency/artifact/metric/performance/redaction/blocker.
-- Allowed writes: .rush/phase50-evidence/P50-102; tests/exits; tests/test_mem_profile.py; tests/test_phase50_installed_mem_profile.py; docs/tools/mem_profile.md; src/rush/tools/mem_profile.py; src/rush/cli.py; src/rush/mcp.py.
+- Allowed reads: AGENTS.md; this plan; tests/test_mem_profile.py; tests/test_phase50_installed_mem_profile.py; docs/tools/mem_profile.md; src/rush/tools/mem_profile.py; src/rush/cli.py; src/rush/mcp.py; captured P50-102 command output and dependency/artifact/metric/performance/redaction evidence.
+- Allowed writes: .rush/phase50-evidence/P50-103.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -6111,19 +6108,19 @@ The ignored Phase 50 evidence fragment must record reproducible memory-profile i
 
 All of these must pass with exit code 0:
 
-.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-102
+.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-103.json
 
-git status --short --ignored -- .rush/phase50-evidence/P50-102
+git status --short --ignored -- .rush/phase50-evidence/P50-103.json
 
 git diff --check
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when .rush/phase50-evidence/P50-102 parses, is ignored, contains both I19 requirements and exact implementation/test/route/docs/dependency/artifact/metric/performance/redaction/blocker evidence, and makes no unsupported lifecycle or readiness claim.
+The task is complete only when .rush/phase50-evidence/P50-103.json parses, is ignored, contains both I19 requirements and exact implementation/test/route/docs/dependency/artifact/metric/performance/redaction/blocker evidence, leaves every producer unchanged, and makes no unsupported lifecycle or readiness claim.
 
 ## Handoff
 
@@ -6172,7 +6169,7 @@ Scope this phase to Python; do not promise Node instrumentation or automatic laz
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_static_import_inventory_is_deterministic -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_static_import_inventory_is_deterministic -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6226,7 +6223,7 @@ Implement only the tested evidence; recommendations remain findings, not patches
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_static_import_inventory_is_deterministic -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6278,7 +6275,7 @@ Pin permission, argv, parsing, threshold, and error preservation separately.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_execution_denied_without_slow_permission tests/test_cold_start.py::test_cold_start_execution_uses_project_python_importtime_argv tests/test_cold_start.py::test_cold_start_execution_parses_observed_rows_and_threshold tests/test_cold_start.py::test_cold_start_execution_preserves_nonzero_and_syntax_errors -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_execution_denied_without_slow_permission tests/test_cold_start.py::test_cold_start_execution_uses_project_python_importtime_argv tests/test_cold_start.py::test_cold_start_execution_parses_observed_rows_and_threshold tests/test_cold_start.py::test_cold_start_execution_preserves_nonzero_and_syntax_errors -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6332,7 +6329,7 @@ Satisfy timing tests only.
 - Broader command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6385,7 +6382,7 @@ Pin exact public arguments only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_cold_start_catalog_declares_python_scope_options tests/test_cli_registry.py::test_cold_start_cli_forwards_entry_execution_and_threshold tests/test_mcp.py::test_cold_start_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6439,7 +6436,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_cold_start_catalog_declares_python_scope_options tests/test_cli_registry.py::test_cold_start_cli_forwards_entry_execution_and_threshold tests/test_mcp.py::test_cold_start_mcp_uses_canonical_name_and_matches_cli -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6491,7 +6488,7 @@ Remove roadmap performance and Node implications from the implemented contract.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_cold_start.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "cold-start|rush_cold_start|importtime|allow-slow|Python-only|Node" docs/tools/cold_start.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6553,7 +6550,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_mcp_matches_cli_without_executing_modules_in_transport -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_mcp_matches_cli_without_executing_modules_in_transport -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6582,7 +6579,7 @@ The rush_cold_start MCP route must use ColdStartTool and return the same data-on
 ## Deliverables
 
 - Production: the rush_cold_start registration and shared-call adapter in src/rush/mcp.py; transport must contain no cold-start probe or patch-planner implementation.
-- Tests: tests/test_cold_start.py::test_cold_start_mcp_matches_cli_without_executing_modules_in_transport and the existing MCP route tests with direct result equality, no-execution, no-write, and stdio framing assertions.
+- Tests: Run unchanged producer-owned verification from tests/test_cold_start.py; this GREEN task may not modify paired tests or fixtures.
 - Production: Integration: callable wiring resolves ColdStartTool, PythonImportProbe, NodeModuleProbe, ModuleWaterfall, and LazyLoadPatchPlanner from src/rush/tools/cold_start.py.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -6595,7 +6592,7 @@ The rush_cold_start MCP route must use ColdStartTool and return the same data-on
 - Task kind: GREEN.
 - Prerequisites: P50-111 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/mcp.py; tests/test_cold_start.py; src/rush/tools/cold_start.py; tests/test_mcp.py.
-- Allowed writes: src/rush/mcp.py; tests/test_cold_start.py; src/rush/tools/cold_start.py.
+- Allowed writes: src/rush/mcp.py; src/rush/tools/cold_start.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -6614,7 +6611,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_mcp_matches_cli_without_executing_modules_in_transport -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py::test_cold_start_mcp_matches_cli_without_executing_modules_in_transport -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6629,22 +6626,21 @@ Implement document measured waterfalls and safe lazy-load patches in rush-cli in
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-113 | I20 cold-start documentation | DOCS | document measured waterfalls and safe lazy-load patches
+# Feature: P50-113 | I20 cold-start documentation | DOCS-VERIFY | verify measured waterfalls and safe lazy-load patch documentation
 
 The user-facing cold-start documentation must make Python/Node measurements, critical paths, exact patch semantics, permissions, and blocked timing evidence executable and auditable.
 
 ## Required behavior
 
-1. Create docs/tools/cold_start.md with the cold-start CLI route, rush_cold_start MCP route, entry, runtimes, runs, threshold_ms, timeout_s, and patch_output options, defaults, outputs, and canonical ToolResult fields.
+1. Verify the P50-110-owned docs/tools/cold_start.md contains the cold-start CLI route, rush_cold_start MCP route, entry, runtimes, runs, threshold_ms, timeout_s, and patch_output options, actual defaults, outputs, and canonical ToolResult fields.
 2. Document ColdStartTool, PythonImportProbe, NodeModuleProbe, ModuleWaterfall, and LazyLoadPatchPlanner, including per-module evaluation waterfalls, repeat/warmup behavior, eager-import critical paths, module failure/timeout partial results, and unavailable Node semantics.
 3. Document the exact lazy-load unified diff, diff/apply/compile validation, source immutability, patch artifact containment, slow permission, read-only defaults, no-network behavior, redaction, external Node >=22.15, and explicit patch-export permission.
 4. Include deterministic Python/Node examples and measured-or-explicitly-blocked performance/evidence guidance for tests/test_cold_start.py and tests/test_phase50_installed_cold_start.py, including <100 ms overhead, 40–80% improvement corpus, actual timing, hashes, and blockers.
 
 ## Deliverables
 
-- Documentation: docs/tools/cold_start.md with literal routes, symbols, options, waterfall/critical-path/diff behavior, safety, dependencies, examples, measurement, evidence, and failure semantics.
-- Documentation: References: update only the direct docs reference required to make docs/tools/cold_start.md discoverable, preserving existing navigation.
-- Evidence: Verification: searchable terms for entry/runtimes/runs/warmup/threshold/timeout/patch, Python/Node probes, exact diff/apply/compile, source immutability, permission, timing, corpus, and blockers.
+- Documentation: Read-only verification of docs/tools/cold_start.md and the P50-110-owned reference anchors.
+- Evidence: .rush/phase50-evidence/P50-113.json with searchable route, runtime, diff/apply/compile, safety, permission, performance, installed-evidence, and blocker results.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -6653,14 +6649,14 @@ The user-facing cold-start documentation must make Python/Node measurements, cri
 
 ## Constraints
 
-- Task kind: DOCS.
+- Task kind: DOCS-VERIFY.
 - Prerequisites: P50-112 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; docs/tools/cold_start.md; tests/test_cold_start.py; tests/test_phase50_installed_cold_start.py; docs/reference.
-- Allowed writes: docs/tools/cold_start.md.
+- Allowed writes: .rush/phase50-evidence/P50-113.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Scope: documentation only plus the minimum direct docs reference; do not modify cold_start production, tests, packaging, or evidence in this task.
+- Scope: documentation verification and evidence only; P50-110 remains the sole documentation producer.
 - Safety: examples must not execute modules or expose secrets; state no-network, source-immutability, patch-containment, and permission requirements explicitly.
 - Compatibility: describe actual canonical ToolResult, CLI/MCP parity, and exact measured-or-blocked semantics without inventing timings or patch output.
 - Prohibited: do not claim <100 ms overhead or 40–80% improvement without recorded measurements, do not call unavailable Node a universal pass, and do not claim installed or release readiness.
@@ -6675,11 +6671,11 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when docs/tools/cold_start.md is present and discoverable, every option, runtime, waterfall, critical-path, exact-diff, apply/compile, safety, permission, timing, and blocker rule is literal, examples are deterministic, and no unsupported readiness claim appears.
+The task is complete only when the unchanged P50-110 documentation passes every option, runtime, waterfall, critical-path, diff/apply/compile, safety, permission, timing, and blocker check, P50-113 records exact evidence, and no unsupported readiness claim appears.
 
 ## Handoff
 
@@ -6690,7 +6686,7 @@ Implement prove Python and Node probes and exact patches from packaged artifacts
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-114 | I20 cold-start installed artifact | GREEN | prove Python and Node probes and exact patches from packaged artifacts
+# Feature: P50-114 | I20 cold-start installed artifact | INSTALLED | prove Python and Node probes and exact patches from packaged artifacts
 
 The installed-artifact test must prove that wheel and sdist installations run real Python and Node cold-start probes and validate exact lazy-load patches outside the source checkout.
 
@@ -6714,10 +6710,10 @@ The installed-artifact test must prove that wheel and sdist installations run re
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-113 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_cold_start.py; tests/fixtures/phase50/cold_start/app.py; tests/test_cold_start.py.
-- Allowed writes: tests/test_phase50_installed_cold_start.py; tests/fixtures/phase50/cold_start/app.py.
+- Allowed writes: tests/test_phase50_installed_cold_start.py; contained ignored .rush/phase50-dist/P50-114 only. Python/Node fixtures and production paths remain read-only producer outputs.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -6734,11 +6730,12 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 
 Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q
 
-uv build --wheel --sdist
+- Contained build command: `$phase50Dist = '.rush/phase50-dist/P50-114'; New-Item -ItemType Directory -Force -Path $phase50Dist | Out-Null; uv build --wheel --sdist --out-dir $phase50Dist`; expected exit 0.
+- Installed acceptance: The named installed test must install the exact wheel and sdist from this directory into separate fresh venvs with `--no-index` and no source fallback.
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_cold_start.py::test_phase50_installed_cold_start_contains_node_probe_and_runs_both_runtimes -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_cold_start.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_cold_start.py::test_phase50_installed_cold_start_contains_node_probe_and_runs_both_runtimes -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6759,16 +6756,17 @@ The ignored Phase 50 evidence fragment must record reproducible cold-start imple
 
 ## Required behavior
 
-1. Create only .rush/phase50-evidence/P50-114 as an ignored, schema-valid fragment containing requirement IDs P50-I20-PY, P50-I20-NODE, and P50-I20-PATCH, implementation revision, tests and exit codes, CLI/MCP routes, permissions, docs anchors, runtime/dependency versions, wheel/sdist hashes, and probe/patch artifacts.
+1. Create only .rush/phase50-evidence/P50-115.json as an ignored, schema-valid fragment containing requirement IDs P50-I20-PY, P50-I20-NODE, and P50-I20-PATCH, implementation revision, tests and exit codes, CLI/MCP routes, permissions, docs anchors, runtime/dependency versions, wheel/sdist hashes, and probe/patch artifacts.
 2. Record app.py/eager.py/app.mjs/eager.mjs coverage; Python/Node waterfalls; eager critical paths; exact lazy-load diff; apply/compile/run results; partial/error/timeout outcomes; source immutability; canonical ToolResult parity; and transport no-execution evidence.
 3. Record measured overhead and improvement corpus values or explicit blocked/unknown state, Node availability and skip rationale if applicable, external-CWD/offline evidence, hashes, redaction, and every timing, dependency, package, patch, route, or runtime blocker with exact references.
 4. Keep the fragment ignored and machine-readable, distinguish pass, skipped, blocked, and unknown, and do not modify ShipGateVerdict, lifecycle status, release workflows, tags, packages, or any other file.
 
 ## Deliverables
 
-- Evidence: .rush/phase50-evidence/P50-114 with stable requirement IDs, revision, tests/exits, routes, permissions, docs anchors, runtimes/dependencies, artifact hashes, waterfalls, diff/apply/compile/performance, redaction, and blockers.
+- Evidence: .rush/phase50-evidence/P50-115.json with stable requirement IDs, revision, tests/exits, routes, permissions, docs anchors, runtimes/dependencies, artifact hashes, waterfalls, diff/apply/compile/performance, redaction, and blockers.
+- Tests: N/A; this readiness task consumes captured P50-104–P50-114 test output without editing tests.
 - Evidence: Schema proof: JSON parse output and ignored-status/diff output showing only the intended fragment is present.
-- Tests: Traceability: evidence values point to tests/test_cold_start.py, tests/test_phase50_installed_cold_start.py, docs/tools/cold_start.md, src/rush/tools/cold_start.py, src/rush/cli.py, and src/rush/mcp.py without embedding source secrets.
+- Traceability: evidence values point to tests/test_cold_start.py, tests/test_phase50_installed_cold_start.py, docs/tools/cold_start.md, src/rush/tools/cold_start.py, src/rush/cli.py, and src/rush/mcp.py without embedding source secrets; all producer paths are read-only.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -6779,8 +6777,8 @@ The ignored Phase 50 evidence fragment must record reproducible cold-start imple
 
 - Task kind: EVIDENCE.
 - Prerequisites: P50-114 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-114; tests/exits; tests/test_cold_start.py; tests/test_phase50_installed_cold_start.py; docs/tools/cold_start.md; src/rush/tools/cold_start.py; src/rush/cli.py; src/rush/mcp.py.
-- Allowed writes: .rush/phase50-evidence/P50-114; tests/exits; tests/test_cold_start.py; tests/test_phase50_installed_cold_start.py; docs/tools/cold_start.md; src/rush/tools/cold_start.py; src/rush/cli.py; src/rush/mcp.py.
+- Allowed reads: AGENTS.md; this plan; tests/test_cold_start.py; tests/test_phase50_installed_cold_start.py; docs/tools/cold_start.md; src/rush/tools/cold_start.py; src/rush/cli.py; src/rush/mcp.py; captured P50-114 command output and artifact/performance/redaction evidence.
+- Allowed writes: .rush/phase50-evidence/P50-115.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -6793,19 +6791,19 @@ The ignored Phase 50 evidence fragment must record reproducible cold-start imple
 
 All of these must pass with exit code 0:
 
-.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-114
+.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-115.json
 
-git status --short --ignored -- .rush/phase50-evidence/P50-114
+git status --short --ignored -- .rush/phase50-evidence/P50-115.json
 
 git diff --check
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when .rush/phase50-evidence/P50-114 parses, is ignored, contains all I20 requirement IDs and exact implementation/probe/patch/runtime/artifact/performance/redaction/blocker evidence, and makes no unsupported lifecycle or readiness claim.
+The task is complete only when .rush/phase50-evidence/P50-115.json parses, is ignored, contains all I20 requirement IDs and exact implementation/probe/patch/runtime/artifact/performance/redaction/blocker evidence, leaves every producer unchanged, and makes no unsupported lifecycle or readiness claim.
 
 ## Handoff
 
@@ -6854,7 +6852,7 @@ Separate evidence-only audit from explicit asset output; do not auto-edit markup
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_audit_reports_svg_cls_and_raster_evidence_without_writes -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_audit_reports_svg_cls_and_raster_evidence_without_writes -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6908,7 +6906,7 @@ Satisfy tested SVG/CLS/raster behavior with current Pillow and stdlib XML.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_audit_reports_svg_cls_and_raster_evidence_without_writes -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -6960,7 +6958,7 @@ Pin active-content removal separately from raster optimization.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_sanitize_requires_permission_and_explicit_output tests/test_media_opt.py::test_media_opt_sanitize_removes_active_content_and_preserves_safe_nodes tests/test_media_opt.py::test_media_opt_sanitize_rejects_escape_and_preserves_source_and_old_output -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_sanitize_requires_permission_and_explicit_output tests/test_media_opt.py::test_media_opt_sanitize_removes_active_content_and_preserves_safe_nodes tests/test_media_opt.py::test_media_opt_sanitize_rejects_escape_and_preserves_source_and_old_output -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7013,7 +7011,7 @@ Satisfy sanitizer tests only.
 - Broader command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7042,9 +7040,9 @@ Pin format capability, deterministic save, and no-larger replacement independent
 
 ## Deliverables
 
-- Tests: tests/test_media_opt.py; docs/developer/phase-50-implementation-evidence.md only for locked-interpreter capability output.; implement the exact tests and assertions named in Required behavior 2.
-- Documentation: tests/test_media_opt.py; docs/developer/phase-50-implementation-evidence.md only for locked-interpreter capability output.: None.
-- Dependencies: tests/test_media_opt.py; docs/developer/phase-50-implementation-evidence.md only for locked-interpreter capability output.
+- Tests: tests/test_media_opt.py only; implement the exact tests and assertions named in Required behavior 2.
+- Documentation: N/A; record locked-interpreter capability output in .rush/phase50-evidence/P50-120.json for P50-210 aggregation.
+- Dependencies: Read-only verification of P50-019-owned Pillow/parser admission; no dependency write.
 - Evidence: .rush/phase50-evidence/P50-120.json; Capability record, sizes/hashes, raster RED results.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -7055,7 +7053,7 @@ Pin format capability, deterministic save, and no-larger replacement independent
 - Task kind: RED.
 - Prerequisites: P50-119 and P50-119
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I21; locked Pillow APIs/version from pyproject.toml and uv.lock; src/rush/tools/media_opt.py; src/rush/permissions.py; src/rush/tools/common.py; tests/test_tool_common.py..
-- Allowed writes: tests/test_media_opt.py; docs/developer/phase-50-implementation-evidence.md only for locked-interpreter capability output.; create ignored .rush/phase50-evidence/P50-120.json.
+- Allowed writes: tests/test_media_opt.py; create ignored .rush/phase50-evidence/P50-120.json. docs/developer/phase-50-implementation-evidence.md is read-only and solely owned by P50-210.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: locked Pillow APIs/version from pyproject.toml and uv.lock; src/rush/tools/media_opt.py; src/rush/permissions.py; src/rush/tools/common.py; tests/test_tool_common.py. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Production/manifest/routes/docs edits; AVIF unless capability decision amended; source overwrite.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -7065,7 +7063,7 @@ Pin format capability, deterministic save, and no-larger replacement independent
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_optimize_requires_permission_and_explicit_output tests/test_media_opt.py::test_media_opt_optimize_writes_only_smaller_deterministic_png_or_webp tests/test_media_opt.py::test_media_opt_optimize_preserves_files_on_no_improvement_escape_or_error -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py::test_media_opt_optimize_requires_permission_and_explicit_output tests/test_media_opt.py::test_media_opt_optimize_writes_only_smaller_deterministic_png_or_webp tests/test_media_opt.py::test_media_opt_optimize_preserves_files_on_no_improvement_escape_or_error -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7118,7 +7116,7 @@ Satisfy raster tests only.
 - Broader command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7170,7 +7168,7 @@ Pin exact options/routes and permission forwarding.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_media_opt_catalog_declares_exact_operation_options tests/test_cli_registry.py::test_media_opt_cli_forwards_audit_sanitize_and_optimize_arguments tests/test_mcp.py::test_media_opt_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_media_opt_catalog_declares_exact_operation_options tests/test_cli_registry.py::test_media_opt_cli_forwards_audit_sanitize_and_optimize_arguments tests/test_mcp.py::test_media_opt_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7225,7 +7223,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_media_opt_catalog_declares_exact_operation_options tests/test_cli_registry.py::test_media_opt_cli_forwards_audit_sanitize_and_optimize_arguments tests/test_mcp.py::test_media_opt_mcp_uses_canonical_name_and_matches_cli -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7277,7 +7275,7 @@ Prevent “zero-loss,” automatic fixes, and percentage savings claims.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_media_opt.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "media-opt|rush_media_opt|zero-loss|30%|AVIF|allow-artifact-write|no_improvement" docs/tools/media_opt.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7293,22 +7291,21 @@ Implement document lossless media, SVG, and markup safety in rush-cli in the cur
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-125 | I21 media-optimization documentation | DOCS | document lossless media, SVG, and markup safety
+# Feature: P50-125 | I21 media-optimization documentation | DOCS-VERIFY | verify lossless media, SVG, and markup-safety documentation
 
 The user-facing media-opt documentation must make equivalence, sanitization, idempotent markup changes, apply safety, and corpus evidence executable and auditable.
 
 ## Required behavior
 
-1. Create docs/tools/media_opt.md with the media-opt CLI route, rush_media_opt MCP route, target_formats, max_image_dim, svg_policy, markup_globs, output_root, and minimum_saving_pct options, defaults, outputs, and canonical ToolResult fields.
+1. Verify the P50-124-owned docs/tools/media_opt.md contains the media-opt CLI route, rush_media_opt MCP route, target_formats, max_image_dim, svg_policy, markup_globs, output_root, and minimum_saving_pct options, actual defaults, outputs, and canonical ToolResult fields.
 2. Document MediaOptTool, RasterOptimizer, LosslessEquivalenceVerifier, SVGSanitizer, MarkupDimensionInserter, and MediaPatchSet, including PNG/WebP/AVIF decoding and round-trip checks for pixels, color profile, orientation, alpha, and the explicit metadata policy.
 3. Document safe SVG render-tree preservation, hostile active-content removal, JSX and HTML dimension insertion and idempotence, original preservation when a candidate is not smaller, dry-run defaults, contained atomic apply, rollback, network denial, redaction, and explicit source/artifact-write permission.
 4. Include deterministic corpus examples and measured-or-explicitly-blocked evidence guidance for tests/test_media_opt.py and tests/test_phase50_installed_media_opt.py, including aggregate >=30% reduction, per-asset <50ms, unsupported-format/threshold blockers, equivalence/security/idempotence evidence, hashes, and release gating.
 
 ## Deliverables
 
-- Documentation: docs/tools/media_opt.md with literal routes, symbols, options, format/equivalence/security/markup/apply behavior, safety, dependencies, examples, metrics, evidence, and blockers.
-- Documentation: References: update only the direct documentation reference required to discover docs/tools/media_opt.md, preserving existing navigation.
-- Evidence: Verification: searchable terms for PNG/WebP/AVIF, pixels/color profile/orientation/alpha/metadata, SVG, JSX/HTML, idempotence, atomicity/rollback, >=30%, <50ms, permissions, and blockers.
+- Documentation: Read-only verification of docs/tools/media_opt.md and the P50-124-owned reference anchors.
+- Evidence: .rush/phase50-evidence/P50-125.json with format, equivalence, security, markup, atomicity, rollback, performance, installed-evidence, and blocker results.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -7317,14 +7314,14 @@ The user-facing media-opt documentation must make equivalence, sanitization, ide
 
 ## Constraints
 
-- Task kind: DOCS.
+- Task kind: DOCS-VERIFY.
 - Prerequisites: P50-124 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; docs/tools/media_opt.md; tests/test_media_opt.py; tests/test_phase50_installed_media_opt.py; docs/reference.
-- Allowed writes: docs/tools/media_opt.md.
+- Allowed writes: .rush/phase50-evidence/P50-125.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Scope: documentation only plus the minimum direct docs reference; do not modify media_opt production, tests, packaging, or evidence in this task.
+- Scope: documentation verification and evidence only; P50-124 remains the sole documentation producer.
 - Safety: examples must contain no hostile payloads that could execute; state no-network, redaction, containment, atomicity, rollback, and permission requirements explicitly.
 - Compatibility: describe actual canonical ToolResult, CLI/MCP parity, existing Pillow 12.3.0, and tree-sitter-language-pack >=1.15,<2 through the shared parser pack without inventing capabilities.
 - Prohibited: do not claim losslessness, security, idempotence, savings, per-asset timing, installed-artifact success, or readiness without recorded evidence.
@@ -7339,11 +7336,11 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when docs/tools/media_opt.md is present and discoverable, every option, format/equivalence/security/markup/effect/permission/metric/evidence rule is literal, examples are safe and deterministic, and no unsupported readiness claim appears.
+The task is complete only when the unchanged P50-124 documentation passes every option, format/equivalence/security/markup/effect/permission/metric/evidence check, P50-125 records exact evidence, and no unsupported readiness claim appears.
 
 ## Handoff
 
@@ -7354,7 +7351,7 @@ Implement prove media equivalence and safe patches from packaged artifacts in ru
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-126 | I21 media-optimization installed artifact | GREEN | prove media equivalence and safe patches from packaged artifacts
+# Feature: P50-126 | I21 media-optimization installed artifact | INSTALLED | prove media equivalence and safe patches from packaged artifacts
 
 The installed-artifact test must prove that wheel and sdist installations optimize the fixed media corpus safely outside the source checkout with real decoding, sanitization, markup, and apply behavior.
 
@@ -7378,10 +7375,10 @@ The installed-artifact test must prove that wheel and sdist installations optimi
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-125 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_media_opt.py; tests/fixtures/phase50/media/corpus-manifest.json; tests/test_media_opt.py.
-- Allowed writes: tests/test_phase50_installed_media_opt.py; tests/fixtures/phase50/media/corpus-manifest.json.
+- Allowed writes: tests/test_phase50_installed_media_opt.py; contained ignored .rush/phase50-dist/P50-126 only. Corpus fixtures and production paths remain read-only producer outputs.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -7398,11 +7395,12 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 
 Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q
 
-uv build --wheel --sdist
+- Contained build command: `$phase50Dist = '.rush/phase50-dist/P50-126'; New-Item -ItemType Directory -Force -Path $phase50Dist | Out-Null; uv build --wheel --sdist --out-dir $phase50Dist`; expected exit 0.
+- Installed acceptance: The named installed test must install the exact wheel and sdist from this directory into separate fresh venvs with `--no-index` and no source fallback.
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_media_opt.py::test_phase50_installed_media_opt_supports_png_webp_avif_svg_html_jsx_fixture -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_media_opt.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_media_opt.py::test_phase50_installed_media_opt_supports_png_webp_avif_svg_html_jsx_fixture -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7423,16 +7421,17 @@ The ignored Phase 50 evidence fragment must record reproducible media equivalenc
 
 ## Required behavior
 
-1. Create only .rush/phase50-evidence/P50-126 as an ignored, schema-valid fragment containing requirement IDs P50-I21-RASTER, P50-I21-SVG, and P50-I21-MARKUP, implementation revision, tests and exits, CLI/MCP routes, permissions, docs anchors, dependency/runtime versions, wheel/sdist hashes, and corpus artifacts.
+1. Create only .rush/phase50-evidence/P50-127.json as an ignored, schema-valid fragment containing requirement IDs P50-I21-RASTER, P50-I21-SVG, and P50-I21-MARKUP, implementation revision, tests and exits, CLI/MCP routes, permissions, docs anchors, dependency/runtime versions, wheel/sdist hashes, and corpus artifacts.
 2. Record corpus-manifest.json, rgba.png, photo.png, safe.svg, hostile.svg, component.jsx, and index.html coverage; per-asset before/after bytes/timing; decoded pixel/color-profile/orientation/alpha/metadata-policy equivalence; safe-tree and hostile active-content results; JSX/HTML idempotence; original-preservation; atomic apply/rollback/source-containment; and canonical result parity.
 3. Record aggregate savings and per-asset timing measurements or explicit blocked/unknown values, unsupported-format and threshold-miss outcomes, artifact hashes, redaction, offline/external-CWD evidence, and every missing dependency, parser, package, permission, or platform blocker with exact references.
 4. Keep the fragment ignored and machine-readable, distinguish pass, skipped, blocked, and unknown, and do not modify ShipGateVerdict, lifecycle status, release workflow, tags, packages, or any other file.
 
 ## Deliverables
 
-- Evidence: .rush/phase50-evidence/P50-126 with stable requirement IDs, revision, tests/exits, routes, permissions, docs anchors, dependencies/runtimes, artifact hashes, corpus metrics, equivalence/security/idempotence/apply/rollback, redaction, and blockers.
+- Evidence: .rush/phase50-evidence/P50-127.json with stable requirement IDs, revision, tests/exits, routes, permissions, docs anchors, dependencies/runtimes, artifact hashes, corpus metrics, equivalence/security/idempotence/apply/rollback, redaction, and blockers.
+- Tests: N/A; this readiness task consumes captured P50-116–P50-126 test output without editing tests.
 - Evidence: Schema proof: JSON parse output and ignored-status/diff output showing only the intended fragment is present.
-- Tests: Traceability: evidence values point to tests/test_media_opt.py, tests/test_phase50_installed_media_opt.py, docs/tools/media_opt.md, src/rush/tools/media_opt.py, src/rush/cli.py, and src/rush/mcp.py without embedding hostile payloads or secrets.
+- Traceability: evidence values point to tests/test_media_opt.py, tests/test_phase50_installed_media_opt.py, docs/tools/media_opt.md, src/rush/tools/media_opt.py, src/rush/cli.py, and src/rush/mcp.py without embedding hostile payloads or secrets; all producer paths are read-only.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -7443,8 +7442,8 @@ The ignored Phase 50 evidence fragment must record reproducible media equivalenc
 
 - Task kind: EVIDENCE.
 - Prerequisites: P50-126 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-126; tests/exits; tests/test_media_opt.py; tests/test_phase50_installed_media_opt.py; docs/tools/media_opt.md; src/rush/tools/media_opt.py; src/rush/cli.py; src/rush/mcp.py.
-- Allowed writes: .rush/phase50-evidence/P50-126; tests/exits; tests/test_media_opt.py; tests/test_phase50_installed_media_opt.py; docs/tools/media_opt.md; src/rush/tools/media_opt.py; src/rush/cli.py; src/rush/mcp.py.
+- Allowed reads: AGENTS.md; this plan; tests/test_media_opt.py; tests/test_phase50_installed_media_opt.py; docs/tools/media_opt.md; src/rush/tools/media_opt.py; src/rush/cli.py; src/rush/mcp.py; captured P50-126 command output and artifact/performance/redaction evidence.
+- Allowed writes: .rush/phase50-evidence/P50-127.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -7457,19 +7456,19 @@ The ignored Phase 50 evidence fragment must record reproducible media equivalenc
 
 All of these must pass with exit code 0:
 
-.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-126
+.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-127.json
 
-git status --short --ignored -- .rush/phase50-evidence/P50-126
+git status --short --ignored -- .rush/phase50-evidence/P50-127.json
 
 git diff --check
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when .rush/phase50-evidence/P50-126 parses, is ignored, contains all I21 requirements and exact corpus/equivalence/security/markup/apply/rollback/artifact/metric/performance/redaction/blocker evidence, and makes no unsupported lifecycle or readiness claim.
+The task is complete only when .rush/phase50-evidence/P50-127.json parses, is ignored, contains all I21 requirements and exact corpus/equivalence/security/markup/apply/rollback/artifact/metric/performance/redaction/blocker evidence, leaves every producer unchanged, and makes no unsupported lifecycle or readiness claim.
 
 ## Handoff
 
@@ -7518,7 +7517,7 @@ Define data independently from Rich rendering and terminal input.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_computes_commit_deltas_from_fixture_records -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_computes_commit_deltas_from_fixture_records -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7572,7 +7571,7 @@ Keep calculation in tui_diff.py and presentation in cli.py.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_computes_commit_deltas_from_fixture_records -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7633,7 +7632,7 @@ Both commands must collect and exit 1 only at the named missing-behavior asserti
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff_app.py::test_tui_diff_full_screen_pilot_navigates_arrows_tabs_expand_filter_and_quit -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_ci_fallback_is_deterministic_json_and_rich_summary -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff_app.py::test_tui_diff_full_screen_pilot_navigates_arrows_tabs_expand_filter_and_quit -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7662,7 +7661,7 @@ The GREEN implementation must satisfy the unchanged pilot and fallback contracts
 ## Deliverables
 
 - Production: src/rush/tui.py and src/rush/tools/tui_diff.py only, with the named app/pane/chart/fallback symbols and shared raw-data boundary.
-- Tests: Tests remain unchanged: tests/test_tui_diff_app.py and tests/test_tui_diff.py from P50-130.
+- Tests: Run unchanged producer-owned verification from tests/test_tui_diff_app.py; tests/test_tui_diff.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: ignored .rush/phase50-evidence/P50-131-green.json with RED hashes, pilot/fallback exits, terminal snapshots, raw-delta equality, cache path, and performance measurements/blockers.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -7674,7 +7673,7 @@ The GREEN implementation must satisfy the unchanged pilot and fallback contracts
 - Task kind: GREEN.
 - Prerequisites: P50-130 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tui.py; src/rush/tools/tui_diff.py; tests/test_tui_diff_app.py; tests/test_tui_diff.py; .rush/phase50-evidence/P50-131-green.json.
-- Allowed writes: src/rush/tui.py; src/rush/tools/tui_diff.py; tests/test_tui_diff_app.py; tests/test_tui_diff.py; .rush/phase50-evidence/P50-131-green.json.
+- Allowed writes: src/rush/tui.py; src/rush/tools/tui_diff.py; .rush/phase50-evidence/P50-131-green.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -7695,7 +7694,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff_app.py::test_tui_diff_full_screen_pilot_navigates_arrows_tabs_expand_filter_and_quit tests/test_tui_diff.py::test_tui_diff_ci_fallback_is_deterministic_json_and_rich_summary -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py tests/test_tui_diff_app.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff_app.py::test_tui_diff_full_screen_pilot_navigates_arrows_tabs_expand_filter_and_quit tests/test_tui_diff.py::test_tui_diff_ci_fallback_is_deterministic_json_and_rich_summary -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7748,7 +7747,7 @@ Pin public routing independently.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_tui_diff_catalog_declares_commit_count_option tests/test_cli_registry.py::test_tui_diff_cli_forms_share_raw_data_and_renderer_boundary tests/test_mcp.py::test_tui_diff_mcp_returns_raw_data_without_control_codes -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7802,7 +7801,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_tui_diff_catalog_declares_commit_count_option tests/test_cli_registry.py::test_tui_diff_cli_forms_share_raw_data_and_renderer_boundary tests/test_mcp.py::test_tui_diff_mcp_returns_raw_data_without_control_codes -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7854,7 +7853,7 @@ Remove full-screen/60-FPS/universal-history claims.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "tui diff|tui-diff|rush_tui_diff|60 FPS|full-screen|introduced|resolved|unknown" docs/tools/tui_diff.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7916,7 +7915,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_mcp_data_contains_no_control_sequences -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_mcp_data_contains_no_control_sequences -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7945,7 +7944,7 @@ The rush_tui_diff MCP registration must return the same raw Git/cache deltas as 
 ## Deliverables
 
 - Production: rush_tui_diff registration and shared-call adapter in src/rush/mcp.py; no TuiDiffApp, RichDiffApp, pane, chart, or fallback rendering logic in the transport.
-- Tests: tests/test_tui_diff.py::test_tui_diff_mcp_data_contains_no_control_sequences and MCP route coverage with direct-result/raw-data parity, cache-provenance, no-control-sequence, no-widget, no-write, and stdout assertions.
+- Tests: Run unchanged producer-owned verification from tests/test_tui_diff.py; this GREEN task may not modify paired tests or fixtures.
 - Production: Integration: callable wiring resolves TuiDiffTool and raw Git/cache data helpers from src/rush/tools/tui_diff.py while interactive symbols remain in src/rush/tui.py.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -7958,7 +7957,7 @@ The rush_tui_diff MCP registration must return the same raw Git/cache deltas as 
 - Task kind: GREEN.
 - Prerequisites: P50-135 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/mcp.py; .rush/cache.db; .rush/cache/ccr.db; .rush/telemetry/tokens.db; tests/test_tui_diff.py; src/rush/tools/tui_diff.py; src/rush/tui.py; tests/test_mcp.py.
-- Allowed writes: src/rush/mcp.py; tests/test_tui_diff.py; src/rush/tools/tui_diff.py; src/rush/tui.py.
+- Allowed writes: src/rush/mcp.py; src/rush/tools/tui_diff.py; src/rush/tui.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -7977,7 +7976,7 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_mcp_data_contains_no_control_sequences -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py::test_tui_diff_mcp_data_contains_no_control_sequences -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -7992,22 +7991,21 @@ Implement document interactive, CI, Git, and cache evidence in rush-cli in the c
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-137 | I22 TUI-diff documentation | DOCS | document interactive, CI, Git, and cache evidence
+# Feature: P50-137 | I22 TUI-diff documentation | DOCS-VERIFY | verify interactive, CI, Git, and cache documentation
 
 The user-facing TUI-diff documentation must make full-screen keyboard behavior, raw CI fallback, Git/cache authority, deltas, safety, and performance evidence executable and auditable.
 
 ## Required behavior
 
-1. Create docs/tools/tui_diff.md with the tui diff CLI route, rush_tui_diff MCP route, base_ref, head_ref, commits (default 10), cache_path, mode, and refresh_hz options, defaults, outputs, canonical ToolResult fields, and the distinction between interactive and data-only modes.
+1. Verify the P50-134-owned docs/tools/tui_diff.md contains the tui diff CLI route, rush_tui_diff MCP route, base_ref, head_ref, commits (default 10), cache_path, mode, refresh_hz, actual defaults, outputs, canonical ToolResult fields, and interactive/data-only distinction.
 2. Document TuiDiffTool, TuiDiffApp, RichDiffApp, CommitPane, QualityPane, FindingPane, DeltaChart, and CiFallbackRenderer, including commit quality, introduced/resolved/persisting findings, charts, Git history, cache deltas, filters, pane navigation, expand/collapse, quit, refresh, and deterministic JSON/Rich CI fallback.
 3. Document the actual Git/cache data authority and resolved public ResultCache API/path; explicitly state that the innovation-required .rush/cache.db authority must be verified and any unresolved path/API is a blocker, not a guessed substitute; document no-network, no-write, terminal restoration, non-TTY, signal/error, stdout/stderr, ANSI/control-sequence, and redaction rules.
 4. Include deterministic TTY pilot and non-TTY examples plus measured-or-explicitly-blocked evidence guidance for tests/test_tui_diff.py and tests/test_phase50_installed_tui_diff.py, including arrows/tabs/expand/filter/quit, terminal snapshots, <30 ms overhead, 60 FPS, raw MCP JSON, Git/cache correctness, artifact hashes, and release blockers.
 
 ## Deliverables
 
-- Documentation: docs/tools/tui_diff.md with literal routes, symbols, options, keyboard/pane behavior, Git/cache provenance, CI fallback, safety, performance, evidence, and failure/blocker semantics.
-- Documentation: References: update only the direct docs reference required to discover docs/tools/tui_diff.md, preserving existing documentation navigation.
-- Evidence: Verification: searchable terms for textual/Rich, TTY/non-TTY, arrows/tabs/expand/filter/quit, Git, ResultCache, .rush/cache.db, cache_path, JSON/Rich fallback, ANSI/control, <30ms, 60FPS, terminal restoration, and blockers.
+- Documentation: Read-only verification of docs/tools/tui_diff.md and the P50-134-owned reference anchors.
+- Evidence: .rush/phase50-evidence/P50-137.json with TTY, keyboard, Git/cache authority, fallback, terminal safety, performance, installed-evidence, and blocker results.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -8016,14 +8014,14 @@ The user-facing TUI-diff documentation must make full-screen keyboard behavior, 
 
 ## Constraints
 
-- Task kind: DOCS.
+- Task kind: DOCS-VERIFY.
 - Prerequisites: P50-136 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; docs/tools/tui_diff.md; .rush/cache.db; tests/test_tui_diff.py; tests/test_phase50_installed_tui_diff.py; .rush/cache; docs/reference.
-- Allowed writes: docs/tools/tui_diff.md; .rush/cache.db.
+- Allowed writes: .rush/phase50-evidence/P50-137.json only; .rush/cache.db is read-only in this verification task.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Scope: documentation only plus the minimum direct docs reference; do not modify TUI production, tests, packaging, or evidence in this task.
+- Scope: documentation verification and evidence only; P50-134 remains the sole documentation producer.
 - Safety: examples must not include secrets, raw control sequences, or destructive Git/cache operations; state no-network, no-write, restoration, redaction, and data-only MCP requirements.
 - Compatibility: describe actual canonical ToolResult and public ResultCache resolution without inventing a cache path; retain explicit unresolved cache authority as a blocker.
 - Prohibited: do not claim interactive performance, 60 FPS, <30 ms overhead, Git/cache correctness, terminal restoration, installed success, or release readiness without evidence.
@@ -8038,11 +8036,11 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when docs/tools/tui_diff.md is present and discoverable, every route/option/symbol/keyboard/cache/Git/fallback/safety/performance/evidence rule is literal, the cache authority/path uncertainty is not hidden, examples are deterministic and safe, and no unsupported readiness claim appears.
+The task is complete only when the unchanged P50-134 documentation passes every route/option/symbol/keyboard/cache/Git/fallback/safety/performance/evidence check, cache authority uncertainty remains explicit, P50-137 records exact evidence, and no unsupported readiness claim appears.
 
 ## Handoff
 
@@ -8053,7 +8051,7 @@ Implement prove pilot and CI fallback outside a checkout in rush-cli in the curr
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-138 | I22 TUI-diff installed artifact | GREEN | prove pilot and CI fallback outside a checkout
+# Feature: P50-138 | I22 TUI-diff installed artifact | INSTALLED | prove pilot and CI fallback outside a checkout
 
 The installed-artifact test must prove that wheel and sdist installations provide the full-screen Rich/Textual pilot and deterministic non-TTY fallback with correct Git/cache deltas outside the source checkout.
 
@@ -8077,10 +8075,10 @@ The installed-artifact test must prove that wheel and sdist installations provid
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-137 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_tui_diff.py; .rush/cache.db; tests/test_tui_diff.py.
-- Allowed writes: tests/test_phase50_installed_tui_diff.py; .rush/cache.db.
+- Allowed writes: tests/test_phase50_installed_tui_diff.py; contained ignored .rush/phase50-dist/P50-138 only. Git/cache fixtures must be created beneath the test temporary root through the public ResultCache API; no repository cache path is writable.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8097,11 +8095,12 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHO
 
 Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py -q
 
-uv build --wheel --sdist
+- Contained build command: `$phase50Dist = '.rush/phase50-dist/P50-138'; New-Item -ItemType Directory -Force -Path $phase50Dist | Out-Null; uv build --wheel --sdist --out-dir $phase50Dist`; expected exit 0.
+- Installed acceptance: The named installed test must install the exact wheel and sdist from this directory into separate fresh venvs with `--no-index` and no source fallback.
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_tui_diff.py::test_phase50_installed_tui_diff_pilot_and_non_tty_fallback_work_without_checkout -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_tui_diff.py -q; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_tui_diff.py::test_phase50_installed_tui_diff_pilot_and_non_tty_fallback_work_without_checkout -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8122,16 +8121,17 @@ The ignored Phase 50 evidence fragment must record reproducible TUI-diff data, p
 
 ## Required behavior
 
-1. Create only .rush/phase50-evidence/P50-138 as an ignored, schema-valid fragment containing requirement IDs P50-I22-DATA, P50-I22-APP, and P50-I22-FALLBACK, implementation revision, tests and exits, CLI/MCP routes, permissions, docs anchors, dependency/runtime versions, wheel/sdist hashes, pilot transcript references, terminal snapshots, and raw fallback artifacts.
+1. Create only .rush/phase50-evidence/P50-139.json as an ignored, schema-valid fragment containing requirement IDs P50-I22-DATA, P50-I22-APP, and P50-I22-FALLBACK, implementation revision, tests and exits, CLI/MCP routes, permissions, docs anchors, dependency/runtime versions, wheel/sdist hashes, pilot transcript references, terminal snapshots, and raw fallback artifacts.
 2. Record deterministic Git history, public ResultCache API and resolved cache path, the verified or unresolved .rush/cache.db authority, commit-quality/finding/chart/delta values, introduced/resolved/persisting classifications, keyboard pilot arrows/tabs/expand/filter/quit, terminal restoration after error/signal, and non-TTY JSON/Rich fallback with raw-MCP no-control evidence.
 3. Record measured <30 ms overhead and 60 FPS values or explicit blocked/unknown state, TTY/cache/runtime availability, external-CWD/offline evidence, redaction, artifact hashes, missing-ref/partial/cache-path/control/performance blockers, and exact evidence references; never guess a cache path or fabricate a transcript.
 4. Keep the fragment ignored and machine-readable, distinguish pass, skipped, blocked, and unknown, and do not modify ShipGateVerdict, lifecycle status, release workflows, tags, packages, or any other file.
 
 ## Deliverables
 
-- Evidence: .rush/phase50-evidence/P50-138 with stable requirement IDs, revision, tests/exits, routes, permissions, docs anchors, runtimes/dependencies, artifact hashes, Git/cache provenance, pilot/fallback transcripts, terminal snapshots, deltas, performance, redaction, and blockers.
+- Evidence: .rush/phase50-evidence/P50-139.json with stable requirement IDs, revision, tests/exits, routes, permissions, docs anchors, runtimes/dependencies, artifact hashes, Git/cache provenance, pilot/fallback transcripts, terminal snapshots, deltas, performance, redaction, and blockers.
+- Tests: N/A; this readiness task consumes captured P50-128–P50-138 test output without editing tests.
 - Evidence: Schema proof: JSON parse output and ignored-status/diff output showing only the intended fragment is present.
-- Tests: Traceability: evidence values point to tests/test_tui_diff.py, tests/test_phase50_installed_tui_diff.py, docs/tools/tui_diff.md, src/rush/tools/tui_diff.py, src/rush/tui.py, src/rush/cli.py, and src/rush/mcp.py without embedding control sequences, secrets, or raw sensitive paths.
+- Traceability: evidence values point to tests/test_tui_diff.py, tests/test_phase50_installed_tui_diff.py, docs/tools/tui_diff.md, src/rush/tools/tui_diff.py, src/rush/tui.py, src/rush/cli.py, and src/rush/mcp.py without embedding control sequences, secrets, or raw sensitive paths; all producer paths are read-only.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -8142,8 +8142,8 @@ The ignored Phase 50 evidence fragment must record reproducible TUI-diff data, p
 
 - Task kind: EVIDENCE.
 - Prerequisites: P50-138 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-138; .rush/cache.db; tests/exits; tests/test_tui_diff.py; tests/test_phase50_installed_tui_diff.py; docs/tools/tui_diff.md; src/rush/tools/tui_diff.py; src/rush/tui.py; src/rush/cli.py; src/rush/mcp.py; docs/dependency/artifact/Git/cache/pilot/fallback/performance/redaction/blocker.
-- Allowed writes: .rush/phase50-evidence/P50-138; tests/exits; tests/test_tui_diff.py; tests/test_phase50_installed_tui_diff.py; docs/tools/tui_diff.md; src/rush/tools/tui_diff.py; src/rush/tui.py; src/rush/cli.py; src/rush/mcp.py.
+- Allowed reads: AGENTS.md; this plan; .rush/cache.db; tests/test_tui_diff.py; tests/test_phase50_installed_tui_diff.py; docs/tools/tui_diff.md; src/rush/tools/tui_diff.py; src/rush/tui.py; src/rush/cli.py; src/rush/mcp.py; captured P50-138 command output and dependency/artifact/Git/cache/pilot/fallback/performance/redaction evidence.
+- Allowed writes: .rush/phase50-evidence/P50-139.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8156,19 +8156,19 @@ The ignored Phase 50 evidence fragment must record reproducible TUI-diff data, p
 
 All of these must pass with exit code 0:
 
-.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-138
+.venv/Scripts/python.exe -m json.tool .rush/phase50-evidence/P50-139.json
 
-git status --short --ignored -- .rush/phase50-evidence/P50-138
+git status --short --ignored -- .rush/phase50-evidence/P50-139.json
 
 git diff --check
 - Focused command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: N/A for this evidence, documentation, dependency, acceptance-probe, or handoff task; no RED result may be claimed.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when .rush/phase50-evidence/P50-138 parses, is ignored, contains all I22 requirements and exact implementation/route/test/docs/dependency/artifact/Git/cache/pilot/fallback/performance/redaction/blocker evidence, preserves unresolved cache authority as blocked or unknown when necessary, and makes no unsupported lifecycle or readiness claim.
+The task is complete only when .rush/phase50-evidence/P50-139.json parses, is ignored, contains all I22 requirements and exact implementation/route/test/docs/dependency/artifact/Git/cache/pilot/fallback/performance/redaction/blocker evidence, leaves every producer unchanged, preserves unresolved cache authority as blocked or unknown when necessary, and makes no unsupported lifecycle or readiness claim.
 
 ## Handoff
 
@@ -8188,14 +8188,14 @@ Pin deterministic adapter tests plus explicit real-runtime acceptance obligation
 ## Required behavior
 
 1. Inspect the full I24 authority field by field against planned keys, providers, checksum/license rules, and missing-component behavior. Stop if one field is absent.
-2. Make this exact change in only the test file: add test_offline_review_missing_runtime_or_model_is_skipped_without_network, guarding socket.socket/create_connection and asserting skipped/no download hint; add test_offline_review_fake_session_returns_valid_findings_and_rejects_socket_use, injecting the approved fake session/preprocessor and contained model with checksum, asserting normalized findings/provider/checksum identity and error on checksum mismatch, escape, or malformed output.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_offline_review.py::test_offline_review_missing_runtime_or_model_is_skipped_without_network tests/test_offline_review.py::test_offline_review_fake_session_returns_valid_findings_and_rejects_socket_use -q`, then `.venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q`; retain absent-contract failures only.
+2. Create the complete I24 RED packet in tests/test_offline_review.py, tests/test_model_registry.py, tests/test_air_gap.py, and tests/test_socket_denied.py with exact fixtures tests/fixtures/phase50/offline/registry.json, registry.sigstore.json, model.onnx.stub, model.gguf.stub, grammar.json, and external-data-model.json. Cover missing-runtime skipped/no-network, deterministic ONNX/GGUF sessions, signed publisher/TUF identity, redirects, digest, size, SPDX license, tokenizer, expiry, contained cache/atomic recovery, path escape, grammar, and OS-enforced socket/DNS/subprocess denial.
+3. Run the exact four-file RED suite; every test must collect and exit 1 only at its named missing runtime, registry, acquisition, air-gap, or grammar assertion. Import/collection error, skip, XFAIL/XPASS, absent optional test dependency, or unrelated failure is invalid RED evidence.
 4. Stop and report a blocker if production/dependency/docs edits, live network, bundled weights, cloud fallback, mock-only completion, or partial scope.
 
 ## Deliverables
 
-- Tests: Create tests/test_offline_review.py.; implement the exact tests and assertions named in Required behavior 2.
-- Dependencies: Create tests/test_offline_review.py.
+- Tests: Create tests/test_offline_review.py, tests/test_model_registry.py, tests/test_air_gap.py, tests/test_socket_denied.py, and the six exact tests/fixtures/phase50/offline files named in Required behavior 2; these become immutable inputs to P50-141 and P50-146–P50-151.
+- Dependencies: Consume only the P50-019-admitted optional runtime extras; this RED task changes no dependency or lockfile.
 - Evidence: .rush/phase50-evidence/P50-140.json; Authority reference, fake-session contract, socket guard, named RED.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
@@ -8207,17 +8207,17 @@ Pin deterministic adapter tests plus explicit real-runtime acceptance obligation
 - Task kind: RED.
 - Prerequisites: P50-001 and P50-019 dependency admission.
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I24; I24 authoritative scope evidence; roadmap I24; ReviewTool normalization; permissions; manifests..
-- Allowed writes: Create tests/test_offline_review.py.; create ignored .rush/phase50-evidence/P50-140.json.
+- Allowed writes: tests/test_offline_review.py; tests/test_model_registry.py; tests/test_air_gap.py; tests/test_socket_denied.py; tests/fixtures/phase50/offline/registry.json; tests/fixtures/phase50/offline/registry.sigstore.json; tests/fixtures/phase50/offline/model.onnx.stub; tests/fixtures/phase50/offline/model.gguf.stub; tests/fixtures/phase50/offline/grammar.json; tests/fixtures/phase50/offline/external-data-model.json; create ignored .rush/phase50-evidence/P50-140.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: I24 authoritative scope evidence; roadmap I24; ReviewTool normalization; permissions; manifests. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Download/bundle; live inference; sockets; dependency/source/docs edits; partial decision.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py::test_offline_review_missing_runtime_or_model_is_skipped_without_network tests/test_offline_review.py::test_offline_review_fake_session_returns_valid_findings_and_rejects_socket_use -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py::test_offline_review_missing_runtime_or_model_is_skipped_without_network tests/test_offline_review.py::test_offline_review_fake_session_returns_valid_findings_and_rejects_socket_use -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_model_registry.py tests/test_air_gap.py tests/test_socket_denied.py -q; expected exit 1 with successful collection and only the named I24 runtime/registry/air-gap/grammar assertions failing.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_model_registry.py tests/test_air_gap.py tests/test_socket_denied.py -q; expected exit 1 for the same semantic RED failures and no skip/XFAIL/XPASS.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_model_registry.py::test_model_registry_rejects_unsigned_untrusted_redirected_mismatched_expired_or_escaping_artifacts tests/test_air_gap.py::test_offline_review_air_gap_denies_socket_dns_subprocess_and_external_data -q; expected exit 1 with successful collection and only the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8271,7 +8271,7 @@ Implement both runtime adapters and the shared zero-network inference boundary; 
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py::test_offline_review_missing_runtime_or_model_is_skipped_without_network tests/test_offline_review.py::test_offline_review_fake_session_returns_valid_findings_and_rejects_socket_use -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8287,22 +8287,22 @@ Implement add isolated ONNX, CUDA, and GGUF optional extras in rush-cli in the c
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-142 | P50-I24 | DEPENDENCY | add isolated ONNX, CUDA, and GGUF optional extras
+# Feature: P50-142 | P50-I24 | DEPENDENCY-VERIFY | verify isolated ONNX, CUDA, and GGUF optional extras
 
 Isolate dependency mutation from behavior.
 
 ## Required behavior
 
 1. Compare exact package/constraint/extra name to I24 authoritative scope and current manifest syntax.
-2. Make this exact change in only pyproject.toml, uv.lock, and the evidence file: add the exact isolated ONNX, ONNX-CUDA, and GGUF optional extras, run `uv lock`, and record exact lock nodes plus no default dependency.
+2. Verify the P50-019-owned pyproject.toml and uv.lock contain exact isolated `offline-onnx`, mutually exclusive `offline-onnx-cuda`, and `offline-gguf` optional extras with no default runtime dependency; record exact lock nodes without mutating the shared lock.
 3. Run `uv lock --check`, `.venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q`, `.venv/Scripts/ruff.exe check src/rush/tools/offline_runner.py tests/test_offline_review.py`, and `.venv/Scripts/ruff.exe format --check src/rush/tools/offline_runner.py tests/test_offline_review.py`; inspect the exact pyproject.toml and uv.lock diff.
 4. Stop and report a blocker if source/test/public-doc/version changes; alternate packages/providers; weights.
 
 ## Deliverables
 
-- Production: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.
-- Documentation: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.: Evidence record only.
-- Dependencies: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.; add `onnxruntime`, mutually exclusive `onnxruntime-gpu`, and `llama-cpp-python` extras exactly as P50-019 admitted; run `uv lock` and record all changed nodes.
+- Production: N/A; dependency verification must not modify production.
+- Documentation: N/A; dependency verification is recorded only in the owned evidence fragment.
+- Dependencies: Read-only proof of `onnxruntime`, mutually exclusive `onnxruntime-gpu`, and `llama-cpp-python` extras exactly as P50-019 admitted, with all lock nodes recorded.
 - Evidence: .rush/phase50-evidence/P50-142.json; Decision link, manifest/lock diff, commands/exits.; produced by the literal commands below.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -8310,27 +8310,27 @@ Isolate dependency mutation from behavior.
 
 ## Constraints
 
-- Task kind: DEPENDENCY.
+- Task kind: DEPENDENCY-VERIFY.
 - Prerequisites: P50-141 and complete I24 authoritative scope..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I24; I24 authoritative scope; current optional extras; runtime import in offline_runner.py..
-- Allowed writes: pyproject.toml; uv.lock; docs/developer/phase-50-implementation-evidence.md.; create ignored .rush/phase50-evidence/P50-142.json.
+- Allowed writes: .rush/phase50-evidence/P50-142.json only; pyproject.toml and uv.lock remain read-only and owned by P50-019.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: I24 authoritative scope; current optional extras; runtime import in offline_runner.py. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Source/test/public-doc/version changes; alternate packages/providers; weights.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
 
-- Focused command: uv lock; expected exit 0.
+- Focused command: uv lock --check; expected exit 0.
 - Broader command: uv lock --check; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q; expected exit 0.
 - Broader command: .venv/Scripts/ruff.exe check src/rush/tools/offline_runner.py tests/test_offline_review.py; expected exit 0.
 - Broader command: .venv/Scripts/ruff.exe format --check src/rush/tools/offline_runner.py tests/test_offline_review.py; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-The task is complete only when pyproject/lock contain exactly the I24 authoritative scope optional runtime constraint or the packet stops.; every command has its stated exit; unchanged paired RED tests pass for GREEN; only Allowed writes paths changed.
+The task is complete only when the unchanged P50-019 lock contains exactly the I24 optional runtime extras with mutual exclusion and no default runtime, or the packet stops with the exact blocker.
 
 ## Handoff
 
@@ -8349,8 +8349,8 @@ Pin the exact full options and both CLI forms.
 ## Required behavior
 
 1. Inspect `review` and generic command registration; confirm exact I24 authoritative scope keys.
-2. Make this exact change in only the three tests: add `test_offline_review_catalog_declares_full_runtime_options`, `test_offline_review_cli_forms_share_registered_tool`, and `test_offline_review_mcp_uses_canonical_name_without_network`; assert one ToolSpec/object, `rush offline-review PATH`, `rush review PATH --offline`, `rush_offline_review`, missing-runtime skipped, injected-result equality, and no network/download route.
-3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network -q`, then `.venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q`; retain missing integration failures.
+2. Make this exact change in only the three tests: add `test_offline_review_catalog_declares_full_runtime_options`, `test_offline_review_cli_forms_share_registered_tool`, `test_offline_review_mcp_uses_canonical_name_without_network`, and `test_model_download_is_cli_only_and_public_mcp_absent`; assert one ToolSpec/object, `rush offline-review PATH`, `rush review PATH --offline`, `rush_offline_review`, missing-runtime skipped, injected-result equality, literal CLI-only `rush model download`, and absence of any model-download MCP operation.
+3. Run `.venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network tests/test_mcp.py::test_model_download_is_cli_only_and_public_mcp_absent -q`, then the three full files; retain only missing integration or negative-applicability failures.
 4. Stop and report a blocker if production/core/docs edits; real runtime/model.
 
 ## Deliverables
@@ -8375,12 +8375,12 @@ Pin the exact full options and both CLI forms.
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network -q; expected exit 1 for the named semantic RED assertion.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network tests/test_mcp.py::test_model_download_is_cli_only_and_public_mcp_absent -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network tests/test_mcp.py::test_model_download_is_cli_only_and_public_mcp_absent -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8435,7 +8435,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_offline_review_catalog_declares_full_runtime_options tests/test_cli_registry.py::test_offline_review_cli_forms_share_registered_tool tests/test_mcp.py::test_offline_review_mcp_uses_canonical_name_without_network -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8458,13 +8458,13 @@ Document the complete air-gapped runtime, signed model lifecycle, transport, per
 ## Required behavior
 
 1. Inspect the `offline-review` command, MCP tool, config table, catalog row, offline-model security rule, and example anchors in docs/CLI_REFERENCE.md, docs/MCP_REFERENCE.md, docs/CONFIGURATION.md, docs/TOOL_CATALOG.md, docs/SECURITY.md, and examples/rush.toml; reconcile every field against I24 authoritative scope and record each pre-edit anchor.
-2. Make this exact change only at those anchors and in docs/tools/offline_runner.md: document the user-supplied model/license/SHA-256 evidence, exact optional install, slow permission, missing-component skipped, checksum/schema errors, no bundle/download, and tested socket boundary.
+2. Make this exact change only at those anchors, docs/tools/offline_runner.md, docs/tools/offline_review.md, and docs/guide/offline_ai_guide.md: document ONNX/GGUF CPU/CUDA review, signed registry acquisition, exact model/license/SHA-256/tokenizer evidence, optional runtime extras, slow permission, missing-component skipped, checksum/schema errors, explicit CLI-only `rush model download`, immutable contained cache promotion, and the tested zero-socket review boundary.
 3. Run `.venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q` and `uv lock --check`; then run `rg -n "offline-review|rush_offline_review|optional runtime|download|bundled|allow-slow|sha256" docs/tools/offline_runner.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml` and record every exact changed anchor. Compare the documented package name and constraint directly to the exact I24 authoritative scope record and `pyproject.toml`; stop on any difference.
 4. Stop and report a blocker if bundled model, implicit download, cloud fallback, mock-only acceptance, unsupported performance claim, or MCP download surface.
 
 ## Deliverables
 
-- Documentation: docs/tools/offline_runner.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml.: Create docs/tools/offline_runner.md; update CLI/MCP/CONFIGURATION/TOOL_CATALOG/SECURITY references and example.
+- Documentation: docs/tools/offline_runner.md; docs/tools/offline_review.md; docs/guide/offline_ai_guide.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml. Create both runtime/operator tool documents and the full offline AI guide; update public references and example.
 - Dependencies: docs/tools/offline_runner.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml.
 - Evidence: .rush/phase50-evidence/P50-145.json; Tests, lock check, docs search.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
@@ -8477,9 +8477,9 @@ Document the complete air-gapped runtime, signed model lifecycle, transport, per
 - Task kind: DOCS.
 - Prerequisites: P50-144 green..
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md section I24; src/rush/tools/offline_runner.py; tests/test_offline_review.py; tests/test_catalog.py; tests/test_cli_registry.py; tests/test_mcp.py; full I24 authority; pyproject.toml; uv.lock; the seven allowed documentation/configuration paths..
-- Allowed writes: docs/tools/offline_runner.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml.; create ignored .rush/phase50-evidence/P50-145.json.
+- Allowed writes: docs/tools/offline_runner.md; docs/tools/offline_review.md; docs/guide/offline_ai_guide.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; create ignored .rush/phase50-evidence/P50-145.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: src/rush/tools/offline_runner.py; tests/test_offline_review.py; tests/test_catalog.py; tests/test_cli_registry.py; tests/test_mcp.py; full I24 authority; pyproject.toml; uv.lock; the seven allowed documentation/configuration paths. remains read-only.
-- Prohibited files, changes, and lifecycle actions: Bundled model, download command, universal air-gap, unsupported provider/device/performance, cloud fallback.
+- Prohibited files, changes, and lifecycle actions: Bundled model bytes, implicit or MCP download, unsupported provider/device/performance claim, cloud fallback, or claim that a process-local flag alone proves air gap.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
 
 ## Checks to run before reporting
@@ -8488,7 +8488,7 @@ Document the complete air-gapped runtime, signed model lifecycle, transport, per
 - Broader command: uv lock --check; expected exit 0.
 - Broader command: rg -n "offline-review|rush_offline_review|optional runtime|download|bundled|allow-slow|sha256" docs/tools/offline_runner.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8510,28 +8510,27 @@ Transition: RED tests prove missing adapters, model formats, devices, bounds, an
 
 ## Required behavior
 
-1. Implement src/rush/tools/offline_runner.py, src/rush/providers/offline.py, and src/rush/model_registry.py with an in-process runtime abstraction that discovers ONNX Runtime and GGUF/llama.cpp backends without bundling a cloud service; support ONNX and GGUF models, CPU and CUDA devices, tokenizer loading, context-window limits, deterministic seed/options, cancellation, timeout, and bounded memory/output accounting. This task must also implement OnnxModelLoader, integrate the bounded context path with src/rush/token_economy.py, and honor [offline_ai] model_path and max_threads=4.
+1. Implement src/rush/tools/offline_runner.py, src/rush/providers/offline.py, and src/rush/model_registry.py with an in-process runtime abstraction that discovers ONNX Runtime and GGUF/llama.cpp backends without bundling a cloud service; support ONNX and GGUF models, CPU and CUDA devices, tokenizer loading, context-window limits, deterministic seed/options, cancellation, timeout, and bounded memory/output accounting. Implement OnnxModelLoader, integrate bounded context through the existing src/rush/token_economy/ package API, and honor [offline_ai] model_path and max_threads=4.
 2. Provide the named signed model variants Qwen 2.5 Coder 1.5B 4-bit and Qwen 2.5 Coder 3B 4-bit in ONNX and GGUF form, with runtime/backend/device metadata, tokenizer metadata, context limits, and a stable model identifier; missing optional runtime engines return a canonical structured skipped result with engine/version/status/duration/summary/findings, while malformed, incompatible, untrusted, over-limit, or expired models return explicit errors and never silently substitute a different model.
 3. Constrain every prompt to repository files, bounded AST context, configured policy text, and the selected local model; return schema-valid structured findings with rule ID, severity, message, file, line/column span, evidence, remediation, model ID, runtime/backend/device, and provenance, with no cloud/API/socket fallback.
-4. Add tests/fixtures/phase50/offline/model.onnx.stub and tests/fixtures/phase50/offline/model.gguf.stub plus tests/test_offline_review.py and tests/test_model_registry.py proving both formats, both devices (including unavailable-device error), model metadata, bounds, cancellation/timeout, deterministic output, skipped missing engine, invalid model failure, and zero external network access.
+4. Run the unchanged P50-140/P50-143-owned model stubs and tests/test_offline_review.py plus tests/test_model_registry.py to prove both formats, both devices (including unavailable-device error), model metadata, bounds, cancellation/timeout, deterministic output, skipped missing engine, invalid model failure, and zero external network access; do not edit those tests or fixtures.
 
 ## Deliverables
 
 - Production: src/rush/tools/offline_runner.py, src/rush/providers/offline.py, src/rush/model_registry.py and their typed public/internal interfaces.
-- Tests: tests/fixtures/phase50/offline/model.onnx.stub and model.gguf.stub.
-- Tests: tests/test_offline_review.py and tests/test_model_registry.py with RED/GREEN coverage and captured structured result/evidence fixtures.
+- Tests: Run unchanged producer-owned verification from tests/fixtures; tests/test_offline_review.py; tests/test_model_registry.py; tests/fixtures/phase50/offline/model.onnx.stub; this GREEN task may not modify paired tests or fixtures.
 - Documentation: Runtime/model documentation source material consumed by P50-151, including exact ONNX Runtime, GGUF/llama.cpp, Qwen 2.5 Coder 1.5B/3B 4-bit, CPU/CUDA, context, timeout, and skip/error claims.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: create ignored .rush/phase50-evidence/P50-146.json with runtime/model/device/bounds/determinism/zero-socket command results and artifact digests.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-145 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/offline_runner.py; src/rush/providers/offline.py; src/rush/model_registry.py; tests/fixtures/phase50/offline/model.onnx.stub; tests/fixtures/phase50/offline/model.gguf.stub; tests/test_offline_review.py; tests/test_model_registry.py; tests/evidence.
-- Allowed writes: src/rush/tools/offline_runner.py; src/rush/providers/offline.py; src/rush/model_registry.py; tests/fixtures/phase50/offline/model.onnx.stub; tests/test_offline_review.py; tests/test_model_registry.py.
+- Allowed writes: src/rush/tools/offline_runner.py; src/rush/providers/offline.py; src/rush/model_registry.py; .rush/phase50-evidence/P50-146.json. All paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8547,7 +8546,7 @@ Transition: RED tests prove missing adapters, model formats, devices, bounds, an
 - Exercise ONNX and GGUF fixtures on CPU; exercise CUDA path when the declared CUDA runtime is present and assert the explicit unavailable-device result otherwise.
 - Assert the captured socket audit has zero outbound attempts and each result records model ID, format, runtime, device, bounds, and evidence digest.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_model_registry.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8569,29 +8568,29 @@ Transition: RED tests reject unsigned, mutable, redirected, hash-mismatched, lic
 
 ## Required behavior
 
-1. Add src/rush/resources/models/registry.json and src/rush/resources/models/registry.sigstore.json, with tests/fixtures/phase50/offline/registry.json and registry.sigstore.json, enumerating every supported ONNX and GGUF Qwen 2.5 Coder 1.5B/3B 4-bit variant, immutable URL/origin, redirect policy, SHA-256 digest, byte limit, SPDX license ID and license-text hash, tokenizer digest, runtime/backend/device/context metadata, expiry, publisher identity, and artifact evidence. Expose acquisition only as the literal CLI operation rush model download and admit optional onnxruntime, mutually exclusive onnxruntime-gpu, and llama-cpp-python extras without a default cloud runtime.
+1. Add src/rush/resources/models/registry.json and src/rush/resources/models/registry.sigstore.json enumerating every supported ONNX and GGUF Qwen 2.5 Coder 1.5B/3B 4-bit variant, immutable URL/origin, redirect policy, SHA-256 digest, byte limit, SPDX license ID and license-text hash, tokenizer digest, runtime/backend/device/context metadata, expiry, publisher identity, and artifact evidence. Run the unchanged P50-140/P50-143-owned registry fixtures; expose the acquisition implementation only to the P50-150-owned literal CLI operation rush model download, and consume the P50-019 optional runtime extras without rewriting them.
 2. Verify the registry signature using pinned Sigstore TUF roots and the declared publisher identity before accepting registry data; reject missing/invalid/expired signatures, unpinned roots, publisher mismatch, unknown model IDs, changed origins, redirects, digest/size/license/tokenizer mismatch, and expired metadata with stable structured errors.
 3. Acquire through a contained streaming cache beneath the configured model root, enforcing byte and decompressed-size limits, timeout, cancellation, no symlink/path escape, no writes outside the cache, and no overwrite of an existing digest; hash while streaming, fsync, atomically promote, and retain registry/artifact/tokenizer/license evidence and recovery metadata.
 4. Make acquisition CLI-only as required by the air-gap boundary: never download or mutate the registry/cache from an MCP request or inference path; when offline mode is active, permit only preinstalled verified artifacts and return an explicit unavailable-artifact error for absent bytes.
 
 ## Deliverables
 
-- Production: src/rush/resources/models/registry.json and registry.sigstore.json.
-- Tests: tests/fixtures/phase50/offline/registry.json and registry.sigstore.json with valid and tampered cases.
+- Production: src/rush/resources/models/registry.json; src/rush/resources/models/registry.sigstore.json; src/rush/model_registry.py; src/rush/providers/offline.py.
+- Tests: Run unchanged tests/fixtures/phase50/offline/registry.json and registry.sigstore.json plus tests/test_model_registry.py; their RED owner remains the only test/fixture writer.
 - Production: Registry verification, cache, streaming, atomic-promotion, expiry, license, redirect, size, path-containment, and recovery implementation in src/rush/model_registry.py and related provider code.
-- Tests: tests/test_model_registry.py evidence for signature, TUF-root, publisher, digest, byte-limit, license, tokenizer, expiry, cache, recovery, offline, and CLI-only acquisition behavior.
+- Tests: Run unchanged producer-owned verification from tests/test_model_registry.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: create ignored .rush/phase50-evidence/P50-147.json with registry/signature/publisher/TUF/artifact/license/cache/recovery command results and digests.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-146 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; src/rush/resources/models/registry.json; src/rush/resources/models/registry.sigstore.json; tests/fixtures/phase50/offline/registry.json; src/rush/model_registry.py; tests/test_model_registry.py.
-- Allowed writes: src/rush/resources/models/registry.json; tests/fixtures/phase50/offline/registry.json; src/rush/model_registry.py; tests/test_model_registry.py.
+- Allowed reads: AGENTS.md; this plan; src/rush/resources/models/registry.json; src/rush/resources/models/registry.sigstore.json; tests/fixtures/phase50/offline/registry.json; tests/fixtures/phase50/offline/registry.sigstore.json; src/rush/model_registry.py; src/rush/providers/offline.py; tests/test_model_registry.py.
+- Allowed writes: src/rush/resources/models/registry.json; src/rush/resources/models/registry.sigstore.json; src/rush/model_registry.py; src/rush/providers/offline.py; .rush/phase50-evidence/P50-147.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8607,7 +8606,7 @@ Transition: RED tests reject unsigned, mutable, redirected, hash-mismatched, lic
 - Run valid and each tampered registry/artifact fixture and assert the exact structured error category, evidence digest, and non-mutated cache state.
 - Interrupt a streaming promotion and verify no partial artifact is selectable; verify a prior verified artifact remains intact.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_model_registry.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8637,20 +8636,20 @@ Transition: RED tests show socket/network and path-escape violations; GREEN runs
 ## Deliverables
 
 - Production: OS-boundary implementation and provider hooks in src/rush/providers/offline.py and src/rush/tools/offline_runner.py.
-- Tests: tests/fixtures/phase50/offline/external-data-model.json and network/path-escape fixtures.
-- Tests: tests/test_air_gap.py and tests/test_socket_denied.py, plus integration assertions in tests/test_offline_review.py.
+- Tests: Run unchanged producer-owned verification from tests/fixtures/phase50/offline/external-data-model.json; this GREEN task may not modify paired tests or fixtures.
+- Tests: Run unchanged producer-owned verification from tests/test_air_gap.py; tests/test_socket_denied.py; tests/test_offline_review.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: Air-gap evidence schema and docs inputs for P50-151.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: create ignored .rush/phase50-evidence/P50-148.json with OS-boundary identity, denied-operation matrix, zero-connection proof, platform result, and digests.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-147 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/providers/offline.py; tests/fixtures/phase50/offline; src/rush/tools/offline_runner.py; tests/fixtures/phase50/offline/external-data-model.json; tests/test_air_gap.py; tests/test_socket_denied.py; tests/test_offline_review.py.
-- Allowed writes: src/rush/providers/offline.py; src/rush/tools/offline_runner.py; tests/fixtures/phase50/offline/external-data-model.json; tests/test_air_gap.py; tests/test_socket_denied.py; tests/test_offline_review.py.
+- Allowed writes: src/rush/providers/offline.py; src/rush/tools/offline_runner.py; create ignored .rush/phase50-evidence/P50-148.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8667,7 +8666,7 @@ Transition: RED tests show socket/network and path-escape violations; GREEN runs
 - Inspect evidence for boundary, root, denial, endpoint, digest, and zero-connection fields.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_air_gap.py tests/test_socket_denied.py tests/test_offline_review.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8696,9 +8695,9 @@ Transition: RED tests reject unbounded prompts, malformed grammar, invalid JSON,
 ## Deliverables
 
 - Production: Grammar/context/bounded-generation implementation in src/rush/tools/offline_runner.py and provider modules.
-- Tests: tests/fixtures/phase50/offline/grammar.json with valid, malformed, unsupported, and limit cases.
-- Tests: tests/test_offline_review.py assertions for context limits, grammar enforcement, deterministic output, schema parsing, invalid response, and explicit failure.
-- Evidence: Prompt/context/output digests and redacted structured evidence.
+- Tests: Run unchanged producer-owned verification from tests/fixtures/phase50/offline/grammar.json; this GREEN task may not modify paired tests or fixtures.
+- Tests: Run unchanged producer-owned verification from tests/test_offline_review.py; this GREEN task may not modify paired tests or fixtures.
+- Evidence: create ignored .rush/phase50-evidence/P50-149.json with prompt/context/output digests, bounds, deterministic comparisons, invalid/limit outcomes, and zero-cloud/socket proof.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -8709,7 +8708,7 @@ Transition: RED tests reject unbounded prompts, malformed grammar, invalid JSON,
 - Task kind: GREEN.
 - Prerequisites: P50-148 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/fixtures/phase50/offline/grammar.json; src/rush/tools/offline_runner.py; tests/test_offline_review.py.
-- Allowed writes: src/rush/tools/offline_runner.py; tests/fixtures/phase50/offline/grammar.json; tests/test_offline_review.py.
+- Allowed writes: src/rush/tools/offline_runner.py; create ignored .rush/phase50-evidence/P50-149.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8726,7 +8725,7 @@ Transition: RED tests reject unbounded prompts, malformed grammar, invalid JSON,
 - Exercise oversized context/output and cancellation/timeout and verify no unbounded retry or partial success.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_offline_review.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8747,7 +8746,7 @@ Transition: RED tests prove missing CLI/MCP/ADR routes, untyped options, acquisi
 
 ## Required behavior
 
-1. Modify src/rush/cli.py, src/rush/mcp.py, src/rush/catalog.py, and src/rush/config.py to register canonical rush offline and typed options for path, model ID, format, runtime, backend, device, tokenizer, grammar, context/output/token/time budgets, timeout, seed, evidence root, and strict air-gap mode; reject unknown/invalid combinations before execution. Register canonical rush offline, compatibility rush review --offline, compatibility rush offline-review, and MCP rush_review(offline=True); keep model download absent from MCP.
+1. Modify src/rush/cli.py, src/rush/mcp.py, src/rush/catalog.py, and src/rush/config.py to register canonical `rush offline` and typed options for path, model ID, format, runtime, backend, device, tokenizer, grammar, context/output/token/time budgets, timeout, seed, evidence root, and strict air-gap mode; reject unknown/invalid combinations before execution. Register canonical `rush offline`, compatibility `rush review --offline`, compatibility `rush offline-review`, MCP `rush_review(offline=True)`, and the explicit CLI-only acquisition operation `rush model download`; prove model download is absent from MCP.
 2. Implement rush offline as the canonical route and preserve rush review --offline as a compatibility alias that forwards to the same implementation and returns the same JSON/exit/evidence semantics; preserve the ADR-declared rush_review(offline=True) forwarding path with no duplicate tool logic.
 3. Register MCP rush_offline_review() with data-only JSON-RPC behavior, canonical ToolResult fields, and no acquisition/mutation/network side effects; all CLI, MCP, and ADR paths must use the same implementation in src/rush/tools/offline_runner.py.
 4. Keep model acquisition CLI-only and explicit; MCP and review compatibility routes may select only an already verified contained artifact, and must return a structured unavailable-artifact/error result otherwise; preserve redaction, permission, containment, and air-gap enforcement.
@@ -8755,20 +8754,20 @@ Transition: RED tests prove missing CLI/MCP/ADR routes, untyped options, acquisi
 ## Deliverables
 
 - Transport: Updated CLI, MCP, catalog, and typed config registrations.
-- Tests: Shared canonical offline implementation and route-parity tests in tests/test_offline_review.py and tests/test_public_api.py or equivalent Phase 50 public contract suite.
+- Tests: Run unchanged producer-owned verification from tests/test_offline_review.py; tests/test_public_api.py; this GREEN task may not modify paired tests or fixtures.
 - Transport: CLI help/schema, MCP schema, compatibility forwarding, and JSON-RPC evidence.
 - Documentation: Documentation source inputs for P50-151 covering rush offline, rush review --offline, rush_offline_review, ADR rush_review(offline=True), typed options, and CLI-only acquisition.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py, containing transport/configuration adapters only and no duplicated review or acquisition logic.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
-- Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Configuration: Canonical typed offline review and CLI-only model-download declarations in src/rush/catalog.py and src/rush/config.py.
+- Evidence: .rush/phase50-evidence/P50-150.json with route/object identity, MCP-absence, stdout, denial, and option-validation results.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-149 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; src/rush/tools/offline_runner.py; tests/test_offline_review.py; tests/test_public_api.py.
-- Allowed writes: tests/test_offline_review.py; tests/test_public_api.py.
+- Allowed writes: src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; .rush/phase50-evidence/P50-150.json. tests/test_offline_review.py and tests/test_public_api.py remain unchanged from the transport RED owner.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8779,12 +8778,12 @@ Transition: RED tests prove missing CLI/MCP/ADR routes, untyped options, acquisi
 
 ## Checks to run before reporting
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_public_api.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_public_api.py tests/test_mcp.py::test_model_download_is_cli_only_and_public_mcp_absent -q; expected exit 0 with every paired RED assertion unchanged.
 - Broader command: git diff --check; expected exit 0.
 - Start rush mcp serve and assert stdout is JSON-RPC only, no diagnostics or acquisition output.
 - Attempt MCP acquisition and an unverified artifact and assert explicit structured denial with no cache mutation.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_offline_review.py tests/test_public_api.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_model_download_is_cli_only_and_public_mcp_absent -q; expected exit 0 with the preceding RED assertion unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8799,7 +8798,7 @@ Implement installed offline review acceptance and documentation in rush-cli in t
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-151 | P50-I24-ACCEPTANCE | GREEN | installed offline review acceptance and documentation
+# Feature: P50-151 | P50-I24-ACCEPTANCE | INSTALLED | installed offline review acceptance and documentation verification
 
 Transition: RED installed tests/docs checks expose missing resources, routes, claims, and evidence; GREEN verifies the packaged artifact end-to-end on CPU/CUDA with zero sockets and complete operator documentation.
 
@@ -8807,25 +8806,25 @@ Transition: RED installed tests/docs checks expose missing resources, routes, cl
 
 1. Add tests/test_phase50_installed_offline_review.py to build/install the wheel and sdist, verify package data includes src/rush/resources/models/registry.json, src/rush/resources/models/registry.sigstore.json, and the declared offline grammar/model resources, and exercise rush offline, rush review --offline, rush offline-review, and rush_review(offline=True). Validate docs/tools/offline_review.md and docs/guide/offline_ai_guide.md and measure or block the required 20-40 token/s installed runtime criterion.
 2. Cover valid ONNX and GGUF Qwen 2.5 Coder 1.5B/3B 4-bit metadata, CPU and CUDA selection, air-gap enforcement, bounded grammar inference, structured findings, missing-runtime skipped result, invalid/unverified model errors, CLI-only acquisition, deterministic evidence, and no external sockets in the installed artifact.
-3. Update docs/tools/offline_runner.md, the offline review/configuration guide, and required API/MCP reference sections with exact supported formats/backends/runtimes/devices, model IDs, signed registry and license requirements, cache lifecycle, air-gap mechanism, limits, routes, error/skip semantics, evidence fields, and CPU/CUDA throughput/compatibility claims grounded in captured artifacts.
+3. Verify the P50-145-owned docs/tools/offline_runner.md, docs/tools/offline_review.md, docs/guide/offline_ai_guide.md, and required CLI/MCP/config/catalog reference sections contain exact supported formats/backends/runtimes/devices, model IDs, signed registry and license requirements, cache lifecycle, air-gap mechanism, limits, routes, error/skip semantics, evidence fields, and CPU/CUDA throughput/compatibility claims grounded in captured artifacts; do not rewrite documentation here.
 4. Add a documentation/claim check that searches the built package and docs for every public route and named format/runtime/model/device and rejects stale offline-review, unsigned, ONNX-only, data-only, or cloud-fallback claims; retain command output, package hashes, model/registry digests, socket audit, and route-parity evidence.
 
 ## Deliverables
 
 - Tests: Installed wheel/sdist acceptance test and fixtures/evidence.
-- Documentation: docs/tools/offline_runner.md plus offline review/configuration and CLI/MCP reference updates.
+- Documentation: Verification only of P50-145-owned offline tool/guide/reference documentation; no documentation write in this installed task.
 - Transport: Package-data manifest evidence, route/exit matrix, CPU/CUDA evidence, registry/license evidence, air-gap/socket audit, and performance/compatibility measurements.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: .rush/phase50-evidence/P50-151.json with wheel/sdist hashes, external-CWD imports, route matrix, resource digests, socket audit, runtime/device outcomes, documentation claim results, and performance result/blocker.
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-150 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/docs; tests/test_phase50_installed_offline_review.py; src/rush/resources/models/registry.json; docs/tools/offline_runner.md.
-- Allowed writes: docs/tools/offline_runner.md.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_offline_review.py; tests/test_offline_review.py; src/rush/resources/models/registry.json; src/rush/resources/models/registry.sigstore.json; docs/tools/offline_runner.md; docs/tools/offline_review.md; docs/guide/offline_ai_guide.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md.
+- Allowed writes: tests/test_phase50_installed_offline_review.py; .rush/phase50-evidence/P50-151.json. Production, paired RED tests, fixtures, and documentation remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -8841,7 +8840,7 @@ Transition: RED installed tests/docs checks expose missing resources, routes, cl
 - Build wheel and sdist, install into a clean environment, run all four public surfaces, and assert expected exits/statuses.
 - Run documentation claim/resource/package-data checks and preserve package hashes, command output, and zero-socket evidence.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_offline_review.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8894,7 +8893,7 @@ Compare supplied numeric samples; execute no quality suite.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py::test_benchmark_compares_fixed_samples_against_threshold -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py::test_benchmark_compares_fixed_samples_against_threshold -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -8948,7 +8947,7 @@ Implement pinned descriptive statistics without orchestration.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py::test_benchmark_compares_fixed_samples_against_threshold -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9000,7 +8999,7 @@ Pin persistence independently from math.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py::test_benchmark_record_requires_cache_write_and_writes_versioned_schema tests/test_benchmark.py::test_benchmark_record_rejects_invalid_samples_and_escaping_path tests/test_benchmark.py::test_benchmark_record_preserves_existing_store_on_replace_failure -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py::test_benchmark_record_requires_cache_write_and_writes_versioned_schema tests/test_benchmark.py::test_benchmark_record_rejects_invalid_samples_and_escaping_path tests/test_benchmark.py::test_benchmark_record_preserves_existing_store_on_replace_failure -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9053,7 +9052,7 @@ Satisfy storage tests only.
 - Broader command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9105,7 +9104,7 @@ Pin exact typed options, CLI operations, MCP, and permissions.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_benchmark_catalog_declares_comparison_and_store_options tests/test_cli_registry.py::test_benchmark_cli_forwards_compare_record_and_cache_permission tests/test_mcp.py::test_benchmark_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_benchmark_catalog_declares_comparison_and_store_options tests/test_cli_registry.py::test_benchmark_cli_forwards_compare_record_and_cache_permission tests/test_mcp.py::test_benchmark_mcp_uses_canonical_name_and_matches_cli -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9159,7 +9158,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_benchmark_catalog_declares_comparison_and_store_options tests/test_cli_registry.py::test_benchmark_cli_forwards_compare_record_and_cache_permission tests/test_mcp.py::test_benchmark_mcp_uses_canonical_name_and_matches_cli -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9211,7 +9210,7 @@ Remove statistical-significance and automatic-suite claims.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_benchmark.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "benchmark|rush_benchmark|statistically significant|record-baseline|cache-write|p95|fail_on" docs/tools/benchmark.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9240,10 +9239,10 @@ Transition: RED tests demonstrate recorded-only or single-run benchmark gaps; GR
 
 ## Deliverables
 
-- Tests: src/rush/tools/benchmark.py, typed benchmark options/specs, corpus and manifest fixtures, tests/test_benchmark.py, and raw evidence schema.
+- Tests: Run unchanged producer-owned verification from tests/test_benchmark.py; this GREEN task may not modify paired tests or fixtures.
 - Tests: Explicit cases for test, lint, binary, finding, token, CodeBLEU/quality, startup, latency, CPU, RSS, output, and package-size metrics.
 - Evidence: Evidence artifacts with run-level records and no recorded-only aggregate.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/tools/benchmark.py repeated SuiteRunner/BenchmarkTool orchestration, raw run records, manifest binding, and failure preservation.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -9254,7 +9253,7 @@ Transition: RED tests demonstrate recorded-only or single-run benchmark gaps; GR
 - Task kind: GREEN.
 - Prerequisites: P50-158 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/benchmark.py; tests/test_benchmark.py.
-- Allowed writes: src/rush/tools/benchmark.py; tests/test_benchmark.py.
+- Allowed writes: src/rush/tools/benchmark.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9270,7 +9269,7 @@ Transition: RED tests demonstrate recorded-only or single-run benchmark gaps; GR
 - Run the full manifest with at least the declared cold/warm repetition counts and assert every required metric has run-level observations.
 - Validate raw JSON schema, manifest/config/input digests, status/exit/error records, and no network/subprocess policy violations.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9298,10 +9297,10 @@ Transition: RED tests reject mean-only, p95-only, threshold-only, or non-signifi
 
 ## Deliverables
 
-- Tests: Statistical analysis implementation integrated with src/rush/tools/benchmark.py and tests/test_benchmark.py or a dedicated statistics module/test.
+- Tests: Run unchanged producer-owned verification from tests/test_benchmark.py; this GREEN task may not modify paired tests or fixtures.
 - Tests: Golden fixtures covering n=1, n=2, repeated normal data, variance changes, 20 percent boundaries, 10-history window, non-significant, significant, insufficient, skipped, and failed cases.
 - Configuration: Versioned analyzed evidence schema with raw/manifest/config digests.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/tools/benchmark.py BenchmarkStatistics, SignificanceEvaluator, deterministic analyzed records, and downstream report fields.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -9312,7 +9311,7 @@ Transition: RED tests reject mean-only, p95-only, threshold-only, or non-signifi
 - Task kind: GREEN.
 - Prerequisites: P50-159 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/benchmark.py; tests/test_benchmark.py.
-- Allowed writes: src/rush/tools/benchmark.py; tests/test_benchmark.py.
+- Allowed writes: src/rush/tools/benchmark.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9329,7 +9328,7 @@ Transition: RED tests reject mean-only, p95-only, threshold-only, or non-signifi
 - Confirm significant/non-significant/insufficient decisions are separately rendered and gate behavior is explicit.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9359,7 +9358,7 @@ Transition: RED tests show partial/corrupt/untyped baseline writes and history l
 
 - Production: Baseline persistence/recovery implementation in src/rush/tools/benchmark.py and common storage helpers.
 - Tests: .rush/baselines.json schema fixtures for valid, version-mismatch, digest-mismatch, corrupt, partial, unauthorized, and recovery cases.
-- Tests: tests/test_benchmark.py evidence for atomic writes, permission, history-10, validation, recovery, and no partial replacement.
+- Tests: Run unchanged producer-owned verification from tests/test_benchmark.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -9371,7 +9370,7 @@ Transition: RED tests show partial/corrupt/untyped baseline writes and history l
 - Task kind: GREEN.
 - Prerequisites: P50-160 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; .rush/baselines.json; src/rush/tools/benchmark.py; tests/test_benchmark.py; tests/exits.
-- Allowed writes: src/rush/tools/benchmark.py; .rush/baselines.json; tests/test_benchmark.py.
+- Allowed writes: src/rush/tools/benchmark.py; .rush/baselines.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9388,7 +9387,7 @@ Transition: RED tests show partial/corrupt/untyped baseline writes and history l
 - Validate JSON schema, digest chain, history length, and evidence fields.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9417,19 +9416,19 @@ Transition: RED tests expose missing routes, options, baseline permissions, and 
 ## Deliverables
 
 - Transport: CLI/MCP/catalog/config registrations and shared dispatch.
-- Tests: tests/test_benchmark.py and public contract tests for help/schema, route parity, typed errors, permission, baseline/export, and JSON-RPC output.
+- Tests: Run unchanged producer-owned verification from tests/test_benchmark.py; this GREEN task may not modify paired tests or fixtures.
 - Documentation: Exact help/schema and docs inputs for P50-163.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/cli.py and src/rush/mcp.py thin adapters; src/rush/catalog.py and src/rush/config.py canonical declarations; no benchmark logic in transports.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
-- Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Configuration: src/rush/catalog.py and src/rush/config.py typed benchmark options and route registration.
+- Evidence: create ignored .rush/phase50-evidence/P50-162.json with route/object identity, option, permission, stdout, and exit evidence.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-161 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/output.json; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; src/rush/tools/benchmark.py; tests/test_benchmark.py; tests/test_public_api.py; .rush/baselines.json.
-- Allowed writes: tests/test_benchmark.py.
+- Allowed writes: src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; create ignored .rush/phase50-evidence/P50-162.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9445,7 +9444,7 @@ Transition: RED tests expose missing routes, options, baseline permissions, and 
 - Exercise rush_benchmark() over stdio and assert JSON-only stdout plus route-parity evidence.
 - Verify denied baseline write leaves .rush/baselines.json unchanged.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_benchmark.py tests/test_public_api.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9460,7 +9459,7 @@ Implement installed benchmark acceptance and performance evidence in rush-cli in
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-163 | P50-I26-ACCEPTANCE | GREEN | installed benchmark acceptance and performance evidence
+# Feature: P50-163 | P50-I26-ACCEPTANCE | INSTALLED | installed benchmark acceptance and performance evidence
 
 Transition: RED installed checks reveal missing benchmark resources, metrics, statistical evidence, routes, or claims; GREEN validates the packaged benchmark end-to-end and documents measured behavior.
 
@@ -9468,25 +9467,25 @@ Transition: RED installed checks reveal missing benchmark resources, metrics, st
 
 1. Add installed-artifact tests that build wheel/sdist, install cleanly, run rush benchmark and rush_benchmark(), verify package/resource/config/catalog parity, execute the complete corpus and repeated cold/warm metric suite, and preserve raw/analyzed/baseline evidence. Measure or block the required <10 ms statistics-comparison overhead.
 2. Assert test/lint/binary/finding/token/CodeBLEU-or-approved-quality, startup, latency, CPU, RSS, output, package-size, statistical, threshold, significance, insufficient-data, and error/skip outcomes, including baseline history 10 and threshold 20 percent.
-3. Update docs/tools/benchmark.md and docs/developer/benchmarking-report.md (plus CLI/MCP/config references) with exact corpus, repetitions, metric formulas, statistics/test assumptions, thresholds, history, baseline file/effects, permissions, routes, expected exits/statuses, and no recorded-only claims.
+3. Verify the unchanged P50-158-owned docs/tools/benchmark.md, docs/developer/benchmarking-report.md, and CLI/MCP/config references against the installed behavior: exact corpus, repetitions, metric formulas, statistical assumptions, thresholds, history, baseline effects, permissions, routes, exits/statuses, and no recorded-only claims.
 4. Enforce the documented performance targets and analysis claim: analysis overhead under 10 ms where specified, with measured raw evidence and environment metadata; never replace measurement with an unmeasured assertion.
 
 ## Deliverables
 
-- Tests: Installed benchmark acceptance tests and clean package evidence.
-- Documentation: docs/tools/benchmark.md and docs/developer/benchmarking-report.md plus public reference updates.
-- Configuration: Raw/analyzed/baseline JSON, manifest/config digests, package hashes, command output, and performance report.
+- Tests: Create tests/test_phase50_installed_benchmark.py with clean wheel/sdist and external-CWD acceptance.
+- Documentation: Read-only verification of P50-158-owned benchmark documentation and public references.
+- Evidence: .rush/phase50-evidence/P50-163.json with raw/analyzed/baseline JSON digests, manifest/config digests, package hashes, command output, performance results, and blockers.
+- Configuration: N/A; configuration and baseline formats are verified read-only from the installed artifact.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-162 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; docs/tools/benchmark.md; docs/developer/benchmarking-report.md; tests/test_phase50_installed_benchmark.py; tests/test_benchmark.py; docs/claim.
-- Allowed writes: docs/tools/benchmark.md; docs/developer/benchmarking-report.md.
+- Allowed reads: AGENTS.md; this plan; docs/tools/benchmark.md; docs/developer/benchmarking-report.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; examples/rush.toml; tests/fixtures/phase50/docs/governed-docs.json and every exact benchmark/reference path named by that immutable manifest; tests/test_phase50_installed_benchmark.py; tests/test_benchmark.py; tests/test_phase50_packaging.py; pyproject.toml.
+- Allowed writes: tests/test_phase50_installed_benchmark.py; .rush/phase50-evidence/P50-163.json only. P50-158 documentation and all product paths remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9500,9 +9499,9 @@ Transition: RED installed checks reveal missing benchmark resources, metrics, st
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_benchmark.py tests/test_benchmark.py -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: git diff --check; expected exit 0.
 - Build/install wheel and sdist, run CLI/MCP parity, full corpus repetitions, statistical analysis, and explicit baseline/export checks.
-- Run docs/claim checks and verify analysis-overhead measurement is below 10 ms where required.
+- Run exact claims from docs/tools/benchmark.md, docs/developer/benchmarking-report.md, and the listed CLI/MCP/config/catalog/example references against installed behavior; verify analysis-overhead measurement is below 10 ms where required.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_benchmark.py tests/test_benchmark.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9532,7 +9531,7 @@ Create the fixed direct-tool RED contract that fails only because the complete p
 
 ## Deliverables
 
-- Tests: tests/test_dead_asset.py; test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph, test_dead_asset_classifies_literal_supported_dynamic_and_ambiguous_references_without_false_deletion, test_dead_asset_reports_manifest_candidates_and_reclaimed_bytes_across_all_required_formats; fixture: tests/fixtures/phase50/dead_assets/app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2; arrange: literal, supported-dynamic, ambiguous, unreadable, referenced, and orphan nodes; action: import DeadAssetTool inside each test body and call it directly; assert: canonical graph states, source spans, candidate paths, reclaimed bytes, and unchanged fixture-tree SHA-256.
+- Tests: tests/test_dead_asset.py; test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph, test_dead_asset_classifies_literal_supported_dynamic_and_ambiguous_references_without_false_deletion, test_dead_asset_reports_manifest_candidates_and_reclaimed_bytes_across_all_required_formats; fixtures: tests/fixtures/phase50/dead_assets/app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2, icon.svg, photo.jpg, photo.webp, and photo.avif; arrange literal, supported-dynamic, ambiguous, unreadable, referenced, and orphan nodes; import DeadAssetTool inside each test body and assert canonical graph states, source spans, candidate paths, reclaimed bytes, and unchanged fixture-tree SHA-256.
 - Evidence: .rush/phase50-evidence/P50-164-red.json; implementation revision, Python version, exact commands, exits, failing assertion, test node IDs, and fixture SHA-256 values produced by the checks below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
@@ -9545,7 +9544,7 @@ Create the fixed direct-tool RED contract that fails only because the complete p
 - Task kind: RED.
 - Prerequisites: P50-016 parser-pack GREEN evidence and P50-019 shared-readiness evidence.
 - Allowed reads: AGENTS.md; docs/developer/rush-token-innovation-enhancement-report-plan.md; src/rush/tools/dead_asset.py; DeadAssetScanner.scan_dead_assets; src/rush/tools/parser_pack.py; src/rush/cli.py; dead_asset_cmd; src/rush/mcp.py; existing rush_dead_asset adapter; tests/test_phase50_slsa_attestation.py; test_dead_asset_scanner.
-- Allowed writes: create tests/test_dead_asset.py; create exactly tests/fixtures/phase50/dead_assets/app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2; create ignored .rush/phase50-evidence/P50-164-red.json.
+- Allowed writes: create tests/test_dead_asset.py; create exactly tests/fixtures/phase50/dead_assets/app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2, icon.svg, photo.jpg, photo.webp, and photo.avif; create ignored .rush/phase50-evidence/P50-164-red.json.
 - Existing test_phase50_slsa_attestation.py, canonical ToolResult, legacy CLI/MCP signatures, and every production/public contract remain unchanged.
 - Prohibited: production, configuration, dependency, lockfile, CLI, MCP, manifest, prune, documentation, CI, release, version, Git-history, hook, commit, tag, push, publish, deploy, and real-asset changes.
 - Use no live network or credentials; do not use regex as an AST substitute, filename-text heuristics, glob deletion, Git rollback, skip, XFAIL, XPASS, collection failure, or import failure as RED evidence.
@@ -9555,13 +9554,13 @@ Create the fixed direct-tool RED contract that fails only because the complete p
 
 ## Checks to run before reporting
 
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py::test_dead_asset_scanner -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph -q; expected exit 0.
+- Focused commands: run separately .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph -q; tests/test_dead_asset.py::test_dead_asset_classifies_literal_supported_dynamic_and_ambiguous_references_without_false_deletion -q; and tests/test_dead_asset.py::test_dead_asset_reports_manifest_candidates_and_reclaimed_bytes_across_all_required_formats -q; each expected exit 1 only at its named semantic RED assertion.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py::test_dead_asset_scanner -q; expected exit 0.
 - Named failing assertion: test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph must fail at the asserted complete graph node/edge set because DeadAssetTool or parser-backed graph behavior is absent.
 - Expected failure: an ordinary assertion reports the missing DeadAssetTool contract or wrong literal graph value; no fixture-tree byte changes occur.
 - Confirmation: missing dependency, test collection failure, top-level import failure, skip, XFAIL, XPASS, route-not-found, environment failure, or unrelated assertion does not satisfy this RED.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_phase50_slsa_attestation.py::test_dead_asset_scanner -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED commands: rerun all three literal P50-164 test nodes separately; each must collect and exit 1 only for its named missing graph, classification, or reclaimed-byte behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9582,7 +9581,7 @@ Transition: RED tests expose false positives from static-only scanning; GREEN bu
 
 ## Required behavior
 
-1. Implement src/rush/tools/dead_asset.py and tests/test_dead_asset.py over tests/fixtures/phase50/dead_assets/app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, and unused.woff2; discover references to SVG, WOFF, WOFF2, PNG, JPEG, WebP, AVIF, images/fonts/icons, CSS classes, CSS custom properties/design tokens, imports, URLs, template bindings, component props, generated names, and dynamic maps. Inventory asset_dirs=public/assets and source_dirs=src; implement AssetPruner and rush ship clean; retain icon-${name}.svg only through an explicit dynamic-name whitelist; default to --dry-run.
+1. Implement only src/rush/tools/dead_asset.py against the unchanged P50-164 tests and exact fixtures app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2, icon.svg, photo.jpg, photo.webp, and photo.avif; discover SVG, WOFF/WOFF2, PNG, JPEG, WebP, AVIF, images/fonts/icons, CSS classes, custom properties/design tokens, imports, URLs, bindings, props, generated names, and dynamic maps. Inventory asset_dirs=public/assets and source_dirs=src; implement AssetPruner and rush ship clean; retain icon-${name}.svg only through an explicit dynamic-name whitelist; default to --dry-run.
 2. Parse Python, TypeScript, TSX, Rust, HTML, CSS, Vue, and Svelte source and preserve file/line/column/span, reference kind, asset/token identity, importer, dynamic expression, and resolution confidence; resolve relative/aliased paths, CSS/token graph edges, markup/template references, and generated/dynamic cases without treating text-only coincidences as proof.
 3. Emit a complete graph with reachable/unused/dynamic/unknown/unresolved nodes and edge evidence, explicit allowlist/keep annotations, hash/size/type metadata, and zero false-positive requirement for the labeled fixtures; retain unresolved or potentially dynamic assets rather than marking them dead.
 4. Keep graph discovery separate from deletion/effect execution; produce deterministic JSON/Markdown findings and a source digest that P50-174 and P50-175 can consume.
@@ -9590,8 +9589,8 @@ Transition: RED tests expose false positives from static-only scanning; GREEN bu
 ## Deliverables
 
 - Production: src/rush/tools/dead_asset.py graph/discovery implementation.
-- Tests: Complete fixture set app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2 and any named SVG/JPEG/WebP/AVIF fixtures.
-- Tests: tests/test_dead_asset.py for all languages/types/reference forms, dynamic/unknown/unresolved retention, token edges, aliases, spans, determinism, and false-positive labels.
+- Tests: Run unchanged exact fixtures app.jsx, app.tsx, index.html, view.vue, view.svelte, styles.css, tokens.css, dynamic-cases.json, kept.png, unused.woff2, icon.svg, photo.jpg, photo.webp, and photo.avif; do not create or modify tests or fixtures in this GREEN task.
+- Tests: Run unchanged producer-owned verification from tests/test_dead_asset.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Versioned graph schema and source-bound evidence.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -9603,7 +9602,7 @@ Transition: RED tests expose false positives from static-only scanning; GREEN bu
 - Task kind: GREEN.
 - Prerequisites: P50-164 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/dead_asset.py; tests/test_dead_asset.py; tests/fixtures/phase50/dead_asset.
-- Allowed writes: src/rush/tools/dead_asset.py; tests/test_dead_asset.py.
+- Allowed writes: src/rush/tools/dead_asset.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9619,7 +9618,7 @@ Transition: RED tests expose false positives from static-only scanning; GREEN bu
 - Run all named fixtures and assert each expected reachable/unused/dynamic/unknown/unresolved classification, asset type, token edge, and exact source span.
 - Repeat the scan and compare graph/evidence bytes and source digest.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9652,14 +9651,14 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: .rush/phase50-evidence/P50-166-green.json with RED evidence hash, commands/exits, canonical-result sample hash, changed-symbol list, and production diff hash.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-165 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/dead_asset.py; src/rush/tools/parser_pack.py; tests/test_dead_asset.py; tests/test_phase50_slsa_attestation.py; tests/test_parser_pack.py; .rush/phase50-evidence/P50-166-green.json.
-- Allowed writes: src/rush/tools/dead_asset.py; src/rush/tools/parser_pack.py.
+- Allowed writes: src/rush/tools/dead_asset.py; create ignored .rush/phase50-evidence/P50-166-green.json. src/rush/tools/parser_pack.py, paired tests, fixtures, and all other paths remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9677,7 +9676,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9706,21 +9705,21 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 ## Deliverables
 
 - Tests: Modify only tests/test_dead_asset.py.
-- Tests: Add exactly test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment and test_dead_asset_never_deletes_ambiguous_changed_unreadable_or_out_of_root_assets.
+- Tests: Add exactly test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment, test_dead_asset_never_deletes_ambiguous_changed_unreadable_or_out_of_root_assets, and test_dead_asset_prune_rejects_hard_link_escape.
 - Tests: Add fixture-local manifest and attack-vector builders inside that test file; do not touch real repository assets.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: .rush/phase50-evidence/P50-167-red.json with semantic failures, pre/post tree hashes, manifest bytes, commands/exits, and test diff hash.
 
 ## Constraints
 
 - Task kind: RED.
 - Prerequisites: P50-166 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_dead_asset.py; src/rush/tools/dead_asset.py; .rush/phase50-evidence/P50-167-red.json.
-- Allowed writes: tests/test_dead_asset.py.
+- Allowed writes: tests/test_dead_asset.py; create ignored .rush/phase50-evidence/P50-167-red.json. All production paths and repository fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9732,13 +9731,13 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 
 1. Inspect ExecutionPermissions.artifact_write, ExecutionPermissions.destructive_write, shared containment/atomic helpers, P50-166 result fields, and src/rush/tools/dead_asset.py; stop for plan amendment if a required shared primitive is absent.
 2. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q before editing; expect the P50-164 core tests to exit 0.
-3. Add only the two named tests. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment -q; expect exit 1 because the effect contract is absent.
+3. Add only the three named tests. Run the dry-run/manifest/rescan test and `test_dead_asset_prune_rejects_hard_link_escape` separately; each must collect and exit 1 only because the effect or hard-link identity contract is absent.
 4. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_never_deletes_ambiguous_changed_unreadable_or_out_of_root_assets -q; expect exit 1 on refusal/retention behavior with every protected fixture present.
 5. Run git diff -- tests/test_dead_asset.py; verify it is the only tracked write and retain failing assertions plus pre/post tree hashes.
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q before editing; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q before editing; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused commands: run tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment and tests/test_dead_asset.py::test_dead_asset_prune_rejects_hard_link_escape separately; each expected exit 1 for its named semantic RED assertion.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph -q; expected exit 0.
+- Paired RED commands: rerun the dry-run/manifest/rescan and hard-link test nodes separately; each must collect and exit 1 only for its named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9762,7 +9761,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 1. Make the unchanged P50-167 tests green with `DeletionManifest` and `PruneExecutor` in `src/rush/tools/dead_asset.py`.
 2. Keep dry-run write-free and require `artifact_write` for deterministic versioned path/hash/size/reason/state manifest records through shared contained atomic output.
 3. Require `destructive_write`, schema/root validation, no-follow containment, identity/hash rechecks, and a fresh P50-166 graph rescan before deleting an unchanged still-orphan candidate.
-4. Explicitly retain every candidate that fails any guard and return a canonical denied/error result without partial deletion.
+4. Explicitly retain every candidate that fails any guard and return ToolResult `status="error"` for permission/guard denial, or `status="skipped"` only for an unavailable optional engine; encode denial in a redacted finding and never introduce `denied` or `refused` as ToolStatus values.
 
 ## Deliverables
 
@@ -9780,7 +9779,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 - Task kind: GREEN.
 - Prerequisites: P50-167 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/dead_asset.py; tests/test_dead_asset.py; tests/test_output_containment.py; tests/test_permissions.py; .rush/phase50-evidence/P50-168-green.json.
-- Allowed writes: src/rush/tools/dead_asset.py.
+- Allowed writes: src/rush/tools/dead_asset.py; create ignored .rush/phase50-evidence/P50-168-green.json. Paired tests, fixtures, shared files, and all other paths remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -9793,12 +9792,12 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 1. Inspect P50-167 failures and shared effect APIs; confirm P50-166 graph supplies every manifest field before changing production; otherwise stop.
 2. Change only src/rush/tools/dead_asset.py; keep dry-run, export, and prune branches explicit and return canonical denied/error findings without partial deletion.
 3. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment -q; expect exit 0.
-4. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q and .venv/Scripts/python.exe -m pytest tests/test_output_containment.py tests/test_permissions.py -q; expect exit 0 with unchanged tests.
+4. Run each listed pytest command separately; expect exit 0 from tests/test_dead_asset.py and from tests/test_output_containment.py plus tests/test_permissions.py with unchanged tests.
 5. Run .venv/Scripts/ruff.exe check src/rush/tools/dead_asset.py tests/test_dead_asset.py and .venv/Scripts/ruff.exe format --check src/rush/tools/dead_asset.py tests/test_dead_asset.py; expect exit 0. Trace every unlink to permission, manifest, identity, hash, and rescan.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment -q; expected exit 0 with the paired RED test unchanged.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q and .venv/Scripts/python.exe -m pytest tests/test_output_containment.py tests/test_permissions.py -q; expected exit 0.
+- Broader commands: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; then .venv/Scripts/python.exe -m pytest tests/test_output_containment.py tests/test_permissions.py -q; each expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9853,10 +9852,10 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 2. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expect exit 0.
 3. Add the named test and run .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; expect exit 1 on missing thin-route behavior.
 4. Run git diff -- tests/test_cli_registry.py and retain the failing assertion and existing legacy signature observation.
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_builds_asset_css_token_and_polyglot_reference_graph -q; expected exit 0.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9884,7 +9883,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 
 - Transport: Modify only src/rush/cli.py.
 - Evidence: Revise only dead_asset_cmd/registration and use existing _run_tool/render helpers.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/cli.py transport registration/parsing/rendering adapter only; no dead-asset feature logic.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -9906,12 +9905,13 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 
 1. Inspect the P50-169 failure and current handler/callers; stop if an option is not declared by the prerequisite config task.
 2. Change only CLI parsing/forwarding/rendering.
-3. Run .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q and .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_phase50_public_compatibility.py -q; expect exit 0.
+3. Run .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; then run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_phase50_public_compatibility.py -q; expect exit 0 from each command.
 4. Run .venv/Scripts/ruff.exe check src/rush/cli.py tests/test_cli_registry.py and .venv/Scripts/ruff.exe format --check src/rush/cli.py tests/test_cli_registry.py; inspect cli.py for feature logic and expect none.
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q and .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_phase50_public_compatibility.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; expected exit 0 with the paired RED test unchanged.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_phase50_public_compatibility.py -q; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q and .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_phase50_public_compatibility.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_cli_registry.py::test_dead_asset_cli_inventory_manifest_dry_run_and_prune_share_registered_tool -q; expected exit 0 with the preceding RED assertion unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9964,10 +9964,10 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 2. Run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py -q; expect exit 0.
 3. Add the named test; run .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; expect exit 1 on route/object/permission parity.
 4. Retain the failing JSON-RPC response and verify git diff names only tests/test_mcp.py.
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py -q; expected exit 1 for the named semantic RED assertion.
-- Broader command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; expected exit 1 for the named semantic RED assertion.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py -q; expected exit 0.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -9995,7 +9995,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 
 - Transport: Modify only src/rush/mcp.py.
 - Evidence: Revise only dead-asset registration/compatibility forwarding.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/mcp.py generic registration/argument-forwarding/serialization adapter only; no dead-asset feature logic.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -10017,12 +10017,13 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 
 1. Inspect the P50-171 failure and generic registration; confirm the canonical object is already registered by its prerequisite.
 2. Change only MCP lookup/argument normalization/forwarding.
-3. Run .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q and .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_public_compatibility.py -q; expect exit 0.
+3. Run .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; then run .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_public_compatibility.py -q; expect exit 0 from each command.
 4. Run .venv/Scripts/ruff.exe check src/rush/mcp.py tests/test_mcp.py and .venv/Scripts/ruff.exe format --check src/rush/mcp.py tests/test_mcp.py; inspect mcp.py for business logic and stdout writes; expect none.
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q and .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_public_compatibility.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; expected exit 0 with the paired RED test unchanged.
+- Broader command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_public_compatibility.py -q; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q and .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_public_compatibility.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_mcp.py::test_dead_asset_mcp_matches_cli_and_prune_requires_explicit_permission -q; expected exit 0 with the preceding RED assertion unchanged.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10073,7 +10074,7 @@ Remove perfect-detection and safe-prune claims.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "dead-asset|rush_dead_asset|100%|zero false|prune|manifest|uncertain" docs/tools/dead_asset.md README.md README2.md README3.md docs/AGENTIC_RUSH.md docs/ARCHITECTURE.md docs/developer/architecture.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10103,8 +10104,8 @@ Transition: RED tests expose deletion without explicit effect, stale graph, part
 ## Deliverables
 
 - Production: Effect protocol integrated with src/rush/tools/dead_asset.py and common containment/permission helpers.
-- Tests: tests/test_dead_asset.py cases for default dry-run, explicit prune, output manifest, permission denial, changed hash, reachability race, path/symlink/.git refusal, interruption, recovery, and post-prune evidence.
-- Evidence: Versioned output manifest/journal/recovery schema.
+- Tests: Run unchanged producer-owned verification from tests/test_dead_asset.py; this GREEN task may not modify paired tests or fixtures.
+- Evidence: create ignored .rush/phase50-evidence/P50-174.json with manifest/journal/recovery schema, permission/path/race/hard-link matrix, hashes, and exact command exits.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -10115,7 +10116,7 @@ Transition: RED tests expose deletion without explicit effect, stale graph, part
 - Task kind: GREEN.
 - Prerequisites: P50-173 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/dead_asset.py; tests/test_dead_asset.py.
-- Allowed writes: src/rush/tools/dead_asset.py; tests/test_dead_asset.py.
+- Allowed writes: src/rush/tools/dead_asset.py; create ignored .rush/phase50-evidence/P50-174.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -10126,13 +10127,13 @@ Transition: RED tests expose deletion without explicit effect, stale graph, part
 
 ## Checks to run before reporting
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py::test_dead_asset_prune_rejects_hard_link_escape tests/test_dead_asset.py::test_dead_asset_dry_run_writes_nothing_and_prune_requires_destructive_permission_manifest_hash_rescan_and_containment -q; expected exit 0 with the paired RED tests unchanged.
 - Run default and explicit prune in isolated fixtures; assert default exit/status and file hashes unchanged.
-- Mutate candidate between graph and prune, deny permissions, inject symlink/.git/outside path, interrupt deletion, and assert refusal/recovery with no partial-success claim.
+- Mutate a candidate between graph and prune; deny permissions; inject symlink, hard-link escape, .git, and outside-root cases; interrupt deletion; assert refusal/recovery with no partial-success claim.
 - Validate manifest/journal/pre/post digests and canonical effect fields.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_dead_asset.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10147,34 +10148,33 @@ Implement dead-asset public surfaces and installed evidence in rush-cli in the c
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-175 | P50-I27-ACCEPTANCE | GREEN | dead-asset public surfaces and installed evidence
+# Feature: P50-175 | P50-I27-ACCEPTANCE | INSTALLED | verify dead-asset public surfaces and installed evidence
 
 Transition: RED checks expose missing routes, typed options, package resources, docs, or performance evidence; GREEN verifies complete graph and guarded effects from the installed artifact.
 
 ## Required behavior
 
-1. Register rush dead-asset . with typed --format, --output-manifest, --prune, --keep/allowlist, --include/asset-type, --follow-alias, --evidence-root, and permission/effect options in src/rush/cli.py, src/rush/mcp.py, src/rush/catalog.py, and src/rush/config.py; register rush_dead_asset() as data-only MCP and forward both to one implementation. Expose rush dead-asset . --dry-run --manifest .rush/dead-assets.json and require explicit destructive_write for prune.
+1. Verify the P50-170/P50-172-owned registrations for `rush dead-asset .` with typed `--format`, `--output-manifest`, `--prune`, `--keep/allowlist`, `--include/asset-type`, `--follow-alias`, `--evidence-root`, and permission/effect options in src/rush/cli.py, src/rush/mcp.py, src/rush/catalog.py, and src/rush/config.py; verify `rush_dead_asset()` is data-only MCP and both routes forward to one implementation. Do not modify transport or configuration here.
 2. Build/install wheel and sdist and run the complete named fixture/language/format/dynamic/token graph, default dry-run, explicit manifest, denied prune, successful guarded prune, hash-race, and recovery cases; assert zero false-positive on labeled fixtures and no external fetch.
-3. Update docs/tools/dead_asset.md and relevant CLI/MCP/config/release references with all supported languages/formats, CSS tokens, dynamic/unknown/unresolved policy, output schema, dry-run default, explicit permissions, prune/recovery semantics, route exits/statuses, and evidence fields.
+3. Verify the P50-173-owned docs/tools/dead_asset.md and CLI/MCP/config/release references contain all supported languages/formats, CSS tokens, dynamic/unknown/unresolved policy, output schema, dry-run default, explicit permissions, prune/recovery semantics, route exits/statuses, and evidence fields; documentation remains read-only here.
 4. Measure and evidence the required performance target of under 50 ms for 1,000 files where specified, including corpus/environment/engine metadata and graph correctness; do not replace this with a recorded-only or unmeasured claim.
 
 ## Deliverables
 
-- Tests: CLI/MCP/catalog/config registrations and public contract tests.
-- Tests: Installed acceptance suite and complete fixtures/resources.
-- Documentation: docs/tools/dead_asset.md and reference updates.
+- Tests: Create tests/test_phase50_installed_dead_asset.py only; run all existing CLI/MCP/catalog/config/core/effect tests and fixtures unchanged.
+- Documentation: Verification only of P50-173-owned docs/tools/dead_asset.md and reference updates.
 - Transport: Graph, manifest, permission/effect, recovery, performance, package-hash, and route-parity evidence.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: N/A; P50-170/P50-172-owned production and transport paths remain read-only.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: .rush/phase50-evidence/P50-175.json with wheel/sdist hashes, external-CWD imports, route/object parity, complete corpus, prune safety, recovery, documentation claims, and measured performance/blockers.
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-174 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; docs/tools/dead_asset.md; tests/test_phase50_installed_dead_asset.py; tests/test_dead_asset.py; docs/claim.
-- Allowed writes: docs/tools/dead_asset.md.
+- Allowed reads: AGENTS.md; this plan; src/rush/tools/dead_asset.py; src/rush/tools/__init__.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; docs/tools/dead_asset.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; tests/fixtures/phase50/docs/governed-docs.json and every exact dead-asset/reference path named by that immutable manifest; tests/test_phase50_installed_dead_asset.py; tests/test_dead_asset.py; tests/test_phase50_packaging.py; pyproject.toml; .rush/phase50-evidence/P50-170.json; .rush/phase50-evidence/P50-172.json; .rush/phase50-evidence/P50-173.json.
+- Allowed writes: tests/test_phase50_installed_dead_asset.py; .rush/phase50-evidence/P50-175.json. Production, paired RED tests, fixtures, configuration, transports, and documentation remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -10188,9 +10188,9 @@ Transition: RED checks expose missing routes, typed options, package resources, 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_dead_asset.py tests/test_dead_asset.py -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: git diff --check; expected exit 0.
 - Build/install wheel and sdist; run CLI/MCP parity, complete fixtures, dry-run/prune/recovery/effect tests, and 1,000-file timing.
-- Run docs/claim checks and verify measured graph runtime is under 50 ms where required.
+- Run exact claims from docs/tools/dead_asset.md and the listed CLI/MCP/config/catalog/security/example references against installed behavior; verify measured graph runtime is under 50 ms where required.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_dead_asset.py tests/test_dead_asset.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10243,7 +10243,7 @@ Pin a card that distinguishes observed Git/ToolResult evidence from unavailable 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py::test_pr_synthesize_renders_only_observed_evidence tests/test_pr_synthesize.py::test_pr_synthesize_missing_base_or_metric_is_explicit_not_success -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py::test_pr_synthesize_renders_only_observed_evidence tests/test_pr_synthesize.py::test_pr_synthesize_missing_base_or_metric_is_explicit_not_success -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10297,7 +10297,7 @@ Remove hardcoded verdicts in one private core that later integration cards can s
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py::test_pr_synthesize_renders_only_observed_evidence tests/test_pr_synthesize.py::test_pr_synthesize_missing_base_or_metric_is_explicit_not_success -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10349,7 +10349,7 @@ Pin artifact effect separately from evidence rendering.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py::test_pr_synthesize_export_requires_artifact_permission tests/test_pr_synthesize.py::test_pr_synthesize_export_is_contained_atomic_and_deterministic tests/test_pr_synthesize.py::test_pr_synthesize_export_preserves_existing_file_on_error -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py::test_pr_synthesize_export_requires_artifact_permission tests/test_pr_synthesize.py::test_pr_synthesize_export_is_contained_atomic_and_deterministic tests/test_pr_synthesize.py::test_pr_synthesize_export_preserves_existing_file_on_error -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10402,7 +10402,7 @@ Satisfy export tests only.
 - Broader command: git diff --check; expected exit 0.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10454,7 +10454,7 @@ Pin exact options and preserve `rush_pr_synthesize` as the canonical normalized 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_pr_synthesize_catalog_declares_evidence_and_output_options tests/test_cli_registry.py::test_pr_synthesize_cli_forwards_base_evidence_output_and_permission tests/test_mcp.py::test_pr_synthesize_mcp_uses_canonical_name_without_hardcoded_claims -q; expected exit 1 for the named semantic RED assertion.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_pr_synthesize_catalog_declares_evidence_and_output_options tests/test_cli_registry.py::test_pr_synthesize_cli_forwards_base_evidence_output_and_permission tests/test_mcp.py::test_pr_synthesize_mcp_uses_canonical_name_without_hardcoded_claims -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10508,7 +10508,7 @@ Satisfy integration only.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py tests/test_phase50_slsa_attestation.py -q; expected exit 0.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py::test_pr_synthesize_catalog_declares_evidence_and_output_options tests/test_cli_registry.py::test_pr_synthesize_cli_forwards_base_evidence_output_and_permission tests/test_mcp.py::test_pr_synthesize_mcp_uses_canonical_name_without_hardcoded_claims -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10560,7 +10560,7 @@ Remove accurate-risk/reviewer/test-proof claims.
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Broader command: rg -n "pr-synthesize|rush_pr_synthesize|reviewer|risk tier|SLSA|coverage|passed|GitHub API" docs/tools/pr_synthesize.md README.md README2.md README3.md docs/AGENTIC_RUSH.md docs/ARCHITECTURE.md docs/developer/architecture.md docs/CLI_REFERENCE.md docs/MCP_REFERENCE.md docs/CONFIGURATION.md docs/TOOL_CATALOG.md docs/SECURITY.md examples/rush.toml; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10582,7 +10582,7 @@ Transition: RED tests prove PR cards lose evidence families or fabricate absent 
 
 ## Required behavior
 
-1. Modify src/rush/tools/pr_synthesize.py and tests/test_pr_synthesize.py to ingest source-bound diff, test, coverage, blast-radius, migration, token-cost, specification, SLSA attestation, benchmark, provenance, and ownership evidence from their declared Phase 50 evidence artifacts, including .rush/phase50-evidence/P50-*.json and linked package/release evidence. Aggregate local Git diff, quality, test-heal, coverage, database-drift, semantic-version, src/rush/graft, blast-radius, migration, benchmark, provenance, and attestation evidence with source digests.
+1. Modify src/rush/tools/pr_synthesize.py and run the unchanged producer-owned tests/test_pr_synthesize.py to ingest source-bound diff, test, coverage, blast-radius, migration, token-cost, specification, SLSA attestation, benchmark, provenance, and ownership evidence from declared Phase 50 artifacts. Aggregate local Git diff, quality, test-heal, coverage, database-drift, semantic-version, src/rush/graft, blast-radius, migration, benchmark, provenance, and attestation evidence with source digests.
 2. Preserve for every evidence item its producer/task ID, source path, command, exit/status, timestamp, input/config/artifact digest, schema/version, finding/test/metric payload, permission/effect record, and link; reject invalid, stale, digest-mismatched, cross-repository, untrusted, or unverifiable evidence rather than silently dropping or rewriting it.
 3. Emit a complete deterministic evidence model keyed by commit/base_ref and requirement/task ID, with explicit present, missing, skipped, failed, stale, and unverifiable states; missing evidence must be visible in the card and must not become a passing claim or invented value.
 4. Correlate evidence to exact changed files/lines, requirements, tests, owners, attestation subjects, benchmark manifests, provenance chains, and release artifacts; include source and evidence digests in every downstream card so reviewers can reproduce the claim.
@@ -10590,7 +10590,7 @@ Transition: RED tests prove PR cards lose evidence families or fabricate absent 
 ## Deliverables
 
 - Production: Evidence ingestion/model/schema implementation in src/rush/tools/pr_synthesize.py.
-- Tests: tests/test_pr_synthesize.py fixtures and assertions for every named evidence family, valid/missing/failed/stale/tampered/cross-repository cases, digest and requirement correlation, and deterministic serialization.
+- Tests: Run unchanged producer-owned verification from tests/test_pr_synthesize.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Versioned evidence manifest and redacted source-bound evidence artifact.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -10602,7 +10602,7 @@ Transition: RED tests prove PR cards lose evidence families or fabricate absent 
 - Task kind: GREEN.
 - Prerequisites: P50-182 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/pr_synthesize.py; tests/test_pr_synthesize.py; .rush/phase50-evidence/P50-*.json; tests/ruff.
-- Allowed writes: src/rush/tools/pr_synthesize.py; tests/test_pr_synthesize.py.
+- Allowed writes: src/rush/tools/pr_synthesize.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -10618,7 +10618,7 @@ Transition: RED tests prove PR cards lose evidence families or fabricate absent 
 - Feed complete, missing, failed, stale, tampered, and cross-repository fixtures and assert exact state, no fabrication, and source/evidence digest links.
 - Repeat ingestion and compare model/evidence JSON bytes and requirement/task mapping.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10675,7 +10675,7 @@ Transition: RED tests expose ungrounded risk/reviewer badges or missing ownershi
 - Repeat output and compare JSON/risk/reviewer digests; verify a missing source never renders an affirmative badge.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10704,7 +10704,7 @@ Transition: RED tests expose missing fields, unstable ordering, source-link loss
 ## Deliverables
 
 - Production: PrCardTemplate/model and Markdown/JSON renderers in src/rush/tools/pr_synthesize.py.
-- Tests: tests/test_pr_synthesize.py golden Markdown/JSON fixtures, byte determinism, schema parity, escaping/path normalization, missing/failed evidence, permission, containment, and atomic-write cases.
+- Tests: Run unchanged producer-owned verification from tests/test_pr_synthesize.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Versioned rendered artifact schema and hashes.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -10716,7 +10716,7 @@ Transition: RED tests expose missing fields, unstable ordering, source-link loss
 - Task kind: GREEN.
 - Prerequisites: P50-184 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/pr_synthesize.py; tests/test_pr_synthesize.py; tests/exits.
-- Allowed writes: src/rush/tools/pr_synthesize.py; tests/test_pr_synthesize.py.
+- Allowed writes: src/rush/tools/pr_synthesize.py. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -10732,7 +10732,7 @@ Transition: RED tests expose missing fields, unstable ordering, source-link loss
 - Run write permission granted/denied and path-escape cases; assert atomic contained effect and unchanged tree on denial.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10761,19 +10761,19 @@ Transition: RED tests expose missing public routes, typed options, transport par
 ## Deliverables
 
 - Transport: CLI/MCP/catalog/config registration and canonical dispatch.
-- Tests: tests/test_pr_synthesize.py plus public API/transport tests for help/schema, old call signature, route parity, typed errors, JSON-only stdout, permissions, and output effects.
-- Evidence: Exact help/schema and compatibility evidence for P50-187 and release integration.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Tests: Run unchanged producer-owned verification from tests/test_pr_synthesize.py; this GREEN task may not modify paired tests or fixtures.
+- Evidence: create ignored .rush/phase50-evidence/P50-186.json with route/object identity, option, permission, stdout, and exit evidence.
+- Production: src/rush/cli.py and src/rush/mcp.py thin adapters; src/rush/catalog.py and src/rush/config.py canonical declarations; no PR synthesis logic in transports.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
-- Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
+- Configuration: src/rush/catalog.py and src/rush/config.py typed PR-synthesis options and route registration.
 
 ## Constraints
 
 - Task kind: GREEN.
 - Prerequisites: P50-185 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; src/rush/tools/pr_synthesize.py; tests/test_pr_synthesize.py; tests/test_public_api.py; tests/test_mcp.py.
-- Allowed writes: tests/test_pr_synthesize.py.
+- Allowed writes: src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; create ignored .rush/phase50-evidence/P50-186.json. Paired RED tests and fixtures remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -10788,7 +10788,7 @@ Transition: RED tests expose missing public routes, typed options, transport par
 - Broader command: git diff --check; expected exit 0.
 - Assert CLI/MCP/compatibility output/status/evidence parity and JSON-only MCP stdout.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py tests/test_public_api.py tests/test_mcp.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10803,7 +10803,7 @@ Implement installed PR synthesis and source-bound delivery evidence in rush-cli 
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-187 | P50-I28-ACCEPTANCE | GREEN | installed PR synthesis and source-bound delivery evidence
+# Feature: P50-187 | P50-I28-ACCEPTANCE | INSTALLED | installed PR synthesis and source-bound delivery evidence
 
 Transition: RED installed checks expose missing package resources, routes, formats, evidence links, or performance proof; GREEN validates the complete synthesizer from clean wheel/sdist installs.
 
@@ -10811,25 +10811,25 @@ Transition: RED installed checks expose missing package resources, routes, forma
 
 1. Add tests/test_phase50_installed_pr_synthesize.py to build/install wheel and sdist, verify src/rush/tools/pr_synthesize.py, PrCardTemplate, schemas, docs, fixtures, CLI/MCP registrations, and package data, then exercise complete/missing/failed/unknown evidence. Prove missing base defaults to an explicit error or unknown state and measure or block the required <50 ms synthesis overhead.
 2. Assert CLI rush pr-synthesize, MCP rush_pr_synthesize(), and PrSynthesizer.synthesize_pr_card(project_root, base_ref="main") produce equivalent complete Markdown/JSON cards with risk Low/Medium/High/Critical, ownership/blame/reviewer, every named evidence family, source links/digests, and explicit missing states.
-3. Update docs/tools/pr_synthesize.md and all relevant CLI/MCP/config/API/release references with exact inputs, output schemas, evidence families, risk/reviewer rules, compatibility signature, permissions/effects, expected exits/statuses, and deterministic dual-format behavior.
+3. Verify the unchanged P50-182-owned docs/tools/pr_synthesize.md and CLI/MCP/config/API/release references against installed behavior: exact inputs, schemas, evidence families, risk/reviewer rules, compatibility signature, permissions/effects, exits/statuses, and deterministic dual-format behavior.
 4. Measure the required installed performance target under 50 ms where specified for card synthesis, recording corpus, changed-file/evidence counts, runtime/environment, command, raw timing, and digest; retain correctness and source-bound evidence rather than a recorded-only claim.
 
 ## Deliverables
 
-- Tests: Clean wheel/sdist installed acceptance tests and package/resource evidence.
-- Documentation: docs/tools/pr_synthesize.md plus CLI/MCP/config/API/release reference updates.
-- Transport: Markdown/JSON golden hashes, evidence manifest, risk/reviewer/source-link matrix, route parity, performance measurements, and package hashes.
+- Tests: Create tests/test_phase50_installed_pr_synthesize.py with clean wheel/sdist and external-CWD acceptance.
+- Documentation: Read-only verification of P50-182-owned PR-synthesis documentation and public references.
+- Evidence: .rush/phase50-evidence/P50-187.json with Markdown/JSON golden hashes, evidence manifest, risk/reviewer/source-link matrix, route parity, performance measurements, package hashes, and blockers.
+- Transport: Read-only installed CLI/MCP parity verification; transport source remains owned by P50-186.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-186 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_pr_synthesize.py; src/rush/tools/pr_synthesize.py; docs/tools/pr_synthesize.md; tests/test_pr_synthesize.py; docs/claim/package-data.
-- Allowed writes: docs/tools/pr_synthesize.md.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_pr_synthesize.py; src/rush/tools/pr_synthesize.py; docs/tools/pr_synthesize.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; tests/test_pr_synthesize.py; tests/test_phase50_packaging.py; tests/fixtures/phase50/docs/governed-docs.json and every exact PR-synthesis/reference path named by that immutable manifest; pyproject.toml.
+- Allowed writes: tests/test_phase50_installed_pr_synthesize.py; .rush/phase50-evidence/P50-187.json only. P50-182 documentation and all product paths remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -10843,9 +10843,9 @@ Transition: RED installed checks expose missing package resources, routes, forma
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_pr_synthesize.py tests/test_pr_synthesize.py -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: git diff --check; expected exit 0.
 - Build/install wheel and sdist; run all public surfaces, complete evidence matrix, dual-format determinism/schema, permission/output, and under-50-ms timing checks.
-- Run docs/claim/package-data checks and preserve hashes, command output, route exits, and evidence digests.
+- Run the exact documentation claims from docs/tools/pr_synthesize.md and its listed public references, package-data assertions from tests/test_phase50_packaging.py/pyproject.toml, and installed probes; preserve hashes, command output, route exits, and evidence digests.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_pr_synthesize.py tests/test_pr_synthesize.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10869,13 +10869,13 @@ Verify integration after individual GREEN cards without creating a new implement
 ## Required behavior
 
 1. Inspect the exact fourteen-tool disposition from decision evidence and compare every admitted tool with TOOL_SPECS, ALL_TOOLS object identity, `CliRunner --help`, `build_server` names, typed option declarations, and the sole deprecated `rush_attest_generate` alias. Prove the other four historical underscore names are canonical registrations with no duplicate shim. Inspect transport source for `_run_tool`/registered-object calls only. Stop on the first missing per-feature integration test; do not create it here.
-2. Make this exact change in only the evidence file: write a fourteen-row matrix under `Route parity / P50-187` containing requirement disposition, ToolFn/class/module, ToolSpec/options, ALL_TOOLS object identity, CLI routes, canonical underscore MCP route, compatibility alias, result-shape test, integration task, and command exit. Every original subrequirement must be implemented or recorded as a blocker; no reduction, deferral, or substitute may be marked complete.
+2. Write the fourteen-row route parity matrix only to .rush/phase50-evidence/P50-188.json, including requirement disposition, ToolFn/class/module, ToolSpec/options, ALL_TOOLS identity, CLI route, canonical MCP route or explicit N/A, compatibility alias, result-shape test, integration task, and command exit. Every original subrequirement is implemented or blocked; no reduction, deferral, or substitute is complete.
 3. Run `.venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_prompt_eval.py tests/test_error_catalog.py tests/test_provenance_ai.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py tests/test_mem_profile.py tests/test_cold_start.py tests/test_media_opt.py tests/test_offline_review.py tests/test_tui_diff.py tests/test_benchmark.py tests/test_dead_asset.py tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_config.py tests/test_cli_registry.py tests/test_mcp.py -q`. Reinspect CLI/MCP source and record the exact matrix and exit.
 4. Stop and report a blocker if production edits; converting a blocked feature into a placeholder; deleting `rush_attest_generate`; retaining duplicate canonical-name shims; weakening assertions to match current output.
 
 ## Deliverables
 
-- Documentation: docs/developer/phase-50-implementation-evidence.md only; record the parity matrix there.
+- Documentation: Read-only input docs/developer/phase-50-implementation-evidence.md; P50-210 is its sole writer.
 - Evidence: .rush/phase50-evidence/P50-188.json; Enumerated implemented-tool set, test output, route-source inspection, parity matrix.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
@@ -10888,7 +10888,7 @@ Verify integration after individual GREEN cards without creating a new implement
 - Task kind: EVIDENCE.
 - Prerequisites: P50-020–P50-187 are complete with every full-scope behavior, effect, transport/applicability, documentation, installed-artifact, and readiness obligation green or explicitly blocked without a completion claim.
 - Allowed reads: AGENTS.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; TOOL_SPECS; ALL_TOOLS; cli.py command registry; build_server tool manager; every implemented Phase 50 ToolFn; config examples; deprecated alias wrappers..
-- Allowed writes: docs/developer/phase-50-implementation-evidence.md only; create ignored .rush/phase50-evidence/P50-188.json.
+- Allowed writes: create ignored .rush/phase50-evidence/P50-188.json only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: TOOL_SPECS; ALL_TOOLS; cli.py command registry; build_server tool manager; every implemented Phase 50 ToolFn; config examples; deprecated alias wrappers. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Production edits; converting a blocked feature into a placeholder; deleting `rush_attest_generate`; retaining duplicate canonical-name shims; weakening assertions to match current output.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -10897,8 +10897,8 @@ Verify integration after individual GREEN cards without creating a new implement
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_prompt_eval.py tests/test_error_catalog.py tests/test_provenance_ai.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py tests/test_mem_profile.py tests/test_cold_start.py tests/test_media_opt.py tests/test_offline_review.py tests/test_tui_diff.py tests/test_benchmark.py tests/test_dead_asset.py tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py tests/test_catalog.py tests/test_config.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Broader command: Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Broader command: inspect the task-local post-task SHA-256/status manifest; expected result: no newly changed path outside the task's Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10959,7 +10959,7 @@ Create the installed-artifact contract separately from evidence-file mutation. T
 - Broader command: .venv/Scripts/ruff.exe format --check tests/test_phase50_packaging.py; expected exit 0.
 - Broader command: git status --short; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -10983,13 +10983,13 @@ Keep final artifact evidence separate from test authoring and prohibit implement
 
 1. From the same implementation revision run `Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue`; `Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue`; `$phase50Worktree = (Resolve-Path .).Path`; `$phase50Dist = [System.IO.Path]::GetFullPath((Join-Path $phase50Worktree '.rush/phase50-dist'))`; `if (-not $phase50Dist.StartsWith($phase50Worktree + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { throw "phase50-dist escaped worktree" }`; `Remove-Item -LiteralPath $phase50Dist -Recurse -Force -ErrorAction SilentlyContinue`; `uv build --out-dir $phase50Dist`; `$phase50Wheels = @(Get-ChildItem -LiteralPath $phase50Dist -Filter 'rush-*.whl' -File)`; `if ($phase50Wheels.Count -ne 1) { throw "expected exactly one Rush wheel" }`; `$phase50Wheel = $phase50Wheels[0].FullName`; `uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file .rush/phase50-runtime-requirements.txt`; `uv venv --clear .rush/phase50-wheel-venv`; `uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline -r .rush/phase50-runtime-requirements.txt`; `uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline --no-deps $phase50Wheel`.
 2. Run `$env:RUSH_PHASE50_WHEEL = $phase50Wheel`; `$env:RUSH_PHASE50_PYTHON = (Resolve-Path .rush/phase50-wheel-venv/Scripts/python.exe).Path`; `.venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q`; `.rush/phase50-wheel-venv/Scripts/rush.exe --version`; `.rush/phase50-wheel-venv/Scripts/rush.exe --help`; `Get-FileHash -Algorithm SHA256 -LiteralPath $phase50Wheel`; `git status --short`. Capture the exact wheel filename, SHA-256, ZIP-member assertion, isolated interpreter/import path, CLI commands, MCP names, test exits, and dirty paths.
-3. Make this exact change in only docs/developer/phase-50-implementation-evidence.md: append the captured values and literal command/exit ledger beneath `Wheel evidence / P50-189`; state that no source checkout path, online dependency resolution, package-config edit, or release action was used.
+3. Write captured values and the literal command/exit ledger only to .rush/phase50-evidence/P50-190.json; state that no checkout path, online resolution, package-config edit, central-ledger edit, or release action was used.
 4. Stop and report a blocker if test, production, package-configuration, dependency, lock, version, or public-documentation edits; online fallback; source installation; publication/upload.
 
 ## Deliverables
 
-- Documentation: docs/developer/phase-50-implementation-evidence.md; regenerate ephemeral `.rush/phase50-dist`, `.rush/phase50-wheel-venv`, and `.rush/phase50-runtime-requirements.txt`.: Append only `Wheel evidence / P50-189` to docs/developer/phase-50-implementation-evidence.md.
-- Dependencies: docs/developer/phase-50-implementation-evidence.md; regenerate ephemeral `.rush/phase50-dist`, `.rush/phase50-wheel-venv`, and `.rush/phase50-runtime-requirements.txt`.
+- Documentation: Read-only input docs/developer/phase-50-implementation-evidence.md; P50-210 is its sole writer.
+- Dependencies: Read-only verification of pyproject.toml and uv.lock; regenerate only the three ignored contained ephemeral paths.
 - Evidence: .rush/phase50-evidence/P50-190.json; Independent wheel filename/SHA-256, ZIP-member assertion, isolated import path, public CLI/MCP lists, commands/exits, and evidence-only diff.; produced by the literal commands below.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
@@ -11001,7 +11001,7 @@ Keep final artifact evidence separate from test authoring and prohibit implement
 - Task kind: EVIDENCE.
 - Prerequisites: P50-189 passes; tests/test_phase50_packaging.py unchanged after its recorded result..
 - Allowed reads: AGENTS.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; pyproject.toml; uv.lock; unchanged tests/test_phase50_packaging.py; built wheel ZIP; installed CLI/MCP outputs; P50-189–P50-189 evidence..
-- Allowed writes: docs/developer/phase-50-implementation-evidence.md; regenerate ephemeral `.rush/phase50-dist`, `.rush/phase50-wheel-venv`, and `.rush/phase50-runtime-requirements.txt`.; create ignored .rush/phase50-evidence/P50-190.json.
+- Allowed writes: create ignored .rush/phase50-evidence/P50-190.json; regenerate only .rush/phase50-dist, .rush/phase50-wheel-venv, and .rush/phase50-runtime-requirements.txt. docs/developer/phase-50-implementation-evidence.md remains read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: pyproject.toml; uv.lock; unchanged tests/test_phase50_packaging.py; built wheel ZIP; installed CLI/MCP outputs; P50-189–P50-189 evidence. remains read-only.
 - Prohibited files, changes, and lifecycle actions: Test, production, package-configuration, dependency, lock, version, or public-documentation edits; online fallback; source installation; publication/upload.
 - Safety restrictions: no unapproved network, credentials, filesystem expansion, subprocess shell, Git history operation, packaging fallback, version edit, commit, merge, tag, push, publish, release, deployment, hook, or worktree removal.
@@ -11016,7 +11016,7 @@ Keep final artifact evidence separate from test authoring and prohibit implement
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q; expected exit 0.
 - Broader command: git status --short; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11039,15 +11039,15 @@ Produce one reproducible implementation-completion record without committing, ta
 ## Required behavior
 
 1. Inspect git diff --name-only and mechanically map every changed path to exactly one completed task. Inspect git diff --check and git status --short --branch. Stop on any unowned path, blocked-feature implementation, or unresolved merge marker.
-2. Make this exact change in only the evidence file: add the final revision, implemented-tool enumeration, blocked/deferred enumeration, path-to-task ownership table, dependency/lock disposition, documentation claim-search results, wheel SHA-256, and every command/exit below. Do not edit implementation to make a gate pass.
+2. Write final revision, implemented/blocked enumeration, path-owner table, dependency/lock disposition, documentation claim-search results, wheel SHA-256, and every command/exit only to .rush/phase50-evidence/P50-191.json. Do not edit implementation or the P50-210-owned central ledger to make a gate pass.
 3. Run these literal PowerShell commands in order: `Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue`; `Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue`; `.venv/Scripts/python.exe --version`; `.venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_prompt_eval.py tests/test_error_catalog.py tests/test_provenance_ai.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py tests/test_mem_profile.py tests/test_cold_start.py tests/test_media_opt.py tests/test_offline_review.py tests/test_tui_diff.py tests/test_benchmark.py tests/test_dead_asset.py tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py -q`; `.venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_config.py tests/test_cli_registry.py tests/test_mcp.py -q`; `.venv/Scripts/python.exe -m pytest tests/ --ignore=tests/test_phase50_packaging.py -q`; `.venv/Scripts/ruff.exe check src tests scripts`; `.venv/Scripts/ruff.exe format --check src tests scripts`; `uv lock --check`; `$phase50Worktree = (Resolve-Path .).Path`; `$phase50Dist = [System.IO.Path]::GetFullPath((Join-Path $phase50Worktree '.rush/phase50-dist'))`; `if (-not $phase50Dist.StartsWith($phase50Worktree + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { throw "phase50-dist escaped worktree" }`; `Remove-Item -LiteralPath $phase50Dist -Recurse -Force -ErrorAction SilentlyContinue`; `uv build --out-dir $phase50Dist`; `$phase50Wheels = @(Get-ChildItem -LiteralPath $phase50Dist -Filter 'rush-*.whl' -File)`; `if ($phase50Wheels.Count -ne 1) { throw "expected exactly one Rush wheel" }`; `$phase50Wheel = $phase50Wheels[0].FullName`; `uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file .rush/phase50-runtime-requirements.txt`; `uv venv --clear .rush/phase50-wheel-venv`; `uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline -r .rush/phase50-runtime-requirements.txt`; `uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline --no-deps $phase50Wheel`; `$env:RUSH_PHASE50_WHEEL = $phase50Wheel`; `$env:RUSH_PHASE50_PYTHON = (Resolve-Path .rush/phase50-wheel-venv/Scripts/python.exe).Path`; `.venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q`; `.rush/phase50-wheel-venv/Scripts/rush.exe --version`; `.rush/phase50-wheel-venv/Scripts/rush.exe --help`; `Get-FileHash -Algorithm SHA256 -LiteralPath $phase50Wheel`; `git diff --check`; `git diff --name-only`; `git status --short --branch`.
 4. Stop and report a blocker if production, tests, dependencies, public documentation, version, Git history, release state, and every completed task artifact remain unchanged.
 
 ## Deliverables
 
-- Documentation: docs/developer/phase-50-implementation-evidence.md; Final verification and handoff anchor; claim: exact revision, command ledger, changed-path ownership, artifact hashes, unresolved blocker truth, and no-release statement.
+- Documentation: Read-only input docs/developer/phase-50-implementation-evidence.md; P50-210 is its sole writer.
 - Dependencies: pyproject.toml and uv.lock; verify consistency without mutation; resolution command: uv lock --check; license/security condition: no dependency or lock drift.
-- Evidence: docs/developer/phase-50-implementation-evidence.md; exact command ledger and ownership table produced by the retained numbered instructions; ephemeral .rush/phase50-dist, .rush/phase50-wheel-venv, and .rush/phase50-runtime-requirements.txt may be regenerated.
+- Evidence: .rush/phase50-evidence/P50-191.json with exact command ledger and ownership table; the three ignored contained ephemeral paths may be regenerated.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -11058,7 +11058,7 @@ Produce one reproducible implementation-completion record without committing, ta
 - Task kind: HANDOFF.
 - Prerequisites: P50-190 evidence; every required Section 9 task complete; no uncovered, blocked, duplicate, dangling, or unpaired requirement slice.
 - Allowed reads: AGENTS.md; this plan; every task-owned changed file; git diff/status; test/lint/format/build outputs; dependency lock; installed artifacts; trust evidence.
-- Allowed writes: modify docs/developer/phase-50-implementation-evidence.md; regenerate only the three ignored ephemeral paths named above.
+- Allowed writes: create ignored .rush/phase50-evidence/P50-191.json; regenerate only the three ignored ephemeral paths named above. docs/developer/phase-50-implementation-evidence.md remains read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: all application, test, configuration, dependency, transport, documentation other than the evidence file, packaging, and release behavior remain read-only.
 - Prohibited files, changes, and lifecycle actions: production/test/public-doc/dependency corrections; commits, branches, merges, tags, pushes, version/changelog changes, uploads, publication, deployment, hooks, history edits, and worktree removal.
 - Safety restrictions: no live credentials/network fallback, source installation, uncontained deletion, ambient checkout import, secret output, or repair inside this evidence task.
@@ -11082,7 +11082,7 @@ Produce one reproducible implementation-completion record without committing, ta
 - Broader command: git diff --name-only; expected exit 0.
 - Broader command: git status --short --branch; expected exit 0.
 - Paired RED command: run the exact named RED test unchanged; expected exit 0 for GREEN and exit 1 for a RED task.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11100,16 +11100,16 @@ Implement Phase 49 admission and all-42 baseline in rush-cli in the current work
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-192 | P50-INTEGRATION-ADMISSION | GREEN | Phase 49 admission and all-42 baseline
+# Feature: P50-192 | P50-INTEGRATION-ADMISSION | VERIFY | Phase 49 admission and all-42 baseline
 
 Transition: RED tests fail on missing predecessor, wrong worktree, dirty tracked state, runtime, or baseline evidence; GREEN records an immutable admission and complete all-42 baseline without changing product scope.
 
 ## Required behavior
 
 1. Implement tests/test_phase50_admission.py to verify the accepted Phase 49 close SHA, designated non-main implementation worktree C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration, clean tracked state, Python 3.12 project interpreter, and passing recorded Phase 49 baselines before any behavior-changing Phase 50 task.
-2. Enumerate every innovation I01 through I42 and capture its source heading, requirement slices, current implementation status, test/doc/evidence owner, baseline command, exit code, and blocker truth; missing or unavailable predecessor evidence blocks admission without deleting or narrowing any requirement.
+2. Enumerate every innovation I01 through I42 from `docs/developer/rush-token-innovation-enhancement-report-plan.md`, reconcile it against `docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md` and `docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md`, and capture each exact source heading, line span, SHA-256, requirement slices, current implementation status, test/doc/evidence owner, baseline command, exit code, and blocker truth; missing or unavailable predecessor evidence blocks admission without narrowing scope.
 3. Verify pyproject.toml/uv.lock consistency and all shared dependencies/engines required by the plan, including codebleu, tree-sitter-language-pack, license-expression, python-hcl2, psutil, textual, scipy, optional onnxruntime/onnxruntime-gpu/llama-cpp-python, external Node 22.15+, Cosign, and slsa-verifier; record unavailable optional engines as explicit skips only where the contract permits.
-4. Emit .rush/phase50-evidence/P50-192.json with revision/worktree/runtime, all-42 rows, command/exit ledger, baseline digests, dependency/lock disposition, and blockers; do not alter source, tests, dependencies, version, Git history, release state, or evidence inputs.
+4. Emit .rush/phase50-evidence/P50-192.json with revision/worktree/runtime, all-42 rows, the three authority-file digests plus exact heading/line-span map, command/exit ledger, baseline digests, dependency/lock disposition, and blockers; do not alter source, tests, dependencies, version, Git history, release state, or evidence inputs.
 
 ## Deliverables
 
@@ -11124,9 +11124,9 @@ Transition: RED tests fail on missing predecessor, wrong worktree, dirty tracked
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-191 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_admission.py; .rush/phase50-evidence/P50-192.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; tests/test_phase50_admission.py; .rush/phase50-evidence/P50-192.json. Record exact relevant headings, line spans, and SHA-256 for all three authority files.
 - Allowed writes: tests/test_phase50_admission.py; .rush/phase50-evidence/P50-192.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -11142,8 +11142,8 @@ Transition: RED tests fail on missing predecessor, wrong worktree, dirty tracked
 - Broader command: git diff --check; expected exit 0.
 - .venv/Scripts/ruff.exe check tests/test_phase50_admission.py
 - uv lock --check; git diff --check; git diff --name-only; git status --short --branch
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_admission.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_admission.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11158,9 +11158,9 @@ Implement the 38-current-plus-14 52-row integration matrix and historical all-42
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-193 | P50-INTEGRATION-MATRIX | GREEN | 38-current-plus-14 matrix with separate historical subset
+# Feature: P50-193 | P50-INTEGRATION-MATRIX | VERIFY | 38-current-plus-14 matrix with separate historical subset
 
-Transition: RED tests expose missing cross-feature rows or arithmetic/scope drift; GREEN validates the exact source-defined 52-row matrix with explicit identities, consumers, and outcomes.
+Transition: RED tests expose missing rows or arithmetic/scope drift; GREEN validates the current-plan 38+14=52 matrix and independently validates the historical all-42 ledger. Neither ledger is authoritative for the other; any mapping/count contradiction blocks completion.
 
 ## Required behavior
 
@@ -11171,7 +11171,7 @@ Transition: RED tests expose missing cross-feature rows or arithmetic/scope drif
 
 ## Deliverables
 
-- Tests: tests/test_phase50_integration.py and source-defined 52-row matrix manifest.
+- Tests: tests/test_phase50_integration.py and a current-plan 52-row matrix manifest plus a separately identified historical all-42 manifest/assertion.
 - Tests: Complete row-to-task/path/test/doc/evidence ownership table.
 - Evidence: .rush/phase50-evidence/P50-193.json with count, conflict, and cross-feature results.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
@@ -11182,14 +11182,14 @@ Transition: RED tests expose missing cross-feature rows or arithmetic/scope drif
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-192 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_integration.py; .rush/phase50-evidence/P50-193.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md exact integration headings/spans; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md exact matrix headings/spans; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; tests/test_phase50_integration.py; .rush/phase50-evidence/P50-193.json. Record source file, heading, line span, and SHA-256 for each authority.
 - Allowed writes: tests/test_phase50_integration.py; .rush/phase50-evidence/P50-193.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- “52-row” is a required source label; do not substitute 56, a sample, a representative set, or a reduced matrix.
+- Current-plan 38+14=52 and historical all-42 are distinct required ledgers; do not substitute, add them together, call either source-defined for the other, sample them, or silently reconcile a contradiction.
 - No integration row may claim readiness from a producer-only or recorded-only artifact.
 - Preserve all language/provider/runtime/format/transport/config/effect/documentation slices.
 - Read-only matrix/evidence generation must not mutate implementation or release state.
@@ -11200,8 +11200,8 @@ Transition: RED tests expose missing cross-feature rows or arithmetic/scope drif
 - Broader command: git diff --check; expected exit 0.
 - Validate matrix schema, exact all-42 plus 14 labels, duplicate/dangling/owner checks, source digests, and all cross-feature edge results.
 - Record contradiction/blocker output if the numeric label cannot be reconciled.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_integration.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_integration.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11216,7 +11216,7 @@ Implement transport identity and legacy parity in rush-cli in the current workin
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-194 | P50-INTEGRATION-TRANSPORT | GREEN | transport identity and legacy parity
+# Feature: P50-194 | P50-INTEGRATION-TRANSPORT | VERIFY | transport identity and legacy parity
 
 Transition: RED tests detect duplicate ToolFn logic, route-only behavior, JSON-RPC contamination, or broken aliases; GREEN proves all transports invoke one canonical object with equivalent results.
 
@@ -11239,7 +11239,7 @@ Transition: RED tests detect duplicate ToolFn logic, route-only behavior, JSON-R
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-193 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_transport_identity.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/tools/; .rush/phase50-evidence/P50-194.json; tests/test_cli_registry.py; tests/test_mcp.py; src/rush/tools.
 - Allowed writes: tests/test_phase50_transport_identity.py; .rush/phase50-evidence/P50-194.json.
@@ -11257,8 +11257,8 @@ Transition: RED tests detect duplicate ToolFn logic, route-only behavior, JSON-R
 - Broader command: git diff --check; expected exit 0.
 - Run all listed CLI help/invalid/valid and MCP dispatch/schema probes; assert exact outputs/exits and stdout purity.
 - Inspect registered object identities and changed paths; stop on duplicate logic or route drift.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_transport_identity.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_transport_identity.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11273,7 +11273,7 @@ Implement quality evidence to SLSA attestation in rush-cli in the current workin
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-195 | P50-INTEGRATION-ATTESTATION | GREEN | quality evidence to SLSA attestation
+# Feature: P50-195 | P50-INTEGRATION-ATTESTATION | VERIFY | quality evidence to SLSA attestation
 
 Transition: RED tests show quality results absent or unbound from signed provenance; GREEN binds source, test, quality, benchmark, model, and attestation subjects without weakening signature policy.
 
@@ -11297,7 +11297,7 @@ Transition: RED tests show quality results absent or unbound from signed provena
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-194 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_attestation_quality.py; .rush/phase50-evidence/P50-195.json; tests/test_attest.py; tests/test_slsa_policy.py.
 - Allowed writes: tests/test_phase50_attestation_quality.py; .rush/phase50-evidence/P50-195.json.
@@ -11315,8 +11315,8 @@ Transition: RED tests show quality results absent or unbound from signed provena
 - Run Cosign/slsa-verifier checks over valid, tampered, wrong-subject, wrong-revision, unsigned, and missing-quality fixtures; record expected exits.
 - Compare all quality/attestation digests and verify release gate behavior for every non-pass state.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_attestation_quality.py tests/test_attest.py tests/test_slsa_policy.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_attestation_quality.py tests/test_attest.py tests/test_slsa_policy.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11331,7 +11331,7 @@ Implement attribution and TUI correlation in rush-cli in the current working dir
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-196 | P50-INTEGRATION-ATTRIBUTION | GREEN | attribution and TUI correlation
+# Feature: P50-196 | P50-INTEGRATION-ATTRIBUTION | VERIFY | attribution and TUI correlation
 
 Transition: RED tests show trailer/session attribution or TUI deltas without shared commit/finding identity; GREEN correlates I15 survival/defect evidence with I22 full-screen and CI-fallback views.
 
@@ -11355,7 +11355,7 @@ Transition: RED tests show trailer/session attribution or TUI deltas without sha
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-195 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_provenance_tui.py; src/rush/tools/provenance_ai.py; src/rush/tools/tui_diff.py; .rush/phase50-evidence/P50-196.json; tests/test_provenance_ai.py; tests/test_tui_diff.py; tests/test_tui_diff_app.py.
 - Allowed writes: tests/test_phase50_provenance_tui.py; .rush/phase50-evidence/P50-196.json.
@@ -11373,8 +11373,8 @@ Transition: RED tests show trailer/session attribution or TUI deltas without sha
 - Exercise 30/60/90 survival, defect, shallow/unknown, introduced/resolved/persisting/unknown, full-screen, fallback, terminal restore, and MCP JSON cases.
 - Compare correlation keys/digests and assert no false match or mutation.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py tests/test_tui_diff.py tests/test_tui_diff_app.py tests/test_phase50_provenance_tui.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_provenance_ai.py tests/test_tui_diff.py tests/test_tui_diff_app.py tests/test_phase50_provenance_tui.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11389,7 +11389,7 @@ Implement complete I28 evidence integration in rush-cli in the current working d
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-197 | P50-INTEGRATION-PR | GREEN | complete I28 evidence integration
+# Feature: P50-197 | P50-INTEGRATION-PR | VERIFY | complete I28 evidence integration
 
 Transition: RED tests show PR synthesis dropping one evidence family or displaying unsupported risk/reviewer claims; GREEN integrates all local evidence, deterministic tiers, owners, reviewers, and dual-format outputs.
 
@@ -11413,7 +11413,7 @@ Transition: RED tests show PR synthesis dropping one evidence family or displayi
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-196 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_pr_synthesis_integration.py; src/rush/tools/pr_synthesize.py; .rush/phase50-evidence/P50-197.json; tests/test_pr_synthesize.py.
 - Allowed writes: tests/test_phase50_pr_synthesis_integration.py; .rush/phase50-evidence/P50-197.json.
@@ -11431,8 +11431,8 @@ Transition: RED tests show PR synthesis dropping one evidence family or displayi
 - Run complete and every missing/failed/stale/unknown evidence fixture; compare Markdown/JSON field/link/digest parity.
 - Verify risk/reviewer decisions, permission denial/grant, route parity, and unchanged producer evidence.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py tests/test_phase50_pr_synthesis_integration.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_pr_synthesize.py tests/test_phase50_pr_synthesis_integration.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11447,14 +11447,14 @@ Implement performance corpus manifest and coverage in rush-cli in the current wo
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-198 | P50-INTEGRATION-PERFORMANCE | GREEN | performance corpus manifest and coverage
+# Feature: P50-198 | P50-INTEGRATION-PERFORMANCE | VERIFY | performance corpus manifest and coverage
 
 Transition: RED tests expose missing language/size/tool/runtime/quality cases; GREEN defines every required corpus row and repeated cold/warm/model/runtime measurement input.
 
 ## Required behavior
 
-1. Add tests/fixtures/phase50/benchmarks/manifest.json and tests/test_phase50_performance_evidence.py enumerating repository sizes, Python/TypeScript/TSX/Rust/HTML/CSS/Vue/Svelte, clean/finding/error/skip cases, configured parser/linter/formatter/test/binary/quality tools, local ONNX/GGUF CPU/CUDA variants, and package/install cases. Prove exactly 38 current capability rows plus 14 Phase 50 rows equals 52, while the historical all-42 set remains an independently verified subset.
-2. Declare cold and warm repetitions, model/runtime/device/seed/config, labeled expected findings for precision/recall/F1, CodeBLEU or approved quality metric, token/prompt/response counts, startup/latency/CPU/RSS/output/package-size metrics, and baseline/history/threshold/statistical inputs.
+1. Add tests/fixtures/phase50/benchmarks/manifest.json and tests/test_phase50_performance_evidence.py enumerating repository sizes, Python/TypeScript/TSX/Rust/HTML/CSS/Vue/Svelte, clean/finding/error/skip cases, configured tools, ONNX/GGUF CPU/CUDA variants, package/install cases, and exact fixed corpora for attestation (<100 ms per signed+verified artifact), license scan (<50 ms for exactly 200 dependencies), and IAM extraction (<30 ms for exactly 500 files). Prove current-plan 38+14=52 and historical all-42 independently.
+2. Declare cold/warm repetitions, model/runtime/device/seed/config, labeled findings, quality/token/startup/latency/CPU/RSS/output/package-size metrics, baseline/history/statistical inputs, and exact hardware schema. Include signed modern+legacy attestation fixtures and signer matrix, a 200-dependency polyglot license manifest with category/conflict mix, and a 500-file AWS/GCP/Azure/Terraform/CDK IAM corpus with pinned digests.
 3. Validate manifest schema, source/fixture digests, tool/config identity, permission profile, containment, no-network profile, and deterministic row ordering; missing or unmeasurable rows are explicit blockers, not omitted.
 4. Emit .rush/phase50-evidence/P50-198.json with manifest digest, row count, metric matrix, repetition plan, environment, and coverage gaps for P50-199 and release gates.
 
@@ -11471,10 +11471,10 @@ Transition: RED tests expose missing language/size/tool/runtime/quality cases; G
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-197 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/fixtures/phase50/benchmarks/manifest.json; tests/test_phase50_performance_evidence.py; .rush/phase50-evidence/P50-198.json.
-- Allowed writes: tests/test_phase50_performance_evidence.py; .rush/phase50-evidence/P50-198.json.
+- Allowed reads: AGENTS.md; this plan; tests/fixtures/phase50/benchmarks/manifest.json; the attestation/license/IAM fixed fixture inputs; tests/test_phase50_performance_evidence.py; .rush/phase50-evidence/P50-198.json.
+- Allowed writes: tests/fixtures/phase50/benchmarks/manifest.json; tests/test_phase50_performance_evidence.py; .rush/phase50-evidence/P50-198.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -11489,12 +11489,12 @@ Transition: RED tests expose missing language/size/tool/runtime/quality cases; G
 - Validate manifest JSON, every language/variant/metric/case, all digests, repetitions, and no-network/permission fields.
 - Run benchmark manifest schema/coverage check and record expected blocker rows.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_performance_evidence.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_performance_evidence.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- The full reproducible corpus and metric/run matrix is enumerated and digest-bound with no missing required row.
+- The full digest-bound corpus and metric matrix exists with no missing row, including exact <100 ms attestation, <50 ms/200-dependency license, and <30 ms/500-file IAM acceptance inputs.
 
 ## Handoff
 
@@ -11505,15 +11505,15 @@ Implement measured performance evidence and release decisions in rush-cli in the
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-199 | P50-INTEGRATION-PERFORMANCE-EVIDENCE | GREEN | measured performance evidence and release decisions
+# Feature: P50-199 | P50-INTEGRATION-PERFORMANCE-EVIDENCE | VERIFY | measured performance evidence and release decisions
 
 Transition: RED tests reject unmeasured, single-run, mean-only, or non-significant performance claims; GREEN records repeated raw runs, complete statistics, thresholds, significance, and explicit decisions.
 
 ## Required behavior
 
-1. Run P50-198 through src/rush/tools/benchmark.py over all declared cold/warm/tool/language/model/runtime/device/package rows; capture raw run records for wall/startup latency, CPU, peak RSS, output, tokens, findings, quality, binary/package size, status, exit, timeout, skip, and error. Pin seven ship vectors, rush ship gate <2.0 s, routing/distillation <5 ms, graph/skeleton <30 ms, scripts/sync_docs.py --check across 226 docs, and >850 tests.
+1. Run the P50-198 manifest through src/rush/tools/benchmark.py over every declared row; capture repeated raw wall/startup latency, CPU, peak RSS, output, tokens, findings, quality, size, status, exit, timeout, skip, and error. Measure and enforce signed+verified attestation <100 ms per real artifact across required profiles, license matrix <50 ms on the fixed 200-dependency corpus, IAM extraction <30 ms on the fixed 500-file corpus, seven ship vectors, rush ship gate <2.0 s, routing/distillation <5 ms, graph/skeleton <30 ms, docs sync 226/226, and >850 tests.
 2. Analyze with count, mean, standard deviation, median, min/max, p95, confidence interval, moving average, percent delta, effect size, t-test/declared test, significance, threshold 20 percent, history window 10, and insufficient/non-significant semantics.
-3. Preserve manifest/input/config/model/evidence digests, environment, command/argv, permissions, source spans, and baseline before/after; under-10-ms analysis and under-50-ms/1,000-file graph targets are measured claims where applicable, never substitutions.
+3. Preserve manifest/input/config/model/evidence digests, hardware/environment, command/argv, permissions, source spans, and baselines. Report count/mean/stddev/median/min/max/p95/confidence interval/effect/significance for the attestation, 200-dependency license, and 500-file IAM thresholds; unsupported hardware, missed threshold, insufficient samples, or non-significance is a blocker, never a skip or substituted corpus.
 4. Emit .rush/phase50-evidence/P50-199.json and block release/attestation/PR claims on missing rows, failed measurements, insufficient data, non-significant threshold claims, regression, or digest mismatch.
 
 ## Deliverables
@@ -11529,7 +11529,7 @@ Transition: RED tests reject unmeasured, single-run, mean-only, or non-significa
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-198 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; src/rush/tools/benchmark.py; .rush/phase50-evidence/P50-199.json; tests/test_phase50_performance_evidence.py; tests/test_benchmark.py.
 - Allowed writes: tests/test_phase50_performance_evidence.py; .rush/phase50-evidence/P50-199.json.
@@ -11545,14 +11545,14 @@ Transition: RED tests reject unmeasured, single-run, mean-only, or non-significa
 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_performance_evidence.py tests/test_benchmark.py -q; expected exit 0 with the paired RED test unchanged.
 - Run the complete manifest with declared repetitions and inspect raw/analyzed/baseline counts and digests.
-- Verify exact statistical fixture outcomes, threshold/history/significance decisions, timing targets, and gate blockers.
+- Verify exact statistical fixture outcomes, <100 ms attestation, <50 ms/200-dependency license, <30 ms/500-file IAM, all global timing targets, threshold/history/significance decisions, and gate blockers.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_performance_evidence.py tests/test_benchmark.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_performance_evidence.py tests/test_benchmark.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- All required performance claims have complete repeated raw and statistical evidence with explicit decisions and no false-positive release conclusion.
+- All required performance claims, including attestation, exact 200-dependency license scan, exact 500-file IAM extraction, and global targets, have repeated raw/statistical evidence with explicit decisions and no false-positive release conclusion.
 
 ## Handoff
 
@@ -11569,9 +11569,9 @@ Transition: RED tests fail only at missing complete package-data/resource/route 
 
 ## Required behavior
 
-1. Add or extend tests/test_phase50_packaging.py to build exactly one Rush wheel and sdist from the current revision, verify package metadata, source/resource inclusion, and reject source-checkout/PYTHONPATH imports, online resolution, copied-resource fallback, or mocked installed behavior.
-2. Assert package data includes every declared resource, schema, model registry/trust policy, docs/tool metadata, and fixture needed by installed acceptance, while excluding unintended source/test/research/secret files and preserving version/config/lock identity.
-3. Exercise installed rush --version, rush --help, all required CLI routes, MCP registrations, canonical public symbols, and package-data/resource discovery in an isolated environment; the RED assertions must fail only for owned missing behavior, not setup.
+1. Add or extend tests/test_phase50_packaging.py to build exactly one `rush-*.whl` and exactly one `rush-*.tar.gz` from the current revision, record SHA-256 for both, verify package metadata/source/resource inclusion, and reject source-checkout/PYTHONPATH imports, online resolution, copied-resource fallback, extra artifacts, or mocked installed behavior.
+2. Assert the package manifest literally contains `src/rush/tools/prompt_eval.py`, `src/rush/tools/error_catalog.py`, `src/rush/tools/provenance_ai.py`, `src/rush/tools/attest.py`, `src/rush/tools/license_matrix.py`, `src/rush/tools/iam_audit.py`, `src/rush/tools/mem_profile.py`, `src/rush/tools/cold_start.py`, `src/rush/tools/media_opt.py`, `src/rush/tools/tui_diff.py`, `src/rush/tools/offline_runner.py`, `src/rush/tools/benchmark.py`, `src/rush/tools/dead_asset.py`, `src/rush/tools/pr_synthesize.py`, `src/rush/tools/parser_pack.py`, `src/rush/tools/statistics.py`, `src/rush/providers/offline.py`, `src/rush/model_registry.py`, `src/rush/tui.py`, `src/rush/resources/iam/aws.json`, `src/rush/resources/iam/gcp.json`, `src/rush/resources/iam/azure.json`, `src/rush/resources/models/registry.json`, `src/rush/resources/models/registry.sigstore.json`, and `src/rush/resources/slsa/trust-policy-v1.json`. Reject an omitted listed path, undeclared runtime resource, tests/source-only fixtures, research, secrets, caches, or build evidence.
+3. Install the wheel and sdist separately into two fresh offline virtual environments, run each from an external empty CWD with `PYTHONPATH` and `VIRTUAL_ENV` cleared, and exercise installed `rush --version`, `rush --help`, all required CLI routes, MCP registrations, canonical public symbols, and importlib package-resource discovery; RED must fail only for owned missing behavior, not setup.
 4. Emit .rush/phase50-evidence/P50-200-red.json with wheel/sdist command, expected artifact names, package-data manifest, isolated path, expected RED assertions, and unchanged-tree hash.
 
 ## Deliverables
@@ -11589,7 +11589,7 @@ Transition: RED tests fail only at missing complete package-data/resource/route 
 
 - Task kind: RED.
 - Prerequisites: P50-199 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_packaging.py; docs/tool; .rush/phase50-evidence/P50-200-red.json; .rush/phase50-dist.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_packaging.py; pyproject.toml; uv.lock; src/rush/tools; src/rush/providers/offline.py; src/rush/model_registry.py; src/rush/tui.py; src/rush/resources/iam; src/rush/resources/models; src/rush/resources/slsa/trust-policy-v1.json; tests/fixtures/phase50/docs/governed-docs.json and every exact tool-documentation path named by that immutable manifest; .rush/phase50-evidence/P50-200-red.json; .rush/phase50-dist.
 - Allowed writes: tests/test_phase50_packaging.py; .rush/phase50-evidence/P50-200-red.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -11605,7 +11605,7 @@ Transition: RED tests fail only at missing complete package-data/resource/route 
 - Broader command: git diff --check; expected exit 0.
 - Inspect ZIP members, metadata, import path, package/resource manifest, git diff --check, and git status --short --branch.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11626,17 +11626,18 @@ Transition: GREEN satisfies the unchanged P50-200 contract from clean wheel/sdis
 
 ## Required behavior
 
-1. Build wheel and sdist with uv, install offline into .rush/phase50-wheel-venv using the frozen runtime requirements, and verify exactly one artifact, metadata/version/config/lock identity, package data, schemas, resources, docs/tool files, and declared model/trust-policy resources.
-2. Run installed rush --version, rush --help, all CLI routes, MCP route/schema checks, and canonical public imports with CWD outside the source checkout and PYTHONPATH/VIRTUAL_ENV cleared; assert no source path appears in imports or runtime resource resolution.
-3. Verify package-data-only behavior for model registry, SLSA trust policy, grammar/schemas, tool docs/metadata, and every installed acceptance fixture; reject online resolution, copied fallback, missing resource, dependency/lock drift, and unintended files.
-4. Emit .rush/phase50-evidence/P50-201.json with wheel/sdist SHA-256, ZIP members, installed import/resource paths, commands/exits, route/status results, and unchanged source/version/release state.
+1. Run `uv build --wheel --sdist --out-dir .rush/phase50-dist`; require exactly one `rush-*.whl` and one `rush-*.tar.gz`, record both SHA-256 values, create separate fresh `.rush/phase50-wheel-venv` and `.rush/phase50-sdist-venv`, install the frozen runtime requirements offline into each, then install the wheel into the first and the sdist into the second without dependency or source fallback.
+2. From separate external empty CWDs with `PYTHONPATH` and `VIRTUAL_ENV` cleared, run installed `rush --version`, `rush --help`, all CLI routes, MCP route/schema checks, canonical public imports, and importlib resource discovery in both environments; assert neither import nor runtime resource resolution references the checkout.
+3. Verify package-data-only behavior for the exact P50-200 resource allowlist; if the unchanged RED test proves a package-data inclusion gap, modify only pyproject.toml package-data/include declarations, never source logic, dependencies, lock identity, versions, or tests. Reject online resolution, copied fallback, missing resource, dependency/lock drift, and unintended files.
+4. Emit .rush/phase50-evidence/P50-201.json with the exact wheel/sdist filenames and SHA-256, deterministic member manifests, separate environment/CWD paths, installed import/resource paths, commands/exits, route/status results, and unchanged source/version/release state.
 
 ## Deliverables
 
-- Tests: GREEN package/build/install acceptance through tests/test_phase50_packaging.py.
+- Tests: Run unchanged P50-200 tests/test_phase50_packaging.py.
 - Evidence: .rush/phase50-evidence/P50-201.json and artifact hashes/manifest.
-- Evidence: Clean isolated .rush/phase50-wheel-venv evidence (ephemeral and ignored).
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: pyproject.toml package-data/include declarations only when unchanged P50-200 RED proves a packaging gap; otherwise no production change.
+- Evidence: Clean isolated `.rush/phase50-wheel-venv` and `.rush/phase50-sdist-venv` plus separate external-CWD evidence (ephemeral and ignored).
+- Packaging: pyproject.toml package-data/include declarations only when the P50-200 RED test proves a literal resource gap.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -11646,13 +11647,13 @@ Transition: GREEN satisfies the unchanged P50-200 contract from clean wheel/sdis
 
 - Task kind: GREEN.
 - Prerequisites: P50-200 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-wheel-venv; docs/tool; docs/metadata; .rush/phase50-evidence/P50-201.json; tests/test_phase50_packaging.py; .rush/phase50-dist; .rush/phase50-runtime-requirements.txt; .rush/phase50-wheel-venv/Scripts/python.exe; .rush/phase50-dist/rush_phase50.whl; .rush/phase50-wheel-venv/Scripts/rush.exe.
-- Allowed writes: tests/test_phase50_packaging.py; .rush/phase50-evidence/P50-201.json; .rush/phase50-wheel-venv.
+- Allowed reads: AGENTS.md; this plan; pyproject.toml; uv.lock; every literal P50-200 module/resource path; .rush/phase50-wheel-venv; .rush/phase50-sdist-venv; .rush/phase50-evidence/P50-201.json; tests/test_phase50_packaging.py; .rush/phase50-dist; .rush/phase50-runtime-requirements.txt; both fresh environment interpreters/entry points; the exact built wheel and sdist.
+- Allowed writes: pyproject.toml package-data/include declarations only; .rush/phase50-evidence/P50-201.json; contained ignored .rush/phase50-dist, .rush/phase50-wheel-venv, .rush/phase50-sdist-venv, two external empty-CWD directories, and .rush/phase50-runtime-requirements.txt. P50-200 RED tests remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
 - Package data only; no source checkout/PYTHONPATH, online dependency resolution, copied fallback, version change, publication, upload, or release action.
-- Use uv --offline with frozen requirements and one wheel/sdist identity.
+- Use `uv --offline` with frozen requirements, exactly one wheel and one sdist identity, and separate fresh environments; any extra/missing artifact, online resolution, or shared-environment acceptance is a blocker.
 - Keep package/resource paths contained and redacted.
 - Preserve all public routes and package data.
 
@@ -11660,14 +11661,14 @@ Transition: GREEN satisfies the unchanged P50-200 contract from clean wheel/sdis
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: git diff --check; expected exit 0.
-- uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline -r .rush/phase50-runtime-requirements.txt; uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline --no-deps .rush/phase50-dist/rush_phase50.whl
-- .venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q; .rush/phase50-wheel-venv/Scripts/rush.exe --version; .rush/phase50-wheel-venv/Scripts/rush.exe --help
+- Artifact/install commands: `uv build --wheel --sdist --out-dir .rush/phase50-dist`; require exactly one `rush-*.whl` and one `rush-*.tar.gz`; create fresh `.rush/phase50-wheel-venv` and `.rush/phase50-sdist-venv`; install `.rush/phase50-runtime-requirements.txt` with `uv pip install --offline` into each; install the exact wheel into the wheel environment and exact sdist into the sdist environment with `--offline --no-deps`; every command expected exit 0.
+- Installed probes: from separate external empty CWDs with both environment variables cleared, run each environment's `rush.exe --version`, `rush.exe --help`, CLI/MCP/resource/import probes, and the unchanged packaging test; every command expected exit 0 and no checkout path may appear.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_phase50_packaging.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- Clean offline wheel/sdist installations pass complete package-data/resource/public behavior with no source import or release mutation.
+- Clean, separate, offline wheel and sdist installations pass the complete literal module/resource/public-behavior manifest from external CWDs with exact artifact hashes, no source import, and no release mutation.
 
 ## Handoff
 
@@ -11684,15 +11685,15 @@ Transition: RED tests identify missing, stale, narrowed, contradictory, or undis
 
 ## Required behavior
 
-1. Add tests/test_phase50_docs.py to locate every required docs/tools file and public reference for I13-I28, shared contracts, package/config/dependencies, attestation/security, offline runtime, benchmark, dead-asset, PR synthesis, packaging, release, and handoff. Add a semantic RED assertion that scripts/sync_docs.py --check must exist, inspect all 226 governed docs, and fail on any claim/link mismatch; scripts/update_phase_docs.py is not an accepted substitute.
+1. Add tests/test_phase50_docs.py and the immutable versioned `tests/fixtures/phase50/docs/governed-docs.json` manifest containing exactly 226 governed paths, required headings, source authority spans, and SHA-256 digests. Require `scripts/sync_docs.py --check` to consume that exact manifest, inspect all 226 entries, emit literal `226/226 synchronized`, and fail on any claim/link/path/digest mismatch; `scripts/update_phase_docs.py` is not a substitute.
 2. Search exact names and variants: CLI commands, MCP names, symbols, providers, languages, runtimes, formats, devices, model IDs, permissions/effects, routes, statuses/exits, evidence fields, performance metrics, trust/signature claims, and lifecycle boundaries; fail on omitted or stale claims and on current-plan narrowings.
 3. Require docs to distinguish supported, unavailable, skipped, failed, unknown, insufficient, non-significant, blocked, and unverified outcomes, and to state CLI-only/network/air-gap/effect/release limits without promising an unsupported substitute.
-4. Emit .rush/phase50-evidence/P50-202-red.json with path/heading/search inventory, expected claims, missing/stale assertions, source digests, and no documentation mutations outside this owned RED contract.
+4. Emit .rush/phase50-evidence/P50-202-red.json with the versioned manifest path/digest, all 226 path/heading/source rows, expected claims, missing/stale assertions, and no documentation mutations outside this RED-owned test/manifest/evidence contract.
 
 ## Deliverables
 
-- Tests: tests/test_phase50_docs.py exact claim/discoverability RED suite.
-- Documentation: Complete feature-doc/reference path and search manifest.
+- Tests: tests/test_phase50_docs.py exact claim/discoverability RED suite and `tests/fixtures/phase50/docs/governed-docs.json` immutable 226-row contract manifest.
+- Documentation: Read-only complete feature-doc/reference path and claim-search inventory derived from the owned immutable manifest; no documentation file changes.
 - Evidence: .rush/phase50-evidence/P50-202-red.json.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -11703,8 +11704,8 @@ Transition: RED tests identify missing, stale, narrowed, contradictory, or undis
 
 - Task kind: RED.
 - Prerequisites: P50-201 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_docs.py; docs/tools; .rush/phase50-evidence/P50-202-red.json.
-- Allowed writes: tests/test_phase50_docs.py; .rush/phase50-evidence/P50-202-red.json.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_docs.py; tests/fixtures/phase50/docs/governed-docs.json; every tracked README*.md, docs/**/*.md, examples/**/*.toml, and .github/**/*.{yml,yaml} path named in that exact 226-document manifest; scripts/update_phase_docs.py as non-equivalent inventory only; .rush/phase50-evidence/P50-202-red.json.
+- Allowed writes: tests/test_phase50_docs.py; tests/fixtures/phase50/docs/governed-docs.json; .rush/phase50-evidence/P50-202-red.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -11715,12 +11716,12 @@ Transition: RED tests identify missing, stale, narrowed, contradictory, or undis
 
 ## Checks to run before reporting
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_docs.py -q; expected exit 1 for the named semantic RED assertion.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_docs.py -q; expected exit 1 only for the semantic absence/staleness caught against the collected immutable 226-row manifest.
 - Broader command: git diff --check; expected exit 0.
 - Run exact rg searches for all named route/symbol/provider/language/runtime/format/effect/evidence/lifecycle claims and record every miss.
 - Inspect git diff --check and document expected RED only.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_docs.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11741,14 +11742,14 @@ Transition: GREEN passes unchanged P50-202 checks with complete, exact, source-b
 
 ## Required behavior
 
-1. Implement scripts/sync_docs.py and update only README.md, README2.md, README3.md, docs/AGENTIC_RUSH.md, docs/ARCHITECTURE.md, docs/developer/architecture.md, docs/CLI_REFERENCE.md, docs/MCP_REFERENCE.md, docs/CONFIGURATION.md, docs/TOOL_CATALOG.md, docs/SECURITY.md, examples/rush.toml, docs/guide/context-intelligence-guide.md, docs/reference/context-benchmarks.md, and docs/RELEASE_NOTES_v0.3.0.md so scripts/sync_docs.py --check reports 226 of 226 governed documents synchronized without rewriting feature docs or unowned files.
+1. Implement `scripts/sync_docs.py` to consume the unchanged P50-202-owned `tests/fixtures/phase50/docs/governed-docs.json` byte-for-byte, and update only README.md, README2.md, README3.md, docs/AGENTIC_RUSH.md, docs/ARCHITECTURE.md, docs/developer/architecture.md, docs/CLI_REFERENCE.md, docs/MCP_REFERENCE.md, docs/CONFIGURATION.md, docs/TOOL_CATALOG.md, docs/SECURITY.md, docs/INSTALLATION.md, examples/rush.toml, docs/guide/context-intelligence-guide.md, docs/reference/context-benchmarks.md, and docs/RELEASE_NOTES_v0.3.0.md so `scripts/sync_docs.py --check` emits literal `226/226 synchronized` without rewriting feature docs, the manifest, or unowned files.
 2. Document exact I13-I28 behavior, all providers/languages/runtimes/formats/transports/config keys/effects, model/signature/air-gap/lifecycle rules, benchmark metrics/statistics/baseline, dead-asset graph/prune, PR evidence/risk/reviewers, package/install behavior, statuses/exits, and evidence paths without “offline-review”, ONNX-only, static-only, data-only, unsigned, recorded-only, or CPU-only reduction.
 3. Cross-link source headings, symbols, tests, commands, schemas, package/resources, supported/unsupported/skip/error/unknown states, performance measurements, release/hosted-builder boundaries, and no-publish/no-Git-mutation lifecycle constraints.
-4. Emit .rush/phase50-evidence/P50-203.json with changed docs paths/headings, claim-search output, source/config/reference digests, link checks, and exact command/exit ledger; only literal allowed docs/evidence paths may change.
+4. Emit .rush/phase50-evidence/P50-203.json with the immutable manifest path/digest, changed docs paths/headings, claim-search output, source/config/reference digests, link checks, literal `226/226 synchronized` output, and exact command/exit ledger; only literal allowed docs/evidence paths may change.
 
 ## Deliverables
 
-- Documentation: README.md; README2.md; README3.md; docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/developer/architecture.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; docs/guide/context-intelligence-guide.md; docs/reference/context-benchmarks.md; docs/RELEASE_NOTES_v0.3.0.md.
+- Documentation: README.md; README2.md; README3.md; docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/developer/architecture.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/INSTALLATION.md; examples/rush.toml; docs/guide/context-intelligence-guide.md; docs/reference/context-benchmarks.md; docs/RELEASE_NOTES_v0.3.0.md.
 - Tests: tests/test_phase50_docs.py remains unchanged and supplies GREEN evidence.
 - Evidence: .rush/phase50-evidence/P50-203.json and the source-to-claim/search/link matrix.
 - Production: scripts/sync_docs.py only.
@@ -11760,27 +11761,28 @@ Transition: GREEN passes unchanged P50-202 checks with complete, exact, source-b
 
 - Task kind: GREEN.
 - Prerequisites: P50-202 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; docs/tools; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/developer/benchmarking-report.md; docs/developer/phase-50-implementation-evidence.md; examples/rush.toml; .rush/phase50-evidence/P50-203.json; docs/evidence; docs/reference/config/example; tests/test_phase50_docs.py; docs/headings.
-- Allowed writes: scripts/sync_docs.py; README.md; README2.md; README3.md; docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/developer/architecture.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; docs/guide/context-intelligence-guide.md; docs/reference/context-benchmarks.md; docs/RELEASE_NOTES_v0.3.0.md; .rush/phase50-evidence/P50-203.json.
+- Allowed reads: AGENTS.md; this plan; the unchanged tests/fixtures/phase50/docs/governed-docs.json; docs/tools; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/INSTALLATION.md; docs/developer/benchmarking-report.md; docs/developer/phase-50-implementation-evidence.md; examples/rush.toml; .rush/phase50-evidence/P50-203.json; docs/evidence; docs/reference/config/example; unchanged tests/test_phase50_docs.py; every path named by the immutable 226-row manifest.
+- Allowed writes: scripts/sync_docs.py; README.md; README2.md; README3.md; docs/AGENTIC_RUSH.md; docs/ARCHITECTURE.md; docs/developer/architecture.md; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/INSTALLATION.md; examples/rush.toml; docs/guide/context-intelligence-guide.md; docs/reference/context-benchmarks.md; docs/RELEASE_NOTES_v0.3.0.md; .rush/phase50-evidence/P50-203.json. The P50-202 manifest and test remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
 - Documentation cannot declare reduced substitute complete or conceal missing/blocked/unknown evidence.
 - Preserve examples redaction and exact config/tool catalog consistency.
-- No source implementation, dependency, version, Git, release, publication, or lifecycle action.
+- No product-source implementation, dependency, version, Git, release, publication, or lifecycle action; scripts/sync_docs.py is the only owned automation source in this task.
 - All claims must point to captured implementation/test/evidence.
 
 ## Checks to run before reporting
 
 - Focused command: .venv/Scripts/python.exe -m pytest tests/test_phase50_docs.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe scripts/sync_docs.py --check; expected exit 0 and literal `226/226 synchronized` output against the unchanged `tests/fixtures/phase50/docs/governed-docs.json`, with that manifest SHA-256 recorded.
 - Broader command: git diff --check; expected exit 0.
 - Run git diff --check and verify only owned documentation/evidence paths changed.
 - Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_phase50_docs.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- All required documentation claims and references are complete, exact, discoverable, source-bound, and pass unchanged RED checks.
+- All required documentation claims and references, including docs/INSTALLATION.md, are complete, exact, discoverable, source-bound, and pass unchanged RED checks against the identical immutable 226-row manifest.
 
 ## Handoff
 
@@ -11797,26 +11799,26 @@ Transition: RED tests fail on missing or unsafe workflow/provenance/package/ship
 
 ## Required behavior
 
-1. Add tests/test_phase50_release_workflow.py to inspect workflow/config/release paths and assert explicit build, test, signing, verification, provenance, artifact, hosted-builder, and publication boundaries for Phase 50.
-2. Require release checks for exact wheel/sdist identity, package-data-only install, full regression, docs/claim, benchmark/statistical, attestation/signature/trust, SBOM/license/security, reviewer/ownership, and evidence ledger; missing/failed/unverified checks block release.
+1. Add tests/test_phase50_release_workflow.py to inspect every inventoried workflow/config/release path and require an additive `workflow_dispatch` readiness workflow whose executable build/test/install jobs use `windows-2022` and `pwsh`, whose workflow default is literal `permissions: { contents: read }`, and whose hosted-provenance reusable job alone uses literal `permissions: { actions: read, contents: read, id-token: write }`. Require literal fail-closed steps for base frozen sync; three separate fresh matrix jobs for `offline-onnx`, `offline-onnx-cuda`, and `offline-gguf` with no CPU/CUDA co-installation; full pytest; Ruff check/format; 226/226 docs sync; pip-audit; exactly-one wheel/sdist build; separate offline installs; SBOM generation/validation; both attestation-profile tests; `rush attest`; seven-vector `rush ship gate`; `cosign sign-blob`/`verify-blob`; a hosted SLSA generator; and `slsa-verifier verify-artifact`. Every step has expected exit 0 and no step may publish.
+2. Require exact tested wheel/sdist filenames and SHA-256 to flow unchanged through install, SBOM, signature, provenance, verifier, and evidence steps. Require build step `id: subject` to export non-empty `wheel-name`, `sdist-name`, `wheel-sha256`, `sdist-sha256`, `base64-subjects`, and immutable P50-001 `source-uri`; require the build job to map those step outputs as job outputs; require later same-job steps to consume declared `GITHUB_ENV` values and dependent jobs to consume only `${{ needs.build.outputs.* }}` values. Require transfer of only the tested wheel as a one-day workflow artifact; a separate `provenance` reusable job using `slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0` with `upload-assets: false`, `continue-on-error: false`, and `provenance-name: rush-phase50.intoto.jsonl`; and a separate `needs: [build, provenance]` verification job that downloads that exact wheel and hosted provenance and verifies subject SHA, source URI, and builder ID. Also require an explicit local Cosign bundle producer, modern Statement v1/SLSA v1 local attestation, immutable legacy in-toto v0.1/SLSA v0.2 ECDSA/RSA verification evidence, full regression, documentation claims, benchmark/statistical, license/security, reviewer/ownership, and one-revision ledgers. Temporary workflow-artifact transfer is not release/package publication; any release asset upload remains prohibited. Missing tools, artifacts, trusted policy, failed/unverified checks, filename/digest/output drift, or absent source URI block readiness.
 3. Assert no workflow/task may rewrite Git history, install hooks, create tags, change version/changelog, upload packages, publish releases, deploy, or use cloud/network fallback without an explicit user-controlled release flag and separate authorized operation.
 4. Emit .rush/phase50-evidence/P50-204-red.json with workflow paths, expected jobs/steps/gates, forbidden lifecycle assertions, source digests, and RED result without editing workflows or release state.
 
 ## Deliverables
 
 - Tests: tests/test_phase50_release_workflow.py RED lifecycle/gate suite.
-- Production: Workflow/gate/source matrix and .rush/phase50-evidence/P50-204-red.json.
+- Evidence: Workflow/gate/source matrix and .rush/phase50-evidence/P50-204-red.json; no production or workflow mutation in RED.
+- Production: N/A; this RED task must not modify workflow or release production paths.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
 
 ## Constraints
 
 - Task kind: RED.
 - Prerequisites: P50-203 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_release_workflow.py; docs/claim; .rush/phase50-evidence/P50-204-red.json.
+- Allowed reads: AGENTS.md; this plan; .github/workflows/ci.yml; .github/workflows/release.yml; the future .github/workflows/phase-50-release-readiness.yml path; pyproject.toml; uv.lock; src/rush/tools/release.py; src/rush/release/ci_generator.py; src/rush/release/provenance.py; src/rush/release/semver.py; tests/test_release_packaging_ci.py; tests/test_phase50_release_workflow.py; tests/test_attest.py; docs/developer/release-process.md; docs/maintainers/release-playbook.md; docs/workflows/supply_chain_security_and_flagship_release.md; .rush/phase50-evidence/P50-001.json; .rush/phase50-evidence/P50-067.json; .rush/phase50-evidence/P50-204-red.json.
 - Allowed writes: tests/test_phase50_release_workflow.py; .rush/phase50-evidence/P50-204-red.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -11832,7 +11834,7 @@ Transition: RED tests fail on missing or unsafe workflow/provenance/package/ship
 - Broader command: git diff --check; expected exit 0.
 - Inspect workflow files, package scripts, attest/release commands, and forbidden lifecycle strings; record expected RED and git diff/status.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_release_workflow.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -11853,16 +11855,16 @@ Transition: GREEN passes unchanged release RED contracts and proves complete rel
 
 ## Required behavior
 
-1. Verify release workflows/configuration run or declare all exact Phase 50 gates: admission, 52-row integration, transport parity, quality/attestation, I15/I22, I28, performance, wheel/sdist installed behavior, docs, full regression, security/license/SBOM, reviewer/ownership, and one-revision evidence.
-2. Verify hosted-builder-only SLSA L3 and signed artifact/provenance policy, local air-gap/model boundaries, wheel/sdist hashes, package-data-only runtime, and explicit fail-closed behavior for missing/failed/unverified gates.
+1. Create the additive `.github/workflows/phase-50-release-readiness.yml` with `workflow_dispatch`; literal workflow default `permissions: { contents: read }`; `windows-2022`/`pwsh` for executable jobs; and literal `permissions: { actions: read, contents: read, id-token: write }` only on the hosted-provenance reusable job. Implement only P50-204-proven dry-run/readiness gaps in src/rush/release/ci_generator.py, src/rush/tools/release.py, src/rush/release/provenance.py, and src/rush/release/semver.py. Run a base frozen-sync job and three separate fresh matrix jobs for `offline-onnx`, `offline-onnx-cuda`, and `offline-gguf` without co-installing CPU/CUDA extras, then full pytest, Ruff, immutable-manifest docs sync, pip-audit, exactly-one wheel/sdist build, separate offline installs, SBOM generation/validation, both immutable attestation-profile tests, modern local `rush attest`, seven-vector `rush ship gate`, local Cosign bundle creation/verification, hosted SLSA generation/verification, and every admission/integration/transport/quality/performance/security/license/reviewer/ownership/one-revision gate. Do not modify or invoke an existing publishing workflow.
+2. Require each literal workflow command to exit 0. The build step `id: subject` exports `wheel-name`, `sdist-name`, `wheel-sha256`, `sdist-sha256`, `base64-subjects`, and `source-uri`; the build job maps each as a job output and persists only same-job artifact paths/hashes/source URI through `GITHUB_ENV`. Every later build step consumes the declared environment values, and every dependent job consumes `${{ needs.build.outputs.* }}`; undefined or empty values fail immediately. Upload only the exact tested wheel as the one-day `phase50-wheel-subject` workflow artifact and never upload a release/package asset. The separate `provenance` job must `needs: build`, use `slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0`, pass `${{ needs.build.outputs.base64-subjects }}`, set `provenance-name: rush-phase50.intoto.jsonl`, `upload-assets: false`, and `continue-on-error: false`, and output its hosted provenance name. The separate verification job must `needs: [build, provenance]`, download the exact subject and provenance, and require `slsa-verifier` to match `${{ needs.build.outputs.wheel-sha256 }}`, `${{ needs.build.outputs.source-uri }}`, and builder ID `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0`. Local DSSE/Cosign evidence remains separate and never satisfies hosted-builder Level 3. Missing verifier, trust policy, artifact, signature, provenance, docs manifest, measurement, output, or required gate fails closed.
 3. Confirm publication/tag/version/changelog/deploy/upload/hook/history actions are not invoked; any release execution remains a separately authorized user-controlled action and no “ready” claim means “released.”
 4. Emit .rush/phase50-evidence/P50-205.json with workflow/job/step results, gate statuses/exits, artifact/attestation/evidence digests, no-release proof, and blockers.
 
 ## Deliverables
 
-- Tests: GREEN verification through tests/test_phase50_release_workflow.py.
+- Tests: Run unchanged producer-owned verification from tests/test_phase50_release_workflow.py; this GREEN task may not modify paired tests or fixtures.
 - Evidence: Complete gate/lifecycle/hosted-builder/evidence matrix and .rush/phase50-evidence/P50-205.json.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: `.github/workflows/phase-50-release-readiness.yml` plus only P50-204-proven dry-run/readiness corrections in src/rush/release/ci_generator.py, src/rush/tools/release.py, src/rush/release/provenance.py, and src/rush/release/semver.py; all fail closed and never tag, upload, publish, deploy, or edit versions.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
@@ -11872,27 +11874,37 @@ Transition: GREEN passes unchanged release RED contracts and proves complete rel
 
 - Task kind: GREEN.
 - Prerequisites: P50-204 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-205.json; tests/test_phase50_release_workflow.py.
-- Allowed writes: tests/test_phase50_release_workflow.py; .rush/phase50-evidence/P50-205.json.
+- Allowed reads: AGENTS.md; this plan; .github/workflows/ci.yml; .github/workflows/release.yml; .github/workflows/phase-50-release-readiness.yml; src/rush/release/ci_generator.py; src/rush/tools/release.py; src/rush/release/provenance.py; src/rush/release/semver.py; pyproject.toml; uv.lock; .rush/phase50-evidence/P50-001.json; .rush/phase50-evidence/P50-067.json; .rush/phase50-evidence/P50-205.json; tests/test_phase50_release_workflow.py; tests/test_release_packaging_ci.py; tests/test_attest.py; tests/test_phase50_slsa_attestation.py; src/rush/resources/slsa/trust-policy-v1.json.
+- Allowed writes: .github/workflows/phase-50-release-readiness.yml; src/rush/release/ci_generator.py; src/rush/tools/release.py; src/rush/release/provenance.py; src/rush/release/semver.py; .rush/phase50-evidence/P50-205.json. The P50-204 RED test, dependency/version files, and any existing publishing workflow remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
-- Read-only verification; no workflow edits, release execution, tag/version/changelog change, upload, publish, deploy, hook, or Git mutation.
+- Only the additive readiness workflow and P50-204-proven dry-run/readiness seams may be edited; no existing publishing workflow edit, release execution, tag/version/changelog change, upload, publish, deploy, hook, or Git mutation.
 - Preserve every gate and exact failure/blocker state.
-- No network credentials or local-build SLSA-L3 substitution.
+- No long-lived network credentials or local-build SLSA-L3 substitution. Network is limited to the hosted keyless Sigstore/trusted-builder verification jobs authorized by the workflow contract; every endpoint, identity, certificate, Rekor inclusion proof, and trust-policy decision is recorded and fail-closed.
 - Claims must be digest-linked.
 
 ## Checks to run before reporting
 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_release_workflow.py -q; expected exit 0 with the paired RED test unchanged.
-- Inspect workflows and run all permitted dry-run/verification commands; capture exits, artifacts, signatures, gates, and no-release audit.
+- Workflow commands: base job `uv sync --frozen --python 3.12`; three separate fresh matrix jobs each run `uv sync --frozen --extra ${{ matrix.extra }} --python 3.12` for exactly one of `offline-onnx`, `offline-onnx-cuda`, or `offline-gguf`; every job expected exit 0, and no job uses `--all-extras` or co-installs ONNX CPU and CUDA extras.
+- Workflow command: `.venv/Scripts/python.exe -m pytest tests/ -q`; expected exit 0 with no required skip/XFAIL/XPASS.
+- Workflow commands: `.venv/Scripts/ruff.exe check src tests scripts` and `.venv/Scripts/ruff.exe format --check src tests scripts`; each expected exit 0.
+- Workflow command: `.venv/Scripts/python.exe scripts/sync_docs.py --check`; expected exit 0 and literal `226/226 synchronized` against the P50-202 manifest.
+- Workflow command: `.venv/Scripts/pip-audit.exe --strict`; expected exit 0; missing executable or findings block.
+- Build step `id: subject` commands: `uv build --wheel --sdist --out-dir .rush/phase50-dist`; then `$phase50Wheels = @(Get-ChildItem -LiteralPath .rush/phase50-dist -Filter 'rush-*.whl'); $phase50Sdists = @(Get-ChildItem -LiteralPath .rush/phase50-dist -Filter 'rush-*.tar.gz'); if ($phase50Wheels.Count -ne 1 -or $phase50Sdists.Count -ne 1) { exit 1 }; $phase50Wheel = $phase50Wheels[0]; $phase50Sdist = $phase50Sdists[0]; $phase50WheelSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $phase50Wheel.FullName).Hash.ToLowerInvariant(); $phase50SdistSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $phase50Sdist.FullName).Hash.ToLowerInvariant(); $phase50Admission = Get-Content -LiteralPath .rush/phase50-evidence/P50-001.json | ConvertFrom-Json; $phase50SourceUri = [string]$phase50Admission.source_uri; if ([string]::IsNullOrWhiteSpace($phase50SourceUri)) { exit 1 }; $phase50SubjectLine = "$phase50WheelSha  $($phase50Wheel.Name)"; $phase50Base64Subjects = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($phase50SubjectLine + "`n")); @("wheel-name=$($phase50Wheel.Name)", "sdist-name=$($phase50Sdist.Name)", "wheel-sha256=$phase50WheelSha", "sdist-sha256=$phase50SdistSha", "wheel-path=$($phase50Wheel.FullName)", "sdist-path=$($phase50Sdist.FullName)", "base64-subjects=$phase50Base64Subjects", "source-uri=$phase50SourceUri") | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8; @("PHASE50_WHEEL_PATH=$($phase50Wheel.FullName)", "PHASE50_SDIST_PATH=$($phase50Sdist.FullName)", "PHASE50_WHEEL_SHA256=$phase50WheelSha", "PHASE50_SDIST_SHA256=$phase50SdistSha", "PHASE50_SOURCE_URI=$phase50SourceUri") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8`; define build-job `outputs` mapping `wheel-name`, `sdist-name`, `wheel-sha256`, `sdist-sha256`, `base64-subjects`, and `source-uri` to the corresponding `${{ steps.subject.outputs.* }}` values. Upload `${{ steps.subject.outputs.wheel-path }}` only as workflow artifact `phase50-wheel-subject` with `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`, `if-no-files-found: error`, and `retention-days: 1`. Expected exit 0 with every output non-empty; no release asset is created.
+- Subsequent build-job workflow commands: `Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; if ([string]::IsNullOrWhiteSpace($env:PHASE50_WHEEL_PATH) -or [string]::IsNullOrWhiteSpace($env:PHASE50_SDIST_PATH)) { exit 1 }`; `uv venv .rush/phase50-wheel-venv --python 3.12`; `uv venv .rush/phase50-sdist-venv --python 3.12`; `uv pip install --python .rush/phase50-wheel-venv/Scripts/python.exe --offline --requirement .rush/phase50-runtime-requirements.txt $env:PHASE50_WHEEL_PATH`; `uv pip install --python .rush/phase50-sdist-venv/Scripts/python.exe --offline --requirement .rush/phase50-runtime-requirements.txt $env:PHASE50_SDIST_PATH`; `$phase50WheelPython = (Resolve-Path -LiteralPath .rush/phase50-wheel-venv/Scripts/python.exe).Path; $phase50WheelRush = (Resolve-Path -LiteralPath .rush/phase50-wheel-venv/Scripts/rush.exe).Path; $phase50SdistPython = (Resolve-Path -LiteralPath .rush/phase50-sdist-venv/Scripts/python.exe).Path; $phase50SdistRush = (Resolve-Path -LiteralPath .rush/phase50-sdist-venv/Scripts/rush.exe).Path; New-Item -ItemType Directory -Force .rush/phase50-wheel-cwd, .rush/phase50-sdist-cwd | Out-Null; Push-Location .rush/phase50-wheel-cwd; $phase50WheelImport = & $phase50WheelPython -I -c "import rush; print(rush.__file__)"; & $phase50WheelRush --version; if ($LASTEXITCODE -ne 0) { exit 1 }; & $phase50WheelRush --help; if ($LASTEXITCODE -ne 0) { exit 1 }; Pop-Location; Push-Location .rush/phase50-sdist-cwd; $phase50SdistImport = & $phase50SdistPython -I -c "import rush; print(rush.__file__)"; & $phase50SdistRush --version; if ($LASTEXITCODE -ne 0) { exit 1 }; & $phase50SdistRush --help; if ($LASTEXITCODE -ne 0) { exit 1 }; Pop-Location; if (-not $phase50WheelImport.StartsWith((Resolve-Path -LiteralPath .rush/phase50-wheel-venv).Path) -or -not $phase50SdistImport.StartsWith((Resolve-Path -LiteralPath .rush/phase50-sdist-venv).Path) -or $phase50WheelImport -match '[\\/]src[\\/]rush' -or $phase50SdistImport -match '[\\/]src[\\/]rush') { exit 1 }`; every command expected exit 0; both import paths must resolve under their matching isolated environment and must not resolve through the checkout's `src/rush` tree.
+- Subsequent build-job workflow commands: `.venv/Scripts/python.exe -m pytest tests/test_attest.py::test_attest_signs_statement_v1_slsa_v1_and_binds_artifact_commit_and_quality_evidence tests/test_attest.py::test_attest_signs_legacy_intoto_v01_slsa_v02_with_ecdsa_and_rsa_without_silent_downgrade -q`; `.venv/Scripts/rush.exe sbom . -o .rush/phase50-dist/sbom.cdx.json`; validate the CycloneDX schema, license links, and SHA-256; then `if ([string]::IsNullOrWhiteSpace($env:PHASE50_WHEEL_PATH)) { exit 1 }; .venv/Scripts/rush.exe attest --target-artifact $env:PHASE50_WHEEL_PATH --predicate-version statement-v1-slsa-v1 --signing-backend cosign --export-path .rush/phase50-dist/attestation.dsse.json`; each expected exit 0. The release artifact uses the modern profile; the immutable legacy test/evidence proves compatibility without silent downgrade.
+- Workflow command: `.venv/Scripts/rush.exe ship gate`; expected exit 0 with all seven vectors and measured runtime under 2.0 seconds.
+- Subsequent build-job workflow commands: `if ([string]::IsNullOrWhiteSpace($env:PHASE50_WHEEL_PATH) -or [string]::IsNullOrWhiteSpace($env:PHASE50_WHEEL_SHA256)) { exit 1 }; cosign sign-blob --yes --bundle .rush/phase50-dist/cosign.bundle $env:PHASE50_WHEEL_PATH`; then `cosign verify-blob $env:PHASE50_WHEEL_PATH --bundle .rush/phase50-dist/cosign.bundle; if ((Get-FileHash -Algorithm SHA256 -LiteralPath $env:PHASE50_WHEEL_PATH).Hash.ToLowerInvariant() -ne $env:PHASE50_WHEEL_SHA256) { exit 1 }`; each expected exit 0 under the pinned identity, Rekor, certificate, and trust policy.
+- Hosted provenance and verification steps: define job `provenance` exactly as `needs: build`, `permissions: { actions: read, contents: read, id-token: write }`, `uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0`, with `base64-subjects: ${{ needs.build.outputs.base64-subjects }}`, `provenance-name: rush-phase50.intoto.jsonl`, `upload-assets: false`, and `continue-on-error: false`; define separate job `verify-hosted-provenance` with `needs: [build, provenance]`, download `phase50-wheel-subject` and `${{ needs.provenance.outputs.provenance-name }}` with `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093` into `.rush/phase50-verify` and `.rush/phase50-provenance`, then run `$phase50HostedWheel = '.rush/phase50-verify/${{ needs.build.outputs.wheel-name }}'; $phase50HostedProvenance = '.rush/phase50-provenance/${{ needs.provenance.outputs.provenance-name }}'; if ([string]::IsNullOrWhiteSpace('${{ needs.build.outputs.wheel-sha256 }}') -or [string]::IsNullOrWhiteSpace('${{ needs.build.outputs.source-uri }}')) { exit 1 }; slsa-verifier verify-artifact $phase50HostedWheel --provenance-path $phase50HostedProvenance --source-uri '${{ needs.build.outputs.source-uri }}' --builder-id https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0; if ($LASTEXITCODE -ne 0 -or (Get-FileHash -Algorithm SHA256 -LiteralPath $phase50HostedWheel).Hash.ToLowerInvariant() -ne '${{ needs.build.outputs.wheel-sha256 }}') { exit 1 }`; expected exit 0. The local `.rush/phase50-dist/attestation.dsse.json` is not accepted as hosted provenance.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_release_workflow.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- All release gates verify complete readiness evidence with no lifecycle action taken or implied.
+- All literal release-readiness commands exit 0, the exact tested artifact/digests remain identical through install/sign/verify evidence, and every gate proves complete readiness with no lifecycle action taken or implied.
 
 ## Handoff
 
@@ -11903,20 +11915,20 @@ Implement installed public behavior matrix in rush-cli in the current working di
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-206 | P50-INTEGRATION-INSTALLED | GREEN | installed public behavior matrix
+# Feature: P50-206 | P50-INTEGRATION-INSTALLED | INSTALLED | installed public behavior matrix
 
-Transition: RED tests expose source-only or transport-only success; GREEN verifies clean installed wheel/sdist behavior for every required public surface.
+Installed acceptance exposes source-only or transport-only success and verifies clean wheel/sdist behavior for every required public surface.
 
 ## Required behavior
 
-1. Add tests/test_phase50_installed_public_behavior.py to build/install clean wheel and sdist in .rush/phase50-wheel-venv with frozen offline requirements and CWD outside the checkout, then exercise every required CLI command, MCP tool/schema, compatibility method, config/catalog entry, and package resource.
+1. Add tests/test_phase50_installed_public_behavior.py to build/install the clean wheel and sdist separately into fresh `.rush/phase50-wheel-venv` and `.rush/phase50-sdist-venv` environments with frozen offline requirements, then run each from its own external empty CWD with no checkout import and exercise every required CLI command, MCP tool/schema, compatibility method, config/catalog entry, and package resource.
 2. Assert canonical ToolResult fields/statuses/exits, JSON-RPC stdout purity, stderr diagnostics, typed option validation, permission/effect behavior, redaction, route identity, data-only MCP, and exact aliases for I13-I28/shared/delivery routes.
 3. Exercise supported/unsupported/missing-engine/model/device/runtime/provider/language/format cases and require explicit skipped/error/unknown/blocked semantics, no network/cloud/source import, no copied-resource fallback, and no uncontained writes.
-4. Emit .rush/phase50-evidence/P50-206.json with package hashes, import/resource paths, route/schema/status/exit matrix, effect/network audit, and source/config/reference digests.
+4. Emit .rush/phase50-evidence/P50-206.json with both exact artifact filenames/SHA-256, separate environment and external-CWD paths, import/resource provenance, route/schema/status/exit matrix, effect/network audit, and source/config/reference digests.
 
 ## Deliverables
 
-- Tests: Installed public behavior test and clean environment evidence.
+- Tests: tests/test_phase50_installed_public_behavior.py with distinct clean wheel and sdist environments, distinct external-CWD probes, and both artifact hashes.
 - Transport: Complete route/resource/config/effect/status matrix.
 - Evidence: .rush/phase50-evidence/P50-206.json.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
@@ -11926,10 +11938,10 @@ Transition: RED tests expose source-only or transport-only success; GREEN verifi
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: INSTALLED.
 - Prerequisites: P50-205 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_public_behavior.py; .rush/phase50-wheel-venv; .rush/phase50-evidence/P50-206.json.
-- Allowed writes: .rush/phase50-evidence/P50-206.json.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_installed_public_behavior.py; .rush/phase50-dist; .rush/phase50-wheel-venv; .rush/phase50-sdist-venv; .rush/phase50-wheel-cwd; .rush/phase50-sdist-cwd; .rush/phase50-runtime-requirements.txt; .rush/phase50-evidence/P50-206.json.
+- Allowed writes: tests/test_phase50_installed_public_behavior.py; .rush/phase50-evidence/P50-206.json; contained ignored `.rush/phase50-dist`, `.rush/phase50-wheel-venv`, `.rush/phase50-sdist-venv`, `.rush/phase50-wheel-cwd`, and `.rush/phase50-sdist-cwd` acceptance artifacts only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -11941,15 +11953,15 @@ Transition: RED tests expose source-only or transport-only success; GREEN verifi
 ## Checks to run before reporting
 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_public_behavior.py -q; expected exit 0 with the paired RED test unchanged.
-- Build/install wheel and sdist offline and run the full CLI/MCP/compatibility/resource matrix.
+- Build exactly one wheel and one sdist, record both SHA-256 values, install each offline into its distinct fresh environment, run the full CLI/MCP/compatibility/resource matrix from its distinct external empty CWD, and prove neither probe imports from the checkout; every command expected exit 0.
 - Inspect imports, stdout/stderr, sockets, writes, statuses/exits, hashes, and evidence digest.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_installed_public_behavior.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: N/A for this installed-acceptance task; it authors an isolated installed-artifact probe and does not claim a core RED/GREEN transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- Clean installed artifacts pass complete public behavior and fail closed on every unsupported, missing, invalid, or effect-denied case.
+- The separately installed wheel and sdist each pass complete public behavior from an external empty CWD, both artifact hashes and import/resource origins are recorded, and every unsupported, missing, invalid, or effect-denied case fails closed.
 
 ## Handoff
 
@@ -11960,20 +11972,20 @@ Implement full regression gate in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-207 | P50-INTEGRATION-REGRESSION | GREEN | full regression gate
+# Feature: P50-207 | P50-INTEGRATION-SHIP | RED | pin seven-vector ship gate against the full-regression baseline
 
-Transition: RED identifies any failing, skipped, XFAIL, XPASS, unowned, or unpaired requirement; GREEN runs the complete gate at one recorded revision.
+Transition: RED preserves the complete regression baseline and exposes the missing canonical seven-vector ship-gate implementation before P50-208 changes production.
 
 ## Required behavior
 
 1. Run focused suites tests/test_tool_common.py, tests/test_prompt_eval.py, tests/test_error_catalog.py, tests/test_provenance_ai.py, tests/test_attest.py, tests/test_license_matrix.py, tests/test_iam_audit.py, tests/test_mem_profile.py, tests/test_cold_start.py, tests/test_media_opt.py, tests/test_offline_review.py, tests/test_tui_diff.py, tests/test_benchmark.py, tests/test_dead_asset.py, tests/test_pr_synthesize.py, and tests/test_phase50_slsa_attestation.py.
 2. Run transport/catalog/config suites tests/test_catalog.py, tests/test_config.py, tests/test_cli_registry.py, tests/test_mcp.py; then tests/ with the repository’s explicit packaging exclusion policy, lint/format, uv lock --check, installed acceptance, docs, integration, attestation, performance, and release-workflow suites.
 3. Require every all-42/I13-I28/shared/delivery row and every named variant/provider/language/runtime/format/device/transport/config/effect/docs/evidence slice to have ordinary passing assertions or explicit blocking truth; skipped/XFAIL/XPASS cannot replace required behavior.
-4. Emit .rush/phase50-evidence/P50-207.json with exact ordered command ledger, exits, test counts/statuses, environment/runtime, revision, changed paths, artifacts, and blockers; never repair code/docs/config during the gate.
+4. Create tests/test_phase50_ship_gate.py asserting one canonical ToolFn/ToolResult evaluates clean, env, migration, semver, docs, pack, and tests in one bounded parallel run; CLI and MCP must call the same object and return equivalent JSON-safe data, MCP stdout remains JSON-RPC-only, and the measured gate is <2.0 s. The focused test must collect and exit 1 only because the current five-vector/divergent transport implementation is missing this contract.
 
 ## Deliverables
 
-- Tests: Full regression command/exit ledger and test-status matrix.
+- Tests: tests/test_phase50_ship_gate.py RED contract plus the unchanged full-regression command/status baseline.
 - Evidence: .rush/phase50-evidence/P50-207.json.
 - Tests: Requirement-to-test/evidence coverage report.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
@@ -11984,10 +11996,10 @@ Transition: RED identifies any failing, skipped, XFAIL, XPASS, unowned, or unpai
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: RED.
 - Prerequisites: P50-206 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_tool_common.py; tests/test_prompt_eval.py; tests/test_error_catalog.py; tests/test_provenance_ai.py; tests/test_attest.py; tests/test_license_matrix.py; tests/test_iam_audit.py; tests/test_mem_profile.py; tests/test_cold_start.py; tests/test_media_opt.py; tests/test_offline_review.py; tests/test_tui_diff.py; tests/test_benchmark.py; tests/test_dead_asset.py; tests/test_pr_synthesize.py; tests/test_phase50_slsa_attestation.py; tests/test_catalog.py; tests/test_config.py; tests/test_cli_registry.py; tests/test_mcp.py; docs/evidence; .rush/phase50-evidence/P50-207.json; docs/config; tests/test_phase50_packaging.py.
-- Allowed writes: .rush/phase50-evidence/P50-207.json.
+- Allowed reads: AGENTS.md; this plan; tests/test_tool_common.py; every feature test named in Required behavior 1; tests/test_catalog.py; tests/test_config.py; tests/test_cli_registry.py; tests/test_mcp.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_packaging.py; tests/test_phase50_docs.py; tests/test_phase50_integration.py; tests/test_phase50_release_workflow.py; docs/evidence; .rush/phase50-evidence/P50-207.json.
+- Allowed writes: tests/test_phase50_ship_gate.py; .rush/phase50-evidence/P50-207.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -11999,15 +12011,16 @@ Transition: RED identifies any failing, skipped, XFAIL, XPASS, unowned, or unpai
 ## Checks to run before reporting
 
 - Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
-- Focused command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_prompt_eval.py tests/test_error_catalog.py tests/test_provenance_ai.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py tests/test_mem_profile.py tests/test_cold_start.py tests/test_media_opt.py tests/test_offline_review.py tests/test_tui_diff.py tests/test_benchmark.py tests/test_dead_asset.py tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: .venv/Scripts/python.exe -m pytest tests/test_phase50_ship_gate.py -q; expected exit 1 with successful collection and only the named seven-vector/shared-object assertion failing.
+- Baseline command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_prompt_eval.py tests/test_error_catalog.py tests/test_provenance_ai.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py tests/test_mem_profile.py tests/test_cold_start.py tests/test_media_opt.py tests/test_offline_review.py tests/test_tui_diff.py tests/test_benchmark.py tests/test_dead_asset.py tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py tests/test_phase50_installed_public_behavior.py tests/test_phase50_packaging.py tests/test_phase50_docs.py tests/test_phase50_integration.py tests/test_phase50_release_workflow.py -q; expected exit 0 under the declared packaging exclusion policy.
 - Broader command: .venv/Scripts/python.exe -m pytest tests/test_catalog.py tests/test_config.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0.
 - .venv/Scripts/ruff.exe check src tests scripts; .venv/Scripts/ruff.exe format --check src tests scripts; uv lock --check
-- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_tool_common.py tests/test_prompt_eval.py tests/test_error_catalog.py tests/test_provenance_ai.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py tests/test_mem_profile.py tests/test_cold_start.py tests/test_media_opt.py tests/test_offline_review.py tests/test_tui_diff.py tests/test_benchmark.py tests/test_dead_asset.py tests/test_pr_synthesize.py tests/test_phase50_slsa_attestation.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: .venv/Scripts/python.exe -m pytest tests/test_phase50_ship_gate.py -q; expected exit 1 with successful collection and the named missing behavior.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- Every required regression suite and gate passes at one revision with no skipped replacement, unowned requirement, or hidden repair.
+- The full regression baseline passes, while the named ship-gate test fails only at the missing canonical seven-vector/shared-route assertion; no production repair occurs in RED.
 
 ## Handoff
 
@@ -12024,27 +12037,27 @@ Transition: RED blocks on any incomplete requirement/evidence; GREEN produces a 
 
 ## Required behavior
 
-1. Evaluate admission, all-42/52-row integration, every I13-I28 feature slice, shared contracts, packaging, docs, release workflows, installed behavior, security/signature, performance, ownership/reviewer, and handoff evidence at the same revision.
+1. Implement one canonical ship-gate ToolFn/ToolResult through `src/rush/tools/ship/cockpit.py`, exported by `src/rush/tools/__init__.py` and declared in `src/rush/catalog.py`/`src/rush/config.py`; evaluate clean, env, migration, semver, docs, pack, and tests in one bounded parallel run, then evaluate admission, both integration ledgers, every I13-I28 feature slice, shared contracts, packaging, docs, release workflows, installed behavior, security/signature, performance, ownership/reviewer, and handoff evidence at the same revision.
 2. Require complete direct evidence with command/exit, artifact/source/config/registry/model/manifest/signature digests, test/status, scope owner, and blocker truth; any missing/failed/unsigned/unverified/insufficient/non-significant/unowned result is a hard blocker.
-3. Produce a typed ship-gate result with ready/not-ready/blocker categories, no implied approval or release action, and explicit separation between local readiness, hosted-builder attestation, and a future user-authorized release operation.
-4. Emit .rush/phase50-evidence/P50-208.json and update only the permitted evidence ledger; never modify version/changelog/Git/workflow/package/release state to make the gate pass.
+3. Make `src/rush/cli.py::ship_gate_cmd` and `src/rush/mcp.py::mcp_rush_ship_gate` parse/invoke/render only the same registered object; return equivalent JSON-safe result data, keep MCP stdout JSON-RPC-only, and produce typed ready/not-ready/blocker categories with no implied approval or release action.
+4. Emit .rush/phase50-evidence/P50-208.json with seven-vector identity, parallelism, direct/CLI/MCP parity, measured <2.0 s runtime, and blocker evidence; never modify version/changelog/Git/workflow/package/release state to make the gate pass.
 
 ## Deliverables
 
-- Tests: Ship-gate evaluator/result schema and tests/test_phase50_ship_gate.py.
+- Tests: Run unchanged P50-207 tests/test_phase50_ship_gate.py plus tests/test_cli_registry.py and tests/test_mcp.py.
 - Evidence: Complete readiness/blocker matrix and .rush/phase50-evidence/P50-208.json.
-- Production: N/A for this atomic task; no production artifact may be claimed or changed.
+- Production: src/rush/tools/ship/cockpit.py; src/rush/tools/__init__.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py.
 - Documentation: N/A for this atomic task; no documentation artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
-- Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
-- Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
+- Transport: CLI and MCP adapters invoke the same registered ToolFn and contain no vector or verdict logic.
+- Configuration: Immutable ship-gate ToolSpec and closed typed options for the canonical object.
 
 ## Constraints
 
 - Task kind: GREEN.
-- Prerequisites: P50-207 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; .rush/phase50-evidence/P50-208.json; tests/test_phase50_ship_gate.py.
-- Allowed writes: tests/test_phase50_ship_gate.py; .rush/phase50-evidence/P50-208.json.
+- Prerequisites: P50-207 complete with its named semantic RED evidence and unchanged tests.
+- Allowed reads: AGENTS.md; this plan; src/rush/tools/ship/cockpit.py; src/rush/tools/__init__.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; .rush/phase50-evidence/P50-208.json; tests/test_phase50_ship_gate.py; tests/test_cli_registry.py; tests/test_mcp.py.
+- Allowed writes: src/rush/tools/ship/cockpit.py; src/rush/tools/__init__.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; .rush/phase50-evidence/P50-208.json. All P50-207 RED tests remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -12056,10 +12069,10 @@ Transition: RED blocks on any incomplete requirement/evidence; GREEN produces a 
 ## Checks to run before reporting
 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_ship_gate.py -q; expected exit 0 with the paired RED test unchanged.
-- Run all prerequisite evidence validators and compare revision/digests/owners; assert any injected missing/failed/unverified case blocks.
+- Run all prerequisite evidence validators and compare revision/digests/owners; assert any injected missing/failed/unverified case blocks; measure the direct, CLI, and MCP seven-vector gate and require <2.0 s.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_ship_gate.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12080,8 +12093,8 @@ Transition: RED tests identify missing fields, stale digests, absent commands, u
 
 ## Required behavior
 
-1. Add tests/test_phase50_evidence.py to require a versioned machine-readable entry for every P50-001 through P50-219 task and I01-I42/Phase 50 requirement slice, with source/heading, owner, status, command, exit, environment, revision, inputs/configs, outputs, artifact/source/evidence digests, and successor.
-2. Assert evidence includes RED/GREEN, effects/permissions, tests/docs/installed/package/release/security/performance/transport outcomes, skip/error/blocked/unknown/insufficient/non-significant states, and exact lifecycle/no-release claims; no empty placeholder or unanchored summary is valid.
+1. Add tests/test_phase50_evidence.py to require a versioned machine-readable schema and unique owner/index entry for every P50-001 through P50-219 task and I01-I42/Phase 50 requirement slice. At P50-209, immutable execution entries are required only for completed P50-001 through P50-208 producers; P50-209 through P50-219 must have exact declared future owner/filename/successor entries and may not be represented as completed evidence. Each completed entry requires source/heading, owner, status, command, exit, environment, revision, inputs/configs, outputs, artifact/source/evidence digests, and successor.
+2. Assert completed evidence includes RED/GREEN, effects/permissions, tests, the immutable 226-doc manifest and exact governed docs, installed/package/release/security/performance/transport outcomes, skip/error/blocked/unknown/insufficient/non-significant states, and exact lifecycle/no-release claims. Reject empty placeholders and unanchored summaries; declared future entries are ownership/index records, never pass evidence.
 3. Verify producer/consumer chains, one path owner, one revision, no duplicate/dangling task, and reproducibility from captured command/fixture/artifact data; stale/cross-revision/tampered/unreadable evidence fails the contract.
 4. Emit .rush/phase50-evidence/P50-209-red.json with expected schema/coverage and observed RED failures without changing producers or evidence history.
 
@@ -12100,7 +12113,7 @@ Transition: RED tests identify missing fields, stale digests, absent commands, u
 
 - Task kind: RED.
 - Prerequisites: P50-208 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_evidence.py; tests/docs/installed/package/release/security/performance/transport; .rush/phase50-evidence/P50-209-red.json.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_evidence.py; every exact producer fragment declared by P50-001 through P50-208; tests/fixtures/phase50/docs/governed-docs.json and every exact path named by that immutable manifest; tests/test_phase50_packaging.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_docs.py; tests/test_phase50_release_workflow.py; tests/test_phase50_performance_evidence.py; tests/test_cli_registry.py; tests/test_mcp.py; pyproject.toml; uv.lock; .github/workflows/phase-50-release-readiness.yml; .rush/phase50-evidence/P50-209-red.json.
 - Allowed writes: tests/test_phase50_evidence.py; .rush/phase50-evidence/P50-209-red.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -12116,7 +12129,7 @@ Transition: RED tests identify missing fields, stale digests, absent commands, u
 - Broader command: git diff --check; expected exit 0.
 - Validate schema, task/requirement counts, owners, digests, command/exit fields, chain/one-revision checks, and expected RED.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_evidence.py -q; expected exit 1 with successful collection and the named missing behavior.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12137,15 +12150,15 @@ Transition: GREEN passes unchanged P50-209 with one-revision, source-bound, comp
 
 ## Required behavior
 
-1. Update docs/developer/phase-50-implementation-evidence.md and permitted ignored .rush/phase50-evidence/P50-*.json entries with every P50-001 through P50-219 and I01-I42/Phase 50 slice, exact source headings, owners, commands/exits, statuses, artifacts, digests, and successors.
+1. Read and validate every completed predecessor fragment owned by P50-001 through P50-209 using the exact filename declared by its owner block—never a synthesized numeric name—including `P50-130-red.json`, `P50-131-green.json`, `P50-164-red.json`, `P50-166-green.json`, `P50-167-red.json`, `P50-168-green.json`, `P50-200-red.json`, `P50-202-red.json`, `P50-204-red.json`, and `P50-209-red.json`; reject absent, duplicate, unowned, stale, or unexpected fragments and do not expect P50-211 through P50-219 yet. Then write the sole aggregate docs/developer/phase-50-implementation-evidence.md and P50-210.json with every predecessor task and I01-I42/Phase 50 slice, exact source headings/spans/digests, owners, commands/exits, statuses, artifacts, digests, and successors. Never update producer fragments.
 2. Record all RED/GREEN tests, implementation/effect/transport/config/docs/package/install/release/security/performance/attestation/ownership outcomes and every blocker/skip/error/unknown/insufficient/non-significant state without converting it to pass.
 3. Reproduce source, wheel/sdist, model/registry, benchmark, PR-card, attestation, and docs evidence at one revision; verify producer-consumer digests, one path owner, deterministic ordering, and no unowned/duplicate/dangling evidence.
 4. State exact no-release/no-Git-mutation/no-publish boundary and any remaining blocker; a complete ledger is not a release or approval.
 
 ## Deliverables
 
-- Documentation: Updated docs/developer/phase-50-implementation-evidence.md and ignored evidence fragments.
-- Production: .rush/phase50-evidence/P50-210.json with complete ledger/reproduction/ownership data.
+- Documentation: docs/developer/phase-50-implementation-evidence.md; P50-210 is its sole writer and aggregates immutable completed predecessor fragments P50-001 through P50-209 only.
+- Evidence: .rush/phase50-evidence/P50-210.json with the complete P50-001-through-P50-209 ledger/reproduction/ownership data, exact producer filenames, and fragment hashes; later tasks retain their own fragments.
 - Evidence: Requirement/task/evidence digest map.
 - Tests: N/A for this atomic task; no tests artifact may be claimed or changed.
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
@@ -12156,8 +12169,8 @@ Transition: GREEN passes unchanged P50-209 with one-revision, source-bound, comp
 
 - Task kind: GREEN.
 - Prerequisites: P50-209 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-*.json; docs/package/install/release/security/performance/attestation/ownership; .rush/phase50-evidence/P50-210.json; tests/test_phase50_evidence.py.
-- Allowed writes: docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-210.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/phase-50-implementation-evidence.md; every exact predecessor fragment filename declared by P50-001 through P50-209, including the ten suffixed RED/GREEN names enumerated in Required behavior; tests/fixtures/phase50/docs/governed-docs.json and every exact path named by that immutable manifest; tests/test_phase50_packaging.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_docs.py; tests/test_phase50_release_workflow.py; tests/test_phase50_performance_evidence.py; tests/test_phase50_evidence.py; .github/workflows/phase-50-release-readiness.yml; pyproject.toml; uv.lock; .rush/phase50-evidence/P50-210.json.
+- Allowed writes: docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-210.json only. Every other P50-*.json fragment is read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -12172,11 +12185,11 @@ Transition: GREEN passes unchanged P50-209 with one-revision, source-bound, comp
 - Re-run all permitted producer/consumer validators and compare command/exit/artifact/source/evidence digests.
 - Broader command: git diff --check; expected exit 0.
 - Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_evidence.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- Complete evidence is reproducible, lossless, one-revision, path-owned, and explicit about blockers and no-release boundary.
+- Complete only when every exact predecessor fragment P50-001 through P50-209 is reproducibly aggregated with no numeric-name assumptions, absent/duplicate/unowned fragment, or status upgrade; the ledger is lossless, one-revision, path-owned, and explicit about blockers and the no-release boundary. P50-211 through P50-219 remain later evidence, not missing inputs.
 
 ## Handoff
 
@@ -12187,16 +12200,16 @@ Implement release-note and architecture consistency in rush-cli in the current w
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-211 | P50-INTEGRATION-CONSISTENCY | GREEN | release-note and architecture consistency
+# Feature: P50-211 | P50-INTEGRATION-CONSISTENCY | VERIFY | release-note and architecture consistency
 
 Transition: RED tests identify claims in release notes/architecture docs that diverge from authoritative innovation, ADR, implementation, evidence, or lifecycle boundaries; GREEN proves exact consistency without release execution.
 
 ## Required behavior
 
-1. Add tests/test_phase50_release_note_consistency.py to compare release notes, docs/developer/phase-50-implementation-evidence.md, docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md, authoritative innovation requirements, CLI/MCP/config/catalog docs, and feature docs.
+1. Add tests/test_phase50_release_note_consistency.py to compare release notes, docs/developer/phase-50-implementation-evidence.md, `docs/developer/rush-token-innovation-enhancement-report-plan.md`, `docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md`, `docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md`, CLI/MCP/config/catalog docs, and feature docs using exact relevant headings, line spans, and SHA-256.
 2. Validate exact claims for I13-I28/shared/delivery, in-toto/SLSA/Cosign/trust, ONNX/GGUF/CPU/CUDA/air-gap, benchmark/dead-asset/PR synthesis, public routes, package/evidence, hosted-builder/local boundaries, and no-release lifecycle; stale v0.1/unsigned/ONNX-only/static-only/data-only/recorded-only/cloud claims fail.
 3. Preserve intentional unresolved/blocked/unknown/optional-engine/hosted-builder distinctions and link each claim to source heading, implementation/test, and evidence digest; no narrative smoothing of contradictions.
-4. Emit .rush/phase50-evidence/P50-211.json with claim-by-claim comparison, source/reference digests, mismatches, and no document mutation outside allowed ownership.
+4. Emit .rush/phase50-evidence/P50-211.json with claim-by-claim comparison, all three authority heading/line-span/digest maps, reference/evidence digests, mismatches, and no document mutation outside allowed ownership.
 
 ## Deliverables
 
@@ -12206,13 +12219,13 @@ Transition: RED tests identify claims in release notes/architecture docs that di
 - Dependencies: N/A for this atomic task; no dependencies artifact may be claimed or changed.
 - Transport: N/A for this atomic task; no transport artifact may be claimed or changed.
 - Configuration: N/A for this atomic task; no configuration artifact may be claimed or changed.
-- Evidence: N/A for this atomic task; no evidence artifact may be claimed or changed.
+- Evidence: .rush/phase50-evidence/P50-211.json with the exact authority/reference claim matrix and mismatch/blocker state.
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-210 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_release_note_consistency.py; docs/developer/phase-50-implementation-evidence.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; .rush/phase50-evidence/P50-211.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; tests/test_phase50_release_note_consistency.py; docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-211.json. Record exact relevant headings, line spans, and SHA-256 for all three authority files.
 - Allowed writes: tests/test_phase50_release_note_consistency.py; .rush/phase50-evidence/P50-211.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -12227,8 +12240,8 @@ Transition: RED tests identify claims in release notes/architecture docs that di
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_release_note_consistency.py -q; expected exit 0 with the paired RED test unchanged.
 - Run exact claim searches and compare source/reference/evidence digests; record every mismatch and expected blocker.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_release_note_consistency.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_release_note_consistency.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12243,7 +12256,7 @@ Implement security claim review in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-212 | P50-INTEGRATION-SECURITY | GREEN | security claim review
+# Feature: P50-212 | P50-INTEGRATION-SECURITY | VERIFY | security claim review
 
 Transition: RED tests expose overclaims or missing proof; GREEN verifies every security, provenance, air-gap, trust, permission, privacy, redaction, and lifecycle claim against direct evidence.
 
@@ -12266,7 +12279,7 @@ Transition: RED tests expose overclaims or missing proof; GREEN verifies every s
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-211 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_security_claims.py; .rush/phase50-evidence/P50-212.json; tests/test_slsa_policy.py; tests/test_attest.py; tests/test_permissions.py.
 - Allowed writes: tests/test_phase50_security_claims.py; .rush/phase50-evidence/P50-212.json.
@@ -12284,8 +12297,8 @@ Transition: RED tests expose overclaims or missing proof; GREEN verifies every s
 - Run valid/tampered/unsigned/untrusted/expired/model/socket/path/effect/redaction fixtures and record exits.
 - Compare claim/source/evidence digests and fail on unsupported assurance.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_security_claims.py tests/test_slsa_policy.py tests/test_attest.py tests/test_permissions.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_security_claims.py tests/test_slsa_policy.py tests/test_attest.py tests/test_permissions.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12300,7 +12313,7 @@ Implement v0.2 config migration and compatibility in rush-cli in the current wor
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-213 | P50-INTEGRATION-CONFIG | GREEN | v0.2 config migration and compatibility
+# Feature: P50-213 | P50-INTEGRATION-CONFIG | VERIFY | v0.2 config migration and compatibility
 
 Transition: RED tests identify unknown keys, invalid typed values, catalog/config drift, or loss of existing contracts; GREEN verifies closed typed configuration and compatible migration.
 
@@ -12323,7 +12336,7 @@ Transition: RED tests identify unknown keys, invalid typed values, catalog/confi
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-212 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_config_migration.py; examples/rush.toml; src/rush/config.py; src/rush/catalog.py; .rush/phase50-evidence/P50-213.json; tests/test_config.py; tests/test_catalog.py.
 - Allowed writes: tests/test_phase50_config_migration.py; .rush/phase50-evidence/P50-213.json.
@@ -12340,8 +12353,8 @@ Transition: RED tests identify unknown keys, invalid typed values, catalog/confi
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_config_migration.py tests/test_config.py tests/test_catalog.py -q; expected exit 0 with the paired RED test unchanged.
 - Validate every config/catalog/example/docs field, invalid/unknown/boundary case, migration route, and route schema.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_config_migration.py tests/test_config.py tests/test_catalog.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_config_migration.py tests/test_config.py tests/test_catalog.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12356,7 +12369,7 @@ Implement public reference parity in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-214 | P50-INTEGRATION-REFERENCES | GREEN | public reference parity
+# Feature: P50-214 | P50-INTEGRATION-REFERENCES | VERIFY | public reference parity
 
 Transition: RED tests identify route/options/symbol/schema/help/docs drift; GREEN proves documentation and installed public references exactly match implementation.
 
@@ -12379,9 +12392,9 @@ Transition: RED tests identify route/options/symbol/schema/help/docs drift; GREE
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-213 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_public_reference_parity.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; docs/tools/*.md; examples/rush.toml; .rush/phase50-evidence/P50-214.json; tests/test_cli_registry.py; tests/test_mcp.py; docs/installed.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_public_reference_parity.py; src/rush/cli.py; src/rush/mcp.py; src/rush/catalog.py; src/rush/config.py; docs/CLI_REFERENCE.md; docs/MCP_REFERENCE.md; docs/CONFIGURATION.md; docs/TOOL_CATALOG.md; docs/SECURITY.md; examples/rush.toml; tests/fixtures/phase50/docs/governed-docs.json and every exact `docs/tools/*.md` path named by that immutable manifest; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_packaging.py; .rush/phase50-evidence/P50-206.json; .rush/phase50-evidence/P50-214.json; tests/test_cli_registry.py; tests/test_mcp.py.
 - Allowed writes: tests/test_phase50_public_reference_parity.py; .rush/phase50-evidence/P50-214.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -12394,11 +12407,11 @@ Transition: RED tests identify route/options/symbol/schema/help/docs drift; GREE
 ## Checks to run before reporting
 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_public_reference_parity.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0 with the paired RED test unchanged.
-- Run exact route --help/schema/invalid/valid checks and compare source/docs/installed matrices.
+- Run exact route --help/schema/invalid/valid checks and compare source, every governed public-reference path from tests/fixtures/phase50/docs/governed-docs.json, tests/test_phase50_installed_public_behavior.py evidence, and wheel/sdist matrices.
 - Validate package hashes, statuses/exits, stdout/stderr, links, and no changed paths outside evidence.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_public_reference_parity.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_public_reference_parity.py tests/test_cli_registry.py tests/test_mcp.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12413,16 +12426,16 @@ Implement scope fidelity and path ownership audit in rush-cli in the current wor
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-215 | P50-INTEGRATION-SCOPE | GREEN | scope fidelity and path ownership audit
+# Feature: P50-215 | P50-INTEGRATION-SCOPE | VERIFY | scope fidelity and path ownership audit
 
 Transition: RED identifies omitted/narrowed requirements, unowned/duplicate paths, dangling tasks, unsupported claims, or unauthorized lifecycle changes; GREEN proves lossless ownership.
 
 ## Required behavior
 
 1. Add tests/test_phase50_scope_ownership.py to mechanically map every atomic I13-I28/shared/delivery requirement, P50-001 through P50-219 task, source heading, implementation/test/doc/config/dependency/package/evidence path, and successor.
-2. Compare authoritative sources, current plan, D50 conflict/reduction ledger, registry, Section 9 blocks, task allowed writes, and changed paths; classify every item PRESERVED, ADDITIVE, or VIOLATION and restore/report any omission/reduction as a blocker.
+2. Compare the exact relevant headings, line spans, and SHA-256 of `docs/developer/rush-token-innovation-enhancement-report-plan.md`, `docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md`, and `docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md` against the current plan, D50 conflict/reduction ledger, registry, Section 9 blocks, task allowed writes, and changed paths; classify every item PRESERVED, ADDITIVE, or VIOLATION and restore/report every omission or reduction as a blocker.
 3. Assert exactly one owner per changed path/task/evidence artifact, no duplicate/dangling/unpaired requirement, no unapproved deferral/substitution, and complete provider/language/runtime/format/transport/config/effect/test/docs/release evidence.
-4. Emit .rush/phase50-evidence/P50-215.json with scope delta, owner table, conflict/reduction findings, source headings/line spans, and no implementation edits.
+4. Emit .rush/phase50-evidence/P50-215.json with scope delta, owner table, conflict/reduction findings, all three authority-file digests and exact source headings/line spans, and no implementation edits.
 
 ## Deliverables
 
@@ -12436,9 +12449,9 @@ Transition: RED identifies omitted/narrowed requirements, unowned/duplicate path
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-214 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_scope_ownership.py; docs/release; .rush/phase50-evidence/P50-215.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; tests/test_phase50_scope_ownership.py; tests/fixtures/phase50/docs/governed-docs.json and every exact governed documentation path; tests/test_phase50_release_workflow.py; .github/workflows/phase-50-release-readiness.yml; tests/test_phase50_packaging.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_evidence.py; docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-215.json. Record exact relevant headings, line spans, and SHA-256 for all three authority files.
 - Allowed writes: tests/test_phase50_scope_ownership.py; .rush/phase50-evidence/P50-215.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -12453,8 +12466,8 @@ Transition: RED identifies omitted/narrowed requirements, unowned/duplicate path
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_scope_ownership.py -q; expected exit 0 with the paired RED test unchanged.
 - Run source/plan/registry/task/path/diff ownership checks and inspect every VIOLATION/PRESERVED/ADDITIVE row.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_scope_ownership.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_scope_ownership.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12469,7 +12482,7 @@ Implement one-revision ledger and artifact identity in rush-cli in the current w
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-216 | P50-INTEGRATION-REVISION | GREEN | one-revision ledger and artifact identity
+# Feature: P50-216 | P50-INTEGRATION-REVISION | VERIFY | one-revision ledger and artifact identity
 
 Transition: RED tests expose commands/artifacts from mixed revisions or missing identity; GREEN binds all gates to one exact revision and immutable artifact set.
 
@@ -12492,7 +12505,7 @@ Transition: RED tests expose commands/artifacts from mixed revisions or missing 
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-215 complete with its named evidence and unchanged RED tests where applicable.
 - Allowed reads: AGENTS.md; this plan; tests/test_phase50_one_revision.py; .rush/phase50-dist; .rush/phase50-wheel-venv; .rush/phase50-runtime-requirements.txt; .rush/phase50-evidence/P50-216.json.
 - Allowed writes: tests/test_phase50_one_revision.py; .rush/phase50-evidence/P50-216.json.
@@ -12509,8 +12522,8 @@ Transition: RED tests expose commands/artifacts from mixed revisions or missing 
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_one_revision.py -q; expected exit 0 with the paired RED test unchanged.
 - Broader command: git diff --check; expected exit 0.
 - Mutate or mismatch a fixture and assert hard failure with no identity overwrite.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_one_revision.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_one_revision.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12527,13 +12540,13 @@ Implement final verification gate in rush-cli in the current working directory.
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-217 | P50-INTEGRATION-FINAL | GREEN | final verification gate
+# Feature: P50-217 | P50-INTEGRATION-FINAL | VERIFY | final verification gate
 
 Transition: RED blocks on any uncovered, failed, skipped, unsupported, unowned, unsigned, unverified, stale, or performance-missing requirement; GREEN freezes a complete final verdict.
 
 ## Required behavior
 
-1. Aggregate P50-192 through P50-216 and every Section 9 task into one ordered gate at one revision, preserving direct evidence for every requirement family, provider/language/runtime/format/device/transport/config/effect/docs/package/release slice. Run all seven ship vectors at one revision and require rush ship gate <2.0 s, routing/distillation <5 ms, graph/skeleton <30 ms, scripts/sync_docs.py --check at 226 of 226, and >850 tests; retain every missing measurement or source-count contradiction as a blocker.
+1. Aggregate P50-192 through P50-216 and every Section 9 task at one revision with direct evidence for every slice. Require both signed attestation profiles and ECDSA/RSA/Cosign/Git-SSH/Ed25519 verification; all four license categories and dual-license conflicts; attestation <100 ms; license scan <50 ms on exactly 200 dependencies; IAM extraction <30 ms on exactly 500 files; all seven ship vectors; rush ship gate <2.0 s; routing/distillation <5 ms; graph/skeleton <30 ms; scripts/sync_docs.py --check at 226/226; and >850 tests. Every missing measurement or source-count contradiction blocks.
 2. Fail on any ordinary assertion failure, skip/XFAIL/XPASS replacing required behavior, missing/invalid evidence, unowned path, stale digest, signature/trust failure, insufficient/non-significant performance, unsupported assurance, or unresolved scope violation.
 3. Produce typed ready/not-ready/blocker output, exact command/exit ledger, task/requirement/path owner table, artifact/provenance/signature/package hashes, documentation claim results, and explicit no-release statement.
 4. Update only the permitted final evidence ledger; do not repair implementation/tests/docs/config/dependencies, change version/Git/workflows, commit/tag/push/publish/upload/deploy, install hooks, or remove worktrees.
@@ -12551,9 +12564,9 @@ Transition: RED blocks on any uncovered, failed, skipped, unsupported, unowned, 
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-216 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; docs/package/release; tests/docs/config/dependencies; tests/test_phase50_final_gate.py; .rush/phase50-evidence/P50-217.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; docs/developer/phase-50-implementation-evidence.md; tests/fixtures/phase50/docs/governed-docs.json and every exact governed documentation path; tests/test_phase50_packaging.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_docs.py; tests/test_phase50_release_workflow.py; tests/test_phase50_performance_evidence.py; tests/test_phase50_evidence.py; tests/test_phase50_scope_ownership.py; tests/test_phase50_revision_identity.py; tests/test_phase50_public_reference_parity.py; tests/test_phase50_final_gate.py; tests/test_cli_registry.py; tests/test_mcp.py; pyproject.toml; uv.lock; src/rush/catalog.py; src/rush/config.py; .github/workflows/phase-50-release-readiness.yml; every exact immutable P50 evidence fragment declared by its owner. Record source heading, line span, and SHA-256.
 - Allowed writes: tests/test_phase50_final_gate.py; .rush/phase50-evidence/P50-217.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -12565,15 +12578,15 @@ Transition: RED blocks on any uncovered, failed, skipped, unsupported, unowned, 
 
 ## Checks to run before reporting
 
-- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_final_gate.py -q; expected exit 0 with the paired RED test unchanged.
+- Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_final_gate.py tests/test_phase50_performance_evidence.py tests/test_attest.py tests/test_license_matrix.py tests/test_iam_audit.py -q; expected exit 0 with producer tests unchanged and every exact threshold/profile/category/corpus assertion green.
 - Run every prerequisite gate in prescribed order and compare one revision/artifact/owner/digest identity.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_final_gate.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_final_gate.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
-- Final gate is complete only with direct evidence for every required slice, zero unresolved violations, and explicit no-release truth.
+- Final gate is complete only with direct evidence for every required slice, both attestation authorities and signer matrix, all license categories/conflicts, all exact performance corpora and thresholds, zero unresolved violations, and explicit no-release truth.
 
 ## Handoff
 
@@ -12584,20 +12597,20 @@ Implement flagship readiness handoff in rush-cli in the current working director
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-218 | P50-INTEGRATION-HANDOFF | GREEN | flagship readiness handoff
+# Feature: P50-218 | P50-INTEGRATION-HANDOFF | HANDOFF | flagship readiness handoff
 
 Transition: RED identifies absent handoff artifacts or unsupported readiness claims; GREEN packages a complete reviewable readiness packet without calling the product released.
 
 ## Required behavior
 
-1. Assemble docs/developer/phase-50-implementation-evidence.md plus .rush/phase50-evidence/P50-*.json, exact command/exit ledger, source/task/requirement/path owner map, wheel/sdist/model/registry/attestation/benchmark/PR-card hashes, docs/security/performance/release results, and blockers.
+1. Read the P50-210-owned docs/developer/phase-50-implementation-evidence.md for its completed P50-001-through-P50-209 aggregate, then separately consume immutable P50-211-through-P50-217 fragments; do not expect those later fragments to have been retroactively written into the central document. Read exact relevant headings/line spans/SHA-256 from `docs/developer/rush-token-innovation-enhancement-report-plan.md`, `docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md`, and `docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md`, plus the command/exit ledger, owner map, artifact hashes, governed docs, security/performance/release results, and blockers; assemble the handoff index only in P50-218.json.
 2. Enumerate implemented, blocked, unknown, skipped, failed, insufficient, non-significant, and unverified tasks/requirements explicitly; link each to source heading/line span, test, command, artifact, evidence digest, owner, and successor.
 3. State readiness verdict, hosted-builder/SLSA boundary, local/offline boundary, package/install identity, no-release/no-publish/no-Git-mutation status, and exact next lifecycle action only as a separately authorized operation.
 4. Verify packet reproducibility from the designated worktree and one revision; do not modify producers, version, changelog, tags, release workflows, package registry, or external systems.
 
 ## Deliverables
 
-- Documentation: Complete evidence/owner/readiness handoff packet in docs/developer/phase-50-implementation-evidence.md and permitted ignored evidence fragments.
+- Documentation: Read-only verification of the complete P50-210-owned central evidence ledger; no documentation edit.
 - Evidence: .rush/phase50-evidence/P50-218.json.
 - Evidence: Reviewer-ready artifact/source/command/digest index.
 - Production: N/A for this atomic task; no production artifact may be claimed or changed.
@@ -12608,10 +12621,10 @@ Transition: RED identifies absent handoff artifacts or unsupported readiness cla
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: HANDOFF.
 - Prerequisites: P50-217 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-*.json; docs/security/performance/release; .rush/phase50-evidence/P50-218.json; tests/test_phase50_final_gate.py; tests/test_phase50_evidence.py.
-- Allowed writes: docs/developer/phase-50-implementation-evidence.md; .rush/phase50-evidence/P50-218.json.
+- Allowed reads: AGENTS.md; this plan; docs/developer/rush-token-innovation-enhancement-report-plan.md; docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md; docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md; docs/developer/phase-50-implementation-evidence.md; every exact immutable producer fragment through P50-217, including P50-211 through P50-217 separately from the P50-210 aggregate; tests/fixtures/phase50/docs/governed-docs.json and every exact governed documentation path; tests/test_phase50_packaging.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_release_workflow.py; tests/test_phase50_performance_evidence.py; tests/test_phase50_final_gate.py; tests/test_phase50_evidence.py; .github/workflows/phase-50-release-readiness.yml; src/rush/resources/slsa/trust-policy-v1.json; .rush/phase50-evidence/P50-218.json. Record exact relevant headings, line spans, and SHA-256 for all three authority files.
+- Allowed writes: .rush/phase50-evidence/P50-218.json only; docs/developer/phase-50-implementation-evidence.md and all producer fragments remain read-only.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
 - Safety restrictions: preserve deny-default effects, containment, redaction, stdio JSON-RPC purity, and explicit blocker states.
@@ -12625,8 +12638,8 @@ Transition: RED identifies absent handoff artifacts or unsupported readiness cla
 - Focused command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_final_gate.py tests/test_phase50_evidence.py -q; expected exit 0 with the paired RED test unchanged.
 - Validate all packet links, counts, owners, digests, command exits, package/artifact identity, security/performance/release claims, and no-release text.
 - Broader command: git diff --check; expected exit 0.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_final_gate.py tests/test_phase50_evidence.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Paired RED command: N/A for this handoff task; it consumes the unchanged final-gate and evidence tests and may not claim a new RED/GREEN transition.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
@@ -12641,7 +12654,7 @@ Implement lifecycle boundary and clean worktree audit in rush-cli in the current
 
 Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
 
-# Feature: P50-219 | P50-INTEGRATION-LIFECYCLE | GREEN | lifecycle boundary and clean worktree audit
+# Feature: P50-219 | P50-INTEGRATION-LIFECYCLE | VERIFY | lifecycle boundary and clean worktree audit
 
 Transition: RED blocks on dirty/unowned/uncontained state or any unauthorized lifecycle action; GREEN proves the final packet is cleanly handed off with all mutation boundaries intact.
 
@@ -12649,7 +12662,7 @@ Transition: RED blocks on dirty/unowned/uncontained state or any unauthorized li
 
 1. Add tests/test_phase50_lifecycle_boundary.py and audit the exact worktree, tracked/untracked/ignored paths, unresolved merge markers, changed-path ownership, evidence containment, package/build ephemeral paths, environment/CWD/imports, and secret/redaction boundaries.
 2. Assert no commit, merge, branch creation, tag, push, publish, upload, deploy, release/version/changelog edit, hook install, history rewrite, worktree removal, online dependency/model fallback, or unapproved deletion occurred; release execution remains separate and user-controlled.
-3. Verify only task-owned paths/evidence changed, every changed path has one completed owner and source-bound evidence, ephemeral .rush/phase50-dist/.rush/phase50-wheel-venv/.rush/phase50-runtime-requirements.txt are contained/ignored, and tracked source/tests/docs/config/dependencies/version/release remain as authorized.
+3. Verify only task-owned paths/evidence changed, every changed path has one completed owner and source-bound evidence, ephemeral `.rush/phase50-dist`, `.rush/phase50-wheel-venv`, `.rush/phase50-sdist-venv`, `.rush/phase50-wheel-cwd`, `.rush/phase50-sdist-cwd`, and `.rush/phase50-runtime-requirements.txt` are contained/ignored, and every tracked source/test/governed-doc/config/dependency/version/release path remains authorized.
 4. Emit .rush/phase50-evidence/P50-219.json with clean-state/lifecycle/path ownership/environment/import/network/secret audit, exact revision, command/exit ledger, blockers, and handoff status; any violation blocks completion without cleanup that destroys evidence.
 
 ## Deliverables
@@ -12665,9 +12678,9 @@ Transition: RED blocks on dirty/unowned/uncontained state or any unauthorized li
 
 ## Constraints
 
-- Task kind: GREEN.
+- Task kind: VERIFY.
 - Prerequisites: P50-218 complete with its named evidence and unchanged RED tests where applicable.
-- Allowed reads: AGENTS.md; this plan; tests/test_phase50_lifecycle_boundary.py; .rush/phase50-dist/.rush/phase50-wheel-venv/.rush/phase50-runtime-requirements.txt; tests/docs/config/dependencies/version/release; .rush/phase50-evidence/P50-219.json.
+- Allowed reads: AGENTS.md; this plan; tests/test_phase50_lifecycle_boundary.py; .rush/phase50-dist; .rush/phase50-wheel-venv; .rush/phase50-sdist-venv; .rush/phase50-wheel-cwd; .rush/phase50-sdist-cwd; .rush/phase50-runtime-requirements.txt; tests/fixtures/phase50/docs/governed-docs.json and every exact governed documentation path; tests/test_phase50_packaging.py; tests/test_phase50_installed_public_behavior.py; tests/test_phase50_release_workflow.py; tests/test_phase50_performance_evidence.py; tests/test_phase50_evidence.py; tests/test_phase50_scope_ownership.py; tests/test_phase50_revision_identity.py; tests/test_phase50_public_reference_parity.py; tests/test_phase50_final_gate.py; tests/test_cli_registry.py; tests/test_mcp.py; pyproject.toml; uv.lock; src/rush/catalog.py; src/rush/config.py; .github/workflows/phase-50-release-readiness.yml; every exact immutable P50 evidence fragment through P50-218; .rush/phase50-evidence/P50-219.json.
 - Allowed writes: tests/test_phase50_lifecycle_boundary.py; .rush/phase50-evidence/P50-219.json.
 - Unchanged interfaces, formats, dependencies, behavior, tests, and compatibility contracts: every path not listed under Allowed writes remains read-only.
 - Prohibited files, changes, and lifecycle actions: no unrelated source, test, documentation, dependency, configuration, Git-history, version, release, publish, deploy, hook, or worktree mutation.
@@ -12683,8 +12696,8 @@ Transition: RED blocks on dirty/unowned/uncontained state or any unauthorized li
 - Broader command: git diff --check; expected exit 0.
 - Verify CWD/import paths, package/build/evidence containment, network/socket audit, secret/redaction scan, and forbidden lifecycle command history.
 - Compare final revision/artifact/evidence digests and require zero violations.
-- Paired RED command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_lifecycle_boundary.py -q; expected exit 0 with the preceding RED assertion unchanged.
-- Changed-path command: git diff --name-only; expected result: only paths named under Allowed writes.
+- Verification command: Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue; .venv/Scripts/python.exe -m pytest tests/test_phase50_lifecycle_boundary.py -q; expected exit 0. RED pairing is N/A for this VERIFY task; no GREEN provenance is claimed.
+- Task-local changed-path check: compare the post-task SHA-256/status manifest with the pre-task manifest; expected result: no newly changed path outside this task's Allowed writes. Predecessor paths remain recorded and untouched; do not commit, reset, or clear them.
 
 ## Completion
 
