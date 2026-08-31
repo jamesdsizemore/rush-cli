@@ -193,7 +193,10 @@ class EnvironmentDoctor:
                 status="warn",
                 message=f"No local .venv found at '{venv_path}'. Using global interpreter '{current_exe}'.",
                 remediation="Run 'uv venv' or 'python -m venv .venv' to create a project-isolated environment.",
-                details={"executable": str(current_exe), "expected_venv": str(venv_path)},
+                details={
+                    "executable": str(current_exe),
+                    "expected_venv": str(venv_path),
+                },
             )
 
         if not current_exe.is_relative_to(venv_path):
@@ -202,7 +205,10 @@ class EnvironmentDoctor:
                 status="fail",
                 message=f"Interpreter Shadowing Detected: Running from '{current_exe}', but project venv is at '{venv_path}'.",
                 remediation="Activate project virtual environment or invoke via '.venv/Scripts/python.exe' directly.",
-                details={"active_executable": str(current_exe), "project_venv": str(venv_path)},
+                details={
+                    "active_executable": str(current_exe),
+                    "project_venv": str(venv_path),
+                },
             )
 
         return HealthCheck(
@@ -214,7 +220,9 @@ class EnvironmentDoctor:
 
     def check_git_isolation(self) -> HealthCheck:
         """Verify Git is accessible and repo_root is inside a valid repository."""
-        code, stdout, stderr = run_subprocess(["git", "rev-parse", "--show-toplevel"], cwd=self.repo_root)
+        code, stdout, stderr = run_subprocess(
+            ["git", "rev-parse", "--show-toplevel"], cwd=self.repo_root
+        )
         if code != 0:
             return HealthCheck(
                 name="git_repository",
@@ -270,16 +278,32 @@ class EnvironmentDoctor:
         """Inspect presence and version of essential quality engines."""
         checks = []
         engines = [
-            "ruff", "mypy", "pytest", "biome", "eslint", "prettier",
-            "tsc", "clippy", "rustfmt", "tach", "aislop", "undercover",
-            "bandit", "govulncheck", "golangci-lint"
+            "ruff",
+            "mypy",
+            "pytest",
+            "biome",
+            "eslint",
+            "prettier",
+            "tsc",
+            "clippy",
+            "rustfmt",
+            "tach",
+            "aislop",
+            "undercover",
+            "bandit",
+            "govulncheck",
+            "golangci-lint",
         ]
 
         for eng in engines:
             path = shutil.which(eng)
             if path:
                 code, stdout, _ = run_subprocess([eng, "--version"])
-                ver = stdout.strip().split()[-1] if code == 0 and stdout.strip() else "available"
+                ver = (
+                    stdout.strip().split()[-1]
+                    if code == 0 and stdout.strip()
+                    else "available"
+                )
                 checks.append(
                     HealthCheck(
                         name=f"engine_{eng}",
@@ -335,12 +359,24 @@ class RuffCheckTool(ToolFn):
     def __call__(self, path: Path, **options: object) -> ToolResult:
         return self.run(path, **options)
 
-    def run(self, path: Path, *, config=None, permissions=None, **options: object) -> ToolResult:
+    def run(
+        self, path: Path, *, config=None, permissions=None, **options: object
+    ) -> ToolResult:
         start = now_ms()
         if not shutil.which("ruff"):
-            return ToolResult(tool=self.name, engine="ruff", engine_version=None, status="skipped", duration_ms=elapsed_ms(start), summary="ruff not found", findings=[])
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary="ruff not found",
+                findings=[],
+            )
 
-        target_args = [str(p) for p in [path] if p.is_file()] if path.is_file() else [str(path)]
+        target_args = (
+            [str(p) for p in [path] if p.is_file()] if path.is_file() else [str(path)]
+        )
         proc = run_subprocess(["ruff", "check", *target_args])
         findings: list[Finding] = []
         for line in proc.stdout.splitlines():
@@ -353,7 +389,9 @@ class RuffCheckTool(ToolFn):
                             "path": parts[0].strip(),
                             "line": int(parts[1]) if parts[1].isdigit() else 1,
                             "column": int(parts[2]) if parts[2].isdigit() else 1,
-                            "rule": parts[3].strip().split()[0] if parts[3].strip() else "RUFF",
+                            "rule": parts[3].strip().split()[0]
+                            if parts[3].strip()
+                            else "RUFF",
                             "severity": "fail",
                             "message": ":".join(parts[3:]).strip(),
                         }
@@ -381,10 +419,20 @@ class MypyCheckTool(ToolFn):
     def __call__(self, path: Path, **options: object) -> ToolResult:
         return self.run(path, **options)
 
-    def run(self, path: Path, *, config=None, permissions=None, **options: object) -> ToolResult:
+    def run(
+        self, path: Path, *, config=None, permissions=None, **options: object
+    ) -> ToolResult:
         start = now_ms()
         if not shutil.which("mypy"):
-            return ToolResult(tool=self.name, engine="mypy", engine_version=None, status="skipped", duration_ms=elapsed_ms(start), summary="mypy not found", findings=[])
+            return ToolResult(
+                tool=self.name,
+                engine="mypy",
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary="mypy not found",
+                findings=[],
+            )
 
         target_args = [str(path)]
         proc = run_subprocess(["mypy", "--no-error-summary", *target_args])
@@ -426,10 +474,20 @@ class BanditSecurityTool(ToolFn):
     def __call__(self, path: Path, **options: object) -> ToolResult:
         return self.run(path, **options)
 
-    def run(self, path: Path, *, config=None, permissions=None, **options: object) -> ToolResult:
+    def run(
+        self, path: Path, *, config=None, permissions=None, **options: object
+    ) -> ToolResult:
         start = now_ms()
         if not shutil.which("bandit"):
-            return ToolResult(tool=self.name, engine="bandit", engine_version=None, status="skipped", duration_ms=elapsed_ms(start), summary="bandit not found", findings=[])
+            return ToolResult(
+                tool=self.name,
+                engine="bandit",
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary="bandit not found",
+                findings=[],
+            )
 
         target_args = [str(path)]
         proc = run_subprocess(["bandit", "-q", "-r", *target_args])
@@ -469,12 +527,24 @@ class TachBoundaryTool(ToolFn):
     def __call__(self, path: Path, **options: object) -> ToolResult:
         return self.run(path, **options)
 
-    def run(self, path: Path, *, config=None, permissions=None, **options: object) -> ToolResult:
+    def run(
+        self, path: Path, *, config=None, permissions=None, **options: object
+    ) -> ToolResult:
         start = now_ms()
         if not shutil.which("tach"):
-            return ToolResult(tool=self.name, engine="tach", engine_version=None, status="skipped", duration_ms=elapsed_ms(start), summary="tach not found", findings=[])
+            return ToolResult(
+                tool=self.name,
+                engine="tach",
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary="tach not found",
+                findings=[],
+            )
 
-        proc = run_subprocess(["tach", "check"], cwd=path if path.is_dir() else path.parent)
+        proc = run_subprocess(
+            ["tach", "check"], cwd=path if path.is_dir() else path.parent
+        )
         findings: list[Finding] = []
         for line in proc.stdout.splitlines():
             if "BOUNDARY VIOLATION" in line:
@@ -511,10 +581,20 @@ class AislopCheckTool(ToolFn):
     def __call__(self, path: Path, **options: object) -> ToolResult:
         return self.run(path, **options)
 
-    def run(self, path: Path, *, config=None, permissions=None, **options: object) -> ToolResult:
+    def run(
+        self, path: Path, *, config=None, permissions=None, **options: object
+    ) -> ToolResult:
         start = now_ms()
         if not shutil.which("aislop"):
-            return ToolResult(tool=self.name, engine="aislop", engine_version=None, status="skipped", duration_ms=elapsed_ms(start), summary="aislop not found", findings=[])
+            return ToolResult(
+                tool=self.name,
+                engine="aislop",
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary="aislop not found",
+                findings=[],
+            )
 
         target_args = [str(path)]
         proc = run_subprocess(["aislop", "scan", *target_args])
@@ -574,11 +654,29 @@ class WorkflowStage:
 
 
 DEFAULT_STAGES = [
-    WorkflowStage(name="lint", tool_names=["ruff", "biome", "eslint"], fail_on=SeverityThreshold.FAIL),
-    WorkflowStage(name="typecheck", tool_names=["mypy", "tsc", "pyrefly"], fail_on=SeverityThreshold.FAIL),
-    WorkflowStage(name="security", tool_names=["bandit", "govulncheck", "cargo-audit"], fail_on=SeverityThreshold.ERROR),
-    WorkflowStage(name="architecture", tool_names=["tach", "aislop", "undercover"], fail_on=SeverityThreshold.WARN),
-    WorkflowStage(name="test", tool_names=["pytest", "cargo-test"], fail_on=SeverityThreshold.FAIL),
+    WorkflowStage(
+        name="lint",
+        tool_names=["ruff", "biome", "eslint"],
+        fail_on=SeverityThreshold.FAIL,
+    ),
+    WorkflowStage(
+        name="typecheck",
+        tool_names=["mypy", "tsc", "pyrefly"],
+        fail_on=SeverityThreshold.FAIL,
+    ),
+    WorkflowStage(
+        name="security",
+        tool_names=["bandit", "govulncheck", "cargo-audit"],
+        fail_on=SeverityThreshold.ERROR,
+    ),
+    WorkflowStage(
+        name="architecture",
+        tool_names=["tach", "aislop", "undercover"],
+        fail_on=SeverityThreshold.WARN,
+    ),
+    WorkflowStage(
+        name="test", tool_names=["pytest", "cargo-test"], fail_on=SeverityThreshold.FAIL
+    ),
 ]
 ```
 
@@ -645,10 +743,11 @@ class SuiteRunner:
         target_path = paths[0] if paths else Path(".")
 
         if parallel and len(self.tools) > 1:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.max_workers
+            ) as executor:
                 future_to_tool = {
-                    executor.submit(tool.run, target_path): tool
-                    for tool in self.tools
+                    executor.submit(tool.run, target_path): tool for tool in self.tools
                 }
                 for future in concurrent.futures.as_completed(future_to_tool):
                     try:
@@ -718,21 +817,35 @@ from rush.workflows.doctor import EnvironmentDoctor
 from rush.workflows.runner import SuiteRunner
 from rush.discovery.git import get_staged_files, get_changed_files
 
+
 @click.command(name="doctor")
-@click.option("--json", "as_json", is_flag=True, help="Emit doctor diagnostics as JSON.")
+@click.option(
+    "--json", "as_json", is_flag=True, help="Emit doctor diagnostics as JSON."
+)
 def doctor_cmd(as_json: bool):
     """Diagnose Python environment, anti-shadowing, and tool engine health."""
     doctor = EnvironmentDoctor(Path.cwd())
     checks = doctor.diagnose_all()
 
     if as_json:
-        payload = [{"name": c.name, "status": c.status, "message": c.message, "remediation": c.remediation, "details": c.details} for c in checks]
+        payload = [
+            {
+                "name": c.name,
+                "status": c.status,
+                "message": c.message,
+                "remediation": c.remediation,
+                "details": c.details,
+            }
+            for c in checks
+        ]
         click.echo(json.dumps(payload, indent=2))
         return
 
     click.echo("=== Rush Environment Doctor ===")
     for c in checks:
-        color = "green" if c.status == "ok" else ("yellow" if c.status == "warn" else "red")
+        color = (
+            "green" if c.status == "ok" else ("yellow" if c.status == "warn" else "red")
+        )
         click.secho(f"[{c.status.upper():4}] {c.name}: {c.message}", fg=color)
         if c.remediation:
             click.echo(f"       Fix: {c.remediation}")
@@ -742,7 +855,11 @@ def doctor_cmd(as_json: bool):
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
 @click.option("--staged", is_flag=True, help="Scan staged files only.")
 @click.option("--changed", is_flag=True, help="Scan modified files only.")
-@click.option("--parallel", is_flag=True, help="Run independent quality tools in parallel threads.")
+@click.option(
+    "--parallel",
+    is_flag=True,
+    help="Run independent quality tools in parallel threads.",
+)
 def check_cmd(paths, staged: bool, changed: bool, parallel: bool):
     """Run standard quality suite (lint, format, typecheck, security)."""
     repo_root = Path.cwd()
@@ -759,7 +876,9 @@ def check_cmd(paths, staged: bool, changed: bool, parallel: bool):
     runner = SuiteRunner([])
     summary = runner.run_suite(target_paths, parallel=parallel)
     click.echo(summary.to_markdown_table())
-    click.echo(f"\nSuite completed in {summary.duration_ms}ms. Passed: {summary.passed_count}, Failed: {summary.failed_count}")
+    click.echo(
+        f"\nSuite completed in {summary.duration_ms}ms. Passed: {summary.passed_count}, Failed: {summary.failed_count}"
+    )
     if not summary.passed:
         sys.exit(1)
 
@@ -775,7 +894,10 @@ def gate_cmd(paths, fail_on: str):
     summary = runner.run_suite(target_paths)
 
     if fail_on == "warn" and (summary.warn_count > 0 or summary.failed_count > 0):
-        click.echo("Quality Gate FAILED: Warnings or errors detected under --fail-on warn.", err=True)
+        click.echo(
+            "Quality Gate FAILED: Warnings or errors detected under --fail-on warn.",
+            err=True,
+        )
         sys.exit(1)
     elif not summary.passed:
         click.echo("Quality Gate FAILED: Check suite reported failures.", err=True)
@@ -799,13 +921,33 @@ from rush.workflows.runner import SuiteRunner
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_doctor", description="Inspect Python virtualenv health, anti-shadowing, and engine availability.")
+
+@mcp.tool(
+    name="rush_doctor",
+    description="Inspect Python virtualenv health, anti-shadowing, and engine availability.",
+)
 def rush_doctor() -> str:
     doctor = EnvironmentDoctor(Path.cwd())
     checks = doctor.diagnose_all()
-    return json.dumps([{"name": c.name, "status": c.status, "message": c.message, "remediation": c.remediation, "details": c.details} for c in checks], indent=2)
+    return json.dumps(
+        [
+            {
+                "name": c.name,
+                "status": c.status,
+                "message": c.message,
+                "remediation": c.remediation,
+                "details": c.details,
+            }
+            for c in checks
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_check", description="Run unified multi-engine quality check suite across scoped files.")
+
+@mcp.tool(
+    name="rush_check",
+    description="Run unified multi-engine quality check suite across scoped files.",
+)
 def rush_check(files: list[str] | None = None, parallel: bool = True) -> str:
     repo_root = Path.cwd()
     target_paths = [Path(f) for f in files] if files else [repo_root]
@@ -879,19 +1021,45 @@ def test_doctor_missing_git_repo(tmp_path: Path):
 def test_suite_runner_parallel_execution():
     class FastTool1(ToolFn):
         name: ToolName = "fast1"
+
         @property
-        def mcp_description(self): return "mock1"
-        def __call__(self, path): return self.run(path)
+        def mcp_description(self):
+            return "mock1"
+
+        def __call__(self, path):
+            return self.run(path)
+
         def run(self, path, *, config=None):
-            return {"tool": self.name, "engine": "mock", "engine_version": "1.0", "status": "ok", "duration_ms": 5, "summary": "ok", "findings": []}
+            return {
+                "tool": self.name,
+                "engine": "mock",
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 5,
+                "summary": "ok",
+                "findings": [],
+            }
 
     class FastTool2(ToolFn):
         name: ToolName = "fast2"
+
         @property
-        def mcp_description(self): return "mock2"
-        def __call__(self, path): return self.run(path)
+        def mcp_description(self):
+            return "mock2"
+
+        def __call__(self, path):
+            return self.run(path)
+
         def run(self, path, *, config=None):
-            return {"tool": self.name, "engine": "mock", "engine_version": "1.0", "status": "ok", "duration_ms": 5, "summary": "ok", "findings": []}
+            return {
+                "tool": self.name,
+                "engine": "mock",
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 5,
+                "summary": "ok",
+                "findings": [],
+            }
 
     runner = SuiteRunner([FastTool1(), FastTool2()])
     summary = runner.run_suite([Path(".")], parallel=True)
@@ -904,19 +1072,45 @@ def test_suite_runner_parallel_execution():
 def test_suite_runner_pass_and_fail():
     class PassingTool(ToolFn):
         name: ToolName = "pass_tool"
+
         @property
-        def mcp_description(self): return "pass"
-        def __call__(self, path): return self.run(path)
+        def mcp_description(self):
+            return "pass"
+
+        def __call__(self, path):
+            return self.run(path)
+
         def run(self, path, *, config=None):
-            return {"tool": self.name, "engine": "mock", "engine_version": "1.0", "status": "ok", "duration_ms": 5, "summary": "ok", "findings": []}
+            return {
+                "tool": self.name,
+                "engine": "mock",
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 5,
+                "summary": "ok",
+                "findings": [],
+            }
 
     class FailingTool(ToolFn):
         name: ToolName = "fail_tool"
+
         @property
-        def mcp_description(self): return "fail"
-        def __call__(self, path): return self.run(path)
+        def mcp_description(self):
+            return "fail"
+
+        def __call__(self, path):
+            return self.run(path)
+
         def run(self, path, *, config=None):
-            return {"tool": self.name, "engine": "mock", "engine_version": "1.0", "status": "fail", "duration_ms": 5, "summary": "err", "findings": []}
+            return {
+                "tool": self.name,
+                "engine": "mock",
+                "engine_version": "1.0",
+                "status": "fail",
+                "duration_ms": 5,
+                "summary": "err",
+                "findings": [],
+            }
 
     runner = SuiteRunner([PassingTool(), FailingTool()])
     summary = runner.run_suite([Path(".")])
@@ -932,21 +1126,47 @@ def test_suite_runner_fail_fast():
 
     class FailingTool1(ToolFn):
         name: ToolName = "fail1"
+
         @property
-        def mcp_description(self): return "fail1"
-        def __call__(self, path): return self.run(path)
+        def mcp_description(self):
+            return "fail1"
+
+        def __call__(self, path):
+            return self.run(path)
+
         def run(self, path, *, config=None):
             execution_order.append(self.name)
-            return {"tool": self.name, "engine": "mock", "engine_version": "1.0", "status": "fail", "duration_ms": 5, "summary": "err", "findings": []}
+            return {
+                "tool": self.name,
+                "engine": "mock",
+                "engine_version": "1.0",
+                "status": "fail",
+                "duration_ms": 5,
+                "summary": "err",
+                "findings": [],
+            }
 
     class Tool2(ToolFn):
         name: ToolName = "tool2"
+
         @property
-        def mcp_description(self): return "tool2"
-        def __call__(self, path): return self.run(path)
+        def mcp_description(self):
+            return "tool2"
+
+        def __call__(self, path):
+            return self.run(path)
+
         def run(self, path, *, config=None):
             execution_order.append(self.name)
-            return {"tool": self.name, "engine": "mock", "engine_version": "1.0", "status": "ok", "duration_ms": 5, "summary": "ok", "findings": []}
+            return {
+                "tool": self.name,
+                "engine": "mock",
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 5,
+                "summary": "ok",
+                "findings": [],
+            }
 
     runner = SuiteRunner([FailingTool1(), Tool2()])
     summary = runner.run_suite([Path(".")], fail_fast=True)
@@ -956,22 +1176,50 @@ def test_suite_runner_fail_fast():
 
 
 def test_suite_summary_markdown_rendering():
-    r1: ToolResult = {"tool": "lint", "engine": "ruff", "engine_version": "0.8.0", "status": "ok", "duration_ms": 12, "summary": "clean", "findings": []}
-    r2: ToolResult = {"tool": "test", "engine": "pytest", "engine_version": "8.0.0", "status": "fail", "duration_ms": 150, "summary": "1 failed", "findings": []}
+    r1: ToolResult = {
+        "tool": "lint",
+        "engine": "ruff",
+        "engine_version": "0.8.0",
+        "status": "ok",
+        "duration_ms": 12,
+        "summary": "clean",
+        "findings": [],
+    }
+    r2: ToolResult = {
+        "tool": "test",
+        "engine": "pytest",
+        "engine_version": "8.0.0",
+        "status": "fail",
+        "duration_ms": 150,
+        "summary": "1 failed",
+        "findings": [],
+    }
 
     class T1(ToolFn):
         name = "lint"
+
         @property
-        def mcp_description(self): return "l"
-        def __call__(self, p): return r1
-        def run(self, p, *, config=None): return r1
+        def mcp_description(self):
+            return "l"
+
+        def __call__(self, p):
+            return r1
+
+        def run(self, p, *, config=None):
+            return r1
 
     class T2(ToolFn):
         name = "test"
+
         @property
-        def mcp_description(self): return "t"
-        def __call__(self, p): return r2
-        def run(self, p, *, config=None): return r2
+        def mcp_description(self):
+            return "t"
+
+        def __call__(self, p):
+            return r2
+
+        def run(self, p, *, config=None):
+            return r2
 
     summary = SuiteRunner([T1(), T2()]).run_suite([Path(".")])
     md = summary.to_markdown_table()

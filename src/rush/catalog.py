@@ -33,6 +33,58 @@ TOOL_MATURITY_VALUES: frozenset[ToolMaturity] = frozenset(
 )
 
 
+ToolOptionValue = str | int | float | bool | tuple[str, ...]
+PathKind = Literal["none", "file", "directory"]
+
+
+@dataclass(frozen=True)
+class ToolOptionSpec:
+    """Immutable declaration of a typed configuration option for a tool."""
+
+    name: str
+    value_type: type
+    default: ToolOptionValue | None = None
+    required: bool = False
+    choices: tuple[str, ...] = ()
+    minimum: float | int | None = None
+    maximum: float | int | None = None
+    path_kind: PathKind = "none"
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name:
+            raise ValueError(
+                f"ToolOptionSpec name must be a non-empty string, got {self.name!r}"
+            )
+        if self.value_type not in (str, int, float, bool, tuple):
+            raise ValueError(
+                f"ToolOptionSpec value_type must be str, int, float, bool, or tuple, got {self.value_type!r}"
+            )
+        if self.path_kind not in ("none", "file", "directory"):
+            raise ValueError(f"Invalid path_kind {self.path_kind!r}")
+        if self.choices and not isinstance(self.choices, tuple):
+            raise ValueError("choices must be a tuple of strings")
+        if self.minimum is not None and self.value_type not in (int, float):
+            raise ValueError("minimum is only valid for int or float value_type")
+        if self.maximum is not None and self.value_type not in (int, float):
+            raise ValueError("maximum is only valid for int or float value_type")
+        if self.default is not None:
+            if self.value_type is bool and not isinstance(self.default, bool):
+                raise TypeError(f"Default value {self.default!r} does not match bool")
+            elif self.value_type is int and (
+                not isinstance(self.default, int) or isinstance(self.default, bool)
+            ):
+                raise TypeError(f"Default value {self.default!r} does not match int")
+            elif self.value_type is float and not isinstance(
+                self.default, (int, float)
+            ):
+                raise TypeError(f"Default value {self.default!r} does not match float")
+            elif self.value_type is str and not isinstance(self.default, str):
+                raise TypeError(f"Default value {self.default!r} does not match str")
+            elif self.value_type is tuple and not isinstance(self.default, tuple):
+                raise TypeError(f"Default value {self.default!r} does not match tuple")
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     """Stable metadata shared by CLI help, MCP descriptions, and tests."""
@@ -45,6 +97,7 @@ class ToolSpec:
     supports_path: bool = True
     experimental: bool = False
     maturity: ToolMaturity = "catalog_only"
+    option_specs: tuple[ToolOptionSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -352,6 +405,233 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Diagnose environment health and binary resolution at <path>. Returns {status, findings[], summary}.",
         (),
     ),
+    "attest": ToolSpec(
+        name="attest",
+        category="security",
+        description="Generate in-toto Statement v1 / SLSA Provenance v1 draft attestations.",
+        mcp_description="Generate in-toto Statement v1 SLSA provenance draft for build artifacts; exporting requires artifact_write permission.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="artifact_path",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Target artifact path to attest.",
+            ),
+            ToolOptionSpec(
+                name="output_path",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Contained output path for in-toto provenance JSON.",
+            ),
+            ToolOptionSpec(
+                name="builder_id",
+                value_type=str,
+                default="https://rush-cli.org/builder/v1",
+                description="Builder URI.",
+            ),
+        ),
+    ),
+    "license-matrix": ToolSpec(
+        name="license-matrix",
+        category="security",
+        description="Audit open-source dependencies for license risks and copyleft compliance.",
+        mcp_description="Audit open-source dependencies for license risks and copyleft compliance. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="allowed_licenses",
+                value_type=tuple,
+                default=(
+                    "MIT",
+                    "Apache-2.0",
+                    "BSD-2-Clause",
+                    "BSD-3-Clause",
+                    "ISC",
+                    "Unlicense",
+                    "CC0-1.0",
+                    "0BSD",
+                    "PSF-2.0",
+                    "Python-2.0",
+                ),
+                description="Allowed SPDX license identifiers.",
+            ),
+        ),
+    ),
+    "iam-audit": ToolSpec(
+        name="iam-audit",
+        category="security",
+        description="Audit AWS SDK calls in source code and synthesize least-privilege IAM policy.",
+        mcp_description="Audit AWS SDK calls in source code and synthesize least-privilege IAM policy. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="services",
+                value_type=tuple,
+                default=(
+                    "s3",
+                    "dynamodb",
+                    "sqs",
+                    "sns",
+                    "lambda",
+                    "secretsmanager",
+                    "ssm",
+                    "sts",
+                    "kms",
+                ),
+                description="AWS services to include in static IAM audit.",
+            ),
+            ToolOptionSpec(
+                name="output_policy_file",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Contained path to export synthesized IAM policy JSON.",
+            ),
+        ),
+    ),
+    "prompt-eval": ToolSpec(
+        name="prompt-eval",
+        category="test",
+        description="Evaluate recorded golden task run records.",
+        mcp_description="Evaluate recorded prompt runs against golden task criteria at <path>. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "mem-profile": ToolSpec(
+        name="mem-profile",
+        category="quality",
+        description="Profile memory usage and audit for unclosed resources.",
+        mcp_description="Audit memory usage and unclosed resources at <path>; dynamic probe requires --allow-slow. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "cold-start": ToolSpec(
+        name="cold-start",
+        category="quality",
+        description="Audit Python import overhead and cold-start latency.",
+        mcp_description="Audit import overhead and cold-start latency at <path>; dynamic -X importtime requires --allow-slow. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "media-opt": ToolSpec(
+        name="media-opt",
+        category="quality",
+        description="Audit media assets for CLS, SVG security, and image optimization.",
+        mcp_description="Audit media assets for CLS and SVG security at <path>; writes optimized assets with --allow-artifact-write. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "offline-review": ToolSpec(
+        name="offline-review",
+        category="security",
+        description="Run local offline ONNX model review on code without network access.",
+        mcp_description="Run local offline ONNX model review at <path>; returns skipped when onnxruntime or model is absent. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "tui-diff": ToolSpec(
+        name="tui-diff",
+        category="workflow",
+        description="Compute and render Git commit and quality findings diff delta.",
+        mcp_description="Compute Git commit and quality findings deltas at <path>; renders Rich tables in CLI. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "benchmark": ToolSpec(
+        name="benchmark",
+        category="test",
+        description="Compare performance samples against baseline thresholds.",
+        mcp_description="Compare performance samples against baseline thresholds at <path>; baseline recording requires --allow-cache-write. Returns {status, findings[], summary}.",
+        engine_names=(),
+        maturity="real_adapter",
+    ),
+    "error-catalog": ToolSpec(
+        name="error-catalog",
+        category="security",
+        description="Extract raised exceptions and generate RFC 7807 problem details error catalog.",
+        mcp_description="Extract Python and TS exceptions at <path>, generate RFC 7807 problem catalog; export markdown requires --allow-artifact-write.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="export_path",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Contained destination path to export RFC 7807 Markdown catalog.",
+            ),
+        ),
+    ),
+    "provenance-ai": ToolSpec(
+        name="provenance-ai",
+        category="workflow",
+        description="Audit AI code provenance from commit trailers and track survival states.",
+        mcp_description="Audit AI code attribution via Git trailers and shallow history check at <path>. Returns survival and attribution states.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="max_commits",
+                value_type=int,
+                default=500,
+                minimum=1,
+                maximum=10000,
+                description="Maximum number of commits to scan.",
+            ),
+        ),
+    ),
+    "dead-asset": ToolSpec(
+        name="dead-asset",
+        category="quality",
+        description="Scan repository for unreferenced media, font, and static assets with guarded pruning.",
+        mcp_description="Scan unreferenced assets at <path>; generate manifest; prune requires --allow-artifact-write and SHA-256 validation.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="prune",
+                value_type=bool,
+                default=False,
+                description="Prune unreferenced assets after SHA-256 validation.",
+            ),
+            ToolOptionSpec(
+                name="export_manifest",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Contained destination path to export asset manifest JSON.",
+            ),
+        ),
+    ),
+    "pr-synthesize": ToolSpec(
+        name="pr-synthesize",
+        category="workflow",
+        description="Synthesize structured semantic pull request card from Git diff and tool results.",
+        mcp_description="Synthesize semantic PR markdown card from git diff and evidence at <path>; export requires --allow-artifact-write.",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="base_ref",
+                value_type=str,
+                default="main",
+                description="Base Git branch or reference to diff against.",
+            ),
+            ToolOptionSpec(
+                name="export_path",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Contained destination path to export PR summary Markdown.",
+            ),
+        ),
+    ),
 }
 
 
@@ -394,6 +674,20 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "tdd": "real_adapter",
     "fix": "real_adapter",
     "doctor": "real_adapter",
+    "attest": "real_adapter",
+    "license-matrix": "real_adapter",
+    "iam-audit": "real_adapter",
+    "prompt-eval": "real_adapter",
+    "mem-profile": "real_adapter",
+    "cold-start": "real_adapter",
+    "media-opt": "real_adapter",
+    "offline-review": "real_adapter",
+    "tui-diff": "real_adapter",
+    "benchmark": "real_adapter",
+    "error-catalog": "real_adapter",
+    "provenance-ai": "real_adapter",
+    "dead-asset": "real_adapter",
+    "pr-synthesize": "real_adapter",
 }
 if set(_TOOL_MATURITY) != set(TOOL_SPECS):
     raise RuntimeError("catalog maturity map must classify every tool exactly once")
@@ -477,6 +771,9 @@ PARSER_FIXTURE_SUITES: dict[str, tuple[str, ...]] = {
     ),
     "tdd": ("tests/test_tdd_guard.py",),
     "fix": ("tests/test_fix.py",),
+    "attest": ("tests/test_attest.py",),
+    "license-matrix": ("tests/test_license_matrix.py",),
+    "iam-audit": ("tests/test_iam_audit.py",),
 }
 
 

@@ -74,4 +74,57 @@ sessions_path = ".rush/sessions"
 ccr_cache_path = ".rush/cache/ccr.db"
 failures_db_path = ".rush/memory/failures.db"
 invariants_path = ".rush/memory/invariants.json"
+
+## Phase 50 Security & Quality Suite Tool Configuration
+
+```toml
+[tools.attest]
+target_artifact = "dist/app-0.1.0-py3-none-any.whl"
+export_path = "dist/app-0.1.0.intoto.json"
+
+[tools.license-matrix]
+project_license = "Apache-2.0"
+allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC"]
+export_path = "reports/licenses.json"
+
+[tools.iam-audit]
+export_path = "reports/iam-policy.json"
+
+[tools.dead-asset]
+operation = "audit"
+export_manifest = "reports/dead-assets.json"
+
+[tools.pr-synthesize]
+base_ref = "main"
+export_card = "reports/pr-card.md"
+
+[tools.prompt-eval]
+pass_rate_threshold = 1.0
+max_tokens = 50000
+max_cost = 0.50
+
+[tools.error-catalog]
+operation = "audit"
+export_docs = "docs/ERROR_CATALOG.md"
+output_module = "src/rush/errors.py"
+
+[tools.mem-profile]
+mode = "static"
+
+[tools.cold-start]
+mode = "static"
+threshold_ms = 50.0
+
+[tools.media-opt]
+operation = "audit"
+
+[tools.offline-review]
+model_path = "models/reviewer.onnx"
+
+[tools.tui-diff]
+target_ref = "HEAD"
+
+[tools.benchmark]
+metric = "duration_ms"
+threshold_pct = 10.0
 ```

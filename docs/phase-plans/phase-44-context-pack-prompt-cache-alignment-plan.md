@@ -144,10 +144,16 @@ Agents query entire files or rely on manual multi-file reads, accumulating tens 
 
 ```python
 class ContextPacker:
-    def pack(self, target_file: Path, target_symbol: str, max_tokens: int = 4000) -> str: ...
+    def pack(
+        self, target_file: Path, target_symbol: str, max_tokens: int = 4000
+    ) -> str: ...
+
 
 class CacheAligner:
-    def align_prompt(self, system_prompt: str, tools: list[dict], messages: list[dict]) -> dict[str, Any]: ...
+    def align_prompt(
+        self, system_prompt: str, tools: list[dict], messages: list[dict]
+    ) -> dict[str, Any]: ...
+
 
 class StaleSweeper:
     def sweep_transcript(self, transcript_messages: list[dict]) -> list[dict]: ...

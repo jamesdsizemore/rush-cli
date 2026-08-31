@@ -183,12 +183,12 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PillarScores:
-    type_safety: float      # Weight: 20%
-    test_coverage: float    # Weight: 25%
-    code_health: float      # Weight: 20%
-    security: float         # Weight: 15%
-    token_economy: float    # Weight: 10%
-    governance: float       # Weight: 10%
+    type_safety: float  # Weight: 20%
+    test_coverage: float  # Weight: 25%
+    code_health: float  # Weight: 20%
+    security: float  # Weight: 15%
+    token_economy: float  # Weight: 10%
+    governance: float  # Weight: 10%
 
 
 @dataclass(frozen=True)
@@ -252,7 +252,9 @@ class CompositeScorecardCalculator:
             grade = "F"
 
         summary = f"Composite Quality Score: {total}% (Grade: {grade})"
-        return ScorecardReport(composite_score=total, letter_grade=grade, pillars=pillars, summary=summary)
+        return ScorecardReport(
+            composite_score=total, letter_grade=grade, pillars=pillars, summary=summary
+        )
 ```
 
 ---
@@ -295,7 +297,9 @@ class MultiModelConsensusReconciler:
     def __init__(self, min_agreement_ratio: float = 0.5) -> None:
         self.min_agreement_ratio = min_agreement_ratio
 
-    def reconcile_findings(self, all_findings: list[ModelFinding], total_models: int) -> list[ConsensusFinding]:
+    def reconcile_findings(
+        self, all_findings: list[ModelFinding], total_models: int
+    ) -> list[ConsensusFinding]:
         if total_models <= 0 or not all_findings:
             return []
 
@@ -326,7 +330,9 @@ class MultiModelConsensusReconciler:
                     )
                 )
 
-        return sorted(consensus_list, key=lambda c: (c.confidence, c.severity), reverse=True)
+        return sorted(
+            consensus_list, key=lambda c: (c.confidence, c.severity), reverse=True
+        )
 ```
 
 ---
@@ -494,7 +500,9 @@ class GitHubPrCardFormatter:
     """Formats rich Markdown comment cards for GitHub PRs."""
 
     @staticmethod
-    def format_pr_comment(report: ScorecardReport, delta_score: float | None = None) -> str:
+    def format_pr_comment(
+        report: ScorecardReport, delta_score: float | None = None
+    ) -> str:
         delta_str = ""
         if delta_score is not None:
             sign = "+" if delta_score >= 0 else ""
@@ -562,7 +570,9 @@ class QualityTrendTracker:
             },
         }
         history.append(entry)
-        self.history_file.write_text(json.dumps(history[-50:], indent=2), encoding="utf-8")
+        self.history_file.write_text(
+            json.dumps(history[-50:], indent=2), encoding="utf-8"
+        )
 
     def get_score_delta(self) -> float | None:
         if not self.history_file.exists():
@@ -570,7 +580,9 @@ class QualityTrendTracker:
         try:
             history = json.loads(self.history_file.read_text(encoding="utf-8"))
             if len(history) >= 2:
-                return round(history[-1]["composite_score"] - history[-2]["composite_score"], 1)
+                return round(
+                    history[-1]["composite_score"] - history[-2]["composite_score"], 1
+                )
         except Exception:
             pass
         return None
@@ -597,15 +609,25 @@ class RemediationPlanSynthesizer:
         p = report.pillars
 
         if p.security < 95.0:
-            actions.append("[P0 - Critical] Resolve security findings and remove exposed credentials (rush 007 audit).")
+            actions.append(
+                "[P0 - Critical] Resolve security findings and remove exposed credentials (rush 007 audit)."
+            )
         if p.test_coverage < 85.0:
-            actions.append("[P1 - High] Increase test coverage and fix failing assertions (pytest tests/).")
+            actions.append(
+                "[P1 - High] Increase test coverage and fix failing assertions (pytest tests/)."
+            )
         if p.type_safety < 90.0:
-            actions.append("[P1 - High] Resolve type annotation errors (rush types verify).")
+            actions.append(
+                "[P1 - High] Resolve type annotation errors (rush types verify)."
+            )
         if p.code_health < 90.0:
-            actions.append("[P2 - Medium] Clean up AST slop and dead code (rush hygiene dead-code).")
+            actions.append(
+                "[P2 - Medium] Clean up AST slop and dead code (rush hygiene dead-code)."
+            )
         if p.governance < 90.0:
-            actions.append("[P2 - Medium] Synchronize AGENTS.md rules across IDE files (rush governance sync).")
+            actions.append(
+                "[P2 - Medium] Synchronize AGENTS.md rules across IDE files (rush governance sync)."
+            )
 
         return actions
 
@@ -618,6 +640,7 @@ class ScorecardTelemetryNDJSONLogger:
         import json
         import sys
         from datetime import datetime, timezone
+
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "phase": 40,
@@ -643,10 +666,12 @@ from rush.score.pr_card import GitHubPrCardFormatter
 from rush.score.trend import QualityTrendTracker
 from rush.score.remediation import RemediationPlanSynthesizer
 
+
 @click.group(name="score")
 def score_group():
     """Composite 0-100% quality scorecard and repository health."""
     pass
+
 
 @score_group.command(name="compute")
 @click.option("--type-safety", default=95.0, help="Type safety score (0-100).")
@@ -655,7 +680,14 @@ def score_group():
 @click.option("--security", default=100.0, help="Security score (0-100).")
 @click.option("--token-economy", default=85.0, help="Token economy score (0-100).")
 @click.option("--governance", default=98.0, help="Governance score (0-100).")
-def score_compute_cmd(type_safety: float, test_coverage: float, code_health: float, security: float, token_economy: float, governance: float):
+def score_compute_cmd(
+    type_safety: float,
+    test_coverage: float,
+    code_health: float,
+    security: float,
+    token_economy: float,
+    governance: float,
+):
     """Calculate deterministic repository quality scorecard."""
     pillars = PillarScores(
         type_safety=type_safety,
@@ -681,16 +713,20 @@ def score_compute_cmd(type_safety: float, test_coverage: float, code_health: flo
         for a in actions:
             click.echo(f"  - {a}")
 
+
 @score_group.command(name="badge")
 @click.argument("output_file", default="quality-badge.svg", type=click.Path())
 def score_badge_cmd(output_file: str):
     """Generate standalone SVG quality scorecard badge."""
     pillars = PillarScores(95.0, 90.0, 92.0, 100.0, 85.0, 98.0)
     report = CompositeScorecardCalculator.compute_scorecard(pillars)
-    svg = SvgBadgeGenerator.generate_badge_svg(report.composite_score, report.letter_grade)
+    svg = SvgBadgeGenerator.generate_badge_svg(
+        report.composite_score, report.letter_grade
+    )
 
     Path(output_file).write_text(svg, encoding="utf-8")
     click.echo(f"[GENERATED] Saved SVG quality badge to '{output_file}'.")
+
 
 @score_group.command(name="html")
 @click.argument("output_file", default="quality-report.html", type=click.Path())
@@ -719,7 +755,11 @@ from rush.score.pr_card import GitHubPrCardFormatter
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_score_compute", description="Calculate deterministic 0-100% composite repository quality scorecard.")
+
+@mcp.tool(
+    name="rush_score_compute",
+    description="Calculate deterministic 0-100% composite repository quality scorecard.",
+)
 def rush_score_compute(
     type_safety: float = 95.0,
     test_coverage: float = 90.0,
@@ -728,15 +768,20 @@ def rush_score_compute(
     token_economy: float = 85.0,
     governance: float = 98.0,
 ) -> str:
-    pillars = PillarScores(type_safety, test_coverage, code_health, security, token_economy, governance)
+    pillars = PillarScores(
+        type_safety, test_coverage, code_health, security, token_economy, governance
+    )
     report = CompositeScorecardCalculator.compute_scorecard(pillars)
     card = GitHubPrCardFormatter.format_pr_comment(report)
-    return json.dumps({
-        "composite_score": report.composite_score,
-        "letter_grade": report.letter_grade,
-        "summary": report.summary,
-        "markdown_card": card,
-    }, indent=2)
+    return json.dumps(
+        {
+            "composite_score": report.composite_score,
+            "letter_grade": report.letter_grade,
+            "summary": report.summary,
+            "markdown_card": card,
+        },
+        indent=2,
+    )
 ```
 
 ---
@@ -785,7 +830,9 @@ def test_multi_model_consensus_reconciler():
     findings = [
         ModelFinding("sonnet", "src/core.py", 10, "SEC01", "HIGH", "Insecure eval"),
         ModelFinding("gpt4o", "src/core.py", 10, "SEC01", "HIGH", "Insecure eval"),
-        ModelFinding("gemini", "src/other.py", 5, "STYLE01", "LOW", "Missing docstring"),
+        ModelFinding(
+            "gemini", "src/other.py", 5, "STYLE01", "LOW", "Missing docstring"
+        ),
     ]
 
     consensus = reconciler.reconcile_findings(findings, total_models=3)
@@ -857,6 +904,7 @@ def test_remediation_plan_synthesizer():
 
 def test_telemetry_ndjson_logger(capsys):
     from rush.score.remediation import ScorecardTelemetryNDJSONLogger
+
     line = ScorecardTelemetryNDJSONLogger.emit_event("test_score", {"score": 95.0})
     assert '"event_type": "test_score"' in line
     captured = capsys.readouterr()
@@ -865,6 +913,7 @@ def test_telemetry_ndjson_logger(capsys):
 
 def test_weight_normalizer():
     from rush.score.calculator import WeightNormalizer
+
     raw = {"a": 2.0, "b": 2.0}
     norm = WeightNormalizer.normalize(raw)
     assert norm["a"] == 0.5

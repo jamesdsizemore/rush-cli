@@ -70,6 +70,5 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 
 
 
-## SLSA Level 3 Supply Chain Security (Phase 50)
-Rush produces verifiable in-toto SLSA Level 3 build provenance statements for all distributed binaries, ensuring complete protection against build-time supply chain tampering.
-
+## In-Toto Provenance Draft & Security Analysis (Phase 50)
+`rush attest` produces in-toto Statement v1 / SLSA Provenance v1 unsigned drafts with SHA-256 artifact digests for release builds. `rush license-matrix` and `rush iam-audit` provide static dependency compliance and least-privilege cloud IAM policy synthesis. Note: `rush attest` emits unsigned drafts; cryptographic signing and trusted builder verification are handled by downstream CI release workflows.

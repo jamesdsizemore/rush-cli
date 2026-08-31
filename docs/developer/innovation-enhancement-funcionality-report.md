@@ -602,6 +602,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
+
 @dataclass
 class MemoryRecord:
     category: str  # "invariant", "failure_pattern", "episode", "user_preference"
@@ -610,9 +611,10 @@ class MemoryRecord:
     ast_hash: Optional[str] = None
     confidence: float = 1.0
 
+
 class AgentContextMemoryEngine:
     """Local-first SQLite memory engine uniting traditional FTS5 search and AST Merkle anchoring."""
-    
+
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root
         self.db_path = workspace_root / ".rush" / "memory.db"
@@ -635,9 +637,15 @@ class AgentContextMemoryEngine:
                     last_verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_subj ON memory_records(subject);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_cat ON memory_records(category);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_hash ON memory_records(ast_hash);")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mem_subj ON memory_records(subject);"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mem_cat ON memory_records(category);"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mem_hash ON memory_records(ast_hash);"
+            )
             # Traditional Full-Text Search FTS5 virtual table
             conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -648,16 +656,32 @@ class AgentContextMemoryEngine:
     def remember(self, record: MemoryRecord) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.cursor()
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO memory_records (category, subject, content, ast_hash, confidence)
                 VALUES (?, ?, ?, ?, ?)
-            """, (record.category, record.subject, record.content, record.ast_hash, record.confidence))
+            """,
+                (
+                    record.category,
+                    record.subject,
+                    record.content,
+                    record.ast_hash,
+                    record.confidence,
+                ),
+            )
             rec_id = cur.lastrowid
-            conn.execute("INSERT INTO memory_fts(rowid, subject, content) VALUES (?, ?, ?);",
-                         (rec_id, record.subject, record.content))
+            conn.execute(
+                "INSERT INTO memory_fts(rowid, subject, content) VALUES (?, ?, ?);",
+                (rec_id, record.subject, record.content),
+            )
             return rec_id
 
-    def recall(self, subject: Optional[str] = None, category: Optional[str] = None, include_stale: bool = False) -> list[dict]:
+    def recall(
+        self,
+        subject: Optional[str] = None,
+        category: Optional[str] = None,
+        include_stale: bool = False,
+    ) -> list[dict]:
         query = "SELECT id, category, subject, content, ast_hash, confidence, is_stale FROM memory_records WHERE 1=1"
         params = []
         if not include_stale:
@@ -679,35 +703,45 @@ class AgentContextMemoryEngine:
         """Traditional full-text lexical search using SQLite FTS5."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT m.id, m.category, m.subject, m.content, m.ast_hash, m.confidence
                 FROM memory_records m
                 JOIN memory_fts f ON m.id = f.rowid
                 WHERE memory_fts MATCH ?
                 ORDER BY rank
-            """, (keyword_query,)).fetchall()
+            """,
+                (keyword_query,),
+            ).fetchall()
             return [dict(r) for r in rows]
 
     def invalidate_ast_delta(self, changed_file_ast_hashes: dict[str, str]):
         """Marks memories stale when underlying AST subtrees mutate."""
         with sqlite3.connect(self.db_path) as conn:
             for symbol_name, current_hash in changed_file_ast_hashes.items():
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE memory_records
                     SET is_stale = 1
                     WHERE subject = ? AND ast_hash IS NOT NULL AND ast_hash != ?
-                """, (symbol_name, current_hash))
+                """,
+                    (symbol_name, current_hash),
+                )
 
     def compile_prompt_injection(self, max_tokens: int = 350) -> str:
         """Compiles top invariants and failure anti-patterns into an XML prompt block."""
         invariants = self.recall(category="invariant")
         failures = self.recall(category="failure_pattern")
-        
+
         lines = ["<rush_context_memory>"]
         for r in invariants[:4]:
-            lines.append(f"  <invariant subject='{r['subject']}'>{r['content']}</invariant>")
+            lines.append(
+                f"  <invariant subject='{r['subject']}'>{r['content']}</invariant>"
+            )
         for f in failures[:3]:
-            lines.append(f"  <anti_pattern subject='{f['subject']}'>{f['content']}</anti_pattern>")
+            lines.append(
+                f"  <anti_pattern subject='{f['subject']}'>{f['content']}</anti_pattern>"
+            )
         lines.append("</rush_context_memory>")
         return "\n".join(lines)
 ```
@@ -719,8 +753,10 @@ import sys
 from pathlib import Path
 from rush.catalog import Finding
 
+
 class HallucinationLinter(ast.NodeVisitor):
     """Scans Python AST for hallucinated packages and phantom stdlib methods."""
+
     def __init__(self, workspace_root: Path, declared_packages: set[str]):
         self.workspace_root = workspace_root
         self.declared_packages = declared_packages
@@ -741,16 +777,20 @@ class HallucinationLinter(ast.NodeVisitor):
     def _verify_package(self, pkg_name: str, line: int, col: int):
         if pkg_name in sys.stdlib_module_names:
             return
-        if (self.workspace_root / f"{pkg_name}.py").exists() or (self.workspace_root / pkg_name).is_dir():
+        if (self.workspace_root / f"{pkg_name}.py").exists() or (
+            self.workspace_root / pkg_name
+        ).is_dir():
             return
         if pkg_name not in self.declared_packages:
-            self.findings.append(Finding(
-                check_id="hallu/phantom-package",
-                message=f"Hallucinated dependency '{pkg_name}' imported but not declared in project manifests.",
-                severity="error",
-                line=line,
-                col=col,
-            ))
+            self.findings.append(
+                Finding(
+                    check_id="hallu/phantom-package",
+                    message=f"Hallucinated dependency '{pkg_name}' imported but not declared in project manifests.",
+                    severity="error",
+                    line=line,
+                    col=col,
+                )
+            )
 ```
 
 ### 7.3 `CodeToEnvParityLinter` (`src/rush/sync/env_sync.py`)
@@ -758,6 +798,7 @@ class HallucinationLinter(ast.NodeVisitor):
 import ast
 from pathlib import Path
 from rush.catalog import Finding
+
 
 class CodeToEnvParityLinter:
     """Extracts os.getenv / process.env calls and cross-references .env.example."""
@@ -769,7 +810,9 @@ class CodeToEnvParityLinter:
             try:
                 tree = ast.parse(py_file.read_text(encoding="utf-8"))
                 for node in ast.walk(tree):
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if isinstance(node, ast.Call) and isinstance(
+                        node.func, ast.Attribute
+                    ):
                         if node.func.attr == "getenv" and node.args:
                             if isinstance(node.args[0], ast.Constant):
                                 code_vars.add(node.args[0].value)
@@ -784,12 +827,14 @@ class CodeToEnvParityLinter:
                     example_vars.add(line.split("=")[0].strip())
 
         for missing in code_vars - example_vars:
-            findings.append(Finding(
-                check_id="env/missing-example",
-                message=f"Environment variable '{missing}' used in code but missing from .env.example",
-                severity="fail",
-                line=1,
-            ))
+            findings.append(
+                Finding(
+                    check_id="env/missing-example",
+                    message=f"Environment variable '{missing}' used in code but missing from .env.example",
+                    severity="fail",
+                    line=1,
+                )
+            )
         return findings
 ```
 
@@ -798,27 +843,38 @@ class CodeToEnvParityLinter:
 import re
 from rush.catalog import Finding
 
+
 class ZeroDowntimeMigrationLinter:
     """Audits SQL DDL migrations for table-locking operations."""
+
     HAZARDS = [
-        (re.compile(r"ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+\w+\s+[^;\n]+NOT\s+NULL(?!\s+DEFAULT)", re.I),
-         "ddl/exclusive-lock-not-null",
-         "Adding NOT NULL column without DEFAULT locks the entire table during rewrite."),
-        (re.compile(r"ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN", re.I),
-         "ddl/dangerous-column-drop",
-         "Dropping a column immediately breaks running application workers; use ignore_column first."),
+        (
+            re.compile(
+                r"ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+\w+\s+[^;\n]+NOT\s+NULL(?!\s+DEFAULT)",
+                re.I,
+            ),
+            "ddl/exclusive-lock-not-null",
+            "Adding NOT NULL column without DEFAULT locks the entire table during rewrite.",
+        ),
+        (
+            re.compile(r"ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN", re.I),
+            "ddl/dangerous-column-drop",
+            "Dropping a column immediately breaks running application workers; use ignore_column first.",
+        ),
     ]
 
     def audit_sql(self, sql_content: str) -> list[Finding]:
         findings = []
         for pattern, check_id, msg in self.HAZARDS:
             for match in pattern.finditer(sql_content):
-                findings.append(Finding(
-                    check_id=check_id,
-                    message=msg,
-                    severity="error",
-                    line=sql_content[:match.start()].count("\n") + 1,
-                ))
+                findings.append(
+                    Finding(
+                        check_id=check_id,
+                        message=msg,
+                        severity="error",
+                        line=sql_content[: match.start()].count("\n") + 1,
+                    )
+                )
         return findings
 ```
 
@@ -828,8 +884,10 @@ import ast
 from pathlib import Path
 from rush.catalog import Finding
 
+
 class DeclarativeBoundaryLinter(ast.NodeVisitor):
     """Enforces DDD layer boundary import rules defined in rush.toml."""
+
     def __init__(self, current_layer: str, forbidden_layers: list[str]):
         self.current_layer = current_layer
         self.forbidden_layers = forbidden_layers
@@ -848,12 +906,14 @@ class DeclarativeBoundaryLinter(ast.NodeVisitor):
     def _check_boundary(self, module_path: str, line: int):
         for forbidden in self.forbidden_layers:
             if module_path.startswith(forbidden):
-                self.findings.append(Finding(
-                    check_id="arch/boundary-violation",
-                    message=f"Layer violation: '{self.current_layer}' cannot import forbidden layer '{forbidden}'.",
-                    severity="error",
-                    line=line,
-                ))
+                self.findings.append(
+                    Finding(
+                        check_id="arch/boundary-violation",
+                        message=f"Layer violation: '{self.current_layer}' cannot import forbidden layer '{forbidden}'.",
+                        severity="error",
+                        line=line,
+                    )
+                )
 ```
 
 ### 7.6 `StaleFeatureFlagLinter` (`src/rush/sync/flags_scanner.py`)
@@ -862,8 +922,10 @@ import ast
 import re
 from rush.catalog import Finding
 
+
 class StaleFeatureFlagLinter(ast.NodeVisitor):
     """Detects stale or hardcoded feature flags in AST call trees."""
+
     def __init__(self, flag_registry: dict[str, str]):
         self.flag_registry = flag_registry
         self.findings: list[Finding] = []
@@ -874,12 +936,14 @@ class StaleFeatureFlagLinter(ast.NodeVisitor):
                 flag_name = node.args[0].value
                 status = self.flag_registry.get(flag_name)
                 if status == "deprecated":
-                    self.findings.append(Finding(
-                        check_id="flags/stale-flag-usage",
-                        message=f"Feature flag '{flag_name}' is deprecated and should be cleaned up.",
-                        severity="warning",
-                        line=node.lineno,
-                    ))
+                    self.findings.append(
+                        Finding(
+                            check_id="flags/stale-flag-usage",
+                            message=f"Feature flag '{flag_name}' is deprecated and should be cleaned up.",
+                            severity="warning",
+                            line=node.lineno,
+                        )
+                    )
         self.generic_visit(node)
 ```
 
@@ -888,9 +952,13 @@ class StaleFeatureFlagLinter(ast.NodeVisitor):
 import re
 from rush.catalog import Finding
 
+
 class AISlopCommentScrubber:
     """Detects echo comments that merely repeat identifier names."""
-    ECHO_PATTERN = re.compile(r"^\s*#\s*(initialize|set|get|define|create)\s+([a-zA-Z0-9_]+)", re.I)
+
+    ECHO_PATTERN = re.compile(
+        r"^\s*#\s*(initialize|set|get|define|create)\s+([a-zA-Z0-9_]+)", re.I
+    )
 
     def audit_lines(self, lines: list[str]) -> list[Finding]:
         findings = []
@@ -900,12 +968,14 @@ class AISlopCommentScrubber:
                 next_line = lines[idx]
                 target_identifier = match.group(2).lower()
                 if target_identifier in next_line.lower():
-                    findings.append(Finding(
-                        check_id="slop/echo-comment",
-                        message=f"Redundant AI echo comment on line {idx}: '{line.strip()}'",
-                        severity="info",
-                        line=idx,
-                    ))
+                    findings.append(
+                        Finding(
+                            check_id="slop/echo-comment",
+                            message=f"Redundant AI echo comment on line {idx}: '{line.strip()}'",
+                            severity="info",
+                            line=idx,
+                        )
+                    )
         return findings
 ```
 
@@ -915,8 +985,10 @@ import re
 from pathlib import Path
 from rush.catalog import Finding
 
+
 class SpecTraceabilityLinter:
     """Verifies that PRD requirement codes map to annotated AST handlers."""
+
     REQ_PATTERN = re.compile(r"\[REQ-([A-Z0-9_-]+)\]", re.I)
 
     def run(self, prd_text: str, codebase_dir: Path) -> list[Finding]:
@@ -930,12 +1002,14 @@ class SpecTraceabilityLinter:
         missing = expected_reqs - found_reqs
         findings = []
         for req in missing:
-            findings.append(Finding(
-                check_id="spec/unimplemented-req",
-                message=f"Specification requirement '[REQ-{req}]' defined in PRD has no implementing code annotations.",
-                severity="fail",
-                line=1,
-            ))
+            findings.append(
+                Finding(
+                    check_id="spec/unimplemented-req",
+                    message=f"Specification requirement '[REQ-{req}]' defined in PRD has no implementing code annotations.",
+                    severity="fail",
+                    line=1,
+                )
+            )
         return findings
 ```
 

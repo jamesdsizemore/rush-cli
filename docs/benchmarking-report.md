@@ -146,6 +146,7 @@ from rush.token_economy.distillers import CommandDistiller
 from rush.token_economy.ccr_store import CCRStore
 from rush.tools.ship.cockpit import ShipCockpit
 
+
 def run_all_benchmarks():
     print("[*] Launching Rush Platform Benchmark Suite...")
     # 1. Measure TOON Token Reduction

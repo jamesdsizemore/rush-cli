@@ -561,12 +561,8 @@ class PyreflyEngine(Engine):
                     "line": int(diag.get("line", 1)),
                     "column": int(diag.get("col", 1)),
                     "rule": f"pyrefly/{diag.get('code', 'type-error')}",
-                    "severity": "fail"
-                    if diag.get("severity") == "error"
-                    else "warn",
-                    "message": diag.get(
-                        "message", "Static type violation detected."
-                    ),
+                    "severity": "fail" if diag.get("severity") == "error" else "warn",
+                    "message": diag.get("message", "Static type violation detected."),
                 }
             )
 
@@ -644,9 +640,7 @@ class GlobstarEngine(Engine):
                     "line": int(item.get("line", 1)),
                     "column": int(item.get("col", 1)),
                     "rule": f"globstar/{item.get('pattern_id', 'ast-pattern-match')}",
-                    "severity": "fail"
-                    if item.get("level") == "error"
-                    else "warn",
+                    "severity": "fail" if item.get("level") == "error" else "warn",
                     "message": item.get("message", "AST pattern rule matched."),
                 }
             )
@@ -1083,7 +1077,9 @@ from rush.tools.slop import SlopTool
 def test_aislop_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
-    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
 
@@ -1121,7 +1117,9 @@ from rush.engines.tach import TachEngine
 def test_tach_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
-    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout='{"errors": []}', stderr="")
 

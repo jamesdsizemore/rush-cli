@@ -234,9 +234,13 @@ class UnifiedDiffParser:
                 if target_path and target_path != "/dev/null":
                     resolved = (repo_root / target_path).resolve()
                     if not resolved.is_relative_to(repo_root.resolve()):
-                        raise ValueError(f"Path traversal detected in diff header: '{target_path}'")
+                        raise ValueError(
+                            f"Path traversal detected in diff header: '{target_path}'"
+                        )
                     if target_path in GOVERNANCE_BLOCKED_FILES:
-                        raise PermissionError(f"Modifying governance file '{target_path}' is strictly forbidden.")
+                        raise PermissionError(
+                            f"Modifying governance file '{target_path}' is strictly forbidden."
+                        )
 
             hunks: list[DiffHunk] = []
             hunk_blocks = re.split(r"(?=^@@ )", chunk, flags=re.MULTILINE)
@@ -260,7 +264,9 @@ class UnifiedDiffParser:
                         )
                     )
 
-            patches.append(ParsedFilePatch(old_path=old_file, new_path=new_file, hunks=hunks))
+            patches.append(
+                ParsedFilePatch(old_path=old_file, new_path=new_file, hunks=hunks)
+            )
 
         return patches
 ```
@@ -292,7 +298,10 @@ class PatchSyntaxGuard:
                 ast.parse(source, filename=str(file_path))
                 return True, None
             except SyntaxError as e:
-                return False, f"Python syntax error at line {e.lineno}, col {e.offset}: {e.msg}"
+                return (
+                    False,
+                    f"Python syntax error at line {e.lineno}, col {e.offset}: {e.msg}",
+                )
             except Exception as e:
                 return False, f"AST parse failure: {e}"
 
@@ -396,7 +405,9 @@ class PatchMemoryStore:
             )
             conn.commit()
 
-    def record_success(self, error_signature: str, target_file: str, diff_patch: str) -> None:
+    def record_success(
+        self, error_signature: str, target_file: str, diff_patch: str
+    ) -> None:
         sig_hash = hashlib.sha256(error_signature.encode("utf-8")).hexdigest()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -476,7 +487,13 @@ class PatchApplier:
         try:
             patch_file.write_text(unified_diff, encoding="utf-8")
             proc = run_subprocess(
-                ["git", "apply", "--ignore-whitespace", "--whitespace=nowarn", str(patch_file)],
+                [
+                    "git",
+                    "apply",
+                    "--ignore-whitespace",
+                    "--whitespace=nowarn",
+                    str(patch_file),
+                ],
                 cwd=target_dir,
             )
             if proc.returncode != 0:
@@ -487,7 +504,10 @@ class PatchApplier:
                 f_path = target_dir / p_file.new_path
                 ok, err = PatchSyntaxGuard.validate_file_syntax(f_path)
                 if not ok:
-                    return False, f"Post-patch syntax check failed on {p_file.new_path}: {err}"
+                    return (
+                        False,
+                        f"Post-patch syntax check failed on {p_file.new_path}: {err}",
+                    )
 
             return True, "Patch applied cleanly with valid syntax."
         finally:
@@ -517,14 +537,19 @@ class PatchVerifier:
 
     def verify_patch(self) -> tuple[bool, str]:
         # 1. Python Pytest verification
-        if (self.sandbox_dir / "pytest.ini").exists() or (self.sandbox_dir / "tests").exists():
+        if (self.sandbox_dir / "pytest.ini").exists() or (
+            self.sandbox_dir / "tests"
+        ).exists():
             if shutil.which("pytest"):
                 proc = run_subprocess(
                     ["pytest", "-q", "--tb=short"],
                     cwd=self.sandbox_dir,
                 )
                 if proc.returncode != 0:
-                    return False, f"Pytest regression failure: {proc.stderr or proc.stdout}"
+                    return (
+                        False,
+                        f"Pytest regression failure: {proc.stderr or proc.stdout}",
+                    )
 
         # 2. Node / Vitest / Jest verification
         if (self.sandbox_dir / "package.json").exists():
@@ -534,7 +559,10 @@ class PatchVerifier:
                     cwd=self.sandbox_dir,
                 )
                 if proc.returncode != 0:
-                    return False, f"npm test regression failure: {proc.stderr or proc.stdout}"
+                    return (
+                        False,
+                        f"npm test regression failure: {proc.stderr or proc.stdout}",
+                    )
 
         # 3. Rust Cargo verification
         if (self.sandbox_dir / "Cargo.toml").exists():
@@ -544,7 +572,10 @@ class PatchVerifier:
                     cwd=self.sandbox_dir,
                 )
                 if proc.returncode != 0:
-                    return False, f"Cargo test regression failure: {proc.stderr or proc.stdout}"
+                    return (
+                        False,
+                        f"Cargo test regression failure: {proc.stderr or proc.stdout}",
+                    )
 
         return True, "All automated tests and quality checks passed cleanly in sandbox."
 ```
@@ -629,10 +660,12 @@ from rush.patch.verifier import PatchVerifier
 from rush.patch.promoter import PatchPromoter
 from rush.patch.memory import PatchMemoryStore
 
+
 @click.group(name="patch")
 def patch_group():
     """Isolated AI patch testing, verification, and memory management."""
     pass
+
 
 @patch_group.command(name="test")
 @click.argument("patch_file", type=click.Path(exists=True))
@@ -660,6 +693,7 @@ def patch_test_cmd(patch_file: str):
     finally:
         mgr.cleanup_sandbox(sandbox)
         click.echo("Cleaned up ephemeral sandbox.")
+
 
 @patch_group.command(name="promote")
 @click.argument("patch_file", type=click.Path(exists=True))
@@ -694,6 +728,7 @@ def patch_promote_cmd(patch_file: str):
     finally:
         mgr.cleanup_sandbox(sandbox)
 
+
 @patch_group.command(name="memory")
 def patch_memory_cmd():
     """List all cached successful patch remediations."""
@@ -704,7 +739,9 @@ def patch_memory_cmd():
         return
     click.echo(f"Cached Patch Remediations ({len(records)}):")
     for r in records:
-        click.echo(f"  - {r.target_file} [Used {r.success_count}x, Hash: {r.error_signature[:12]}...]")
+        click.echo(
+            f"  - {r.target_file} [Used {r.success_count}x, Hash: {r.error_signature[:12]}...]"
+        )
 ```
 
 ---
@@ -725,18 +762,28 @@ from rush.patch.memory import PatchMemoryStore
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_patch_apply", description="Test a unified diff in an ephemeral worktree sandbox.")
+
+@mcp.tool(
+    name="rush_patch_apply",
+    description="Test a unified diff in an ephemeral worktree sandbox.",
+)
 def rush_patch_apply(unified_diff: str) -> str:
     repo_root = Path.cwd()
     mgr = PatchSandboxManager(repo_root)
     sandbox = mgr.create_sandbox()
     try:
         ok, msg = PatchApplier.apply_patch_to_dir(sandbox, unified_diff)
-        return json.dumps({"applied": ok, "message": msg, "sandbox": sandbox.name}, indent=2)
+        return json.dumps(
+            {"applied": ok, "message": msg, "sandbox": sandbox.name}, indent=2
+        )
     finally:
         mgr.cleanup_sandbox(sandbox)
 
-@mcp.tool(name="rush_patch_promote", description="Verify and promote an AI patch to the working tree.")
+
+@mcp.tool(
+    name="rush_patch_promote",
+    description="Verify and promote an AI patch to the working tree.",
+)
 def rush_patch_promote(unified_diff: str) -> str:
     repo_root = Path.cwd()
     mgr = PatchSandboxManager(repo_root)
@@ -748,14 +795,20 @@ def rush_patch_promote(unified_diff: str) -> str:
         verifier = PatchVerifier(sandbox)
         passed, v_msg = verifier.verify_patch()
         if not passed:
-            return json.dumps({"promoted": False, "error": f"Verification failed: {v_msg}"}, indent=2)
+            return json.dumps(
+                {"promoted": False, "error": f"Verification failed: {v_msg}"}, indent=2
+            )
         promoter = PatchPromoter(repo_root)
         p_ok, p_msg = promoter.promote_sandbox_diff(sandbox)
         return json.dumps({"promoted": p_ok, "message": p_msg}, indent=2)
     finally:
         mgr.cleanup_sandbox(sandbox)
 
-@mcp.tool(name="rush_patch_lookup", description="Lookup cached patch remediation for a known error signature.")
+
+@mcp.tool(
+    name="rush_patch_lookup",
+    description="Lookup cached patch remediation for a known error signature.",
+)
 def rush_patch_lookup(error_signature: str) -> str:
     store = PatchMemoryStore(Path.cwd())
     cached_diff = store.lookup_patch(error_signature)

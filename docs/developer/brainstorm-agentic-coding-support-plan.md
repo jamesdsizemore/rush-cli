@@ -136,7 +136,9 @@ class ContextSanitizer:
         self.secret = session_secret or secrets.token_hex(32)
 
     def _sign_payload(self, payload: str) -> str:
-        return hmac.new(self.secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+        return hmac.new(
+            self.secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+        ).hexdigest()[:16]
 
     def frame_untrusted_input(self, tag_name: str, untrusted_content: str) -> str:
         # Sanitize any closing tags inside content to prevent injection escape
@@ -223,11 +225,17 @@ class GovernanceGuard:
     def verify_write_target(self, target_path: Path) -> tuple[bool, str | None]:
         resolved = target_path.resolve()
         if not resolved.is_relative_to(self.repo_root):
-            return False, f"Path traversal attack blocked: '{target_path}' is outside repository root."
+            return (
+                False,
+                f"Path traversal attack blocked: '{target_path}' is outside repository root.",
+            )
 
         rel_path = resolved.relative_to(self.repo_root).as_posix()
         if rel_path in self.IMMUTABLE_PATTERNS:
-            return False, f"Agent mutation blocked: '{rel_path}' is an immutable governance file."
+            return (
+                False,
+                f"Agent mutation blocked: '{rel_path}' is an immutable governance file.",
+            )
 
         return True, None
 ```
@@ -243,10 +251,12 @@ from rush.agentic.context_sanitizer import ContextSanitizer
 from rush.agentic.circuit_breaker import AgentCircuitBreaker
 from rush.agentic.governance_guard import GovernanceGuard
 
+
 @click.group(name="agent")
 def agent_group():
     """Agentic coding safety, sandboxing, and context utilities."""
     pass
+
 
 @agent_group.command(name="frame")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -257,6 +267,7 @@ def agent_frame_cmd(file_path: str, tag: str):
     sanitizer = ContextSanitizer()
     framed = sanitizer.frame_untrusted_input(tag, content)
     click.echo(framed)
+
 
 @agent_group.command(name="check-guard")
 @click.argument("target_file", type=click.Path())
@@ -285,12 +296,20 @@ from rush.agentic.governance_guard import GovernanceGuard
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_context_sanitize", description="Wrap untrusted code in HMAC-signed XML boundary tags.")
+
+@mcp.tool(
+    name="rush_context_sanitize",
+    description="Wrap untrusted code in HMAC-signed XML boundary tags.",
+)
 def rush_context_sanitize(content: str, tag_name: str = "safe_input") -> str:
     sanitizer = ContextSanitizer()
     return sanitizer.frame_untrusted_input(tag_name, content)
 
-@mcp.tool(name="rush_guard_check_mutation", description="Check if a file mutation is permitted under governance rules.")
+
+@mcp.tool(
+    name="rush_guard_check_mutation",
+    description="Check if a file mutation is permitted under governance rules.",
+)
 def rush_guard_check_mutation(file_path: str) -> str:
     guard = GovernanceGuard(Path.cwd())
     ok, err = guard.verify_write_target(Path(file_path))

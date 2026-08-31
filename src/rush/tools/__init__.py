@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from .actions import ActionsTool
 from .ai_eval import AiEvalTool
+from .attest import AttestationTool
 from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
+from .benchmark import BenchmarkTool
 from .ci import CiTool
 from .codeql import CodeqlTool
+from .cold_start import ColdStartTool
 from .commit_msg import CommitMsgTool
 from .common import (
     engine_on_path,
@@ -28,18 +31,28 @@ from .continuity import SessionContinuityTool
 from .contract import ContractTool
 from .coverage import CoverageTool
 from .dead import DeadTool
+from .dead_asset import DeadAssetScanner, DeadAssetTool
 from .doctor import DoctorTool
 from .e2e import E2eTool
+from .error_catalog import ErrorCatalogTool
 from .fix import FixTool
 from .flaky import FlakyTool
 from .format import FormatTool
 from .fuzz import FuzzTool
 from .iac import IacTool
+from .iam_audit import IamAuditTool
+from .license_matrix import LicenseMatrixTool
 from .lint import LintTool
 from .load import LoadTool
 from .markdown import MarkdownTool
+from .media_opt import MediaOptTool
+from .mem_profile import MemProfileTool
 from .mutation import MutationTool
+from .offline_runner import OfflineReviewTool
 from .pbt import PbtTool
+from .pr_synthesize import PrSynthesizer, PrSynthesizeTool
+from .prompt_eval import PromptEvalTool
+from .provenance_ai import ProvenanceAiTool
 from .release import ReleaseTool
 from .review import ReviewTool
 from .sbom import SbomTool
@@ -52,6 +65,7 @@ from .sql import SqlTool
 from .tdd_guard import TddGuardTool
 from .templates import TemplatesTool
 from .test import TestTool
+from .tui_diff import TuiDiffTool
 from .typecheck import TypecheckTool
 from .visual import VisualTool
 from .yaml import YamlTool
@@ -95,21 +109,50 @@ ALL_TOOLS: list[ToolFn] = [
     TddGuardTool(),
     FixTool(),
     DoctorTool(),
+    AttestationTool(),
+    LicenseMatrixTool(),
+    IamAuditTool(),
+    PromptEvalTool(),
+    MemProfileTool(),
+    ColdStartTool(),
+    MediaOptTool(),
+    OfflineReviewTool(),
+    TuiDiffTool(),
+    BenchmarkTool(),
+    ErrorCatalogTool(),
+    ProvenanceAiTool(),
+    DeadAssetTool(),
+    PrSynthesizeTool(),
 ]
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # registry
     "ALL_TOOLS",
     "AiEvalTool",
+    "AttestationTool",
+    "BenchmarkTool",
+    "ColdStartTool",
     "ComplexityTool",
+    "DeadAssetScanner",
+    "DeadAssetTool",
     "DeadTool",
     "DoctorTool",
+    "ErrorCatalogTool",
     "Finding",
     "FixTool",
     "FormatTool",
+    "IamAuditTool",
+    "LicenseMatrixTool",
     "LintTool",
     "LlmStatus",
     "MarkdownTool",
+    "MediaOptTool",
+    "MemProfileTool",
+    "OfflineReviewTool",
+    "PrSynthesizeTool",
+    "PrSynthesizer",
+    "PromptEvalTool",
+    "ProvenanceAiTool",
     # concrete tool classes (for testing)
     "ReviewTool",
     "SecurityTool",
@@ -121,6 +164,7 @@ __all__ = [
     "ToolFn",
     "ToolName",
     "ToolResult",
+    "TuiDiffTool",
     # core types
     "ToolStatus",
     "TypecheckTool",

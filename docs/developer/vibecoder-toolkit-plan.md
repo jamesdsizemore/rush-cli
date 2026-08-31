@@ -234,7 +234,11 @@ class VibeCoderOrchestrator:
         type_count = 0
         secret_count = 0
 
-        score = max(0.0, 100.0 - (dead_count * 2 + slop_count * 3 + type_count * 5 + secret_count * 15))
+        score = max(
+            0.0,
+            100.0
+            - (dead_count * 2 + slop_count * 3 + type_count * 5 + secret_count * 15),
+        )
         status = "HEALTHY" if score >= 90.0 else "REMEDIATION_REQUIRED"
 
         return VibeAuditSummary(
@@ -270,7 +274,13 @@ class RouteDefinitionFinder(ast.NodeVisitor):
         for dec in node.decorator_list:
             if isinstance(dec, ast.Call):
                 func = dec.func
-                if isinstance(func, ast.Attribute) and func.attr in ("get", "post", "put", "delete", "patch"):
+                if isinstance(func, ast.Attribute) and func.attr in (
+                    "get",
+                    "post",
+                    "put",
+                    "delete",
+                    "patch",
+                ):
                     if dec.args and isinstance(dec.args[0], ast.Constant):
                         path = str(dec.args[0].value)
                         self.routes.append((func.attr.upper(), path, node.lineno))
@@ -331,14 +341,18 @@ class EnvSyncValidator:
         text = code_file.read_text(encoding="utf-8", errors="replace")
         declared = self.get_declared_env_vars()
 
-        env_pattern = r"(?:os\.environ\.get|os\.getenv)\s*\(\s*['\"]" + r"([A-Z0-9_]+)['\"]"
+        env_pattern = (
+            r"(?:os\.environ\.get|os\.getenv)\s*\(\s*['\"]" + r"([A-Z0-9_]+)['\"]"
+        )
         used_vars = set(re.findall(env_pattern, text))
         used_vars.update(re.findall(r"process\.env\.([A-Z0-9_]+)", text))
 
         missing = []
         for v in sorted(used_vars):
             if v not in declared:
-                missing.append(f"{code_file.name}: Referenced env var '{v}' missing from .env.example.")
+                missing.append(
+                    f"{code_file.name}: Referenced env var '{v}' missing from .env.example."
+                )
         return missing
 ```
 
@@ -371,7 +385,9 @@ class DatabaseSchemaDriftDetector:
         if not sql_file.exists():
             return set()
         text = sql_file.read_text(encoding="utf-8", errors="replace")
-        sql_pattern = r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?" + r"([a-zA-Z0-9_]+)"
+        sql_pattern = (
+            r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?" + r"([a-zA-Z0-9_]+)"
+        )
         return set(re.findall(sql_pattern, text))
 
     @classmethod
@@ -412,7 +428,10 @@ class PackageLockfileGuard:
 
         if pkg_json.exists():
             if not (pkg_lock.exists() or yarn_lock.exists() or pnpm_lock.exists()):
-                return False, "package.json exists but no lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml) found."
+                return (
+                    False,
+                    "package.json exists but no lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml) found.",
+                )
         return True, None
 
     @staticmethod
@@ -423,7 +442,10 @@ class PackageLockfileGuard:
 
         if pyproject.exists():
             if not (uv_lock.exists() or poetry_lock.exists()):
-                return False, "pyproject.toml exists but no lockfile (uv.lock, poetry.lock) found."
+                return (
+                    False,
+                    "pyproject.toml exists but no lockfile (uv.lock, poetry.lock) found.",
+                )
         return True, None
 ```
 
@@ -463,7 +485,9 @@ class VibePromptHistoryLogger:
             "affected_files": affected_files,
         }
         history.append(entry)
-        self.history_file.write_text(json.dumps(history[-100:], indent=2), encoding="utf-8")
+        self.history_file.write_text(
+            json.dumps(history[-100:], indent=2), encoding="utf-8"
+        )
 
 
 class AstFunctionDocstringAuditor(ast.NodeVisitor):
@@ -477,10 +501,14 @@ class AstFunctionDocstringAuditor(ast.NodeVisitor):
         if not node.name.startswith("_"):
             doc = ast.get_docstring(node)
             if not doc:
-                self.findings.append(f"{self.file_path}:{node.lineno}: Public function '{node.name}' missing docstring.")
+                self.findings.append(
+                    f"{self.file_path}:{node.lineno}: Public function '{node.name}' missing docstring."
+                )
             for arg in node.args.args:
                 if arg.arg != "self" and arg.annotation is None:
-                    self.findings.append(f"{self.file_path}:{node.lineno}: Argument '{arg.arg}' in '{node.name}' missing type annotation.")
+                    self.findings.append(
+                        f"{self.file_path}:{node.lineno}: Argument '{arg.arg}' in '{node.name}' missing type annotation."
+                    )
         self.generic_visit(node)
 
 
@@ -514,8 +542,12 @@ class VibeCoderConfigLoader:
             return {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05}
         try:
             import tomllib
+
             data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-            return data.get("vibecoder", {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05})
+            return data.get(
+                "vibecoder",
+                {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05},
+            )
         except Exception:
             return {"enabled": True, "strict_types": True, "max_slop_ratio": 0.05}
 ```
@@ -624,7 +656,9 @@ class VibeFeedbackSupervisor:
         issues.extend(env_issues)
 
         dur_ms = round((time.perf_counter() - start) * 1000, 2)
-        return FeedbackIterationResult(is_clean=len(issues) == 0, issues=issues, duration_ms=dur_ms)
+        return FeedbackIterationResult(
+            is_clean=len(issues) == 0, issues=issues, duration_ms=dur_ms
+        )
 ```
 
 ---
@@ -638,10 +672,12 @@ from rush.vibecoder.orchestrator import VibeCoderOrchestrator
 from rush.vibecoder.feedback_loop import VibeFeedbackSupervisor
 from rush.vibecoder.pkg_lock_guard import PackageLockfileGuard
 
+
 @click.group(name="vibecoder")
 def vibecoder_group():
     """Unified vibe-coding quality, synchronization, and remediation toolkit."""
     pass
+
 
 @vibecoder_group.command(name="audit")
 def vibecoder_audit_cmd():
@@ -649,11 +685,14 @@ def vibecoder_audit_cmd():
     orch = VibeCoderOrchestrator(Path.cwd())
     summary = orch.run_full_audit()
 
-    click.echo(f"🛡️ Vibe-Coder Health Status: [{summary.status}] (Score: {summary.composite_health_score}%)")
+    click.echo(
+        f"🛡️ Vibe-Coder Health Status: [{summary.status}] (Score: {summary.composite_health_score}%)"
+    )
     click.echo(f"  - Dead Code Items:    {summary.dead_code_count}")
     click.echo(f"  - AI Slop Findings:   {summary.slop_findings_count}")
     click.echo(f"  - Type Drift Items:   {summary.type_drift_count}")
     click.echo(f"  - Secret Findings:    {summary.secret_findings_count}")
+
 
 @vibecoder_group.command(name="check")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -665,10 +704,14 @@ def vibecoder_check_cmd(file_path: str):
     if res.is_clean:
         click.echo(f"[PASS] File '{file_path}' is clean ({res.duration_ms}ms).")
     else:
-        click.echo(f"[FAIL] Found {len(res.issues)} issue(s) in '{file_path}' ({res.duration_ms}ms):", err=True)
+        click.echo(
+            f"[FAIL] Found {len(res.issues)} issue(s) in '{file_path}' ({res.duration_ms}ms):",
+            err=True,
+        )
         for issue in res.issues:
             click.echo(f"  - {issue}", err=True)
         raise SystemExit(1)
+
 
 @vibecoder_group.command(name="lock-check")
 def vibecoder_lock_cmd():
@@ -703,24 +746,42 @@ from rush.vibecoder.feedback_loop import VibeFeedbackSupervisor
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_vibecoder_audit", description="Run comprehensive 22-tool quality and hygiene audit for vibe-coding.")
+
+@mcp.tool(
+    name="rush_vibecoder_audit",
+    description="Run comprehensive 22-tool quality and hygiene audit for vibe-coding.",
+)
 def rush_vibecoder_audit() -> str:
     orch = VibeCoderOrchestrator(Path.cwd())
     res = orch.run_full_audit()
-    return json.dumps({
-        "status": res.status,
-        "score": res.composite_health_score,
-        "dead_code": res.dead_code_count,
-        "slop_findings": res.slop_findings_count,
-        "type_drift": res.type_drift_count,
-        "secrets": res.secret_findings_count,
-    }, indent=2)
+    return json.dumps(
+        {
+            "status": res.status,
+            "score": res.composite_health_score,
+            "dead_code": res.dead_code_count,
+            "slop_findings": res.slop_findings_count,
+            "type_drift": res.type_drift_count,
+            "secrets": res.secret_findings_count,
+        },
+        indent=2,
+    )
 
-@mcp.tool(name="rush_vibecoder_check", description="Run sub-second validation on a single modified source file.")
+
+@mcp.tool(
+    name="rush_vibecoder_check",
+    description="Run sub-second validation on a single modified source file.",
+)
 def rush_vibecoder_check(file_path: str) -> str:
     sup = VibeFeedbackSupervisor(Path.cwd())
     res = sup.evaluate_recent_file(Path(file_path))
-    return json.dumps({"is_clean": res.is_clean, "issues": res.issues, "duration_ms": res.duration_ms}, indent=2)
+    return json.dumps(
+        {
+            "is_clean": res.is_clean,
+            "issues": res.issues,
+            "duration_ms": res.duration_ms,
+        },
+        indent=2,
+    )
 ```
 
 ---
@@ -754,7 +815,8 @@ def test_vibecoder_orchestrator(tmp_path: Path):
 
 def test_ast_route_cleaner(tmp_path: Path):
     f = tmp_path / "api.py"
-    f.write_text("""
+    f.write_text(
+        """
 from fastapi import FastAPI
 app = FastAPI()
 
@@ -765,7 +827,9 @@ def get_users():
 @app.post("/items")
 def create_item():
     return {}
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     routes = AstRouteCleaner.extract_routes(f)
     assert len(routes) == 2
@@ -775,14 +839,19 @@ def create_item():
 
 def test_env_sync_validator(tmp_path: Path):
     env_ex = tmp_path / ".env.example"
-    env_ex.write_text("DATABASE_URL=postgres://localhost\nPORT=8000\n", encoding="utf-8")
+    env_ex.write_text(
+        "DATABASE_URL=postgres://localhost\nPORT=8000\n", encoding="utf-8"
+    )
 
     code_f = tmp_path / "app.py"
-    code_f.write_text("""
+    code_f.write_text(
+        """
 import os
 db = os.environ.get("DATABASE_URL")
 secret = os.getenv("UNDECLARED_SECRET")
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     val = EnvSyncValidator(tmp_path)
     missing = val.check_file_references(code_f)
@@ -792,19 +861,25 @@ secret = os.getenv("UNDECLARED_SECRET")
 
 def test_db_schema_drift(tmp_path: Path):
     models_f = tmp_path / "models.py"
-    models_f.write_text("""
+    models_f.write_text(
+        """
 class User:
     __tablename__ = "users"
 
 class Order:
     __tablename__ = "orders"
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     sql_f = tmp_path / "init.sql"
-    sql_f.write_text("""
+    sql_f.write_text(
+        """
 CREATE TABLE users (id INT);
 CREATE TABLE products (id INT);
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     drift = DatabaseSchemaDriftDetector.check_drift(models_f, sql_f)
     assert len(drift) == 2
@@ -852,7 +927,9 @@ def test_vibe_feedback_supervisor(tmp_path: Path):
     sup = VibeFeedbackSupervisor(tmp_path)
 
     clean_py = tmp_path / "clean.py"
-    clean_py.write_text("def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
+    clean_py.write_text(
+        "def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8"
+    )
 
     res = sup.evaluate_recent_file(clean_py)
     assert res.is_clean is True
@@ -862,6 +939,7 @@ def test_vibe_feedback_supervisor(tmp_path: Path):
 
 def test_ast_docstring_auditor():
     from rush.vibecoder.prompt_history import AstFunctionDocstringAuditor
+
     code = """
 def undocumented(x):
     return x
@@ -874,7 +952,10 @@ def undocumented(x):
 
 def test_vibe_telemetry_emitter(capsys):
     from rush.vibecoder.prompt_history import VibeCoderTelemetryNDJSONEmitter
-    line = VibeCoderTelemetryNDJSONEmitter.emit_vibe_event("audit_pass", {"health": 98.0})
+
+    line = VibeCoderTelemetryNDJSONEmitter.emit_vibe_event(
+        "audit_pass", {"health": 98.0}
+    )
     assert '"event": "audit_pass"' in line
     captured = capsys.readouterr()
     assert '"health": 98.0' in captured.err
@@ -882,6 +963,7 @@ def test_vibe_telemetry_emitter(capsys):
 
 def test_vibe_config_loader(tmp_path: Path):
     from rush.vibecoder.prompt_history import VibeCoderConfigLoader
+
     cfg = VibeCoderConfigLoader.load_config(tmp_path)
     assert cfg["enabled"] is True
     assert cfg["strict_types"] is True

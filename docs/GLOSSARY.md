@@ -79,9 +79,16 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 
 
 
-### SLSA Attestation & Security Terms (Phase 50)
-* **DeadAssetScanner**: Tool scanning for unreferenced fonts and images to reduce build weight.
-* **IamPolicySynthesizer**: Static analyzer generating least-privilege IAM policies from SDK calls.
-* **LicenseMatrixScanner**: Compliance tool classifying dependencies into permissive vs. copyleft.
-* **SLSAAttestationGenerator**: Subsystem generating cryptographic SLSA Level 3 build provenance.
-
+### Attestation, Security Suite & Quality Terms (Phase 50)
+* **AttestationTool**: Subsystem generating in-toto Statement v1 / SLSA Provenance v1 unsigned drafts with SHA-256 artifact digests.
+* **DeadAssetTool**: Tool scanning for unreferenced fonts and images to reduce bundle weight with guarded prune verification.
+* **ErrorCatalogTool**: AST exception extractor generating RFC 7807 problem details and Markdown error catalogs.
+* **IamAuditTool**: Static analyzer synthesizing least-privilege AWS IAM JSON policies from boto3/botocore SDK calls.
+* **LicenseMatrixTool**: Compliance tool classifying dependency licenses against allowed SPDX identifiers and flagging manual review needs.
+* **MemProfileTool**: Static resource leak scanner and dynamic memory profiling probe under `--allow-slow`.
+* **MediaOptTool**: SVG script security sanitizer and Pillow PNG/WebP raster image optimizer.
+* **OfflineReviewTool**: Air-gapped local ONNX model code review runner with zero network connectivity.
+* **PromptEvalTool**: Golden coding prompt matrix evaluator comparing sequence matches, patch matches, token counts, and dollar budgets.
+* **ProvenanceAiTool**: Git commit trailer attribution analyzer evaluating AI co-authorship and model provenance metadata.
+* **PrSynthesizeTool**: Pull request description generator synthesizing Git diff statistics and ToolResult quality evidence.
+* **TuiDiffTool**: Git finding delta computer and Rich terminal comparison table renderer.

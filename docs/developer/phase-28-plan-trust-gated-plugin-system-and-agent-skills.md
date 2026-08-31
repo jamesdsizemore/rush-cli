@@ -230,7 +230,9 @@ class PluginTrustStore:
         current_hash = self._compute_sha256(executable_path)
         return record.sha256_hash == current_hash
 
-    def grant_trust(self, plugin_name: str, executable_path: Path) -> TrustedPluginRecord:
+    def grant_trust(
+        self, plugin_name: str, executable_path: Path
+    ) -> TrustedPluginRecord:
         self.trust_file.parent.mkdir(parents=True, exist_ok=True)
         store = self.load_trust_store()
         current_hash = self._compute_sha256(executable_path)
@@ -466,25 +468,35 @@ class PluginManifestValidator:
     """Validates the structure and parameter types of plugin specifications."""
 
     @staticmethod
-    def validate_spec_dict(name: str, spec_data: dict) -> PluginManifestValidationResult:
+    def validate_spec_dict(
+        name: str, spec_data: dict
+    ) -> PluginManifestValidationResult:
         errors = []
         if not name or not name.isidentifier():
-            errors.append(f"Plugin name '{name}' must be a valid alphanumeric identifier.")
+            errors.append(
+                f"Plugin name '{name}' must be a valid alphanumeric identifier."
+            )
 
         cmd = spec_data.get("command")
         if not cmd:
-            errors.append("Plugin specification must define a non-empty 'command' string or list.")
+            errors.append(
+                "Plugin specification must define a non-empty 'command' string or list."
+            )
 
         timeout = spec_data.get("timeout_seconds", 30.0)
         try:
             t_val = float(timeout)
             if t_val <= 0 or t_val > 300.0:
-                errors.append("Plugin timeout_seconds must be between 1.0 and 300.0 seconds.")
+                errors.append(
+                    "Plugin timeout_seconds must be between 1.0 and 300.0 seconds."
+                )
         except (ValueError, TypeError):
             errors.append("Plugin timeout_seconds must be a valid number.")
 
         patterns = spec_data.get("patterns", ["*"])
-        if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        if not isinstance(patterns, list) or not all(
+            isinstance(p, str) for p in patterns
+        ):
             errors.append("Plugin 'patterns' must be a list of glob strings.")
 
         return PluginManifestValidationResult(
@@ -525,7 +537,9 @@ class HardenedPluginExecutor:
         paths: list[Path],
         allow_untrusted: bool = False,
     ) -> ToolResult:
-        if not allow_untrusted and not self.trust_store.is_trusted(plugin.name, plugin.executable_path):
+        if not allow_untrusted and not self.trust_store.is_trusted(
+            plugin.name, plugin.executable_path
+        ):
             finding: Finding = {
                 "path": str(plugin.executable_path),
                 "line": 1,
@@ -725,7 +739,11 @@ from rush.plugins.trust_store import PluginTrustStore
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_trust_check", description="Verify cryptographic trust status for a plugin.")
+
+@mcp.tool(
+    name="rush_trust_check",
+    description="Verify cryptographic trust status for a plugin.",
+)
 def rush_trust_check(plugin_name: str) -> str:
     repo_root = Path.cwd()
     loader = PluginLoader(repo_root)
@@ -735,6 +753,7 @@ def rush_trust_check(plugin_name: str) -> str:
     store = PluginTrustStore(repo_root)
     trusted = store.is_trusted(plugin_name, plugins[plugin_name].executable_path)
     return json.dumps({"plugin": plugin_name, "trusted": trusted}, indent=2)
+
 
 @mcp.tool(name="rush_plugin_execute", description="Execute a trusted custom plugin.")
 def rush_plugin_execute(plugin_name: str, target_file: str = ".") -> str:
@@ -841,9 +860,11 @@ def test_sandboxed_environment_strips_secrets():
 
 def test_executor_blocks_untrusted_plugin(tmp_path: Path):
     script = tmp_path / "scanner.py"
-    script.write_text("print('{\"status\": \"ok\", \"findings\": []}')", encoding="utf-8")
+    script.write_text('print(\'{"status": "ok", "findings": []}\')', encoding="utf-8")
 
-    spec = PluginSpec(name="scanner", command=["python", str(script)], executable_path=script)
+    spec = PluginSpec(
+        name="scanner", command=["python", str(script)], executable_path=script
+    )
     executor = HardenedPluginExecutor(tmp_path)
     res = executor.execute(spec, [tmp_path], allow_untrusted=False)
 
@@ -853,12 +874,17 @@ def test_executor_blocks_untrusted_plugin(tmp_path: Path):
 
 def test_executor_runs_trusted_plugin(tmp_path: Path):
     script = tmp_path / "scanner.py"
-    script.write_text("import sys\nsys.stdout.write('{\"status\": \"ok\", \"findings\": []}')", encoding="utf-8")
+    script.write_text(
+        'import sys\nsys.stdout.write(\'{"status": "ok", "findings": []}\')',
+        encoding="utf-8",
+    )
 
     store = PluginTrustStore(tmp_path)
     store.grant_trust("scanner", script)
 
-    spec = PluginSpec(name="scanner", command=["python", str(script)], executable_path=script)
+    spec = PluginSpec(
+        name="scanner", command=["python", str(script)], executable_path=script
+    )
     executor = HardenedPluginExecutor(tmp_path)
     res = executor.execute(spec, [tmp_path], allow_untrusted=False)
 
@@ -867,9 +893,14 @@ def test_executor_runs_trusted_plugin(tmp_path: Path):
 
 def test_executor_allows_untrusted_with_flag(tmp_path: Path):
     script = tmp_path / "scanner.py"
-    script.write_text("import sys\nsys.stdout.write('{\"status\": \"ok\", \"findings\": []}')", encoding="utf-8")
+    script.write_text(
+        'import sys\nsys.stdout.write(\'{"status": "ok", "findings": []}\')',
+        encoding="utf-8",
+    )
 
-    spec = PluginSpec(name="scanner", command=["python", str(script)], executable_path=script)
+    spec = PluginSpec(
+        name="scanner", command=["python", str(script)], executable_path=script
+    )
     executor = HardenedPluginExecutor(tmp_path)
     res = executor.execute(spec, [tmp_path], allow_untrusted=True)
 
@@ -877,19 +908,28 @@ def test_executor_allows_untrusted_with_flag(tmp_path: Path):
 
 
 def test_manifest_validator_valid():
-    res = PluginManifestValidator.validate_spec_dict("my_plugin", {"command": "python test.py", "timeout_seconds": 10})
+    res = PluginManifestValidator.validate_spec_dict(
+        "my_plugin", {"command": "python test.py", "timeout_seconds": 10}
+    )
     assert res.is_valid is True
     assert res.errors == []
 
 
 def test_manifest_validator_invalid_name():
-    res = PluginManifestValidator.validate_spec_dict("invalid-name-with-dashes", {"command": "python test.py"})
+    res = PluginManifestValidator.validate_spec_dict(
+        "invalid-name-with-dashes", {"command": "python test.py"}
+    )
     assert res.is_valid is False
     assert len(res.errors) >= 1
 
 
 def test_agent_skill_generator():
-    spec = PluginSpec(name="sql_check", command=["python", "sql.py"], executable_path=Path("sql.py"), description="Custom SQL linter")
+    spec = PluginSpec(
+        name="sql_check",
+        command=["python", "sql.py"],
+        executable_path=Path("sql.py"),
+        description="Custom SQL linter",
+    )
     skill_md = AgentSkillGenerator.generate_skill_markdown(spec)
     assert "name: sql_check" in skill_md
     assert "Custom SQL linter" in skill_md

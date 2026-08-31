@@ -432,7 +432,9 @@ class TokenChunkPaginator:
         encoded = text.encode("utf-8")
         total = len(encoded)
         if offset >= total:
-            return PaginatedChunk(chunk_text="", cursor_offset=total, total_bytes=total, has_more=False)
+            return PaginatedChunk(
+                chunk_text="", cursor_offset=total, total_bytes=total, has_more=False
+            )
 
         end = min(offset + limit_bytes, total)
         chunk_bytes = encoded[offset:end]
@@ -537,7 +539,12 @@ class ContextDietScanner:
     def scan(self) -> list[BloatFileRecord]:
         bloated = []
         for p in self.repo_root.rglob("*"):
-            if p.is_file() and ".venv" not in p.parts and "node_modules" not in p.parts and ".git" not in p.parts:
+            if (
+                p.is_file()
+                and ".venv" not in p.parts
+                and "node_modules" not in p.parts
+                and ".git" not in p.parts
+            ):
                 tokens = FastBPETokenCounter.count_file_tokens(p)
                 if tokens >= self.threshold_tokens:
                     bloated.append(
@@ -612,10 +619,12 @@ from rush.token_economy.symbol_slicer import SymbolAstSlicer
 from rush.token_economy.cost_calculator import TokenCostCalculator
 from rush.token_economy.diet_scanner import ContextDietScanner
 
+
 @click.group(name="token")
 def token_group():
     """Analyze and optimize token consumption for coding agents."""
     pass
+
 
 @token_group.command(name="count")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
@@ -632,10 +641,15 @@ def token_count_cmd(paths):
             click.echo(f"  - {p.name}: {cnt:,} tokens")
         elif p.is_dir():
             for f in p.rglob("*"):
-                if f.is_file() and ".venv" not in f.parts and "node_modules" not in f.parts:
+                if (
+                    f.is_file()
+                    and ".venv" not in f.parts
+                    and "node_modules" not in f.parts
+                ):
                     total_tokens += FastBPETokenCounter.count_file_tokens(f)
 
     click.echo(f"Total Estimated Tokens: {total_tokens:,}")
+
 
 @token_group.command(name="outline")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -659,8 +673,11 @@ def token_outline_cmd(file_path: str):
     after_tokens = FastBPETokenCounter.count_tokens(outline)
     savings = ((before_tokens - after_tokens) / max(1, before_tokens)) * 100
 
-    click.echo(f"# Outline for {path.name} (Compressed {before_tokens} -> {after_tokens} tokens, {savings:.1f}% reduction)\n")
+    click.echo(
+        f"# Outline for {path.name} (Compressed {before_tokens} -> {after_tokens} tokens, {savings:.1f}% reduction)\n"
+    )
     click.echo(outline)
+
 
 @token_group.command(name="slice")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -676,6 +693,7 @@ def token_slice_cmd(file_path: str, symbol_name: str):
         click.echo(f"Symbol '{symbol_name}' not found in '{file_path}'.", err=True)
         raise SystemExit(1)
 
+
 @token_group.command(name="diet")
 @click.option("--threshold", default=10000, help="Token count threshold.")
 def token_diet_cmd(threshold: int):
@@ -686,9 +704,14 @@ def token_diet_cmd(threshold: int):
         click.echo(f"No files exceed token threshold of {threshold:,} tokens.")
         return
 
-    click.echo(f"Discovered {len(records)} high-token file(s) (>= {threshold:,} tokens):")
+    click.echo(
+        f"Discovered {len(records)} high-token file(s) (>= {threshold:,} tokens):"
+    )
     for r in records[:20]:
-        click.echo(f"  - {r.file_path:<50}: {r.token_count:,} tokens ({r.size_bytes / 1024:.1f} KB)")
+        click.echo(
+            f"  - {r.file_path:<50}: {r.token_count:,} tokens ({r.size_bytes / 1024:.1f} KB)"
+        )
+
 
 @token_group.command(name="cost")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -720,12 +743,20 @@ from rush.token_economy.diet_scanner import ContextDietScanner
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_token_count", description="Estimate token count for a code string or file.")
+
+@mcp.tool(
+    name="rush_token_count",
+    description="Estimate token count for a code string or file.",
+)
 def rush_token_count(text: str) -> str:
     tokens = FastBPETokenCounter.count_tokens(text)
     return json.dumps({"estimated_tokens": tokens}, indent=2)
 
-@mcp.tool(name="rush_ast_outline", description="Generate minimal AST outline of a source file to save tokens.")
+
+@mcp.tool(
+    name="rush_ast_outline",
+    description="Generate minimal AST outline of a source file to save tokens.",
+)
 def rush_ast_outline(file_path: str) -> str:
     path = Path(file_path)
     if not path.exists():
@@ -743,7 +774,11 @@ def rush_ast_outline(file_path: str) -> str:
         outline = source
     return outline
 
-@mcp.tool(name="rush_ast_slice_symbol", description="Extract a specific symbol implementation.")
+
+@mcp.tool(
+    name="rush_ast_slice_symbol",
+    description="Extract a specific symbol implementation.",
+)
 def rush_ast_slice_symbol(file_path: str, symbol_name: str) -> str:
     path = Path(file_path)
     if not path.exists():
@@ -752,16 +787,27 @@ def rush_ast_slice_symbol(file_path: str, symbol_name: str) -> str:
     sliced = SymbolAstSlicer.slice_symbol(source, symbol_name)
     return sliced or f"Symbol '{symbol_name}' not found."
 
-@mcp.tool(name="rush_token_cost", description="Forecast multi-model ingestion cost for a token count.")
+
+@mcp.tool(
+    name="rush_token_cost",
+    description="Forecast multi-model ingestion cost for a token count.",
+)
 def rush_token_cost(tokens: int) -> str:
     estimates = TokenCostCalculator.calculate_cost(tokens)
-    return json.dumps([{"model": e.model_name, "cost_usd": e.cost_usd} for e in estimates], indent=2)
+    return json.dumps(
+        [{"model": e.model_name, "cost_usd": e.cost_usd} for e in estimates], indent=2
+    )
 
-@mcp.tool(name="rush_context_diet", description="Scan repository for high-token bloat files.")
+
+@mcp.tool(
+    name="rush_context_diet", description="Scan repository for high-token bloat files."
+)
 def rush_context_diet(threshold_tokens: int = 10000) -> str:
     scanner = ContextDietScanner(Path.cwd(), threshold_tokens=threshold_tokens)
     records = scanner.scan()
-    return json.dumps([{"file": r.file_path, "tokens": r.token_count} for r in records[:20]], indent=2)
+    return json.dumps(
+        [{"file": r.file_path, "tokens": r.token_count} for r in records[:20]], indent=2
+    )
 ```
 
 ---

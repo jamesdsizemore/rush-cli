@@ -117,7 +117,9 @@ class MarkdownMagicSync:
     """Synchronizes generated content inside Markdown HTML comment boundaries."""
 
     @staticmethod
-    def sync_block(markdown_content: str, block_name: str, new_content: str) -> tuple[bool, str]:
+    def sync_block(
+        markdown_content: str, block_name: str, new_content: str
+    ) -> tuple[bool, str]:
         pattern = re.compile(
             rf"(<!--\s*RUSH_START:{block_name}\s*-->)(.*?)(<!--\s*RUSH_END\s*-->)",
             re.DOTALL,
@@ -160,7 +162,9 @@ class SessionTranscriptExtractor:
             return []
 
         steps: list[SessionStep] = []
-        for line_num, line in enumerate(jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()):
+        for line_num, line in enumerate(
+            jsonl_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        ):
             line_clean = line.strip()
             if not line_clean:
                 continue
@@ -194,7 +198,9 @@ class StructuralChunker:
     """Splits Markdown documents and source code along structural AST / header boundaries."""
 
     @staticmethod
-    def chunk_markdown_by_headings(content: str, max_chunk_chars: int = 2000) -> list[str]:
+    def chunk_markdown_by_headings(
+        content: str, max_chunk_chars: int = 2000
+    ) -> list[str]:
         # Split on markdown headers (#, ##, ###)
         sections = re.split(r"(^#{1,3}\s+.*$)", content, flags=re.MULTILINE)
         chunks = []
@@ -229,10 +235,12 @@ from rush.integrations.markdown_magic import MarkdownMagicSync
 from rush.integrations.claude_log_extractor import SessionTranscriptExtractor
 from rush.integrations.rag_chunker import StructuralChunker
 
+
 @click.group(name="integrations")
 def integrations_group():
     """Execute integrated utilities and transcript parsers."""
     pass
+
 
 @integrations_group.command(name="sync-block")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -248,6 +256,7 @@ def sync_block_cmd(file_path: str, block_name: str, content: str):
         click.echo(f"Successfully synced block '{block_name}' in '{file_path}'.")
     else:
         click.echo(f"Block '{block_name}' not found in '{file_path}'.", err=True)
+
 
 @integrations_group.command(name="parse-transcript")
 @click.argument("transcript_path", type=click.Path(exists=True))
@@ -273,7 +282,11 @@ from rush.integrations.rag_chunker import StructuralChunker
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_chunk_document", description="Chunk a long markdown document along structural headings.")
+
+@mcp.tool(
+    name="rush_chunk_document",
+    description="Chunk a long markdown document along structural headings.",
+)
 def rush_chunk_document(content: str, max_chars: int = 2000) -> str:
     chunks = StructuralChunker.chunk_markdown_by_headings(content, max_chars)
     return json.dumps({"chunk_count": len(chunks), "chunks": chunks}, indent=2)
@@ -310,7 +323,10 @@ footer
 
 def test_session_transcript_extractor(tmp_path: Path):
     f = tmp_path / "transcript.jsonl"
-    f.write_text('{"step_index": 1, "type": "USER_INPUT", "content": "hello"}\n{"step_index": 2, "type": "MODEL", "content": "hi"}\n', encoding="utf-8")
+    f.write_text(
+        '{"step_index": 1, "type": "USER_INPUT", "content": "hello"}\n{"step_index": 2, "type": "MODEL", "content": "hi"}\n',
+        encoding="utf-8",
+    )
 
     steps = SessionTranscriptExtractor.extract_steps_from_file(f)
     assert len(steps) == 2

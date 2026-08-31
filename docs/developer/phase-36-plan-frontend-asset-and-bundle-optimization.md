@@ -285,7 +285,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ASSET_EXTENSIONS = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".avif", ".woff", ".woff2", ".ttf"}
+ASSET_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".svg",
+    ".webp",
+    ".avif",
+    ".woff",
+    ".woff2",
+    ".ttf",
+}
 
 
 class OrphanedAssetScanner:
@@ -297,7 +307,12 @@ class OrphanedAssetScanner:
     def find_all_assets(self) -> list[Path]:
         assets = []
         for p in self.repo_root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in ASSET_EXTENSIONS and ".venv" not in p.parts and "node_modules" not in p.parts:
+            if (
+                p.is_file()
+                and p.suffix.lower() in ASSET_EXTENSIONS
+                and ".venv" not in p.parts
+                and "node_modules" not in p.parts
+            ):
                 assets.append(p)
         return assets
 
@@ -308,7 +323,16 @@ class OrphanedAssetScanner:
 
         source_text = []
         for p in self.repo_root.rglob("*"):
-            if p.is_file() and p.suffix in (".tsx", ".ts", ".jsx", ".js", ".vue", ".html", ".css", ".scss"):
+            if p.is_file() and p.suffix in (
+                ".tsx",
+                ".ts",
+                ".jsx",
+                ".js",
+                ".vue",
+                ".html",
+                ".css",
+                ".scss",
+            ):
                 source_text.append(p.read_text(encoding="utf-8", errors="replace"))
 
         combined_sources = "\n".join(source_text)
@@ -390,8 +414,14 @@ class CodeSplittingValidator:
 
         if "Routes" in text or "createBrowserRouter" in text:
             for line in text.splitlines():
-                if "import " in line and ("Page" in line or "View" in line) and "lazy" not in text:
-                    findings.append(f"{file_path.name}: Static page import detected without dynamic lazy() splitting: {line.strip()}")
+                if (
+                    "import " in line
+                    and ("Page" in line or "View" in line)
+                    and "lazy" not in text
+                ):
+                    findings.append(
+                        f"{file_path.name}: Static page import detected without dynamic lazy() splitting: {line.strip()}"
+                    )
 
         return findings
 ```
@@ -466,7 +496,9 @@ class PolyfillAuditor:
         findings = []
         for poly in LEGACY_POLYFILLS:
             if poly in text:
-                findings.append(f"{file_path.name}: Redundant legacy polyfill '{poly}' detected.")
+                findings.append(
+                    f"{file_path.name}: Redundant legacy polyfill '{poly}' detected."
+                )
         return findings
 
 
@@ -482,7 +514,9 @@ class WebWorkerAuditor:
         for m in re.finditer(r"new\s+Worker\(([^)]+)\)", text):
             args = m.group(1)
             if "type:" not in args and "module" not in args:
-                findings.append(f"{source_file.name}: Web Worker instantiated without module type: {m.group(0)}")
+                findings.append(
+                    f"{source_file.name}: Web Worker instantiated without module type: {m.group(0)}"
+                )
         return findings
 ```
 
@@ -529,9 +563,15 @@ class FontAssetAuditor:
     def audit_fonts(repo_root: Path) -> list[str]:
         findings = []
         for p in repo_root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in (".ttf", ".otf") and "node_modules" not in p.parts:
+            if (
+                p.is_file()
+                and p.suffix.lower() in (".ttf", ".otf")
+                and "node_modules" not in p.parts
+            ):
                 sz = p.stat().st_size
-                findings.append(f"{p.name} ({sz/1024:.1f} KB): Legacy font format; convert to subsetted WOFF2.")
+                findings.append(
+                    f"{p.name} ({sz / 1024:.1f} KB): Legacy font format; convert to subsetted WOFF2."
+                )
         return findings
 ```
 
@@ -557,9 +597,15 @@ class AssetCacheBustingVerifier:
     def verify_directory_hashes(dist_dir: Path) -> list[str]:
         unhashed = []
         for p in dist_dir.rglob("*"):
-            if p.is_file() and p.suffix in (".js", ".css", ".wasm") and p.name not in ("index.html", "service-worker.js"):
+            if (
+                p.is_file()
+                and p.suffix in (".js", ".css", ".wasm")
+                and p.name not in ("index.html", "service-worker.js")
+            ):
                 if not AssetCacheBustingVerifier.HASH_PATTERN.search(p.name):
-                    unhashed.append(f"Unhashed chunk '{p.name}': Missing content hash for CDN cache busting.")
+                    unhashed.append(
+                        f"Unhashed chunk '{p.name}': Missing content hash for CDN cache busting."
+                    )
         return unhashed
 ```
 
@@ -590,7 +636,9 @@ class ThirdPartyScriptAuditor:
         for m in re.finditer(script_pattern, text, re.IGNORECASE):
             tag = m.group(0)
             if "async" not in tag and "defer" not in tag:
-                findings.append(f"Render-blocking third-party script without async/defer: {m.group(1)}")
+                findings.append(
+                    f"Render-blocking third-party script without async/defer: {m.group(1)}"
+                )
 
         return findings
 ```
@@ -677,10 +725,12 @@ from rush.bundle.script_auditor import ThirdPartyScriptAuditor
 from rush.bundle.css_duplication import CssDuplicationScanner
 from rush.bundle.image_advisor import HeavyImageAdvisor
 
+
 @click.group(name="bundle")
 def bundle_group():
     """Frontend bundle and asset performance optimization."""
     pass
+
 
 @bundle_group.command(name="analyze")
 @click.argument("dist_dir", default="dist", type=click.Path())
@@ -693,11 +743,16 @@ def bundle_analyze_cmd(dist_dir: str):
 
     click.echo(f"Bundle Analysis for '{dist_dir}':")
     for r in reports:
-        click.echo(f"  - {r.file_name:<40} Raw: {r.raw_bytes/1024:6.1f}KB | Gzip: {r.gzip_bytes/1024:5.1f}KB | Brotli: {r.brotli_est_bytes/1024:5.1f}KB")
+        click.echo(
+            f"  - {r.file_name:<40} Raw: {r.raw_bytes / 1024:6.1f}KB | Gzip: {r.gzip_bytes / 1024:5.1f}KB | Brotli: {r.brotli_est_bytes / 1024:5.1f}KB"
+        )
+
 
 @bundle_group.command(name="budget")
 @click.argument("dist_dir", default="dist", type=click.Path())
-@click.option("--max-gzip-kb", default=150, help="Maximum allowed Gzip size per chunk in KB.")
+@click.option(
+    "--max-gzip-kb", default=150, help="Maximum allowed Gzip size per chunk in KB."
+)
 def bundle_budget_cmd(dist_dir: str, max_gzip_kb: int):
     """Enforce performance budget size ceilings."""
     reports = BundleChunkCalculator.measure_directory(Path(dist_dir))
@@ -705,12 +760,20 @@ def bundle_budget_cmd(dist_dir: str, max_gzip_kb: int):
     violations = gate.evaluate_chunks(reports)
 
     if not violations:
-        click.echo(f"[PASS] All chunks meet performance budget (<= {max_gzip_kb}KB gzip).")
+        click.echo(
+            f"[PASS] All chunks meet performance budget (<= {max_gzip_kb}KB gzip)."
+        )
     else:
-        click.echo(f"[FAIL] {len(violations)} chunk(s) exceeded performance budget:", err=True)
+        click.echo(
+            f"[FAIL] {len(violations)} chunk(s) exceeded performance budget:", err=True
+        )
         for v in violations:
-            click.echo(f"  - {v.file_name}: {v.actual_bytes/1024:.1f}KB > {v.max_bytes/1024:.1f}KB", err=True)
+            click.echo(
+                f"  - {v.file_name}: {v.actual_bytes / 1024:.1f}KB > {v.max_bytes / 1024:.1f}KB",
+                err=True,
+            )
         raise SystemExit(1)
+
 
 @bundle_group.command(name="dead-assets")
 def bundle_dead_assets_cmd():
@@ -724,12 +787,17 @@ def bundle_dead_assets_cmd():
         for o in orphans:
             click.echo(f"  - {o.relative_to(Path.cwd())}")
 
+
 @bundle_group.command(name="barrel-audit")
 def bundle_barrel_audit_cmd():
     """Scan codebase for non-tree-shakeable barrel imports."""
     findings = []
     for p in Path.cwd().rglob("*"):
-        if p.is_file() and p.suffix in (".ts", ".tsx", ".js", ".jsx") and "node_modules" not in p.parts:
+        if (
+            p.is_file()
+            and p.suffix in (".ts", ".tsx", ".js", ".jsx")
+            and "node_modules" not in p.parts
+        ):
             findings.extend(BarrelImportAuditor.audit_source_file(p))
 
     if not findings:
@@ -756,12 +824,30 @@ from rush.bundle.dead_assets import OrphanedAssetScanner
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_bundle_analyze", description="Measure raw, Gzip, and Brotli chunk transfer sizes.")
+
+@mcp.tool(
+    name="rush_bundle_analyze",
+    description="Measure raw, Gzip, and Brotli chunk transfer sizes.",
+)
 def rush_bundle_analyze(dist_dir: str = "dist") -> str:
     reports = BundleChunkCalculator.measure_directory(Path(dist_dir))
-    return json.dumps([{"file": r.file_name, "raw_kb": round(r.raw_bytes/1024, 1), "gzip_kb": round(r.gzip_bytes/1024, 1)} for r in reports], indent=2)
+    return json.dumps(
+        [
+            {
+                "file": r.file_name,
+                "raw_kb": round(r.raw_bytes / 1024, 1),
+                "gzip_kb": round(r.gzip_bytes / 1024, 1),
+            }
+            for r in reports
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_bundle_dead_assets", description="Scan repository for unreferenced static assets.")
+
+@mcp.tool(
+    name="rush_bundle_dead_assets",
+    description="Scan repository for unreferenced static assets.",
+)
 def rush_bundle_dead_assets() -> str:
     scanner = OrphanedAssetScanner(Path.cwd())
     orphans = scanner.find_orphaned_assets()
@@ -806,9 +892,17 @@ def test_chunk_calculator(tmp_path: Path):
 
 def test_performance_budget_gate():
     from rush.bundle.chunk_calculator import ChunkSizeReport
+
     reports = [
-        ChunkSizeReport(file_name="small.js", raw_bytes=1000, gzip_bytes=400, brotli_est_bytes=350),
-        ChunkSizeReport(file_name="huge.js", raw_bytes=500000, gzip_bytes=200000, brotli_est_bytes=160000),
+        ChunkSizeReport(
+            file_name="small.js", raw_bytes=1000, gzip_bytes=400, brotli_est_bytes=350
+        ),
+        ChunkSizeReport(
+            file_name="huge.js",
+            raw_bytes=500000,
+            gzip_bytes=200000,
+            brotli_est_bytes=160000,
+        ),
     ]
     gate = PerformanceBudgetGate(max_gzip_bytes=100 * 1024)
     violations = gate.evaluate_chunks(reports)
@@ -846,7 +940,10 @@ def test_barrel_import_auditor(tmp_path: Path):
 
 def test_code_splitting_validator(tmp_path: Path):
     router_f = tmp_path / "Router.tsx"
-    router_f.write_text("import DashboardPage from './DashboardPage';\nconst Routes = () => <DashboardPage />;\n", encoding="utf-8")
+    router_f.write_text(
+        "import DashboardPage from './DashboardPage';\nconst Routes = () => <DashboardPage />;\n",
+        encoding="utf-8",
+    )
 
     findings = CodeSplittingValidator.inspect_route_file(router_f)
     assert len(findings) == 1
@@ -855,7 +952,10 @@ def test_code_splitting_validator(tmp_path: Path):
 
 def test_css_duplication_scanner(tmp_path: Path):
     css_f = tmp_path / "styles.css"
-    css_f.write_text(".box-a { display: flex; align-items: center; justify-content: center; padding: 20px; }\n.box-b { display: flex; align-items: center; justify-content: center; padding: 20px; }\n", encoding="utf-8")
+    css_f.write_text(
+        ".box-a { display: flex; align-items: center; justify-content: center; padding: 20px; }\n.box-b { display: flex; align-items: center; justify-content: center; padding: 20px; }\n",
+        encoding="utf-8",
+    )
 
     findings = CssDuplicationScanner.scan_stylesheet(css_f)
     assert len(findings) == 1
@@ -872,7 +972,10 @@ def test_polyfill_auditor(tmp_path: Path):
 
 def test_css_purge_estimator(tmp_path: Path):
     css_f = tmp_path / "styles.css"
-    css_f.write_text(".btn-primary { color: red; }\n.btn-secondary { color: blue; }\n", encoding="utf-8")
+    css_f.write_text(
+        ".btn-primary { color: red; }\n.btn-secondary { color: blue; }\n",
+        encoding="utf-8",
+    )
     classes = CssPurgeEstimator.extract_css_classes(css_f)
     assert "btn-primary" in classes
     assert "btn-secondary" in classes
@@ -900,7 +1003,10 @@ def test_cache_busting_verifier(tmp_path: Path):
 
 def test_script_auditor(tmp_path: Path):
     html_f = tmp_path / "index.html"
-    html_f.write_text('<html><head><script src="https://cdn.example.com/lib.js"></script></head></html>', encoding="utf-8")
+    html_f.write_text(
+        '<html><head><script src="https://cdn.example.com/lib.js"></script></head></html>',
+        encoding="utf-8",
+    )
 
     findings = ThirdPartyScriptAuditor.scan_html(html_f)
     assert len(findings) == 1

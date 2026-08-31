@@ -19,10 +19,12 @@ SERVER_NAME = "rush"
 
 def build_server_instructions() -> str:
     """Describe the live catalog without duplicating a fixed tool list."""
-    tool_names = ", ".join(f"rush_{name}" for name in TOOL_SPECS)
+    tool_names = ", ".join(f"rush_{name.replace('-', '_')}" for name in TOOL_SPECS)
     maturity = "; ".join(
-        f"rush_{name}={spec.maturity}" for name, spec in TOOL_SPECS.items()
+        f"rush_{name.replace('-', '_')}={spec.maturity}"
+        for name, spec in TOOL_SPECS.items()
     )
+
     return (
         "rush — code-quality tools for coding agents. "
         f"Available tools: {tool_names}. "
@@ -51,7 +53,7 @@ def _register_tools(server) -> None:
     for tool in ALL_TOOLS:
         server.add_tool(
             fn=tool.__call__,
-            name=f"rush_{tool.name}",
+            name=f"rush_{tool.name.replace('-', '_')}",
             description=tool.mcp_description,
         )
 
@@ -357,73 +359,57 @@ def _register_tools(server) -> None:
     )
 
     # Phase 50 Tools
-    def mcp_rush_attest_generate(artifact_path: str = "") -> str:
-        import json
+    def _call_registered_tool(name: str, path_str: str = ".", **kwargs):
+        for tool in ALL_TOOLS:
+            if tool.name == name or tool.name.replace("-", "_") == name:
+                return tool(Path(path_str), **kwargs)
+        return {"status": "skipped", "summary": f"Tool {name} is not registered."}
 
-        from rush.tools.attest import SLSAAttestationGenerator
+    def mcp_rush_attest_generate(artifact_path: str = "") -> dict:
+        """Deprecated alias for rush_attest."""
+        return _call_registered_tool("attest", artifact_path or ".")
 
-        gen = SLSAAttestationGenerator()
-        p = Path(artifact_path) if artifact_path else None
-        res = gen.generate_attestation(p)
-        return json.dumps(res, indent=2)
+    def mcp_rush_license_matrix(path: str = ".") -> dict:
+        return _call_registered_tool("license-matrix", path)
 
-    def mcp_rush_license_matrix() -> str:
-        import json
+    def mcp_rush_iam_audit(path: str = ".") -> dict:
+        return _call_registered_tool("iam-audit", path)
 
-        from rush.tools.license_matrix import LicenseMatrixScanner
+    def mcp_rush_dead_asset(path: str = ".") -> dict:
+        return _call_registered_tool("dead-asset", path)
 
-        scanner = LicenseMatrixScanner()
-        res = scanner.scan_licenses()
-        return json.dumps(res, indent=2)
+    def mcp_rush_pr_synthesize(path: str = ".", base_branch: str = "main") -> dict:
+        return _call_registered_tool("pr-synthesize", path, base_ref=base_branch)
 
-    def mcp_rush_iam_audit() -> str:
-        import json
-
-        from rush.tools.iam_audit import IamPolicySynthesizer
-
-        synth = IamPolicySynthesizer()
-        res = synth.synthesize_policy()
-        return json.dumps(res, indent=2)
-
-    def mcp_rush_dead_asset() -> str:
-        import json
-
-        from rush.tools.dead_asset import DeadAssetScanner
-
-        scanner = DeadAssetScanner()
-        res = scanner.scan_dead_assets()
-        return json.dumps(res, indent=2)
-
-    def mcp_rush_pr_synthesize(base_branch: str = "main") -> str:
-        from rush.tools.pr_synthesize import PrSynthesizer
-
-        synth = PrSynthesizer()
-        return synth.synthesize_pr_card(base_branch=base_branch)
-
+    registered_mcp_names = {t.name.replace("-", "_") for t in ALL_TOOLS}
+    if "license_matrix" not in registered_mcp_names:
+        server.add_tool(
+            fn=mcp_rush_license_matrix,
+            name="rush_license_matrix",
+            description="Audit open-source dependencies for license risks",
+        )
+    if "iam_audit" not in registered_mcp_names:
+        server.add_tool(
+            fn=mcp_rush_iam_audit,
+            name="rush_iam_audit",
+            description="Synthesize least-privilege cloud IAM policy",
+        )
+    if "dead_asset" not in registered_mcp_names:
+        server.add_tool(
+            fn=mcp_rush_dead_asset,
+            name="rush_dead_asset",
+            description="Scan for unreferenced assets and dead media",
+        )
+    if "pr_synthesize" not in registered_mcp_names:
+        server.add_tool(
+            fn=mcp_rush_pr_synthesize,
+            name="rush_pr_synthesize",
+            description="Synthesize structured semantic pull request card",
+        )
     server.add_tool(
         fn=mcp_rush_attest_generate,
         name="rush_attest_generate",
-        description="Generate in-toto SLSA Level 3 provenance statement",
-    )
-    server.add_tool(
-        fn=mcp_rush_license_matrix,
-        name="rush_license_matrix",
-        description="Audit open-source dependencies for license risks",
-    )
-    server.add_tool(
-        fn=mcp_rush_iam_audit,
-        name="rush_iam_audit",
-        description="Synthesize least-privilege cloud IAM policy",
-    )
-    server.add_tool(
-        fn=mcp_rush_dead_asset,
-        name="rush_dead_asset",
-        description="Scan for unreferenced assets and dead media",
-    )
-    server.add_tool(
-        fn=mcp_rush_pr_synthesize,
-        name="rush_pr_synthesize",
-        description="Synthesize structured semantic pull request card",
+        description="Deprecated alias for rush_attest",
     )
 
 

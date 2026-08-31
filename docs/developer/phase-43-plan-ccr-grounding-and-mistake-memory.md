@@ -155,11 +155,15 @@ class CCRStore:
     def store_chunk(self, content: str) -> str: ...
     def retrieve_chunk(self, chunk_id: str) -> str: ...
 
+
 class GroundingVerifier:
     def verify_code(self, source_code: str, file_path: str) -> list[dict[str, Any]]: ...
 
+
 class MistakeMiner:
-    def mine_git_reverts(self, repo_root: Path, limit: int = 50) -> list[dict[str, str]]: ...
+    def mine_git_reverts(
+        self, repo_root: Path, limit: int = 50
+    ) -> list[dict[str, str]]: ...
 ```
 
 ---

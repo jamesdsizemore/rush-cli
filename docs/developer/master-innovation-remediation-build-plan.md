@@ -74,7 +74,7 @@ flowchart TD
                  "producer": str,
                  "report_path": str | None,
              }
-         }
+         },
      }
      ```
 

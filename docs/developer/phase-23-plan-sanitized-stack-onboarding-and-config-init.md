@@ -201,15 +201,36 @@ class StackDetector:
         poetry_lock = self.repo_root / "poetry.lock"
         setup_py = self.repo_root / "setup.py"
 
-        if uv_lock.exists() or pyproject.exists() or requirements.exists() or pipfile.exists() or poetry_lock.exists() or setup_py.exists():
-            pkg_mgr = "uv" if uv_lock.exists() else ("poetry" if poetry_lock.exists() else ("pipenv" if pipfile.exists() else "pip"))
+        if (
+            uv_lock.exists()
+            or pyproject.exists()
+            or requirements.exists()
+            or pipfile.exists()
+            or poetry_lock.exists()
+            or setup_py.exists()
+        ):
+            pkg_mgr = (
+                "uv"
+                if uv_lock.exists()
+                else (
+                    "poetry"
+                    if poetry_lock.exists()
+                    else ("pipenv" if pipfile.exists() else "pip")
+                )
+            )
             recommended = ["ruff", "mypy", "pytest", "bandit", "aislop", "tach"]
-            manifest_name = "pyproject.toml" if pyproject.exists() else ("requirements.txt" if requirements.exists() else "Pipfile")
+            manifest_name = (
+                "pyproject.toml"
+                if pyproject.exists()
+                else ("requirements.txt" if requirements.exists() else "Pipfile")
+            )
             frameworks: list[str] = []
             if pyproject.exists():
                 try:
                     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-                    deps = str(data.get("project", {}).get("dependencies", [])) + str(data.get("tool", {}).get("poetry", {}).get("dependencies", {}))
+                    deps = str(data.get("project", {}).get("dependencies", [])) + str(
+                        data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+                    )
                     if "fastapi" in deps:
                         frameworks.append("fastapi")
                     if "django" in deps:
@@ -252,7 +273,9 @@ class StackDetector:
             if pkg_json.exists():
                 try:
                     data = json.loads(pkg_json.read_text(encoding="utf-8"))
-                    deps = data.get("dependencies", {}) | data.get("devDependencies", {})
+                    deps = data.get("dependencies", {}) | data.get(
+                        "devDependencies", {}
+                    )
                     if "react" in deps:
                         frameworks.append("react")
                     if "next" in deps or "next" in str(deps):
@@ -328,7 +351,13 @@ class StackDetector:
         build_gradle_kts = self.repo_root / "build.gradle.kts"
         if pom_xml.exists() or build_gradle.exists() or build_gradle_kts.exists():
             pkg_mgr = "maven" if pom_xml.exists() else "gradle"
-            manifest = "pom.xml" if pom_xml.exists() else ("build.gradle.kts" if build_gradle_kts.exists() else "build.gradle")
+            manifest = (
+                "pom.xml"
+                if pom_xml.exists()
+                else (
+                    "build.gradle.kts" if build_gradle_kts.exists() else "build.gradle"
+                )
+            )
             stacks.append(
                 DetectedStack(
                     language="java/kotlin",
@@ -348,7 +377,9 @@ class StackDetector:
                     language="c/cpp",
                     package_manager=pkg_mgr,
                     recommended_tools=["clang-tidy", "clang-format", "cppcheck"],
-                    manifest_file="CMakeLists.txt" if cmake_lists.exists() else "meson.build",
+                    manifest_file="CMakeLists.txt"
+                    if cmake_lists.exists()
+                    else "meson.build",
                 )
             )
 
@@ -467,7 +498,11 @@ INSTALL_MATRIX: dict[str, dict[str, list[str]]] = {
         "cargo-audit": ["cargo", "install", "cargo-audit"],
     },
     "go": {
-        "golangci-lint": ["go", "install", "github.com/golangci/golangci-lint/cmd/golangci-lint@latest"],
+        "golangci-lint": [
+            "go",
+            "install",
+            "github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
+        ],
         "govulncheck": ["go", "install", "golang.org/x/vuln/cmd/govulncheck@latest"],
     },
 }
@@ -485,14 +520,20 @@ class ToolInstaller:
 
         manager_tools = INSTALL_MATRIX[pkg_manager]
         if tool_name not in manager_tools:
-            return False, f"No safe install command mapped for tool '{tool_name}' via '{pkg_manager}'."
+            return (
+                False,
+                f"No safe install command mapped for tool '{tool_name}' via '{pkg_manager}'.",
+            )
 
         cmd = manager_tools[tool_name]
         proc = run_subprocess(cmd, cwd=self.repo_root)
 
         if proc.returncode == 0:
             return True, f"Successfully installed {tool_name}."
-        return False, f"Failed to install {tool_name}: {proc.stderr.strip() or proc.stdout.strip()}"
+        return (
+            False,
+            f"Failed to install {tool_name}: {proc.stderr.strip() or proc.stdout.strip()}",
+        )
 ```
 
 ---
@@ -543,11 +584,38 @@ class ConfigValidator:
 
     VALID_FAIL_ON = {"warn", "fail", "error"}
     KNOWN_TOOLS = {
-        "ruff", "mypy", "pytest", "bandit", "biome", "eslint", "prettier", "tsc",
-        "clippy", "rustfmt", "cargo-audit", "golangci-lint", "govulncheck", "gofmt",
-        "phpstan", "php-cs-fixer", "credo", "dialyxir", "spotless", "detekt",
-        "clang-tidy", "clang-format", "cppcheck", "tach", "aislop", "undercover",
-        "medusa", "pyrefly", "globstar", "clines", "cejel", "sentrux"
+        "ruff",
+        "mypy",
+        "pytest",
+        "bandit",
+        "biome",
+        "eslint",
+        "prettier",
+        "tsc",
+        "clippy",
+        "rustfmt",
+        "cargo-audit",
+        "golangci-lint",
+        "govulncheck",
+        "gofmt",
+        "phpstan",
+        "php-cs-fixer",
+        "credo",
+        "dialyxir",
+        "spotless",
+        "detekt",
+        "clang-tidy",
+        "clang-format",
+        "cppcheck",
+        "tach",
+        "aislop",
+        "undercover",
+        "medusa",
+        "pyrefly",
+        "globstar",
+        "clines",
+        "cejel",
+        "sentrux",
     }
 
     def __init__(self, repo_root: Path) -> None:
@@ -555,29 +623,64 @@ class ConfigValidator:
 
     def validate_file(self, config_path: Path) -> list[ValidationFinding]:
         if not config_path.exists():
-            return [ValidationFinding(section="root", key="file", message=f"Config file not found: {config_path}", severity="error")]
+            return [
+                ValidationFinding(
+                    section="root",
+                    key="file",
+                    message=f"Config file not found: {config_path}",
+                    severity="error",
+                )
+            ]
 
         try:
             data = tomllib.loads(config_path.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as e:
-            return [ValidationFinding(section="syntax", key="toml", message=f"TOML parse error: {e}", severity="error")]
+            return [
+                ValidationFinding(
+                    section="syntax",
+                    key="toml",
+                    message=f"TOML parse error: {e}",
+                    severity="error",
+                )
+            ]
 
         findings: list[ValidationFinding] = []
 
         # Validate [rush]
         rush_meta = data.get("rush", {})
         if not rush_meta:
-            findings.append(ValidationFinding(section="rush", key="version", message="Missing [rush] metadata table.", severity="warn"))
+            findings.append(
+                ValidationFinding(
+                    section="rush",
+                    key="version",
+                    message="Missing [rush] metadata table.",
+                    severity="warn",
+                )
+            )
 
         # Validate [tools]
         tools_table = data.get("tools", {})
         for tool_name, tool_cfg in tools_table.items():
             if tool_name not in self.KNOWN_TOOLS:
-                findings.append(ValidationFinding(section=f"tools.{tool_name}", key="name", message=f"Unknown tool '{tool_name}'.", severity="warn"))
+                findings.append(
+                    ValidationFinding(
+                        section=f"tools.{tool_name}",
+                        key="name",
+                        message=f"Unknown tool '{tool_name}'.",
+                        severity="warn",
+                    )
+                )
             if isinstance(tool_cfg, dict):
                 fail_on = tool_cfg.get("fail_on")
                 if fail_on and fail_on not in self.VALID_FAIL_ON:
-                    findings.append(ValidationFinding(section=f"tools.{tool_name}", key="fail_on", message=f"Invalid fail_on value '{fail_on}'. Must be one of {self.VALID_FAIL_ON}", severity="error"))
+                    findings.append(
+                        ValidationFinding(
+                            section=f"tools.{tool_name}",
+                            key="fail_on",
+                            message=f"Invalid fail_on value '{fail_on}'. Must be one of {self.VALID_FAIL_ON}",
+                            severity="error",
+                        )
+                    )
 
         return findings
 ```
@@ -597,9 +700,12 @@ from rush.onboarding.installer import ToolInstaller
 from rush.onboarding.validator import ConfigValidator
 from rush.config import RushConfig
 
+
 @click.command(name="init")
 @click.option("--force", is_flag=True, help="Overwrite existing rush.toml file.")
-@click.option("--yes", "-y", is_flag=True, help="Auto-confirm all prompts (non-TTY safe).")
+@click.option(
+    "--yes", "-y", is_flag=True, help="Auto-confirm all prompts (non-TTY safe)."
+)
 def init_cmd(force: bool, yes: bool):
     """Scan workspace and generate a tailored rush.toml configuration."""
     repo_root = Path.cwd()
@@ -622,7 +728,9 @@ def init_cmd(force: bool, yes: bool):
 
 
 @click.command(name="setup")
-@click.option("--install", is_flag=True, help="Automatically install missing quality tools.")
+@click.option(
+    "--install", is_flag=True, help="Automatically install missing quality tools."
+)
 def setup_cmd(install: bool):
     """Inspect environment tool availability and optionally install missing engines."""
     repo_root = Path.cwd()
@@ -644,8 +752,14 @@ def config_group():
     """Validate and inspect Rush configuration files."""
     pass
 
+
 @config_group.command(name="check")
-@click.option("--path", type=click.Path(exists=True), default="rush.toml", help="Path to rush.toml.")
+@click.option(
+    "--path",
+    type=click.Path(exists=True),
+    default="rush.toml",
+    help="Path to rush.toml.",
+)
 def config_check_cmd(path: str):
     """Validate syntax and schema conformity of rush.toml."""
     config_path = Path(path)
@@ -659,7 +773,9 @@ def config_check_cmd(path: str):
     has_errors = False
     for f in findings:
         color = "red" if f.severity == "error" else "yellow"
-        click.secho(f"[{f.severity.upper()}] [{f.section}] {f.key}: {f.message}", fg=color)
+        click.secho(
+            f"[{f.severity.upper()}] [{f.section}] {f.key}: {f.message}", fg=color
+        )
         if f.severity == "error":
             has_errors = True
 
@@ -683,23 +799,57 @@ from rush.onboarding.validator import ConfigValidator
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_setup_detect", description="Detect language stacks and recommended tools in workspace.")
+
+@mcp.tool(
+    name="rush_setup_detect",
+    description="Detect language stacks and recommended tools in workspace.",
+)
 def rush_setup_detect() -> str:
     detector = StackDetector(Path.cwd())
     stacks = detector.detect()
-    return json.dumps([{"language": s.language, "package_manager": s.package_manager, "tools": s.recommended_tools, "frameworks": s.frameworks} for s in stacks], indent=2)
+    return json.dumps(
+        [
+            {
+                "language": s.language,
+                "package_manager": s.package_manager,
+                "tools": s.recommended_tools,
+                "frameworks": s.frameworks,
+            }
+            for s in stacks
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_init_preview", description="Preview generated rush.toml configuration without writing to disk.")
+
+@mcp.tool(
+    name="rush_init_preview",
+    description="Preview generated rush.toml configuration without writing to disk.",
+)
 def rush_init_preview() -> str:
     detector = StackDetector(Path.cwd())
     stacks = detector.detect()
     return generate_rush_toml(stacks)
 
-@mcp.tool(name="rush_config_validate", description="Validate rush.toml schema conformity and detect unknown tools.")
+
+@mcp.tool(
+    name="rush_config_validate",
+    description="Validate rush.toml schema conformity and detect unknown tools.",
+)
 def rush_config_validate(path: str = "rush.toml") -> str:
     validator = ConfigValidator(Path.cwd())
     findings = validator.validate_file(Path(path))
-    return json.dumps([{"section": f.section, "key": f.key, "message": f.message, "severity": f.severity} for f in findings], indent=2)
+    return json.dumps(
+        [
+            {
+                "section": f.section,
+                "key": f.key,
+                "message": f.message,
+                "severity": f.severity,
+            }
+            for f in findings
+        ],
+        indent=2,
+    )
 ```
 
 ---
@@ -720,7 +870,10 @@ from rush.onboarding.validator import ConfigValidator
 
 
 def test_stack_detector_python_uv(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\ndependencies = ['fastapi>=0.110.0']\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'test'\ndependencies = ['fastapi>=0.110.0']\n",
+        encoding="utf-8",
+    )
     (tmp_path / "uv.lock").write_text("", encoding="utf-8")
 
     detector = StackDetector(tmp_path)
@@ -734,7 +887,10 @@ def test_stack_detector_python_uv(tmp_path: Path):
 
 
 def test_stack_detector_node_pnpm(tmp_path: Path):
-    (tmp_path / "package.json").write_text('{"name": "test", "dependencies": {"react": "^18.0.0", "next": "^14.0.0"}}', encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"name": "test", "dependencies": {"react": "^18.0.0", "next": "^14.0.0"}}',
+        encoding="utf-8",
+    )
     (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
 
     detector = StackDetector(tmp_path)
@@ -785,7 +941,9 @@ def test_stack_detector_php_composer(tmp_path: Path):
 
 
 def test_stack_detector_elixir_mix(tmp_path: Path):
-    (tmp_path / "mix.exs").write_text("defmodule App.MixProject do\nend\n", encoding="utf-8")
+    (tmp_path / "mix.exs").write_text(
+        "defmodule App.MixProject do\nend\n", encoding="utf-8"
+    )
 
     detector = StackDetector(tmp_path)
     stacks = detector.detect()
@@ -797,7 +955,9 @@ def test_stack_detector_elixir_mix(tmp_path: Path):
 
 
 def test_generate_rush_toml_content(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'test'\n", encoding="utf-8"
+    )
     detector = StackDetector(tmp_path)
     stacks = detector.detect()
 
@@ -816,10 +976,13 @@ def test_installer_rejects_unmapped_tool(tmp_path: Path):
 
 def test_config_validator_strict(tmp_path: Path):
     bad_toml = tmp_path / "rush.toml"
-    bad_toml.write_text("""
+    bad_toml.write_text(
+        """
 [tools.nonexistent_tool]
 enabled = true
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     validator = ConfigValidator(tmp_path)
     findings = validator.validate_file(bad_toml)
@@ -828,6 +991,7 @@ enabled = true
 
 def test_config_schema_migrator():
     from rush.onboarding.migrator import ConfigSchemaMigrator
+
     legacy = "[linters.ruff]\nenabled = true\n"
     migrated = ConfigSchemaMigrator.migrate_toml_text(legacy)
     assert "[tools.ruff]" in migrated
@@ -835,14 +999,17 @@ def test_config_schema_migrator():
 
 def test_config_validator_valid_file(tmp_path: Path):
     cfg_file = tmp_path / "rush.toml"
-    cfg_file.write_text("""
+    cfg_file.write_text(
+        """
 [rush]
 version = "0.2.0"
 
 [tools.ruff]
 enabled = true
 fail_on = "error"
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     validator = ConfigValidator(tmp_path)
     findings = validator.validate_file(cfg_file)
@@ -851,14 +1018,17 @@ fail_on = "error"
 
 def test_config_validator_invalid_fail_on(tmp_path: Path):
     cfg_file = tmp_path / "rush.toml"
-    cfg_file.write_text("""
+    cfg_file.write_text(
+        """
 [rush]
 version = "0.2.0"
 
 [tools.ruff]
 enabled = true
 fail_on = "invalid_level"
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     validator = ConfigValidator(tmp_path)
     findings = validator.validate_file(cfg_file)

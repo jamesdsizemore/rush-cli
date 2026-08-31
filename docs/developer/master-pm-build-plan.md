@@ -144,7 +144,15 @@ graph TD
 - **Exact Signatures:**
   ```python
   def compute_file_hash(path: Path) -> str: ...
-  def compute_cache_key(file_path: Path, tool_name: str, engine_version: str, config_hash: str, cli_flags: list[str]) -> str: ...
+  def compute_cache_key(
+      file_path: Path,
+      tool_name: str,
+      engine_version: str,
+      config_hash: str,
+      cli_flags: list[str],
+  ) -> str: ...
+
+
   class ResultCache:
       def get(self, key: str) -> ToolResult | None: ...
       def set(self, key: str, result: ToolResult) -> None: ...

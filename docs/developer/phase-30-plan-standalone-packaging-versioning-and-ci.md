@@ -242,21 +242,27 @@ class SemVerValidator:
         # 1. pyproject.toml
         pyproject = repo_root / "pyproject.toml"
         if pyproject.exists():
-            match = re.search(r'version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"))
+            match = re.search(
+                r'version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8")
+            )
             if match:
                 versions["pyproject.toml"] = match.group(1)
 
         # 2. package.json
         pkg_json = repo_root / "package.json"
         if pkg_json.exists():
-            match = re.search(r'"version"\s*:\s*"([^"]+)"', pkg_json.read_text(encoding="utf-8"))
+            match = re.search(
+                r'"version"\s*:\s*"([^"]+)"', pkg_json.read_text(encoding="utf-8")
+            )
             if match:
                 versions["package.json"] = match.group(1)
 
         # 3. Cargo.toml
         cargo = repo_root / "Cargo.toml"
         if cargo.exists():
-            match = re.search(r'version\s*=\s*"([^"]+)"', cargo.read_text(encoding="utf-8"))
+            match = re.search(
+                r'version\s*=\s*"([^"]+)"', cargo.read_text(encoding="utf-8")
+            )
             if match:
                 versions["Cargo.toml"] = match.group(1)
 
@@ -439,11 +445,17 @@ class TargetTripleConfig:
 
 
 TARGET_TRIPLES = [
-    TargetTripleConfig("linux", "x86_64", "x86_64-unknown-linux-gnu", "rush-linux-x86_64"),
-    TargetTripleConfig("linux", "aarch64", "aarch64-unknown-linux-gnu", "rush-linux-aarch64"),
+    TargetTripleConfig(
+        "linux", "x86_64", "x86_64-unknown-linux-gnu", "rush-linux-x86_64"
+    ),
+    TargetTripleConfig(
+        "linux", "aarch64", "aarch64-unknown-linux-gnu", "rush-linux-aarch64"
+    ),
     TargetTripleConfig("darwin", "arm64", "aarch64-apple-darwin", "rush-darwin-arm64"),
     TargetTripleConfig("darwin", "x86_64", "x86_64-apple-darwin", "rush-darwin-x86_64"),
-    TargetTripleConfig("windows", "x86_64", "x86_64-pc-windows-msvc", "rush-windows-x86_64.exe"),
+    TargetTripleConfig(
+        "windows", "x86_64", "x86_64-pc-windows-msvc", "rush-windows-x86_64.exe"
+    ),
 ]
 
 
@@ -457,7 +469,10 @@ class MultiArchCoordinator:
     @staticmethod
     def get_target_for_os(os_name: str, arch: str) -> TargetTripleConfig | None:
         for t in TARGET_TRIPLES:
-            if t.os_name.lower() == os_name.lower() and t.architecture.lower() == arch.lower():
+            if (
+                t.os_name.lower() == os_name.lower()
+                and t.architecture.lower() == arch.lower()
+            ):
                 return t
         return None
 ```
@@ -646,7 +661,10 @@ class SlsaProvenanceBuilder:
     """Constructs SLSA v0.2 / v1.0 In-toto provenance attestation JSON documents."""
 
     @staticmethod
-    def build_provenance_document(artifact_path: Path, builder_id: str = "https://github.com/jamesdsizemore/rush-cli/actions") -> dict:
+    def build_provenance_document(
+        artifact_path: Path,
+        builder_id: str = "https://github.com/jamesdsizemore/rush-cli/actions",
+    ) -> dict:
         if not artifact_path.exists() or not artifact_path.is_file():
             raise FileNotFoundError(f"Artifact '{artifact_path}' not found.")
 
@@ -676,7 +694,11 @@ class SlsaProvenanceBuilder:
                 },
                 "metadata": {
                     "buildInvocationId": f"build_{int(time.time())}",
-                    "completeness": {"parameters": True, "environment": True, "materials": False},
+                    "completeness": {
+                        "parameters": True,
+                        "environment": True,
+                        "materials": False,
+                    },
                     "reproducible": True,
                 },
             },
@@ -733,10 +755,12 @@ from rush.release.provenance import ArtifactProvenanceVerifier
 from rush.release.changelog_gen import SemanticChangelogGenerator
 from rush.release.multi_arch import MultiArchCoordinator
 
+
 @click.group(name="release")
 def release_group():
     """Manage release versioning, SemVer parity, and artifact provenance."""
     pass
+
 
 @release_group.command(name="check")
 def release_check_cmd():
@@ -756,6 +780,7 @@ def release_check_cmd():
     else:
         click.echo("[FAIL] Manifest version mismatch detected!", err=True)
 
+
 @release_group.command(name="changelog")
 @click.option("--version", default="v0.2.0", help="Release version title.")
 def release_changelog_cmd(version: str):
@@ -763,6 +788,7 @@ def release_changelog_cmd(version: str):
     gen = SemanticChangelogGenerator(Path.cwd())
     notes = gen.generate_changelog(version)
     click.echo(notes)
+
 
 @release_group.command(name="targets")
 def release_targets_cmd():
@@ -772,6 +798,7 @@ def release_targets_cmd():
     for t in targets:
         click.echo(f"  - {t.triple:<30} -> {t.binary_name}")
 
+
 @release_group.command(name="provenance")
 @click.argument("dist_dir", type=click.Path(exists=True))
 def release_provenance_cmd(dist_dir: str):
@@ -779,16 +806,19 @@ def release_provenance_cmd(dist_dir: str):
     manifest = ArtifactProvenanceVerifier.generate_checksums_manifest(Path(dist_dir))
     click.echo(f"[SUCCESS] Checksum manifest generated at '{manifest}'.")
 
+
 @click.group(name="ci")
 def ci_group():
     """Generate hardened CI/CD and container workflows."""
     pass
+
 
 @ci_group.command(name="generate")
 def ci_generate_cmd():
     """Generate hardened 40-character SHA-pinned GitHub Actions workflow."""
     wf = CIWorkflowGenerator.generate_ci_workflow(Path.cwd())
     click.echo(f"[SUCCESS] Hardened CI workflow created at '{wf}'.")
+
 
 @ci_group.command(name="docker")
 def ci_docker_cmd():
@@ -813,18 +843,30 @@ from rush.release.changelog_gen import SemanticChangelogGenerator
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_release_verify", description="Verify SemVer 2.0.0 format and cross-manifest parity.")
+
+@mcp.tool(
+    name="rush_release_verify",
+    description="Verify SemVer 2.0.0 format and cross-manifest parity.",
+)
 def rush_release_verify() -> str:
     versions = SemVerValidator.check_manifest_parity(Path.cwd())
     is_parity = len(set(versions.values())) == 1 if versions else False
     return json.dumps({"versions": versions, "parity": is_parity}, indent=2)
 
-@mcp.tool(name="rush_release_changelog", description="Generate semantic changelog from Conventional Commits.")
+
+@mcp.tool(
+    name="rush_release_changelog",
+    description="Generate semantic changelog from Conventional Commits.",
+)
 def rush_release_changelog(version: str = "v0.2.0") -> str:
     gen = SemanticChangelogGenerator(Path.cwd())
     return gen.generate_changelog(version)
 
-@mcp.tool(name="rush_ci_workflow_generate", description="Generate hardened SHA-pinned GitHub Actions workflow.")
+
+@mcp.tool(
+    name="rush_ci_workflow_generate",
+    description="Generate hardened SHA-pinned GitHub Actions workflow.",
+)
 def rush_ci_workflow_generate() -> str:
     wf = CIWorkflowGenerator.generate_ci_workflow(Path.cwd())
     return json.dumps({"workflow_file": str(wf)}, indent=2)
@@ -877,7 +919,9 @@ def test_semver_parser_invalid():
 
 def test_manifest_parity_checker(tmp_path: Path):
     (tmp_path / "pyproject.toml").write_text('version = "0.2.0"\n', encoding="utf-8")
-    (tmp_path / "package.json").write_text('{"name": "test", "version": "0.2.0"}\n', encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"name": "test", "version": "0.2.0"}\n', encoding="utf-8"
+    )
 
     versions = SemVerValidator.check_manifest_parity(tmp_path)
     assert len(versions) == 2

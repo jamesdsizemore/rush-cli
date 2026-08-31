@@ -170,16 +170,20 @@ class WorkspaceMatrixGenerator:
     """Generates JSON build matrices for GitHub Actions / GitLab CI from affected packages."""
 
     @staticmethod
-    def generate_github_matrix(affected_packages: list[str], graph: WorkspaceGraph) -> str:
+    def generate_github_matrix(
+        affected_packages: list[str], graph: WorkspaceGraph
+    ) -> str:
         entries = []
         for name in affected_packages:
             pkg = graph.packages.get(name)
             if pkg:
-                entries.append({
-                    "package": pkg.name,
-                    "kind": pkg.kind,
-                    "path": pkg.relative_path,
-                })
+                entries.append(
+                    {
+                        "package": pkg.name,
+                        "kind": pkg.kind,
+                        "path": pkg.relative_path,
+                    }
+                )
         return json.dumps({"include": entries}, indent=2)
 ```
 
@@ -253,8 +257,12 @@ class WorkspaceDiscovery:
             for pattern in members:
                 for member_path in self.repo_root.glob(pattern):
                     if member_path.is_dir() and (member_path / "Cargo.toml").exists():
-                        pkg_data = tomllib.loads((member_path / "Cargo.toml").read_text(encoding="utf-8"))
-                        pkg_name = pkg_data.get("package", {}).get("name", member_path.name)
+                        pkg_data = tomllib.loads(
+                            (member_path / "Cargo.toml").read_text(encoding="utf-8")
+                        )
+                        pkg_name = pkg_data.get("package", {}).get(
+                            "name", member_path.name
+                        )
                         rel_path = member_path.relative_to(self.repo_root).as_posix()
                         packages.append(
                             WorkspacePackage(
@@ -334,7 +342,9 @@ class WorkspaceDiscovery:
                                 name=mod_path.name,
                                 kind="go",
                                 root_path=mod_path,
-                                relative_path=mod_path.relative_to(self.repo_root).as_posix(),
+                                relative_path=mod_path.relative_to(
+                                    self.repo_root
+                                ).as_posix(),
                             )
                         )
         except Exception:
@@ -365,7 +375,9 @@ class WorkspaceLockValidator:
         findings: list[Finding] = []
 
         # Check uv lock
-        if (self.repo_root / "pyproject.toml").exists() and not (self.repo_root / "uv.lock").exists():
+        if (self.repo_root / "pyproject.toml").exists() and not (
+            self.repo_root / "uv.lock"
+        ).exists():
             findings.append(
                 {
                     "path": "pyproject.toml",
@@ -378,7 +390,9 @@ class WorkspaceLockValidator:
             )
 
         # Check Cargo lock
-        if (self.repo_root / "Cargo.toml").exists() and not (self.repo_root / "Cargo.lock").exists():
+        if (self.repo_root / "Cargo.toml").exists() and not (
+            self.repo_root / "Cargo.lock"
+        ).exists():
             findings.append(
                 {
                     "path": "Cargo.toml",
@@ -391,7 +405,9 @@ class WorkspaceLockValidator:
             )
 
         # Check pnpm lock
-        if (self.repo_root / "pnpm-workspace.yaml").exists() and not (self.repo_root / "pnpm-lock.yaml").exists():
+        if (self.repo_root / "pnpm-workspace.yaml").exists() and not (
+            self.repo_root / "pnpm-lock.yaml"
+        ).exists():
             findings.append(
                 {
                     "path": "pnpm-workspace.yaml",
@@ -431,7 +447,9 @@ from rush.workspaces.models import WorkspaceGraph, WorkspacePackage
 class WorkspaceSuiteRunner:
     """Executes quality checks across workspace packages in topological order."""
 
-    def __init__(self, repo_root: Path, graph: WorkspaceGraph, max_workers: int = 4) -> None:
+    def __init__(
+        self, repo_root: Path, graph: WorkspaceGraph, max_workers: int = 4
+    ) -> None:
         self.repo_root = repo_root.resolve()
         self.graph = graph
         self.max_workers = max_workers
@@ -442,7 +460,9 @@ class WorkspaceSuiteRunner:
     ) -> dict[str, SuiteSummary]:
         results: dict[str, SuiteSummary] = {}
 
-        ordered_targets = [name for name in self.graph.topological_order if name in package_names]
+        ordered_targets = [
+            name for name in self.graph.topological_order if name in package_names
+        ]
 
         for pkg_name in ordered_targets:
             pkg = self.graph.packages.get(pkg_name)
@@ -531,7 +551,11 @@ class AffectedCalculator:
         direct_affected: set[str] = set()
 
         for f in changed_files:
-            rel = f.relative_to(self.repo_root).as_posix() if f.is_absolute() else f.as_posix()
+            rel = (
+                f.relative_to(self.repo_root).as_posix()
+                if f.is_absolute()
+                else f.as_posix()
+            )
             for name, pkg in self.graph.packages.items():
                 if rel.startswith(pkg.relative_path):
                     direct_affected.add(name)
@@ -564,7 +588,9 @@ from pathlib import Path
 from rush.tools.base import Finding, ToolResult
 from rush.workspaces.models import WorkspacePackage
 
-ILLEGAL_IMPORT_REGEX = re.compile(r"(?:from|import)\s+[\"']" + r"(?:\.\./){2,}[^\"']*[\"']")
+ILLEGAL_IMPORT_REGEX = re.compile(
+    r"(?:from|import)\s+[\"']" + r"(?:\.\./){2,}[^\"']*[\"']"
+)
 
 
 class WorkspaceBoundaryGuard:
@@ -578,15 +604,26 @@ class WorkspaceBoundaryGuard:
 
         for pkg in packages:
             for src_file in pkg.root_path.rglob("*"):
-                if src_file.is_file() and src_file.suffix in (".py", ".ts", ".tsx", ".js", ".jsx"):
-                    if "node_modules" not in src_file.parts and ".venv" not in src_file.parts:
+                if src_file.is_file() and src_file.suffix in (
+                    ".py",
+                    ".ts",
+                    ".tsx",
+                    ".js",
+                    ".jsx",
+                ):
+                    if (
+                        "node_modules" not in src_file.parts
+                        and ".venv" not in src_file.parts
+                    ):
                         content = src_file.read_text(encoding="utf-8", errors="replace")
                         for line_idx, line in enumerate(content.splitlines(), start=1):
                             match = ILLEGAL_IMPORT_REGEX.search(line)
                             if match:
                                 findings.append(
                                     {
-                                        "path": str(src_file.relative_to(self.repo_root)),
+                                        "path": str(
+                                            src_file.relative_to(self.repo_root)
+                                        ),
                                         "line": line_idx,
                                         "column": 1,
                                         "rule": "workspace-boundary-violation",
@@ -620,10 +657,12 @@ from rush.workspaces.affected import AffectedCalculator
 from rush.workspaces.boundary import WorkspaceBoundaryGuard
 from rush.discovery.git import get_changed_files
 
+
 @click.group(name="workspace")
 def workspace_group():
     """Monorepo workspace discovery, topological execution, and boundary enforcement."""
     pass
+
 
 @workspace_group.command(name="list")
 def workspace_list_cmd():
@@ -633,6 +672,7 @@ def workspace_list_cmd():
     click.echo(f"Discovered {len(packages)} workspace package(s):")
     for p in packages:
         click.echo(f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})")
+
 
 @workspace_group.command(name="affected")
 def workspace_affected_cmd():
@@ -648,6 +688,7 @@ def workspace_affected_cmd():
     click.echo(f"Affected package(s) ({len(affected)}):")
     for name in affected:
         click.echo(f"  - {name}")
+
 
 @workspace_group.command(name="boundaries")
 def workspace_boundaries_cmd():
@@ -679,13 +720,24 @@ from rush.discovery.git import get_changed_files
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_workspace_list", description="List all discovered monorepo packages and their languages.")
+
+@mcp.tool(
+    name="rush_workspace_list",
+    description="List all discovered monorepo packages and their languages.",
+)
 def rush_workspace_list() -> str:
     discovery = WorkspaceDiscovery(Path.cwd())
     packages = discovery.discover_all()
-    return json.dumps([{"name": p.name, "kind": p.kind, "path": p.relative_path} for p in packages], indent=2)
+    return json.dumps(
+        [{"name": p.name, "kind": p.kind, "path": p.relative_path} for p in packages],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_workspace_affected", description="Compute affected workspace packages based on Git changes.")
+
+@mcp.tool(
+    name="rush_workspace_affected",
+    description="Compute affected workspace packages based on Git changes.",
+)
 def rush_workspace_affected() -> list[str]:
     repo_root = Path.cwd()
     discovery = WorkspaceDiscovery(repo_root)
@@ -722,7 +774,9 @@ def test_cargo_workspace_discovery(tmp_path: Path):
 
     crate_a = tmp_path / "crates" / "core"
     crate_a.mkdir(parents=True)
-    (crate_a / "Cargo.toml").write_text('[package]\nname = "my-core"\nversion = "0.1.0"\n', encoding="utf-8")
+    (crate_a / "Cargo.toml").write_text(
+        '[package]\nname = "my-core"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
 
     discovery = WorkspaceDiscovery(tmp_path)
     packages = discovery.discover_all()
@@ -735,7 +789,9 @@ def test_cargo_workspace_discovery(tmp_path: Path):
 def test_pnpm_workspace_discovery(tmp_path: Path):
     pkg_dir = tmp_path / "packages" / "ui"
     pkg_dir.mkdir(parents=True)
-    (pkg_dir / "package.json").write_text('{"name": "@mono/ui", "version": "1.0.0"}', encoding="utf-8")
+    (pkg_dir / "package.json").write_text(
+        '{"name": "@mono/ui", "version": "1.0.0"}', encoding="utf-8"
+    )
 
     discovery = WorkspaceDiscovery(tmp_path)
     packages = discovery.discover_all()
@@ -746,9 +802,27 @@ def test_pnpm_workspace_discovery(tmp_path: Path):
 
 
 def test_topological_sort_dag():
-    pkg_a = WorkspacePackage(name="pkg_a", kind="python", root_path=Path("a"), relative_path="a", dependencies=())
-    pkg_b = WorkspacePackage(name="pkg_b", kind="python", root_path=Path("b"), relative_path="b", dependencies=("pkg_a",))
-    pkg_c = WorkspacePackage(name="pkg_c", kind="python", root_path=Path("c"), relative_path="c", dependencies=("pkg_b",))
+    pkg_a = WorkspacePackage(
+        name="pkg_a",
+        kind="python",
+        root_path=Path("a"),
+        relative_path="a",
+        dependencies=(),
+    )
+    pkg_b = WorkspacePackage(
+        name="pkg_b",
+        kind="python",
+        root_path=Path("b"),
+        relative_path="b",
+        dependencies=("pkg_a",),
+    )
+    pkg_c = WorkspacePackage(
+        name="pkg_c",
+        kind="python",
+        root_path=Path("c"),
+        relative_path="c",
+        dependencies=("pkg_b",),
+    )
 
     graph = DependencyGraphBuilder.build_graph([pkg_c, pkg_b, pkg_a])
 
@@ -757,16 +831,40 @@ def test_topological_sort_dag():
 
 
 def test_topological_sort_cycle_detection():
-    pkg_a = WorkspacePackage(name="pkg_a", kind="python", root_path=Path("a"), relative_path="a", dependencies=("pkg_b",))
-    pkg_b = WorkspacePackage(name="pkg_b", kind="python", root_path=Path("b"), relative_path="b", dependencies=("pkg_a",))
+    pkg_a = WorkspacePackage(
+        name="pkg_a",
+        kind="python",
+        root_path=Path("a"),
+        relative_path="a",
+        dependencies=("pkg_b",),
+    )
+    pkg_b = WorkspacePackage(
+        name="pkg_b",
+        kind="python",
+        root_path=Path("b"),
+        relative_path="b",
+        dependencies=("pkg_a",),
+    )
 
     graph = DependencyGraphBuilder.build_graph([pkg_a, pkg_b])
     assert graph.has_cycles is True
 
 
 def test_affected_package_calculator(tmp_path: Path):
-    pkg_a = WorkspacePackage(name="core", kind="python", root_path=tmp_path / "packages" / "core", relative_path="packages/core", dependencies=())
-    pkg_b = WorkspacePackage(name="app", kind="python", root_path=tmp_path / "packages" / "app", relative_path="packages/app", dependencies=("core",))
+    pkg_a = WorkspacePackage(
+        name="core",
+        kind="python",
+        root_path=tmp_path / "packages" / "core",
+        relative_path="packages/core",
+        dependencies=(),
+    )
+    pkg_b = WorkspacePackage(
+        name="app",
+        kind="python",
+        root_path=tmp_path / "packages" / "app",
+        relative_path="packages/app",
+        dependencies=("core",),
+    )
 
     graph = DependencyGraphBuilder.build_graph([pkg_a, pkg_b])
     calc = AffectedCalculator(tmp_path, graph)
@@ -784,7 +882,9 @@ def test_boundary_guard_illegal_import(tmp_path: Path):
     bad_file = pkg_root / "bad.py"
     bad_file.write_text("from ../../backend/secret import data\n", encoding="utf-8")
 
-    pkg = WorkspacePackage(name="app", kind="python", root_path=pkg_root, relative_path="packages/app")
+    pkg = WorkspacePackage(
+        name="app", kind="python", root_path=pkg_root, relative_path="packages/app"
+    )
     guard = WorkspaceBoundaryGuard(tmp_path)
     res = guard.check_package_boundaries([pkg])
     assert res["status"] == "fail"
@@ -793,13 +893,19 @@ def test_boundary_guard_illegal_import(tmp_path: Path):
 
 def test_go_workspace_discovery(tmp_path: Path):
     go_work = tmp_path / "go.work"
-    go_work.write_text("go 1.22\n\nuse (\n\t./service-a\n\t./service-b\n)\n", encoding="utf-8")
+    go_work.write_text(
+        "go 1.22\n\nuse (\n\t./service-a\n\t./service-b\n)\n", encoding="utf-8"
+    )
 
     (tmp_path / "service-a").mkdir()
-    (tmp_path / "service-a" / "go.mod").write_text("module service-a\n\ngo 1.22\n", encoding="utf-8")
+    (tmp_path / "service-a" / "go.mod").write_text(
+        "module service-a\n\ngo 1.22\n", encoding="utf-8"
+    )
 
     (tmp_path / "service-b").mkdir()
-    (tmp_path / "service-b" / "go.mod").write_text("module service-b\n\ngo 1.22\n", encoding="utf-8")
+    (tmp_path / "service-b" / "go.mod").write_text(
+        "module service-b\n\ngo 1.22\n", encoding="utf-8"
+    )
 
     discovery = WorkspaceDiscovery(tmp_path)
     packages = discovery.discover_all()
@@ -810,7 +916,13 @@ def test_go_workspace_discovery(tmp_path: Path):
 
 
 def test_workspace_suite_runner_execution(tmp_path: Path):
-    pkg_a = WorkspacePackage(name="pkg_a", kind="python", root_path=tmp_path / "a", relative_path="a", dependencies=())
+    pkg_a = WorkspacePackage(
+        name="pkg_a",
+        kind="python",
+        root_path=tmp_path / "a",
+        relative_path="a",
+        dependencies=(),
+    )
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "test.py").write_text("print('hello')\n", encoding="utf-8")
 
@@ -826,9 +938,13 @@ def test_boundary_guard_clean_relative_imports(tmp_path: Path):
     pkg_root = tmp_path / "packages" / "app"
     pkg_root.mkdir(parents=True)
     clean_file = pkg_root / "clean.py"
-    clean_file.write_text("from .local_mod import data\nfrom ..sub import helper\n", encoding="utf-8")
+    clean_file.write_text(
+        "from .local_mod import data\nfrom ..sub import helper\n", encoding="utf-8"
+    )
 
-    pkg = WorkspacePackage(name="app", kind="python", root_path=pkg_root, relative_path="packages/app")
+    pkg = WorkspacePackage(
+        name="app", kind="python", root_path=pkg_root, relative_path="packages/app"
+    )
     guard = WorkspaceBoundaryGuard(tmp_path)
     res = guard.check_package_boundaries([pkg])
     assert res["status"] == "ok"
@@ -836,13 +952,20 @@ def test_boundary_guard_clean_relative_imports(tmp_path: Path):
 
 
 def test_workspace_matrix_generator():
-    pkg_a = WorkspacePackage(name="pkg_a", kind="python", root_path=Path("a"), relative_path="packages/a")
-    pkg_b = WorkspacePackage(name="pkg_b", kind="rust", root_path=Path("b"), relative_path="crates/b")
+    pkg_a = WorkspacePackage(
+        name="pkg_a", kind="python", root_path=Path("a"), relative_path="packages/a"
+    )
+    pkg_b = WorkspacePackage(
+        name="pkg_b", kind="rust", root_path=Path("b"), relative_path="crates/b"
+    )
 
     graph = DependencyGraphBuilder.build_graph([pkg_a, pkg_b])
-    matrix_json = WorkspaceMatrixGenerator.generate_github_matrix(["pkg_a", "pkg_b"], graph)
+    matrix_json = WorkspaceMatrixGenerator.generate_github_matrix(
+        ["pkg_a", "pkg_b"], graph
+    )
 
     import json
+
     data = json.loads(matrix_json)
     assert len(data["include"]) == 2
     assert data["include"][0]["package"] == "pkg_a"

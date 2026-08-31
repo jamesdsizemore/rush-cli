@@ -122,6 +122,7 @@ def run_subprocess(
     """Runs external commands with stdin=DEVNULL, shell=False, and stdout/stderr capture."""
     ...
 
+
 def resolve_binary(binary_name: str) -> str | None:
     """Resolves binary location using in-memory @lru_cache for performance."""
     ...
@@ -152,11 +153,16 @@ def export_to_sarif(result: ToolResult, output_path: Path | str) -> Path:
 ```python
 class LLMProvider(ABC):
     @abstractmethod
-    def review(self, files: dict[str, str], instructions: str | None = None) -> list[Finding]:
+    def review(
+        self, files: dict[str, str], instructions: str | None = None
+    ) -> list[Finding]:
         """Review code files using provider LLM."""
         ...
 
+
 class AnthropicProvider(LLMProvider): ...
+
+
 class OpenAIProvider(LLMProvider): ...
 ```
 
@@ -183,11 +189,14 @@ class ExecutionPermissions:
 ```python
 class AgentSafetyGuard:
     """Intercepts destructive shell commands and validates repository boundary paths."""
+
     def inspect_command(self, cmd: str) -> tuple[bool, str | None]: ...
     def inspect_path(self, path: Path) -> tuple[bool, str | None]: ...
 
+
 class SecretRedactor:
     """Shannon-entropy and regex secret scrubber for logs and stdout streams."""
+
     def redact_text(self, text: str) -> str: ...
 ```
 
@@ -198,14 +207,19 @@ class SecretRedactor:
 ```python
 class FastBPETokenCounter:
     """Calculates exact Byte-Pair Encoding token counts for model context windows."""
+
     def count_tokens(self, text: str) -> int: ...
+
 
 class PythonAstOutlineCompressor:
     """Compresses Python AST by preserving signatures while stripping function bodies."""
+
     def compress_source(self, source_code: str) -> str: ...
+
 
 class CodeGraphStore:
     """SQLite-backed Code Property Graph index store for symbols and call paths."""
+
     def insert_node(self, node: GraphNode) -> None: ...
     def find_nodes_by_symbol(self, symbol_name: str) -> list[GraphNode]: ...
 ```
@@ -217,13 +231,18 @@ class CodeGraphStore:
 ```python
 class TypeScriptContractGenerator:
     """Transpiles OpenAPI JSON schemas into typed TypeScript interface declarations."""
+
     @staticmethod
     def generate_interfaces(openapi_json: str) -> str: ...
 
+
 class ASTConflictMerger:
     """Reconciles conflicting Python ASTs across 3-way Git merge branches."""
+
     @staticmethod
-    def merge_source_files(base: str, branch_a: str, branch_b: str) -> tuple[bool, str]: ...
+    def merge_source_files(
+        base: str, branch_a: str, branch_b: str
+    ) -> tuple[bool, str]: ...
 ```
 
 ---
@@ -233,11 +252,14 @@ class ASTConflictMerger:
 ```python
 class BundleChunkCalculator:
     """Measures raw, Gzip, and Brotli chunk transfer sizes across build dist directories."""
+
     @staticmethod
     def measure_directory(dist_dir: Path) -> list[ChunkSizeReport]: ...
 
+
 class RiskMatrixCalculator:
     """Computes composite defect risk scores by combining commit churn and McCabe cyclomatic complexity."""
+
     def analyze_hotspots(self) -> list[HotspotRiskScore]: ...
 ```
 
@@ -248,15 +270,20 @@ class RiskMatrixCalculator:
 ```python
 class AgentsMdSynchronizer:
     """Compiles canonical AGENTS.md instructions to .cursorrules, .clinerules, etc."""
+
     def sync_all(self) -> list[SyncResult]: ...
+
 
 class FastIncrementalAstLinter:
     """Sub-millisecond AST parser for Git staged Python source files."""
+
     @staticmethod
     def lint_staged_python(file_paths: list[Path]) -> list[str]: ...
 
+
 class CompositeScorecardCalculator:
     """Computes deterministic 0–100% 6-pillar quality scores and letter grades."""
+
     @classmethod
     def compute_scorecard(cls, pillars: PillarScores) -> ScorecardReport: ...
 ```

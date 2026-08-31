@@ -486,6 +486,50 @@ def benchmark_status(output: Path) -> None:
         )
 
 
+@benchmark.command("check")
+@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.option(
+    "--threshold", default=5.0, type=float, help="Percentage threshold for regression."
+)
+@click.option(
+    "--record",
+    is_flag=True,
+    help="Record current samples as baseline in .rush/baselines.json.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def benchmark_check_cmd(
+    path: Path,
+    threshold: float,
+    record: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Compare performance samples against baseline thresholds at <path>."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_tool(
+        "benchmark",
+        path,
+        as_json=as_json,
+        permissions=perms,
+        extra_kwargs={"threshold_percent": threshold, "record": record},
+    )
+
+
 # --- Subcommands (one per tool) --------------------------------------------
 
 
@@ -1253,7 +1297,14 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
 
 
 for _catalog_tool in ALL_TOOLS:
-    if _catalog_tool.name not in {"review", "format", "commit-msg", "sbom", "fix"}:
+    if _catalog_tool.name not in {
+        "review",
+        "format",
+        "commit-msg",
+        "sbom",
+        "fix",
+        "benchmark",
+    }:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
 
@@ -2584,79 +2635,159 @@ def simulate_ci_cmd(workflow: str) -> None:
 
 
 @cli.command(name="attest")
-@click.option(
-    "--out", "-o", default=None, help="Output file path for SLSA JSON provenance."
+@click.argument(
+    "path",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("."),
+    required=False,
 )
-def attest_cmd(out: str | None) -> None:
-    """Generate in-toto SLSA Level 3 cryptographic build provenance statement."""
-    import json
-
-    from rush.tools.attest import SLSAAttestationGenerator
-
-    generator = SLSAAttestationGenerator()
-    stmt = generator.generate_attestation()
-    if out:
-        Path(out).write_text(json.dumps(stmt, indent=2), encoding="utf-8")
-        click.echo(f"Attestation: SLSA Level 3 provenance written to '{out}'.")
-    else:
-        click.echo(json.dumps(stmt, indent=2))
+@click.option(
+    "--artifact-path",
+    "-a",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Target artifact path to attest.",
+)
+@click.option(
+    "--out",
+    "-o",
+    "output_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Contained output path for in-toto provenance JSON.",
+)
+@click.option(
+    "--builder-id",
+    default="https://rush-cli.org/builder/v1",
+    help="Builder ID URI.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def attest_cmd(
+    path: Path,
+    artifact_path: Path | None,
+    output_path: Path | None,
+    builder_id: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Generate in-toto Statement v1 / SLSA Provenance v1 draft attestations."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_tool(
+        "attest",
+        path,
+        as_json=as_json,
+        permissions=perms,
+        extra_kwargs={
+            "artifact_path": str(artifact_path) if artifact_path else None,
+            "output_path": str(output_path) if output_path else None,
+            "builder_id": builder_id,
+        },
+    )
 
 
 @cli.command(name="license-matrix")
-def license_matrix_cmd() -> None:
+@click.argument(
+    "path",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("."),
+    required=False,
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def license_matrix_cmd(
+    path: Path,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
     """Audit project dependencies for copyleft and license risks."""
-    from rush.tools.license_matrix import LicenseMatrixScanner
-
-    scanner = LicenseMatrixScanner()
-    res = scanner.scan_licenses()
-    click.echo(
-        f"License Matrix: Scanned {res['total_packages']} packages (Copyleft violations: {res['copyleft_violations_count']}):"
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
     )
-    for p in res["packages"]:
-        click.echo(
-            f"  {p['package']}: {p['license']} [{p['category']}] (Risk: {p['risk']})"
-        )
+    _run_tool(
+        "license-matrix",
+        path,
+        as_json=as_json,
+        permissions=perms,
+    )
 
 
 @cli.command(name="iam-audit")
-def iam_audit_cmd() -> None:
-    """Synthesize least-privilege cloud IAM JSON policy from static SDK usage."""
-    import json
-
-    from rush.tools.iam_audit import IamPolicySynthesizer
-
-    synth = IamPolicySynthesizer()
-    policy = synth.synthesize_policy()
-    click.echo("IAM Policy Synthesizer: Synthesized least-privilege AWS/GCP policy:")
-    click.echo(json.dumps(policy, indent=2))
-
-
-@cli.command(name="dead-asset")
-def dead_asset_cmd() -> None:
-    """Scan for unreferenced media, font, and image files in the repository."""
-    from rush.tools.dead_asset import DeadAssetScanner
-
-    scanner = DeadAssetScanner()
-    res = scanner.scan_dead_assets()
-    if res["dead_assets_count"] == 0:
-        click.echo(
-            f"DeadAsset: Clean - all {res['total_assets']} assets are referenced."
-        )
-    else:
-        click.echo(f"DeadAsset: Found {res['dead_assets_count']} unreferenced assets:")
-        for a in res["dead_assets"]:
-            click.echo(f"  {a}")
-
-
-@cli.command(name="pr-synthesize")
-@click.option("--base", "-b", default="main", help="Base branch to diff against.")
-def pr_synthesize_cmd(base: str) -> None:
-    """Synthesize structured semantic pull request markdown card."""
-    from rush.tools.pr_synthesize import PrSynthesizer
-
-    synth = PrSynthesizer()
-    card = synth.synthesize_pr_card(base_branch=base)
-    click.echo(card)
+@click.argument(
+    "path",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("."),
+    required=False,
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_policy_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Contained output path for synthesized IAM policy JSON.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def iam_audit_cmd(
+    path: Path,
+    output_policy_file: Path | None,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Audit AWS SDK calls in source code and synthesize least-privilege IAM policy."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_tool(
+        "iam-audit",
+        path,
+        as_json=as_json,
+        permissions=perms,
+        extra_kwargs={
+            "output_policy_file": (
+                str(output_policy_file) if output_policy_file else None
+            ),
+        },
+    )
 
 
 @cli.command(name="hallu-guard")

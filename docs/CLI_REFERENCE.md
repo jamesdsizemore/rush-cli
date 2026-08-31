@@ -303,21 +303,106 @@ Emulate local GitHub Actions CI workflow execution.
 * `--workflow, -w`: GitHub Actions workflow file to emulate (default: ci.yml).
 
 ### `rush attest`
-Generate in-toto SLSA Level 3 cryptographic build provenance statement.
-* `--out, -o`: Output file path for SLSA JSON provenance.
+Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifact.
+* `PATH`: Project root directory.
+* `--target-artifact, -t`: Path to target artifact file to hash (SHA-256).
+* `--export-path, -o`: Contained output file path for Statement JSON (requires `--allow-artifact-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush license-matrix`
-Audit project dependencies for copyleft and license risks.
+Audit project dependencies for copyleft and license risks across manifests.
+* `PATH`: Project root directory.
+* `--project-license`: Declared project license string.
+* `--allowed-licenses`: Comma-separated list of approved SPDX licenses.
+* `--export-path, -o`: Export summary matrix to JSON (requires `--allow-artifact-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush iam-audit`
-Synthesize least-privilege cloud IAM JSON policy from static SDK usage.
+Audit AWS SDK (boto3) usage and synthesize least-privilege cloud IAM JSON policy.
+* `PATH`: Project root directory.
+* `--export-path, -o`: Contained output path for policy JSON (requires `--allow-artifact-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush dead-asset`
 Scan for unreferenced media, font, and image files in the repository.
+* `PATH`: Project root directory.
+* `--operation`: Operation mode (`audit` | `prune`, default: `audit`). `prune` requires `--allow-artifact-write`.
+* `--export-manifest, -o`: Output path for JSON manifest (requires `--allow-artifact-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush pr-synthesize`
-Synthesize structured semantic pull request markdown card.
-* `--base, -b`: Base branch to diff against (default: main).
+Synthesize structured semantic pull request markdown card from Git diff and tool results.
+* `PATH`: Project root directory.
+* `--base-ref, -b`: Base branch or ref to diff against (default: `main`).
+* `--evidence-file, -e`: Optional path to JSON ToolResult evidence file.
+* `--export-card, -o`: Output path for PR markdown file (requires `--allow-artifact-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush prompt-eval`
+Evaluate recorded golden coding prompt execution runs against deterministic acceptance criteria.
+* `PATH`: Project root directory.
+* `--pass-rate-threshold`: Minimum acceptable pass rate float (default: `1.0`).
+* `--max-tokens`: Maximum token budget integer threshold.
+* `--max-cost`: Maximum dollar cost threshold.
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush error-catalog`
+Extract error definitions and generate RFC 7807 problem details and markdown catalog.
+* `PATH`: Project root directory.
+* `--operation`: Operation mode (`audit` | `generate`, default: `audit`).
+* `--export-docs, -o`: Path for generated Markdown documentation (requires `--allow-artifact-write`).
+* `--output-module`: Path for generated Python problem details helper module (requires `--allow-artifact-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush provenance-ai`
+Analyze Git commit trailers for AI co-authorship and model provenance metadata.
+* `PATH`: Project root directory.
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush mem-profile`
+Scan for unclosed resource leaks and execute dynamic memory profiling probes.
+* `PATH`: Project root directory.
+* `--mode`: Profiling mode (`static` | `dynamic`, default: `static`). `dynamic` requires `--allow-slow`.
+* `--probe-cmd`: Command string for dynamic memory profiling.
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush cold-start`
+Analyze import latency and cold-start overhead for modules and dependencies.
+* `PATH`: Project root directory.
+* `--mode`: Analysis mode (`static` | `dynamic`, default: `static`). `dynamic` requires `--allow-slow`.
+* `--entry-point`: Entry-point file for dynamic import profiling.
+* `--threshold-ms`: Threshold in milliseconds for flagging slow imports (default: `50.0`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush media-opt`
+Audit, sanitize SVG files, and optimize raster media assets.
+* `PATH`: Project root directory.
+* `--operation`: Operation mode (`audit` | `sanitize` | `optimize`, default: `audit`). Modifying operations require `--allow-artifact-write`.
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush offline-review`
+Execute air-gapped local ONNX code review model inference with zero network connectivity.
+* `PATH`: Project root directory.
+* `--model-path`: Contained path to local ONNX model file.
+* `--model-sha256`: Expected SHA-256 digest of the model file.
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush tui-diff`
+Compute Git finding deltas and render Rich comparison tables between commits.
+* `PATH`: Project root directory.
+* `--base-ref, -b`: Base Git commit reference to compare against.
+* `--target-ref, -t`: Target Git commit reference (default: `HEAD`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
+### `rush benchmark check`
+Compare performance metrics against `.rush/baselines.json` regression thresholds.
+* `PATH`: Project root directory.
+* `--metric`: Metric name to benchmark (`duration_ms` | `throughput` | `memory_mb`).
+* `--value`: Observed numeric sample value.
+* `--threshold-pct`: Maximum allowable regression percentage (default: `10.0`).
+* `--record`: Record the current sample as the baseline (requires `--allow-cache-write`).
+* `--json`: Emit raw canonical `ToolResult` JSON payload.
+
 
 
 ### `rush toon-inspect`

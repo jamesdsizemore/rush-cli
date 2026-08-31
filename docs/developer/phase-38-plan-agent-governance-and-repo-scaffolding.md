@@ -226,10 +226,12 @@ class AgentsMdSynchronizer:
         for rel_target in IDE_TARGETS:
             out_p = self.repo_root / rel_target
             out_p.parent.mkdir(parents=True, exist_ok=True)
-            
+
             action = "updated" if out_p.exists() else "created"
             out_p.write_text(full_content, encoding="utf-8")
-            results.append(SyncResult(target_path=rel_target, action=action, sha256=canonical_sha))
+            results.append(
+                SyncResult(target_path=rel_target, action=action, sha256=canonical_sha)
+            )
 
         return results
 ```
@@ -336,7 +338,9 @@ class SubagentHierarchyValidator:
     def __init__(self, max_depth: int = 3) -> None:
         self.max_depth = max_depth
 
-    def validate_invocations(self, invocations: list[SubagentInvocation]) -> tuple[bool, str | None]:
+    def validate_invocations(
+        self, invocations: list[SubagentInvocation]
+    ) -> tuple[bool, str | None]:
         adj: dict[str, list[str]] = {}
         for inv in invocations:
             adj.setdefault(inv.parent_agent, []).append(inv.child_agent)
@@ -346,7 +350,10 @@ class SubagentHierarchyValidator:
 
         def dfs(node: str, depth: int) -> tuple[bool, str | None]:
             if depth > self.max_depth:
-                return False, f"Subagent call depth exceeded maximum allowed ({depth} > {self.max_depth})."
+                return (
+                    False,
+                    f"Subagent call depth exceeded maximum allowed ({depth} > {self.max_depth}).",
+                )
             visited.add(node)
             rec_stack.add(node)
 
@@ -356,7 +363,10 @@ class SubagentHierarchyValidator:
                     if not ok:
                         return False, err
                 elif neighbor in rec_stack:
-                    return False, f"Cyclic subagent invocation detected: '{node}' -> '{neighbor}'."
+                    return (
+                        False,
+                        f"Cyclic subagent invocation detected: '{node}' -> '{neighbor}'.",
+                    )
 
             rec_stack.remove(node)
             return True, None
@@ -413,7 +423,11 @@ class RuleParityChecker:
             else:
                 content = p.read_text(encoding="utf-8")
                 if canonical_sha[:12] not in content:
-                    violations.append(ParityViolation(rel_target, "Rule file out of sync with AGENTS.md SHA."))
+                    violations.append(
+                        ParityViolation(
+                            rel_target, "Rule file out of sync with AGENTS.md SHA."
+                        )
+                    )
 
         return violations
 ```
@@ -456,7 +470,9 @@ class AuditManifestGenerator:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "agents_md_sha256": agents_sha,
             "synced_targets": targets_sha,
-            "status": "synchronized" if len(targets_sha) == len(IDE_TARGETS) else "drift_detected",
+            "status": "synchronized"
+            if len(targets_sha) == len(IDE_TARGETS)
+            else "drift_detected",
         }
         return manifest
 ```
@@ -486,13 +502,24 @@ class AgentBudgetGuard:
     def __init__(self, limits: AgentBudgetLimits | None = None) -> None:
         self.limits = limits or AgentBudgetLimits()
 
-    def evaluate_step(self, current_steps: int, current_tokens: int, current_cost: float) -> tuple[bool, str | None]:
+    def evaluate_step(
+        self, current_steps: int, current_tokens: int, current_cost: float
+    ) -> tuple[bool, str | None]:
         if current_steps > self.limits.max_steps_per_turn:
-            return False, f"Exceeded max steps limit ({current_steps} > {self.limits.max_steps_per_turn})."
+            return (
+                False,
+                f"Exceeded max steps limit ({current_steps} > {self.limits.max_steps_per_turn}).",
+            )
         if current_tokens > self.limits.max_tokens_per_session:
-            return False, f"Exceeded token budget ({current_tokens} > {self.limits.max_tokens_per_session})."
+            return (
+                False,
+                f"Exceeded token budget ({current_tokens} > {self.limits.max_tokens_per_session}).",
+            )
         if current_cost > self.limits.max_cost_usd:
-            return False, f"Exceeded cost limit (${current_cost:.2f} > ${self.limits.max_cost_usd:.2f})."
+            return (
+                False,
+                f"Exceeded cost limit (${current_cost:.2f} > ${self.limits.max_cost_usd:.2f}).",
+            )
         return True, None
 ```
 
@@ -509,9 +536,15 @@ import re
 from pathlib import Path
 
 FORBIDDEN_DIRECTIVES = [
-    (re.compile(r"git\s+push\s+--force"), "Explicit instruction allowing git push --force."),
+    (
+        re.compile(r"git\s+push\s+--force"),
+        "Explicit instruction allowing git push --force.",
+    ),
     (re.compile(r"rm\s+-rf\s+/"), "Dangerous recursive root deletion."),
-    (re.compile(r"disable\s+(linting|security)"), "Disabling core quality/security checks."),
+    (
+        re.compile(r"disable\s+(linting|security)"),
+        "Disabling core quality/security checks.",
+    ),
 ]
 
 
@@ -527,7 +560,9 @@ class ForbiddenRuleScanner:
 
         for pat, desc in FORBIDDEN_DIRECTIVES:
             if pat.search(text):
-                findings.append(f"{file_path.name}: Forbidden directive detected: {desc}")
+                findings.append(
+                    f"{file_path.name}: Forbidden directive detected: {desc}"
+                )
 
         return findings
 ```
@@ -562,8 +597,23 @@ class AgentRolePermissions:
 
 ROLE_DEFINITIONS = {
     "researcher": AgentRolePermissions("researcher", {AgentCapability.READ_CODE}),
-    "coder": AgentRolePermissions("coder", {AgentCapability.READ_CODE, AgentCapability.WRITE_WORKTREE, AgentCapability.RUN_TESTS}),
-    "maintainer": AgentRolePermissions("maintainer", {AgentCapability.READ_CODE, AgentCapability.WRITE_WORKTREE, AgentCapability.RUN_TESTS, AgentCapability.GIT_COMMIT}),
+    "coder": AgentRolePermissions(
+        "coder",
+        {
+            AgentCapability.READ_CODE,
+            AgentCapability.WRITE_WORKTREE,
+            AgentCapability.RUN_TESTS,
+        },
+    ),
+    "maintainer": AgentRolePermissions(
+        "maintainer",
+        {
+            AgentCapability.READ_CODE,
+            AgentCapability.WRITE_WORKTREE,
+            AgentCapability.RUN_TESTS,
+            AgentCapability.GIT_COMMIT,
+        },
+    ),
 }
 
 
@@ -667,10 +717,12 @@ from rush.governance.mcp_configs import McpConfigGenerator
 from rush.governance.forbidden_rules import ForbiddenRuleScanner
 from rush.governance.scaffolder import ZeroTrustRepoScaffolder
 
+
 @click.group(name="governance")
 def governance_group():
     """Agent governance, AGENTS.md synchronization, and rule parity."""
     pass
+
 
 @governance_group.command(name="sync")
 def governance_sync_cmd():
@@ -684,9 +736,12 @@ def governance_sync_cmd():
     McpConfigGenerator.generate_cursor_config(Path.cwd())
     McpConfigGenerator.generate_vscode_config(Path.cwd())
 
-    click.echo(f"[SYNCED] Synchronized {len(results)} IDE rule file(s) and MCP configurations:")
+    click.echo(
+        f"[SYNCED] Synchronized {len(results)} IDE rule file(s) and MCP configurations:"
+    )
     for r in results:
         click.echo(f"  - {r.target_path:<35} [{r.action}] (SHA: {r.sha256[:8]})")
+
 
 @governance_group.command(name="verify")
 def governance_verify_cmd():
@@ -701,18 +756,22 @@ def governance_verify_cmd():
             click.echo(f"  - {v.target_path}: {v.reason}", err=True)
         raise SystemExit(1)
 
+
 @governance_group.command(name="manifest")
 def governance_manifest_cmd():
     """Generate SHA-256 governance provenance audit manifest."""
     gen = AuditManifestGenerator(Path.cwd())
     manifest = gen.generate_manifest()
     import json
+
     click.echo(json.dumps(manifest, indent=2))
+
 
 @click.group(name="scaffold")
 def scaffold_group():
     """Zero-trust repository template generator."""
     pass
+
 
 @scaffold_group.command(name="init")
 @click.argument("project_name")
@@ -739,19 +798,39 @@ from rush.governance.audit_manifest import AuditManifestGenerator
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_governance_sync", description="Synchronize AGENTS.md into Cursor, Windsurf, Copilot, Cline, and Antigravity rule files.")
+
+@mcp.tool(
+    name="rush_governance_sync",
+    description="Synchronize AGENTS.md into Cursor, Windsurf, Copilot, Cline, and Antigravity rule files.",
+)
 def rush_governance_sync() -> str:
     sync = AgentsMdSynchronizer(Path.cwd())
     results = sync.sync_all()
-    return json.dumps([{"path": r.target_path, "action": r.action, "sha": r.sha256[:8]} for r in results], indent=2)
+    return json.dumps(
+        [
+            {"path": r.target_path, "action": r.action, "sha": r.sha256[:8]}
+            for r in results
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_governance_verify", description="Verify that IDE rule files match canonical AGENTS.md.")
+
+@mcp.tool(
+    name="rush_governance_verify",
+    description="Verify that IDE rule files match canonical AGENTS.md.",
+)
 def rush_governance_verify() -> str:
     checker = RuleParityChecker(Path.cwd())
     violations = checker.check_parity()
-    return json.dumps([{"path": v.target_path, "reason": v.reason} for v in violations], indent=2)
+    return json.dumps(
+        [{"path": v.target_path, "reason": v.reason} for v in violations], indent=2
+    )
 
-@mcp.tool(name="rush_governance_manifest", description="Generate SHA-256 provenance audit manifest for repository governance.")
+
+@mcp.tool(
+    name="rush_governance_manifest",
+    description="Generate SHA-256 provenance audit manifest for repository governance.",
+)
 def rush_governance_manifest() -> str:
     gen = AuditManifestGenerator(Path.cwd())
     return json.dumps(gen.generate_manifest(), indent=2)
@@ -771,7 +850,10 @@ import pytest
 from rush.governance.synchronizer import AgentsMdSynchronizer
 from rush.governance.mcp_configs import McpConfigGenerator
 from rush.governance.boundary_guard import WorkspaceBoundaryGuard
-from rush.governance.subagent_guard import SubagentHierarchyValidator, SubagentInvocation
+from rush.governance.subagent_guard import (
+    SubagentHierarchyValidator,
+    SubagentInvocation,
+)
 from rush.governance.parity_checker import RuleParityChecker
 from rush.governance.audit_manifest import AuditManifestGenerator
 from rush.governance.budget_limits import AgentBudgetGuard, AgentBudgetLimits
@@ -864,11 +946,19 @@ def test_audit_manifest_generator(tmp_path: Path):
 
 
 def test_agent_budget_guard():
-    guard = AgentBudgetGuard(AgentBudgetLimits(max_steps_per_turn=10, max_tokens_per_session=1000, max_cost_usd=1.0))
-    ok, err = guard.evaluate_step(current_steps=5, current_tokens=500, current_cost=0.50)
+    guard = AgentBudgetGuard(
+        AgentBudgetLimits(
+            max_steps_per_turn=10, max_tokens_per_session=1000, max_cost_usd=1.0
+        )
+    )
+    ok, err = guard.evaluate_step(
+        current_steps=5, current_tokens=500, current_cost=0.50
+    )
     assert ok is True
 
-    ok_step, err_step = guard.evaluate_step(current_steps=15, current_tokens=500, current_cost=0.50)
+    ok_step, err_step = guard.evaluate_step(
+        current_steps=15, current_tokens=500, current_cost=0.50
+    )
     assert ok_step is False
     assert "Exceeded max steps" in err_step
 
@@ -883,10 +973,23 @@ def test_forbidden_rule_scanner(tmp_path: Path):
 
 
 def test_agent_permission_guard():
-    assert AgentPermissionGuard.check_permission("researcher", AgentCapability.READ_CODE) is True
-    assert AgentPermissionGuard.check_permission("researcher", AgentCapability.WRITE_WORKTREE) is False
-    assert AgentPermissionGuard.check_permission("coder", AgentCapability.WRITE_WORKTREE) is True
-    assert AgentPermissionGuard.check_permission("coder", AgentCapability.DEPLOY) is False
+    assert (
+        AgentPermissionGuard.check_permission("researcher", AgentCapability.READ_CODE)
+        is True
+    )
+    assert (
+        AgentPermissionGuard.check_permission(
+            "researcher", AgentCapability.WRITE_WORKTREE
+        )
+        is False
+    )
+    assert (
+        AgentPermissionGuard.check_permission("coder", AgentCapability.WRITE_WORKTREE)
+        is True
+    )
+    assert (
+        AgentPermissionGuard.check_permission("coder", AgentCapability.DEPLOY) is False
+    )
 
 
 def test_zero_trust_repo_scaffolder(tmp_path: Path):

@@ -9,6 +9,7 @@ remain clean on stdout; any human/log output there would corrupt the transport.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -23,7 +24,7 @@ from rush.tools import ALL_TOOLS
 from rush.tools.continuity import SessionContinuityTool
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_TOOLS = {f"rush_{tool.name}" for tool in ALL_TOOLS} | {
+EXPECTED_TOOLS = {f"rush_{tool.name.replace('-', '_')}" for tool in ALL_TOOLS} | {
     "rush_ship_clean",
     "rush_ship_env",
     "rush_ship_gate",
@@ -329,3 +330,64 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         assert continuity_payload["tool"] == "continuity"
     assert '"logger": "rush.mcp"' in server_stderr
     assert '"msg": "starting rush stdio MCP server"' in server_stderr
+
+
+def test_mcp_catalog_names_normalize_toolfn_hyphens_to_underscores() -> None:
+    from rush.mcp import build_server
+
+    server = build_server()
+    tools = getattr(server, "_tool_manager", None)
+    if tools is not None:
+        tool_names = set(getattr(tools, "_tools", {}).keys())
+    else:
+        tool_names = set()
+
+    for name in tool_names:
+        assert "-" not in name, (
+            f"MCP tool name {name!r} contains hyphens; must use underscores"
+        )
+
+
+def test_phase50_mcp_registration_has_one_object_per_tool_and_only_attest_alias() -> None:
+    """Phase 50 MCP routes are the registered objects plus one explicit alias."""
+    import rush.mcp as mcp
+
+    source = inspect.getsource(mcp._register_tools)
+    assert "_call_registered_tool" not in source
+    assert "mcp_rush_license_matrix" not in source
+    assert "mcp_rush_iam_audit" not in source
+    assert "mcp_rush_dead_asset" not in source
+    assert "mcp_rush_pr_synthesize" not in source
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, str, str]] = []
+
+        def add_tool(self, *, fn, name: str, description: str) -> None:
+            self.calls.append((fn, name, description))
+
+    server = FakeServer()
+    mcp._register_tools(server)
+    by_name = {name: fn for fn, name, _ in server.calls}
+    phase50_tools = {
+        "attest",
+        "license-matrix",
+        "iam-audit",
+        "prompt-eval",
+        "mem-profile",
+        "cold-start",
+        "media-opt",
+        "offline-review",
+        "tui-diff",
+        "benchmark",
+        "error-catalog",
+        "provenance-ai",
+        "dead-asset",
+        "pr-synthesize",
+    }
+
+    for tool in ALL_TOOLS:
+        if tool.name in phase50_tools:
+            fn = by_name[f"rush_{tool.name.replace('-', '_')}"]
+            assert getattr(fn, "__self__", None) is tool
+    assert "rush_attest_generate" in by_name

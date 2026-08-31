@@ -38,6 +38,7 @@ class ProjectConfig:
     test: tuple[str, ...] = ("tests", "test")
     exclude: tuple[str, ...] = ("**/.venv/**", "**/node_modules/**")
 
+
 @dataclass(frozen=True)
 class ReviewConfig:
     max_file_lines: int = 400
@@ -46,10 +47,12 @@ class ReviewConfig:
     source_policy_exclude: tuple[str, ...] = ("tests/**", "fixtures/**")
     fail_on: tuple[str, ...] = ()
 
+
 @dataclass(frozen=True)
 class ToolOverrideConfig:
     engine_args: tuple[str, ...] = ()
     check: bool = True
+
 
 @dataclass(frozen=True)
 class RushConfig:

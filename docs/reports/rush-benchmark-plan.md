@@ -75,6 +75,7 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 
+
 class Outcome(StrEnum):
     PASS = "pass"
     FAIL = "fail"
@@ -82,8 +83,10 @@ class Outcome(StrEnum):
     DEFERRED = "deferred"
     SKIPPED = "skipped"
 
+
 class FixtureError(ValueError):
     pass
+
 
 @dataclass(frozen=True)
 class SourceEvidence:
@@ -91,6 +94,7 @@ class SourceEvidence:
     retrieved_at: str
     revision: str = ""
     license_or_terms: str = ""
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -100,6 +104,7 @@ class Scenario:
     input: dict[str, Any]
     required_facts: tuple[str, ...]
     expected_outcome: Outcome
+
 
 @dataclass(frozen=True)
 class ProbeResult:
@@ -121,7 +126,9 @@ class ProbeResult:
         data["evidence"] = [asdict(item) for item in self.evidence]
         return data
 
+
 REQUIRED_RESULT_KEYS = frozenset(ProbeResult.__dataclass_fields__)
+
 
 def require_exact_keys(payload: dict[str, Any], keys: frozenset[str]) -> None:
     missing, unknown = keys - payload.keys(), payload.keys() - keys
@@ -137,23 +144,36 @@ from .contracts import FixtureError, Outcome, Scenario, require_exact_keys
 
 FIXTURE_ROOT = Path("tests/fixtures/benchmarks").resolve()
 
+
 def fixture_path(name: str) -> Path:
     path = (FIXTURE_ROOT / name).resolve()
     if FIXTURE_ROOT not in path.parents or path.suffix != ".json":
         raise FixtureError(f"fixture path denied: {name}")
     return path
 
+
 def load_scenarios() -> dict[str, Scenario]:
     raw = json.loads(fixture_path("scenarios.json").read_text(encoding="utf-8"))
     scenarios: dict[str, Scenario] = {}
     for item in raw["scenarios"]:
-        require_exact_keys(item, frozenset({
-            "scenario_id", "probe", "category", "input",
-            "required_facts", "expected_outcome",
-        }))
+        require_exact_keys(
+            item,
+            frozenset(
+                {
+                    "scenario_id",
+                    "probe",
+                    "category",
+                    "input",
+                    "required_facts",
+                    "expected_outcome",
+                }
+            ),
+        )
         scenario = Scenario(
-            scenario_id=item["scenario_id"], probe=item["probe"],
-            category=item["category"], input=item["input"],
+            scenario_id=item["scenario_id"],
+            probe=item["probe"],
+            category=item["category"],
+            input=item["input"],
             required_facts=tuple(item["required_facts"]),
             expected_outcome=Outcome(item["expected_outcome"]),
         )
@@ -174,8 +194,11 @@ PROBES = {
     "local": local.run_local_probe,
 }
 
+
 def run_scenario(
-    scenario_id: str, output_root: Path, *,
+    scenario_id: str,
+    output_root: Path,
+    *,
     model_cache: Path | None = None,
     allow_live_route: str | None = None,
     allow_model_download: str | None = None,
@@ -189,7 +212,8 @@ def run_scenario(
     if probe is None:
         raise FixtureError(f"unknown probe: {scenario.probe}")
     result = probe(
-        scenario, model_cache=model_cache,
+        scenario,
+        model_cache=model_cache,
         allow_live_route=allow_live_route,
         allow_model_download=allow_model_download,
     )

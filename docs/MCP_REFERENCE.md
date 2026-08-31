@@ -102,11 +102,22 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_mesh_release_lock(path, agent_id)`**: Release multi-agent file lock.
 * **`rush_swarm_merge(base_code, ours_code, theirs_code)`**: Execute 3-way AST merge conflict resolution.
 
-* **`rush_attest_generate(artifact_path="")`**: Generate in-toto SLSA Level 3 provenance statement.
-* **`rush_license_matrix()`**: Audit open-source dependencies for license risks.
-* **`rush_iam_audit()`**: Synthesize least-privilege cloud IAM policy.
-* **`rush_dead_asset()`**: Scan for unreferenced assets and dead media.
-* **`rush_pr_synthesize(base_branch="main")`**: Synthesize structured semantic pull request card.
+## Phase 50 FastMCP Tool Additions
 
+* **`rush_attest(path, target_artifact, export_path=None)`**: Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifact.
+* **`rush_attest_generate(artifact_path="")`**: *(Deprecated compatibility alias)* Delegates directly to `rush_attest`.
+* **`rush_license_matrix(path, project_license="", allowed_licenses=None, export_path=None)`**: Audit dependency licenses across manifests.
+* **`rush_iam_audit(path, export_path=None)`**: Synthesize least-privilege AWS IAM JSON policy from static SDK usage.
+* **`rush_dead_asset(path, operation="audit", export_manifest=None)`**: Scan unreferenced assets or prune with hash verification.
+* **`rush_pr_synthesize(path, base_ref="main", evidence_file=None, export_card=None)`**: Synthesize structured pull request card.
+* **`rush_prompt_eval(path, pass_rate_threshold=1.0, max_tokens=None, max_cost=None)`**: Evaluate recorded golden prompt runs.
+* **`rush_error_catalog(path, operation="audit", export_docs=None, output_module=None)`**: Extract errors and generate RFC 7807 problem details.
+* **`rush_provenance_ai(path)`**: Analyze Git commit trailers for AI co-authorship attribution.
+* **`rush_mem_profile(path, mode="static", probe_cmd=None)`**: Scan unclosed resources and run dynamic memory probes.
+* **`rush_cold_start(path, mode="static", entry_point=None, threshold_ms=50.0)`**: Analyze module import cold-start latency.
+* **`rush_media_opt(path, operation="audit")`**: Audit, sanitize SVGs, and optimize raster media assets.
+* **`rush_offline_review(path, model_path=None, model_sha256=None)`**: Offline local ONNX model review inference with zero network.
+* **`rush_tui_diff(path, base_ref=None, target_ref="HEAD")`**: Compute Git finding deltas across commits.
+* **`rush_benchmark(path, metric=None, value=None, threshold_pct=10.0, record=False)`**: Compare performance samples against baseline thresholds.
 * **`rush_context_skeletonize(path)`**: Extract compressed AST outline skeletons for a target source file.
 * **`rush_context_cache_manifest()`**: Retrieve Merkle DAG content-addressable cache block manifests.

@@ -239,13 +239,34 @@ from __future__ import annotations
 import re
 
 DANGEROUS_COMMAND_PATTERNS = [
-    (re.compile(r"\bgit\s+reset\s+--hard\b"), "Blocked destructive command 'git reset --hard'."),
-    (re.compile(r"\bgit\s+clean\s+-[a-zA-Z]*f"), "Blocked destructive command 'git clean -f'."),
-    (re.compile(r"\bgit\s+push\s+.*--force\b"), "Blocked destructive command 'git push --force'."),
-    (re.compile(r"\bgit\s+push\s+.*-f\b"), "Blocked destructive command 'git push -f'."),
-    (re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\s+[\/\.]"), "Blocked destructive root/directory recursive deletion."),
-    (re.compile(r"\bdrop\s+database\b", re.IGNORECASE), "Blocked destructive SQL 'DROP DATABASE' command."),
-    (re.compile(r"\bchmod\s+777\b"), "Blocked insecure permission escalation 'chmod 777'."),
+    (
+        re.compile(r"\bgit\s+reset\s+--hard\b"),
+        "Blocked destructive command 'git reset --hard'.",
+    ),
+    (
+        re.compile(r"\bgit\s+clean\s+-[a-zA-Z]*f"),
+        "Blocked destructive command 'git clean -f'.",
+    ),
+    (
+        re.compile(r"\bgit\s+push\s+.*--force\b"),
+        "Blocked destructive command 'git push --force'.",
+    ),
+    (
+        re.compile(r"\bgit\s+push\s+.*-f\b"),
+        "Blocked destructive command 'git push -f'.",
+    ),
+    (
+        re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\s+[\/\.]"),
+        "Blocked destructive root/directory recursive deletion.",
+    ),
+    (
+        re.compile(r"\bdrop\s+database\b", re.IGNORECASE),
+        "Blocked destructive SQL 'DROP DATABASE' command.",
+    ),
+    (
+        re.compile(r"\bchmod\s+777\b"),
+        "Blocked insecure permission escalation 'chmod 777'.",
+    ),
 ]
 
 
@@ -336,7 +357,12 @@ SECRET_PATTERNS = [
     (re.compile(r"ghp_[a-zA-Z0-9]{20,}"), "[REDACTED_GITHUB_TOKEN]"),
     (re.compile(r"gho_[a-zA-Z0-9]{20,}"), "[REDACTED_GITHUB_OAUTH]"),
     (re.compile(r"AKIA[0-9A-Z]{16}"), "[REDACTED_AWS_ACCESS_KEY]"),
-    (re.compile(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----"), "[REDACTED_PRIVATE_KEY]"),
+    (
+        re.compile(
+            r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----"
+        ),
+        "[REDACTED_PRIVATE_KEY]",
+    ),
 ]
 
 
@@ -362,7 +388,7 @@ class SecretRedactor:
         for x in set(data):
             p_x = float(data.count(x)) / len(data)
             if p_x > 0:
-                entropy += - p_x * math.log2(p_x)
+                entropy += -p_x * math.log2(p_x)
         return entropy
 ```
 
@@ -384,8 +410,12 @@ class NetworkEgressGuard:
     @staticmethod
     def block_network_sockets() -> None:
         """Monkey-patches Python socket creation to prevent egress in sandboxed plugins."""
+
         def guarded_socket(*args, **kwargs):
-            raise PermissionError("Network access blocked: Sandbox operates in zero-network hermetic mode.")
+            raise PermissionError(
+                "Network access blocked: Sandbox operates in zero-network hermetic mode."
+            )
+
         socket.socket = guarded_socket  # type: ignore
 ```
 
@@ -408,7 +438,9 @@ from pathlib import Path
 class SecurityAuditLogger:
     """Maintains an append-only, cryptographically chained audit trail on sys.stderr and .rush/audit.log."""
 
-    def __init__(self, repo_root: Path, secret_key: str = "rush_internal_audit_secret") -> None:
+    def __init__(
+        self, repo_root: Path, secret_key: str = "rush_internal_audit_secret"
+    ) -> None:
         self.repo_root = repo_root.resolve()
         self.secret_key = secret_key.encode("utf-8")
         self.log_file = self.repo_root / ".rush" / "audit.log"
@@ -424,7 +456,9 @@ class SecurityAuditLogger:
             "prev_hash": self.last_hash,
         }
         record_bytes = json.dumps(record_body, sort_keys=True).encode("utf-8")
-        current_hash = hmac.new(self.secret_key, record_bytes, hashlib.sha256).hexdigest()
+        current_hash = hmac.new(
+            self.secret_key, record_bytes, hashlib.sha256
+        ).hexdigest()
         record_body["hmac_sha256"] = current_hash
         self.last_hash = current_hash
 
@@ -454,7 +488,9 @@ class WorkspacePathConfiner:
 
     def confine_path(self, target_path: Path | str) -> Path:
         p = Path(target_path)
-        resolved = (self.repo_root / p).resolve() if not p.is_absolute() else p.resolve()
+        resolved = (
+            (self.repo_root / p).resolve() if not p.is_absolute() else p.resolve()
+        )
 
         if not resolved.is_relative_to(self.repo_root):
             raise PermissionError(
@@ -580,10 +616,12 @@ from rush.safety.redactor import SecretRedactor
 from rush.safety.import_guard import AstImportGuard
 from rush.safety.worktree_sandbox import WorktreeSandboxManager
 
+
 @click.group(name="guard")
 def guard_group():
     """Agent safety guards, command interception, and secret redaction."""
     pass
+
 
 @guard_group.command(name="check-cmd")
 @click.argument("command_line")
@@ -595,6 +633,7 @@ def guard_check_cmd(command_line: str):
     else:
         click.echo(f"[BLOCKED] {reason}", err=True)
         raise SystemExit(1)
+
 
 @guard_group.command(name="check-ast")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -610,6 +649,7 @@ def guard_check_ast_cmd(file_path: str):
             click.echo(f"  - {v}", err=True)
         raise SystemExit(1)
 
+
 @guard_group.command(name="redact")
 @click.argument("input_file", type=click.Path(exists=True))
 def guard_redact_cmd(input_file: str):
@@ -618,10 +658,12 @@ def guard_redact_cmd(input_file: str):
     redacted = SecretRedactor.redact_text(text)
     click.echo(redacted)
 
+
 @click.group(name="sandbox")
 def sandbox_group():
     """Manage ephemeral Git worktree sandboxes."""
     pass
+
 
 @sandbox_group.command(name="create")
 def sandbox_create_cmd():
@@ -629,6 +671,7 @@ def sandbox_create_cmd():
     mgr = WorktreeSandboxManager(Path.cwd())
     sb = mgr.allocate_sandbox()
     click.echo(f"[CREATED] Allocated sandbox worktree at '{sb.name}'.")
+
 
 @sandbox_group.command(name="prune")
 def sandbox_prune_cmd():
@@ -655,22 +698,36 @@ from rush.safety.worktree_sandbox import WorktreeSandboxManager
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_guard_check_command", description="Verify that a command is safe and non-destructive.")
+
+@mcp.tool(
+    name="rush_guard_check_command",
+    description="Verify that a command is safe and non-destructive.",
+)
 def rush_guard_check_command(command_line: str) -> str:
     allowed, reason = DangerousCommandInterceptor.inspect_command(command_line)
     return json.dumps({"allowed": allowed, "reason": reason}, indent=2)
 
-@mcp.tool(name="rush_guard_check_ast", description="Scan Python source code for dynamic execution violations.")
+
+@mcp.tool(
+    name="rush_guard_check_ast",
+    description="Scan Python source code for dynamic execution violations.",
+)
 def rush_guard_check_ast(source_code: str) -> str:
     clean, violations = AstImportGuard.inspect_source(source_code)
     return json.dumps({"clean": clean, "violations": violations}, indent=2)
 
-@mcp.tool(name="rush_guard_redact", description="Redact secrets from arbitrary text or diffs.")
+
+@mcp.tool(
+    name="rush_guard_redact", description="Redact secrets from arbitrary text or diffs."
+)
 def rush_guard_redact(text: str) -> str:
     redacted = SecretRedactor.redact_text(text)
     return redacted
 
-@mcp.tool(name="rush_sandbox_create", description="Allocate an ephemeral worktree sandbox.")
+
+@mcp.tool(
+    name="rush_sandbox_create", description="Allocate an ephemeral worktree sandbox."
+)
 def rush_sandbox_create() -> str:
     mgr = WorktreeSandboxManager(Path.cwd())
     sb = mgr.allocate_sandbox()
@@ -720,12 +777,23 @@ def test_dangerous_command_interceptor():
     assert DangerousCommandInterceptor.inspect_command("pytest tests/")[0] is True
 
     # Blocked dangerous commands
-    assert DangerousCommandInterceptor.inspect_command("git reset --hard HEAD~1")[0] is False
+    assert (
+        DangerousCommandInterceptor.inspect_command("git reset --hard HEAD~1")[0]
+        is False
+    )
     assert DangerousCommandInterceptor.inspect_command("git clean -fdx")[0] is False
-    assert DangerousCommandInterceptor.inspect_command("git push origin main --force")[0] is False
+    assert (
+        DangerousCommandInterceptor.inspect_command("git push origin main --force")[0]
+        is False
+    )
     assert DangerousCommandInterceptor.inspect_command("rm -rf /")[0] is False
-    assert DangerousCommandInterceptor.inspect_command("DROP DATABASE production;")[0] is False
-    assert DangerousCommandInterceptor.inspect_command("chmod 777 script.sh")[0] is False
+    assert (
+        DangerousCommandInterceptor.inspect_command("DROP DATABASE production;")[0]
+        is False
+    )
+    assert (
+        DangerousCommandInterceptor.inspect_command("chmod 777 script.sh")[0] is False
+    )
 
 
 def test_ast_import_guard():
@@ -734,7 +802,7 @@ def test_ast_import_guard():
     assert clean is True
     assert len(violations) == 0
 
-    dangerous_code = "eval('__import__(\"os\").system(\"rm -rf /\")')\n"
+    dangerous_code = 'eval(\'__import__("os").system("rm -rf /")\')\n'
     d_clean, d_violations = AstImportGuard.inspect_source(dangerous_code)
     assert d_clean is False
     assert len(d_violations) >= 1
@@ -762,7 +830,9 @@ def test_process_resource_limiter():
 
 
 def test_secret_redactor():
-    raw_text = "API Key: sk-ant-api03-12345678901234567890 and token ghp_12345678901234567890"
+    raw_text = (
+        "API Key: sk-ant-api03-12345678901234567890 and token ghp_12345678901234567890"
+    )
     redacted = SecretRedactor.redact_text(raw_text)
     assert "sk-ant" not in redacted
     assert "ghp_" not in redacted
@@ -779,6 +849,7 @@ def test_shannon_entropy_calculation():
 
 def test_network_egress_guard():
     import socket
+
     old_socket = socket.socket
     try:
         NetworkEgressGuard.block_network_sockets()

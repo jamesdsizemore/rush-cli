@@ -142,8 +142,12 @@ Developers alter ORM models without generating migrations; monolithic spaghetti 
 class DbDriftAuditor:
     def audit_drift(self, project_root: Path) -> list[dict[str, Any]]: ...
 
+
 class ComplexityDecomposer:
-    def decompose_function(self, source_code: str, target_fn: str) -> dict[str, Any]: ...
+    def decompose_function(
+        self, source_code: str, target_fn: str
+    ) -> dict[str, Any]: ...
+
 
 class TypeSynthesizer:
     def synthesize_guards(self, source_code: str) -> str: ...

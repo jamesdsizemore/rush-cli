@@ -195,12 +195,18 @@ class OpenApiContractChecker:
     def check_spec_exists(self) -> bool:
         return self.spec_path.exists()
 
-    def inspect_breaking_changes(self, old_spec_json: str, new_spec_json: str) -> list[ApiDriftFinding]:
+    def inspect_breaking_changes(
+        self, old_spec_json: str, new_spec_json: str
+    ) -> list[ApiDriftFinding]:
         try:
             old_data = json.loads(old_spec_json)
             new_data = json.loads(new_spec_json)
         except Exception as e:
-            return [ApiDriftFinding(endpoint_path="*", method="*", issue=f"Invalid JSON: {e}")]
+            return [
+                ApiDriftFinding(
+                    endpoint_path="*", method="*", issue=f"Invalid JSON: {e}"
+                )
+            ]
 
         findings = []
         old_paths = old_data.get("paths", {})
@@ -208,7 +214,11 @@ class OpenApiContractChecker:
 
         for path, methods in old_paths.items():
             if path not in new_paths:
-                findings.append(ApiDriftFinding(endpoint_path=path, method="ALL", issue="Endpoint deleted."))
+                findings.append(
+                    ApiDriftFinding(
+                        endpoint_path=path, method="ALL", issue="Endpoint deleted."
+                    )
+                )
             else:
                 for method in methods:
                     if method not in new_paths[path]:
@@ -316,7 +326,9 @@ class FastApiAstExtractor:
                             method_candidate = decorator.func.attr.lower()
                             if method_candidate in FastApiAstExtractor.HTTP_METHODS:
                                 route_path = "/"
-                                if decorator.args and isinstance(decorator.args[0], ast.Constant):
+                                if decorator.args and isinstance(
+                                    decorator.args[0], ast.Constant
+                                ):
                                     route_path = str(decorator.args[0].value)
                                 endpoints.append(
                                     DiscoveredEndpoint(
@@ -364,11 +376,15 @@ class DjangoNinjaAstExtractor:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for decorator in node.decorator_list:
-                    if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
+                    if isinstance(decorator, ast.Call) and isinstance(
+                        decorator.func, ast.Attribute
+                    ):
                         method = decorator.func.attr.lower()
                         if method in {"get", "post", "put", "delete", "patch"}:
                             route = "/"
-                            if decorator.args and isinstance(decorator.args[0], ast.Constant):
+                            if decorator.args and isinstance(
+                                decorator.args[0], ast.Constant
+                            ):
                                 route = str(decorator.args[0].value)
                             endpoints.append(
                                 DjangoNinjaEndpoint(
@@ -419,7 +435,9 @@ class EnvSchemaSynchronizer:
         return keys
 
     @staticmethod
-    def verify_env_parity(example_keys: set[str], settings_keys: set[str]) -> tuple[bool, set[str]]:
+    def verify_env_parity(
+        example_keys: set[str], settings_keys: set[str]
+    ) -> tuple[bool, set[str]]:
         missing_in_example = settings_keys - example_keys
         return len(missing_in_example) == 0, missing_in_example
 ```
@@ -498,7 +516,9 @@ class ZodPydanticParityChecker:
         fields = set()
         for line in pydantic_source.splitlines():
             line_clean = line.strip()
-            m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_\[\]]+", line_clean)
+            m = re.match(
+                r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_\[\]]+", line_clean
+            )
             if m and not line_clean.startswith("def "):
                 fields.add(m.group(1))
         return fields
@@ -514,7 +534,9 @@ class ZodPydanticParityChecker:
         return fields
 
     @staticmethod
-    def compare_models(pydantic_src: str, zod_src: str) -> tuple[bool, set[str], set[str]]:
+    def compare_models(
+        pydantic_src: str, zod_src: str
+    ) -> tuple[bool, set[str], set[str]]:
         py_fields = ZodPydanticParityChecker.extract_pydantic_fields(pydantic_src)
         zod_fields = ZodPydanticParityChecker.extract_zod_fields(zod_src)
 
@@ -554,7 +576,10 @@ class GraphQLBreakingChangeGuard:
         old_fields = GraphQLBreakingChangeGuard.extract_schema_fields(old_sdl)
         new_fields = GraphQLBreakingChangeGuard.extract_schema_fields(new_sdl)
         removed = old_fields - new_fields
-        return [f"Breaking Change: GraphQL field '{f}' was deleted." for f in sorted(removed)]
+        return [
+            f"Breaking Change: GraphQL field '{f}' was deleted."
+            for f in sorted(removed)
+        ]
 ```
 
 ---
@@ -599,10 +624,12 @@ from rush.sync.django_ninja import DjangoNinjaAstExtractor
 from rush.sync.env_sync import EnvSchemaSynchronizer
 from rush.sync.graphql_guard import GraphQLBreakingChangeGuard
 
+
 @click.group(name="sync")
 def sync_group():
     """Full-stack contract sync, type safety, and ORM migration gates."""
     pass
+
 
 @sync_group.command(name="openapi")
 @click.argument("old_spec", type=click.Path(exists=True))
@@ -617,10 +644,13 @@ def sync_openapi_cmd(old_spec: str, new_spec: str):
     if not findings:
         click.echo("[PASS] No breaking OpenAPI contract changes detected.")
     else:
-        click.echo(f"[FAIL] Found {len(findings)} breaking OpenAPI change(s):", err=True)
+        click.echo(
+            f"[FAIL] Found {len(findings)} breaking OpenAPI change(s):", err=True
+        )
         for f in findings:
             click.echo(f"  - {f.method} {f.endpoint_path}: {f.issue}", err=True)
         raise SystemExit(1)
+
 
 @sync_group.command(name="ts-gen")
 @click.argument("spec_file", type=click.Path(exists=True))
@@ -635,6 +665,7 @@ def sync_ts_gen_cmd(spec_file: str, out: str | None):
     else:
         click.echo(ts_code)
 
+
 @sync_group.command(name="extract-routes")
 @click.argument("python_file", type=click.Path(exists=True))
 def sync_extract_routes_cmd(python_file: str):
@@ -643,11 +674,16 @@ def sync_extract_routes_cmd(python_file: str):
     routes = FastApiAstExtractor.extract_endpoints_from_source(src)
     click.echo(f"Extracted {len(routes)} FastAPI route(s):")
     for r in routes:
-        click.echo(f"  - {r.http_method:<7} {r.path:<30} -> {r.function_name}() [Line {r.line_number}]")
+        click.echo(
+            f"  - {r.http_method:<7} {r.path:<30} -> {r.function_name}() [Line {r.line_number}]"
+        )
+
 
 @sync_group.command(name="env")
 @click.option("--example", default=".env.example", help="Path to .env.example.")
-@click.option("--settings", default="src/config.py", help="Path to Pydantic settings file.")
+@click.option(
+    "--settings", default="src/config.py", help="Path to Pydantic settings file."
+)
 def sync_env_cmd(example: str, settings: str):
     """Verify parity between .env.example and Pydantic Settings."""
     ex_path = Path(example)
@@ -657,16 +693,21 @@ def sync_env_cmd(example: str, settings: str):
         return
 
     ex_keys = EnvSchemaSynchronizer.extract_env_keys_from_file(ex_path)
-    st_keys = EnvSchemaSynchronizer.extract_settings_keys_from_pydantic(st_path.read_text(encoding="utf-8"))
+    st_keys = EnvSchemaSynchronizer.extract_settings_keys_from_pydantic(
+        st_path.read_text(encoding="utf-8")
+    )
     synced, missing = EnvSchemaSynchronizer.verify_env_parity(ex_keys, st_keys)
 
     if synced:
-        click.echo("[PASS] Environment variables in .env.example are synchronized with Pydantic settings.")
+        click.echo(
+            "[PASS] Environment variables in .env.example are synchronized with Pydantic settings."
+        )
     else:
         click.echo(f"[FAIL] Missing keys in {example}:", err=True)
         for k in sorted(missing):
             click.echo(f"  - {k}", err=True)
         raise SystemExit(1)
+
 
 @sync_group.command(name="orm")
 def sync_orm_cmd():
@@ -707,32 +748,62 @@ from rush.sync.env_sync import EnvSchemaSynchronizer
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_sync_openapi", description="Validate OpenAPI contract backwards compatibility.")
+
+@mcp.tool(
+    name="rush_sync_openapi",
+    description="Validate OpenAPI contract backwards compatibility.",
+)
 def rush_sync_openapi(old_spec_json: str, new_spec_json: str) -> str:
     checker = OpenApiContractChecker(Path("openapi.json"))
     findings = checker.inspect_breaking_changes(old_spec_json, new_spec_json)
-    return json.dumps([{"path": f.endpoint_path, "method": f.method, "issue": f.issue} for f in findings], indent=2)
+    return json.dumps(
+        [
+            {"path": f.endpoint_path, "method": f.method, "issue": f.issue}
+            for f in findings
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_sync_ts_gen", description="Generate TypeScript interfaces from an OpenAPI JSON string.")
+
+@mcp.tool(
+    name="rush_sync_ts_gen",
+    description="Generate TypeScript interfaces from an OpenAPI JSON string.",
+)
 def rush_sync_ts_gen(openapi_json: str) -> str:
     return TypeScriptContractGenerator.generate_interfaces(openapi_json)
 
-@mcp.tool(name="rush_sync_extract_routes", description="Statically extract FastAPI routes from Python code.")
+
+@mcp.tool(
+    name="rush_sync_extract_routes",
+    description="Statically extract FastAPI routes from Python code.",
+)
 def rush_sync_extract_routes(source_code: str) -> str:
     routes = FastApiAstExtractor.extract_endpoints_from_source(source_code)
-    return json.dumps([{"method": r.http_method, "path": r.path, "function": r.function_name} for r in routes], indent=2)
+    return json.dumps(
+        [
+            {"method": r.http_method, "path": r.path, "function": r.function_name}
+            for r in routes
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_sync_orm_drift", description="Verify ORM database migration parity.")
+
+@mcp.tool(
+    name="rush_sync_orm_drift", description="Verify ORM database migration parity."
+)
 def rush_sync_orm_drift() -> str:
     validator = OrmMigrationDriftValidator(Path.cwd())
     ok_a, msg_a = validator.check_alembic()
     ok_p, msg_p = validator.check_prisma()
     ok_d, msg_d = validator.check_django()
-    return json.dumps({
-        "alembic": {"synced": ok_a, "msg": msg_a},
-        "prisma": {"synced": ok_p, "msg": msg_p},
-        "django": {"synced": ok_d, "msg": msg_d},
-    }, indent=2)
+    return json.dumps(
+        {
+            "alembic": {"synced": ok_a, "msg": msg_a},
+            "prisma": {"synced": ok_p, "msg": msg_p},
+            "django": {"synced": ok_d, "msg": msg_d},
+        },
+        indent=2,
+    )
 ```
 
 ---
@@ -759,17 +830,21 @@ from rush.sync.rpc_synchronizer import RpcInterfaceSynchronizer
 
 
 def test_openapi_checker_detects_deleted_endpoint():
-    old_spec = json.dumps({
-        "paths": {
-            "/api/users": {"get": {}},
-            "/api/orders": {"post": {}},
+    old_spec = json.dumps(
+        {
+            "paths": {
+                "/api/users": {"get": {}},
+                "/api/orders": {"post": {}},
+            }
         }
-    })
-    new_spec = json.dumps({
-        "paths": {
-            "/api/users": {"get": {}},
+    )
+    new_spec = json.dumps(
+        {
+            "paths": {
+                "/api/users": {"get": {}},
+            }
         }
-    })
+    )
     checker = OpenApiContractChecker(Path("openapi.json"))
     findings = checker.inspect_breaking_changes(old_spec, new_spec)
     assert len(findings) == 1
@@ -778,16 +853,20 @@ def test_openapi_checker_detects_deleted_endpoint():
 
 
 def test_openapi_checker_detects_deleted_method():
-    old_spec = json.dumps({
-        "paths": {
-            "/api/users": {"get": {}, "delete": {}},
+    old_spec = json.dumps(
+        {
+            "paths": {
+                "/api/users": {"get": {}, "delete": {}},
+            }
         }
-    })
-    new_spec = json.dumps({
-        "paths": {
-            "/api/users": {"get": {}},
+    )
+    new_spec = json.dumps(
+        {
+            "paths": {
+                "/api/users": {"get": {}},
+            }
         }
-    })
+    )
     checker = OpenApiContractChecker(Path("openapi.json"))
     findings = checker.inspect_breaking_changes(old_spec, new_spec)
     assert len(findings) == 1
@@ -796,21 +875,23 @@ def test_openapi_checker_detects_deleted_method():
 
 
 def test_typescript_generator():
-    openapi_spec = json.dumps({
-        "components": {
-            "schemas": {
-                "User": {
-                    "type": "object",
-                    "required": ["id", "username"],
-                    "properties": {
-                        "id": {"type": "integer"},
-                        "username": {"type": "string"},
-                        "bio": {"type": "string"},
-                    },
+    openapi_spec = json.dumps(
+        {
+            "components": {
+                "schemas": {
+                    "User": {
+                        "type": "object",
+                        "required": ["id", "username"],
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "username": {"type": "string"},
+                            "bio": {"type": "string"},
+                        },
+                    }
                 }
             }
         }
-    })
+    )
     ts_code = TypeScriptContractGenerator.generate_interfaces(openapi_spec)
     assert "export interface User {" in ts_code
     assert "id: number;" in ts_code
@@ -888,7 +969,9 @@ const UserProfileSchema = z.object({
     email: z.string(),
 });
 """
-    is_synced, missing, extra = ZodPydanticParityChecker.compare_models(pydantic_code, zod_code_synced)
+    is_synced, missing, extra = ZodPydanticParityChecker.compare_models(
+        pydantic_code, zod_code_synced
+    )
     assert is_synced is True
     assert len(missing) == 0
 
@@ -898,7 +981,9 @@ const UserProfileSchema = z.object({
     name: z.string(),
 });
 """
-    is_synced_m, missing_m, extra_m = ZodPydanticParityChecker.compare_models(pydantic_code, zod_code_missing)
+    is_synced_m, missing_m, extra_m = ZodPydanticParityChecker.compare_models(
+        pydantic_code, zod_code_missing
+    )
     assert is_synced_m is False
     assert "email" in missing_m
 

@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from src.rush.tools.attest import SLSAAttestationGenerator
+from src.rush.tools.attest import AttestationTool, SLSAAttestationGenerator
 from src.rush.tools.dead_asset import DeadAssetScanner
-from src.rush.tools.iam_audit import IamPolicySynthesizer
-from src.rush.tools.license_matrix import LicenseMatrixScanner
+from src.rush.tools.iam_audit import IamAuditTool, IamPolicySynthesizer
+from src.rush.tools.license_matrix import LicenseMatrixScanner, LicenseMatrixTool
 from src.rush.tools.pr_synthesize import PrSynthesizer
 
 
@@ -16,11 +16,10 @@ def test_slsa_attestation_generator(tmp_path: Path):
     gen = SLSAAttestationGenerator(project_root=tmp_path)
     stmt = gen.generate_attestation(dummy_bin)
 
-    assert stmt["_type"] == "https://in-toto.io/Statement/v0.1"
-    assert stmt["predicateType"] == "https://slsa.dev/provenance/v0.2"
+    assert stmt["_type"] == "https://in-toto.io/Statement/v1"
+    assert stmt["predicateType"] == "https://slsa.dev/provenance/v1"
     assert stmt["subject"][0]["name"] == "rush.whl"
     assert "sha256" in stmt["subject"][0]["digest"]
-    assert stmt["predicate"]["metadata"]["reproducible"] is True
 
 
 def test_license_matrix_scanner(tmp_path: Path):
@@ -75,3 +74,38 @@ def test_pr_synthesizer(tmp_path: Path):
 
     assert "SLSA Provenance" in card
     assert "Architecture Guard" in card
+
+
+def test_phase50_manual_mcp_names_contain_no_business_implementations() -> None:
+    import inspect
+
+    import src.rush.mcp as mcp_mod
+
+    source = inspect.getsource(mcp_mod._register_tools)
+    # Ensure no manual instantiation of ad-hoc classes inside _register_tools
+    assert "SLSAAttestationGenerator(" not in source
+    assert "LicenseMatrixScanner(" not in source
+    assert "IamPolicySynthesizer(" not in source
+    assert "DeadAssetScanner(" not in source
+    assert "PrSynthesizer(" not in source
+
+
+def test_canonical_phase50_tools_return_canonical_result(tmp_path: Path) -> None:
+    # AttestationTool
+    attest_tool = AttestationTool()
+    attest_res = attest_tool.run(tmp_path)
+    assert attest_res["tool"] == "attest"
+    assert attest_res["status"] == "ok"
+    assert "statement" in attest_res["metadata"]
+
+    # LicenseMatrixTool
+    lic_tool = LicenseMatrixTool()
+    lic_res = lic_tool.run(tmp_path)
+    assert lic_res["tool"] == "license-matrix"
+    assert lic_res["status"] in ("ok", "warn")
+
+    # IamAuditTool
+    iam_tool = IamAuditTool()
+    iam_res = iam_tool.run(tmp_path)
+    assert iam_res["tool"] == "iam-audit"
+    assert iam_res["status"] in ("ok", "warn")

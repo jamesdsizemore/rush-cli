@@ -22,8 +22,10 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-# tomllib is stdlib; nothing to import
+if TYPE_CHECKING:
+    from .catalog import ToolOptionSpec, ToolOptionValue
 
 
 class RushConfigError(Exception):
@@ -43,6 +45,7 @@ class ProjectConfig:
 class ToolConfig:
     engine_args: list[str] = field(default_factory=list)
     check: bool = False
+    options: dict[str, ToolOptionValue] = field(default_factory=dict)
 
 
 @dataclass
@@ -134,7 +137,8 @@ def _parse(raw: dict, source: Path) -> RushConfig:
     for tool_name, tr in (raw.get("tools", {}) or {}).items():
         if tool_name not in TOOL_SPECS:
             raise RushConfigError(f"unknown tool in {source}: {tool_name}")
-        if TOOL_SPECS[tool_name].maturity in {
+        spec = TOOL_SPECS[tool_name]
+        if spec.maturity in {
             "guarded_placeholder",
             "browser_runtime",
         }:
@@ -143,9 +147,105 @@ def _parse(raw: dict, source: Path) -> RushConfig:
                 "it is not a configurable local adapter"
             )
         tr = tr or {}
+        declared_options: dict[str, ToolOptionSpec] = {
+            opt.name: opt for opt in getattr(spec, "option_specs", ())
+        }
+        reserved_keys = {"engine_args", "check"}
+        for key in tr:
+            if key not in reserved_keys and key not in declared_options:
+                raise RushConfigError(
+                    f"unknown option '{key}' for tool '{tool_name}' in {source}"
+                )
+
+        parsed_options: dict[str, ToolOptionValue] = {}
+        for opt_name, opt_spec in declared_options.items():
+            if opt_name in tr:
+                val = tr[opt_name]
+                if opt_spec.value_type is bool:
+                    if not isinstance(val, bool):
+                        raise RushConfigError(
+                            f"option '{opt_name}' for tool '{tool_name}' must be bool, got {type(val).__name__}"
+                        )
+                elif opt_spec.value_type is int:
+                    if not isinstance(val, int) or isinstance(val, bool):
+                        raise RushConfigError(
+                            f"option '{opt_name}' for tool '{tool_name}' must be int, got {type(val).__name__}"
+                        )
+                elif opt_spec.value_type is float:
+                    if not isinstance(val, (int, float)) or isinstance(val, bool):
+                        raise RushConfigError(
+                            f"option '{opt_name}' for tool '{tool_name}' must be float, got {type(val).__name__}"
+                        )
+                    val = float(val)
+                elif opt_spec.value_type is str:
+                    if not isinstance(val, str):
+                        raise RushConfigError(
+                            f"option '{opt_name}' for tool '{tool_name}' must be str, got {type(val).__name__}"
+                        )
+                elif opt_spec.value_type is tuple:
+                    if isinstance(val, list):
+                        if not all(isinstance(x, str) for x in val):
+                            raise RushConfigError(
+                                f"option '{opt_name}' for tool '{tool_name}' must be list of strings"
+                            )
+                        val = tuple(val)
+                    elif isinstance(val, tuple):
+                        if not all(isinstance(x, str) for x in val):
+                            raise RushConfigError(
+                                f"option '{opt_name}' for tool '{tool_name}' must be tuple of strings"
+                            )
+                    else:
+                        raise RushConfigError(
+                            f"option '{opt_name}' for tool '{tool_name}' must be list/tuple of strings, got {type(val).__name__}"
+                        )
+
+                if opt_spec.choices:
+                    if opt_spec.value_type is tuple:
+                        for item in val:
+                            if item not in opt_spec.choices:
+                                raise RushConfigError(
+                                    f"option '{opt_name}' item '{item}' for tool '{tool_name}' not in allowed choices {opt_spec.choices}"
+                                )
+                    else:
+                        if val not in opt_spec.choices:
+                            raise RushConfigError(
+                                f"option '{opt_name}' value '{val}' for tool '{tool_name}' not in allowed choices {opt_spec.choices}"
+                            )
+
+                if opt_spec.minimum is not None and val < opt_spec.minimum:
+                    raise RushConfigError(
+                        f"option '{opt_name}' value {val} for tool '{tool_name}' is less than minimum {opt_spec.minimum}"
+                    )
+                if opt_spec.maximum is not None and val > opt_spec.maximum:
+                    raise RushConfigError(
+                        f"option '{opt_name}' value {val} for tool '{tool_name}' is greater than maximum {opt_spec.maximum}"
+                    )
+
+                if opt_spec.path_kind in ("file", "directory"):
+                    path_str = str(val)
+                    p = Path(path_str)
+                    if (
+                        p.is_absolute()
+                        or path_str.startswith(("/", "\\"))
+                        or bool(p.drive)
+                        or ".." in p.parts
+                    ):
+                        raise RushConfigError(
+                            f"option '{opt_name}' path '{path_str}' for tool '{tool_name}' must be a relative, non-parent-traversing path"
+                        )
+
+                parsed_options[opt_name] = val
+            elif opt_spec.required:
+                raise RushConfigError(
+                    f"required option '{opt_name}' for tool '{tool_name}' is missing in {source}"
+                )
+            elif opt_spec.default is not None:
+                parsed_options[opt_name] = opt_spec.default
+
         tools[tool_name] = ToolConfig(
             engine_args=list(tr.get("engine_args", [])),
             check=bool(tr.get("check", False)),
+            options=parsed_options,
         )
 
     review_raw = raw.get("review", {}) or {}

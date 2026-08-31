@@ -140,6 +140,7 @@ Modifying a symbol outputs a risk score and affected routes in $<25\text{ ms}$. 
 from pydantic import BaseModel, Field
 from pathlib import Path
 
+
 class BlastRadiusReport(BaseModel):
     target_files: list[str]
     max_depth: int
@@ -148,11 +149,17 @@ class BlastRadiusReport(BaseModel):
     recommended_tests: list[str]
     risk_score: str
 
+
 class BlastRadiusAnalyzer:
-    def analyze(self, changed_files: list[Path], max_depth: int = 5) -> BlastRadiusReport: ...
+    def analyze(
+        self, changed_files: list[Path], max_depth: int = 5
+    ) -> BlastRadiusReport: ...
+
 
 class ArchGuard:
-    def evaluate_boundaries(self, project_root: Path, layers_config: dict[str, list[str]]) -> list[dict[str, Any]]: ...
+    def evaluate_boundaries(
+        self, project_root: Path, layers_config: dict[str, list[str]]
+    ) -> list[dict[str, Any]]: ...
 ```
 
 ---

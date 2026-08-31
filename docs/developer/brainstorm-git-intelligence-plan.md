@@ -116,13 +116,19 @@ class AutomatedBisectRunner:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
 
-    def run_bisect(self, good_commit: str, bad_commit: str, test_command: list[str]) -> tuple[bool, str]:
+    def run_bisect(
+        self, good_commit: str, bad_commit: str, test_command: list[str]
+    ) -> tuple[bool, str]:
         # Start bisect
         run_subprocess(["git", "bisect", "reset"], cwd=self.repo_root)
-        run_subprocess(["git", "bisect", "start", bad_commit, good_commit], cwd=self.repo_root)
+        run_subprocess(
+            ["git", "bisect", "start", bad_commit, good_commit], cwd=self.repo_root
+        )
 
         cmd_str = " ".join(test_command)
-        code, stdout, stderr = run_subprocess(["git", "bisect", "run", *test_command], cwd=self.repo_root)
+        code, stdout, stderr = run_subprocess(
+            ["git", "bisect", "run", *test_command], cwd=self.repo_root
+        )
 
         culprit_commit = "Unknown"
         for line in stdout.splitlines():
@@ -234,7 +240,9 @@ class WorktreeFarmManager:
         count = 0
         for p in self.farm_dir.iterdir():
             if p.is_dir():
-                run_subprocess(["git", "worktree", "remove", "--force", str(p)], cwd=self.repo_root)
+                run_subprocess(
+                    ["git", "worktree", "remove", "--force", str(p)], cwd=self.repo_root
+                )
                 shutil.rmtree(p, ignore_errors=True)
                 count += 1
         return count
@@ -251,10 +259,12 @@ from rush.git_intelligence.drift import BranchDriftDetector
 from rush.git_intelligence.farm import WorktreeFarmManager
 from rush.git_intelligence.bisect import AutomatedBisectRunner
 
+
 @click.group(name="git")
 def git_group():
     """Execute advanced Git intelligence and worktree workflows."""
     pass
+
 
 @git_group.command(name="drift")
 @click.option("--base", default="main", help="Base branch name.")
@@ -269,6 +279,7 @@ def git_drift_cmd(base: str):
     click.echo(f"  - Ahead:   {drift.ahead_commits} commit(s)")
     click.echo(f"  - Behind:  {drift.behind_commits} commit(s)")
     click.echo(f"  - Files:   {drift.diverged_files_count} diverged file(s)")
+
 
 @git_group.command(name="worktrees-clean")
 def git_worktrees_clean_cmd():
@@ -293,19 +304,30 @@ from rush.git_intelligence.farm import WorktreeFarmManager
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_git_drift_check", description="Check branch drift and divergence against main branch.")
+
+@mcp.tool(
+    name="rush_git_drift_check",
+    description="Check branch drift and divergence against main branch.",
+)
 def rush_git_drift_check(base_branch: str = "main") -> str:
     detector = BranchDriftDetector(Path.cwd())
     drift = detector.get_drift(base_branch=base_branch)
     if not drift:
         return f"Unable to calculate drift against '{base_branch}'."
-    return json.dumps({
-        "ahead": drift.ahead_commits,
-        "behind": drift.behind_commits,
-        "diverged_files": drift.diverged_files_count,
-    }, indent=2)
+    return json.dumps(
+        {
+            "ahead": drift.ahead_commits,
+            "behind": drift.behind_commits,
+            "diverged_files": drift.diverged_files_count,
+        },
+        indent=2,
+    )
 
-@mcp.tool(name="rush_git_worktree_spawn", description="Spawn an isolated worktree sandbox for parallel tasks.")
+
+@mcp.tool(
+    name="rush_git_worktree_spawn",
+    description="Spawn an isolated worktree sandbox for parallel tasks.",
+)
 def rush_git_worktree_spawn(task_id: str) -> str:
     mgr = WorktreeFarmManager(Path.cwd())
     ok, path = mgr.spawn(task_id)

@@ -124,6 +124,7 @@ class CacheKey:
     flags_hash: str
     composite_key: str
 
+
 @dataclass
 class CacheEntry:
     cache_key: str
@@ -138,6 +139,7 @@ class CacheEntry:
     findings_json: str
     created_at: float
     last_accessed: float
+
 
 @dataclass
 class CacheStats:
@@ -638,38 +640,51 @@ from pathlib import Path
 from rush.cache import ResultCache
 from rush.discovery.git import get_staged_files, get_changed_files, get_files_since
 
+
 @click.group()
 def cli():
     pass
+
 
 @cli.group(name="cache")
 def cache_group():
     """Manage Rush result cache and execution index."""
     pass
 
+
 @cache_group.command(name="stats")
-@click.option("--db", type=click.Path(), default=".rush/cache.db", help="Path to cache database.")
+@click.option(
+    "--db", type=click.Path(), default=".rush/cache.db", help="Path to cache database."
+)
 def cache_stats_cmd(db: str):
     """Display cache hit rate, entries count, and saved execution duration."""
     cache = ResultCache(Path(db))
     stats = cache.stats()
     click.echo(json.dumps(stats, indent=2))
 
+
 @cache_group.command(name="clean")
-@click.option("--db", type=click.Path(), default=".rush/cache.db", help="Path to cache database.")
+@click.option(
+    "--db", type=click.Path(), default=".rush/cache.db", help="Path to cache database."
+)
 def cache_clean_cmd(db: str):
     """Purge all cached results and reclaim database storage."""
     cache = ResultCache(Path(db))
     count = cache.clear()
     click.echo(f"Cache cleared successfully. Removed {count} entries.")
 
+
 @cache_group.command(name="verify")
-@click.option("--db", type=click.Path(), default=".rush/cache.db", help="Path to cache database.")
+@click.option(
+    "--db", type=click.Path(), default=".rush/cache.db", help="Path to cache database."
+)
 def cache_verify_cmd(db: str):
     """Verify integrity of the local cache database."""
     cache = ResultCache(Path(db))
     stats = cache.stats()
-    click.echo(f"Cache database at '{stats['db_path']}' verified. Total valid entries: {stats['entries']}.")
+    click.echo(
+        f"Cache database at '{stats['db_path']}' verified. Total valid entries: {stats['entries']}."
+    )
 ```
 
 ---
@@ -687,12 +702,20 @@ from rush.discovery.git import get_staged_files, get_changed_files
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_cache_stats", description="Inspect Rush result cache metrics and CPU savings.")
+
+@mcp.tool(
+    name="rush_cache_stats",
+    description="Inspect Rush result cache metrics and CPU savings.",
+)
 def rush_cache_stats() -> str:
     cache = ResultCache(Path(".rush/cache.db"))
     return json.dumps(cache.stats(), indent=2)
 
-@mcp.tool(name="rush_cache_clear", description="Purge all cached results from Rush SQLite cache.")
+
+@mcp.tool(
+    name="rush_cache_clear",
+    description="Purge all cached results from Rush SQLite cache.",
+)
 def rush_cache_clear() -> str:
     cache = ResultCache(Path(".rush/cache.db"))
     count = cache.clear()

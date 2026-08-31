@@ -44,6 +44,19 @@ def test_catalog_path_command_emits_canonical_json(tmp_path: Path) -> None:
     assert '"tool": "lint"' in result.output
 
 
+def test_benchmark_has_one_noncolliding_group_surface() -> None:
+    """The Phase 50 benchmark tool is reached through its selected group command."""
+    result = CliRunner().invoke(cli, ["benchmark", "check", "--help"])
+
+    assert result.exit_code == 0
+    assert "--threshold" in result.output
+    assert "benchmark" not in {
+        command.name
+        for command in cli.commands.values()
+        if command.name != "benchmark" and command.name == "benchmark"
+    }
+
+
 def test_review_cli_passes_only_explicit_changed_files_to_shared_tool(
     tmp_path: Path,
 ) -> None:
@@ -257,3 +270,36 @@ def test_session_resume_help_lists_only_implemented_direct_routes() -> None:
     assert "antigravity_cli" in result.output
     assert "omniroute_api" in result.output
     assert "9router_api" not in result.output
+
+
+def test_phase50_track_b_cli_commands_emit_canonical_json(tmp_path: Path) -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path("test_file.py").write_text(
+            "def test():\n    raise ValueError('bad value')\n", encoding="utf-8"
+        )
+
+        # error-catalog CLI
+        res_ec = runner.invoke(cli, ["error-catalog", "test_file.py", "--json"])
+        assert res_ec.exit_code in (0, 1, 2)
+        payload_ec = json.loads(res_ec.output)
+        assert payload_ec["tool"] == "error-catalog"
+        assert payload_ec["status"] == "ok"
+
+        # dead-asset CLI
+        res_da = runner.invoke(cli, ["dead-asset", ".", "--json"])
+        assert res_da.exit_code in (0, 1, 2)
+        payload_da = json.loads(res_da.output)
+        assert payload_da["tool"] == "dead-asset"
+
+        # provenance-ai CLI
+        res_pa = runner.invoke(cli, ["provenance-ai", ".", "--json"])
+        assert res_pa.exit_code in (0, 1, 2)
+        payload_pa = json.loads(res_pa.output)
+        assert payload_pa["tool"] == "provenance-ai"
+
+        # pr-synthesize CLI
+        res_pr = runner.invoke(cli, ["pr-synthesize", ".", "--json"])
+        assert res_pr.exit_code in (0, 1, 2)
+        payload_pr = json.loads(res_pr.output)
+        assert payload_pr["tool"] == "pr-synthesize"

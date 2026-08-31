@@ -55,6 +55,21 @@ The catalog contains 38 user-visible tools. **Maturity matters:** a listed tool 
 | `governance` | workflow | real adapter | canonical AGENTS.md compiler to multi-IDE rules, repo scaffolder, subagent guard |
 | `hook` | workflow | real adapter | sub-second staged AST linter, Trojan Source detector, hook tamper guard |
 | `score` | workflow | real adapter | 6-pillar composite quality scorecard, SARIF 2.1.0 exporter, SVG badge generator, multi-model consensus reconciler |
+| `prompt-eval` | test | real adapter | golden task evaluation matrix, tool sequence and patch matching, token/cost budgets, pass rate thresholds |
+| `error-catalog` | security | real adapter | Python AST and TypeScript exception extractor; deterministic RFC 7807 problem details and Markdown docs generator |
+| `provenance-ai` | workflow | real adapter | Git commit trailer attribution (Co-authored-by, Generated-by), shallow history detection, unknown survival states |
+| `attest` | security | real adapter | in-toto Statement v1 unsigned provenance draft for a local artifact with SHA-256 digest |
+| `license-matrix` | security | real adapter | multi-manifest dependency license auditor with exact allowlist matching and manual review classification |
+| `iam-audit` | security | real adapter | static Python AST AWS SDK usage auditor and least-privilege IAM policy synthesizer |
+| `mem-profile` | quality | real adapter | static AST unclosed resource detection and optional dynamic memory probe under `--allow-slow` |
+| `cold-start` | quality | real adapter | static Python AST import inventory and dynamic `-X importtime` module timing under `--allow-slow` |
+| `media-opt` | quality | real adapter | SVG script security audit/sanitization and Pillow PNG/WebP raster optimization under `--allow-artifact-write` |
+| `offline-review` | security | real adapter | air-gapped local ONNX model review runner with zero network access |
+| `tui-diff` | workflow | real adapter | Git commit and finding delta computer with Rich terminal rendering and raw MCP payloads |
+| `benchmark` | test | real adapter | performance sample comparison against baseline thresholds in `.rush/baselines.json` |
+| `dead-asset` | quality | real adapter | static asset vs source reference scanner, manifest generator, and guarded prune with hash verification |
+| `pr-synthesize` | workflow | real adapter | Git diff and ToolResult evidence parser synthesizing structured GitHub pull request markdown cards |
+
 
 Generated help is authoritative for options. See [CLI reference](reference/cli-reference.md), [Engine directory](reference/engine-directory.md), and [Permissions](safety/permissions.md).
 

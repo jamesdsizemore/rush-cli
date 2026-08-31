@@ -195,12 +195,22 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 
 
 
-## 19. SLSA Attestation, Security & Release Subsystems (Phase 50)
-* `SLSAAttestationGenerator` (`src/rush/tools/attest.py`): In-toto SLSA Level 3 builder.
-* `LicenseMatrixScanner` (`src/rush/tools/license_matrix.py`): Dependency license risk classifier.
-* `IamPolicySynthesizer` (`src/rush/tools/iam_audit.py`): Static SDK call policy synthesizer.
-* `DeadAssetScanner` (`src/rush/tools/dead_asset.py`): Media asset reference scanner.
-* `PrSynthesizer` (`src/rush/tools/pr_synthesize.py`): Semantic PR markdown generator.
+## 19. Attestation, Security, & Quality Subsystems (Phase 50)
+* `AttestationTool` (`src/rush/tools/attest.py`): in-toto Statement v1 / SLSA Provenance v1 unsigned provenance draft generator.
+* `LicenseMatrixTool` (`src/rush/tools/license_matrix.py`): Multi-manifest dependency license auditor and risk classifier.
+* `IamAuditTool` (`src/rush/tools/iam_audit.py`): Static AST AWS SDK call auditor and least-privilege IAM JSON policy synthesizer.
+* `DeadAssetTool` (`src/rush/tools/dead_asset.py`): Static media asset vs source reference scanner and guarded prune manager.
+* `PrSynthesizeTool` (`src/rush/tools/pr_synthesize.py`): Git diff and ToolResult evidence semantic pull request markdown card generator.
+* `PromptEvalTool` (`src/rush/tools/prompt_eval.py`): Golden coding task prompt evaluation runner and token/cost matrix calculator.
+* `ErrorCatalogTool` (`src/rush/tools/error_catalog.py`): AST exception extractor, RFC 7807 problem details generator, and markdown catalog emitter.
+* `ProvenanceAiTool` (`src/rush/tools/provenance_ai.py`): Git commit trailer attribution analyzer and shallow history detector.
+* `MemProfileTool` (`src/rush/tools/mem_profile.py`): Static unclosed resource detector and dynamic memory profiling probe.
+* `ColdStartTool` (`src/rush/tools/cold_start.py`): Static AST import analyzer and dynamic `-X importtime` module latency timer.
+* `MediaOptTool` (`src/rush/tools/media_opt.py`): SVG active script sanitizer and Pillow PNG/WebP raster image optimizer.
+* `OfflineReviewTool` (`src/rush/tools/offline_runner.py`): Air-gapped local ONNX model review runner with zero network access.
+* `TuiDiffTool` (`src/rush/tools/tui_diff.py`): Git commit finding delta computer and Rich table terminal renderer.
+* `BenchmarkTool` (`src/rush/tools/benchmark.py`): Performance sample comparator against `.rush/baselines.json` threshold gates.
+
 
 ## 20. Reproducible Benchmark Harness Subsystem (Phases B1–B6)
 * `scripts/benchmarks/contracts.py`: Dataclass models (`Outcome`, `ProbeResult`, `Scenario`, `RouteDescriptor`, `HardwareProfile`, `CandidateBinary`, `DecisionRecord`) and schema validator.

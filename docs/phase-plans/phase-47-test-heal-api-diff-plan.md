@@ -143,11 +143,15 @@ class GitSandbox:
     def __enter__(self) -> Path: ...
     def __exit__(self, exc_type, exc_val, exc_tb) -> None: ...
 
+
 class TestHealer:
     def diagnose_and_heal(self, test_path: str, runs: int = 10) -> dict[str, Any]: ...
 
+
 class ApiDiffer:
-    def diff_public_api(self, project_root: Path, base_ref: str = "main") -> list[dict[str, Any]]: ...
+    def diff_public_api(
+        self, project_root: Path, base_ref: str = "main"
+    ) -> list[dict[str, Any]]: ...
 ```
 
 ---

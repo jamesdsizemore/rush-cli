@@ -195,17 +195,21 @@ class InMemoryStateStore:
 
     def add_event(self, event_type: str, details: dict[str, Any]) -> None:
         with self._lock:
-            self._state.recent_events.append({
-                "timestamp": time.time(),
-                "type": event_type,
-                "details": details,
-            })
+            self._state.recent_events.append(
+                {
+                    "timestamp": time.time(),
+                    "type": event_type,
+                    "details": details,
+                }
+            )
             if len(self._state.recent_events) > 200:
                 self._state.recent_events = self._state.recent_events[-200:]
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
-            total_findings = sum(len(r.get("findings", [])) for r in self._state.results)
+            total_findings = sum(
+                len(r.get("findings", [])) for r in self._state.results
+            )
             return {
                 "repo_root": self._state.repo_root,
                 "started_at": self._state.started_at,
@@ -261,7 +265,10 @@ class DashboardAuthMiddleware(BaseHTTPMiddleware):
             token = request.query_params["token"]
 
         if not self.auth_mgr.verify_token(token):
-            return JSONResponse({"error": "Unauthorized: Invalid or missing session token."}, status_code=401)
+            return JSONResponse(
+                {"error": "Unauthorized: Invalid or missing session token."},
+                status_code=401,
+            )
 
         return await call_next(request)
 ```
@@ -325,7 +332,11 @@ from typing import Callable
 class IdleShutdownMonitor:
     """Monitors incoming HTTP/WebSocket activity and triggers auto-shutdown on idle timeout."""
 
-    def __init__(self, idle_timeout_sec: int = 1800, shutdown_callback: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        idle_timeout_sec: int = 1800,
+        shutdown_callback: Callable[[], None] | None = None,
+    ) -> None:
         self.idle_timeout_sec = idle_timeout_sec
         self.shutdown_callback = shutdown_callback
         self.last_activity_time = time.time()
@@ -397,7 +408,11 @@ class DashboardMetricsAggregator:
         durations = [r.get("duration_ms", 0) for r in results]
         avg_dur = round(sum(durations) / len(durations), 1) if durations else 0.0
 
-        slowest = max(results, key=lambda r: r.get("duration_ms", 0)).get("tool") if results else None
+        slowest = (
+            max(results, key=lambda r: r.get("duration_ms", 0)).get("tool")
+            if results
+            else None
+        )
 
         return QualityMetrics(
             pass_rate_percentage=pass_rate,
@@ -572,7 +587,9 @@ class FindingInspectorPanel(Static):
     def compose(self) -> ComposeResult:
         with Vertical(id="inspector_panel"):
             yield Label("Finding Details", id="inspector_title")
-            yield Static("Select a finding from the table to view details.", id="inspector_body")
+            yield Static(
+                "Select a finding from the table to view details.", id="inspector_body"
+            )
 
     def update_finding(self, finding: Finding) -> None:
         body = self.query_one("#inspector_body", Static)
@@ -610,12 +627,24 @@ class KeybindingAction:
 
 DEFAULT_KEYBINDINGS = [
     KeybindingAction(key="q", action_name="quit", description="Exit Rush TUI"),
-    KeybindingAction(key="j", action_name="cursor_down", description="Navigate down one row"),
-    KeybindingAction(key="k", action_name="cursor_up", description="Navigate up one row"),
-    KeybindingAction(key="enter", action_name="select_row", description="Inspect selected finding"),
-    KeybindingAction(key="f", action_name="apply_fix", description="Trigger automated fix for selected finding"),
+    KeybindingAction(
+        key="j", action_name="cursor_down", description="Navigate down one row"
+    ),
+    KeybindingAction(
+        key="k", action_name="cursor_up", description="Navigate up one row"
+    ),
+    KeybindingAction(
+        key="enter", action_name="select_row", description="Inspect selected finding"
+    ),
+    KeybindingAction(
+        key="f",
+        action_name="apply_fix",
+        description="Trigger automated fix for selected finding",
+    ),
     KeybindingAction(key="r", action_name="refresh", description="Rerun quality suite"),
-    KeybindingAction(key="slash", action_name="focus_filter", description="Focus search filter input"),
+    KeybindingAction(
+        key="slash", action_name="focus_filter", description="Focus search filter input"
+    ),
 ]
 
 
@@ -662,7 +691,9 @@ class RushTuiApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Static("Rush Quality Findings (Press 'q' to quit, 'r' to refresh)", id="title")
+        yield Static(
+            "Rush Quality Findings (Press 'q' to quit, 'r' to refresh)", id="title"
+        )
         yield DataTable(id="findings_table")
         yield Footer()
 
@@ -690,9 +721,12 @@ from pathlib import Path
 from rush.dashboard.server import EphemeralDashboardServer
 from rush.dashboard.tui import RushTuiApp
 
+
 @click.command(name="dashboard")
 @click.option("--port", type=int, default=8080, help="Loopback port for web dashboard.")
-@click.option("--open", "open_browser", is_flag=True, help="Automatically open browser.")
+@click.option(
+    "--open", "open_browser", is_flag=True, help="Automatically open browser."
+)
 def dashboard_cmd(port: int, open_browser: bool):
     """Launch authenticated in-memory web dashboard on 127.0.0.1."""
     server = EphemeralDashboardServer(Path.cwd(), port=port)
@@ -701,7 +735,9 @@ def dashboard_cmd(port: int, open_browser: bool):
     if open_browser:
         webbrowser.open(auth_url)
     import uvicorn
+
     uvicorn.run(server.app, host="127.0.0.1", port=port, log_level="warning")
+
 
 @click.command(name="ui")
 def ui_cmd():
@@ -723,7 +759,11 @@ from rush.dashboard.server import EphemeralDashboardServer
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_dashboard_url", description="Generate authenticated loopback URL for local dashboard.")
+
+@mcp.tool(
+    name="rush_dashboard_url",
+    description="Generate authenticated loopback URL for local dashboard.",
+)
 def rush_dashboard_url(port: int = 8080) -> str:
     server = EphemeralDashboardServer(Path.cwd(), port=port)
     return server.get_authenticated_url(port=port)
@@ -754,8 +794,33 @@ from rush.tools.base import Finding, ToolResult
 def test_in_memory_state_store(tmp_path: Path):
     store = InMemoryStateStore(tmp_path)
     res: list[ToolResult] = [
-        {"tool": "ruff", "engine": "ruff", "engine_version": "0.8.0", "status": "ok", "duration_ms": 5, "summary": "clean", "findings": []},
-        {"tool": "mypy", "engine": "mypy", "engine_version": "1.13.0", "status": "fail", "duration_ms": 10, "summary": "1 error", "findings": [{"path": "a.py", "line": 1, "column": 1, "rule": "type-err", "severity": "fail", "message": "err"}]},
+        {
+            "tool": "ruff",
+            "engine": "ruff",
+            "engine_version": "0.8.0",
+            "status": "ok",
+            "duration_ms": 5,
+            "summary": "clean",
+            "findings": [],
+        },
+        {
+            "tool": "mypy",
+            "engine": "mypy",
+            "engine_version": "1.13.0",
+            "status": "fail",
+            "duration_ms": 10,
+            "summary": "1 error",
+            "findings": [
+                {
+                    "path": "a.py",
+                    "line": 1,
+                    "column": 1,
+                    "rule": "type-err",
+                    "severity": "fail",
+                    "message": "err",
+                }
+            ],
+        },
     ]
     store.update_results(res)
     snapshot = store.get_snapshot()
@@ -839,10 +904,33 @@ def test_state_store_recent_events_limit(tmp_path: Path):
 
 def test_dashboard_metrics_aggregator():
     res: list[ToolResult] = [
-        {"tool": "ruff", "engine": "ruff", "engine_version": "0.8.0", "status": "ok", "duration_ms": 12, "summary": "clean", "findings": []},
-        {"tool": "mypy", "engine": "mypy", "engine_version": "1.13.0", "status": "fail", "duration_ms": 45, "summary": "1 error", "findings": [
-            {"path": "a.py", "line": 1, "column": 1, "rule": "E", "severity": "fail", "message": "err"}
-        ]},
+        {
+            "tool": "ruff",
+            "engine": "ruff",
+            "engine_version": "0.8.0",
+            "status": "ok",
+            "duration_ms": 12,
+            "summary": "clean",
+            "findings": [],
+        },
+        {
+            "tool": "mypy",
+            "engine": "mypy",
+            "engine_version": "1.13.0",
+            "status": "fail",
+            "duration_ms": 45,
+            "summary": "1 error",
+            "findings": [
+                {
+                    "path": "a.py",
+                    "line": 1,
+                    "column": 1,
+                    "rule": "E",
+                    "severity": "fail",
+                    "message": "err",
+                }
+            ],
+        },
     ]
     metrics = DashboardMetricsAggregator.compute_metrics(res)
     assert metrics.pass_rate_percentage == 50.0

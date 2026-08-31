@@ -167,13 +167,18 @@ Releases lack cryptographic SLSA attestation; license risks and excessive IAM pe
 
 ```python
 class AttestTool:
-    def generate_statement(self, artifact_path: Path, private_key_pem: bytes) -> dict[str, Any]: ...
+    def generate_statement(
+        self, artifact_path: Path, private_key_pem: bytes
+    ) -> dict[str, Any]: ...
+
 
 class LicenseAuditor:
     def audit_dependencies(self, project_root: Path) -> dict[str, Any]: ...
 
+
 class IamAuditor:
     def synthesize_policy(self, project_root: Path) -> dict[str, Any]: ...
+
 
 class PrSynthesizer:
     def synthesize_pr_card(self, project_root: Path, base_ref: str = "main") -> str: ...

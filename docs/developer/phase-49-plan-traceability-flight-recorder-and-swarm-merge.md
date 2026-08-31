@@ -150,11 +150,17 @@ Specs are continuously verified against AST nodes; agent sessions are replayable
 
 ```python
 class MeshLockManager:
-    def acquire(self, file_path: Path, agent_id: str, timeout_s: float = 5.0) -> bool: ...
+    def acquire(
+        self, file_path: Path, agent_id: str, timeout_s: float = 5.0
+    ) -> bool: ...
     def release(self, file_path: Path, agent_id: str) -> bool: ...
 
+
 class SwarmMergeSolver:
-    def merge_3way(self, base_code: str, ours_code: str, theirs_code: str) -> dict[str, Any]: ...
+    def merge_3way(
+        self, base_code: str, ours_code: str, theirs_code: str
+    ) -> dict[str, Any]: ...
+
 
 class TraceScanner:
     def scan_traceability(self, project_root: Path) -> dict[str, Any]: ...

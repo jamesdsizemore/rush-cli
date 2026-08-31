@@ -184,7 +184,9 @@ from __future__ import annotations
 import re
 
 SECRET_PATTERNS = [
-    re.compile(r"(?i)(api[_-]?key|secret|token|password|bearer|auth)\s*[:=]\s*['\"]?([a-zA-Z0-9_\-\.]{8,})['\"]?"),
+    re.compile(
+        r"(?i)(api[_-]?key|secret|token|password|bearer|auth)\s*[:=]\s*['\"]?([a-zA-Z0-9_\-\.]{8,})['\"]?"
+    ),
     re.compile(r"ghp_[a-zA-Z0-9]{36}"),
     re.compile(r"sk-[a-zA-Z0-9]{48}"),
 ]
@@ -221,7 +223,9 @@ class TimeDecayCalculator:
         self.half_life_days = half_life_days
         self.decay_constant = math.log(2.0) / self.half_life_days
 
-    def calculate_weight(self, commit_date: datetime, current_date: datetime | None = None) -> float:
+    def calculate_weight(
+        self, commit_date: datetime, current_date: datetime | None = None
+    ) -> float:
         now = current_date or datetime.now(timezone.utc)
         age_days = max(0.0, (now - commit_date).total_seconds() / 86400.0)
         return math.exp(-self.decay_constant * age_days)
@@ -260,7 +264,14 @@ class GitChurnExtractor:
 
     def extract_churn(self, max_commits: int = 500) -> dict[str, FileChurnStats]:
         proc = run_subprocess(
-            ["git", "--no-pager", "log", f"-n{max_commits}", "--numstat", "--format=COMMIT|%an|%s"],
+            [
+                "git",
+                "--no-pager",
+                "log",
+                f"-n{max_commits}",
+                "--numstat",
+                "--format=COMMIT|%an|%s",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode != 0:
@@ -288,7 +299,12 @@ class GitChurnExtractor:
                     continue
 
                 if file_p not in file_data:
-                    file_data[file_p] = {"commits": 0, "ins": 0, "dels": 0, "authors": set()}
+                    file_data[file_p] = {
+                        "commits": 0,
+                        "ins": 0,
+                        "dels": 0,
+                        "authors": set(),
+                    }
 
                 file_data[file_p]["commits"] += 1
                 file_data[file_p]["ins"] += ins
@@ -335,7 +351,9 @@ class FunctionChurnMapper:
     """Maps git diff change lines to specific AST function definitions."""
 
     @staticmethod
-    def map_file_function_churn(file_path: Path, changed_lines: set[int]) -> list[FunctionChurnFinding]:
+    def map_file_function_churn(
+        file_path: Path, changed_lines: set[int]
+    ) -> list[FunctionChurnFinding]:
         if not file_path.exists() or file_path.suffix != ".py":
             return []
         try:
@@ -512,9 +530,18 @@ class TemporalCouplingAnalyzer:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
 
-    def analyze_coupling(self, min_co_changes: int = 3, max_commits: int = 500) -> list[TemporalCouplingPair]:
+    def analyze_coupling(
+        self, min_co_changes: int = 3, max_commits: int = 500
+    ) -> list[TemporalCouplingPair]:
         proc = run_subprocess(
-            ["git", "--no-pager", "log", f"-n{max_commits}", "--name-only", "--format=COMMIT"],
+            [
+                "git",
+                "--no-pager",
+                "log",
+                f"-n{max_commits}",
+                "--name-only",
+                "--format=COMMIT",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode != 0:
@@ -547,7 +574,9 @@ class TemporalCouplingAnalyzer:
         results = []
         for (fa, fb), cnt in pair_counts.items():
             if cnt >= min_co_changes:
-                results.append(TemporalCouplingPair(file_a=fa, file_b=fb, co_change_count=cnt))
+                results.append(
+                    TemporalCouplingPair(file_a=fa, file_b=fb, co_change_count=cnt)
+                )
 
         return sorted(results, key=lambda p: p.co_change_count, reverse=True)
 ```
@@ -669,7 +698,12 @@ class BranchAgeTracker:
 
     def get_branch_drift(self) -> list[dict[str, str | int]]:
         proc = run_subprocess(
-            ["git", "--no-pager", "branch", "--format=%(refname:short)|%(committerdate:iso8601)"],
+            [
+                "git",
+                "--no-pager",
+                "branch",
+                "--format=%(refname:short)|%(committerdate:iso8601)",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode != 0:
@@ -720,10 +754,12 @@ from rush.hotspots.coupling import TemporalCouplingAnalyzer
 from rush.hotspots.bus_factor import BusFactorAssessor
 from rush.hotspots.velocity import CodeVelocityForecaster
 
+
 @click.group(name="hotspots")
 def hotspots_group():
     """Git hotspots, churn analysis, and defect risk matrix."""
     pass
+
 
 @hotspots_group.command(name="analyze")
 @click.option("--limit", default=10, help="Number of top risk files to display.")
@@ -737,7 +773,10 @@ def hotspots_analyze_cmd(limit: int):
 
     click.echo(f"Top {min(limit, len(reports))} Defect Risk Hotspots:")
     for r in reports[:limit]:
-        click.echo(f"  - {r.file_path:<40} Risk: {r.defect_risk_score:8.1f} | Churn: {r.churn_score:5d} | Complexity: {r.complexity_score:3d} | Authors: {r.author_count}")
+        click.echo(
+            f"  - {r.file_path:<40} Risk: {r.defect_risk_score:8.1f} | Churn: {r.churn_score:5d} | Complexity: {r.complexity_score:3d} | Authors: {r.author_count}"
+        )
+
 
 @hotspots_group.command(name="coupling")
 @click.option("--min-co-changes", default=3, help="Minimum co-commit occurrences.")
@@ -746,12 +785,15 @@ def hotspots_coupling_cmd(min_co_changes: int):
     analyzer = TemporalCouplingAnalyzer(Path.cwd())
     pairs = analyzer.analyze_coupling(min_co_changes=min_co_changes)
     if not pairs:
-        click.echo(f"No temporal coupling pairs found with >= {min_co_changes} co-commits.")
+        click.echo(
+            f"No temporal coupling pairs found with >= {min_co_changes} co-commits."
+        )
         return
 
     click.echo(f"Discovered {len(pairs)} Temporal Coupling Pair(s):")
     for p in pairs:
         click.echo(f"  - {p.file_a} <--> {p.file_b} ({p.co_change_count} co-changes)")
+
 
 @hotspots_group.command(name="bus-factor")
 def hotspots_bus_factor_cmd():
@@ -763,14 +805,19 @@ def hotspots_bus_factor_cmd():
     else:
         click.echo(f"Found {len(findings)} single-maintainer file(s):")
         for f in findings:
-            click.echo(f"  - {f.file_path}: Sole author '{f.primary_author}' ({f.author_share_percent:.0f}%)")
+            click.echo(
+                f"  - {f.file_path}: Sole author '{f.primary_author}' ({f.author_share_percent:.0f}%)"
+            )
+
 
 @hotspots_group.command(name="velocity")
 def hotspots_velocity_cmd():
     """Display repository code churn velocity summary."""
     forecaster = CodeVelocityForecaster(Path.cwd())
     v = forecaster.calculate_velocity()
-    click.echo(f"Code Velocity: Ins: +{v.total_insertions} | Del: -{v.total_deletions} | Net: {v.net_lines_added:+d} lines across {v.total_commits} commits (avg {v.avg_churn_per_commit} lines/commit)")
+    click.echo(
+        f"Code Velocity: Ins: +{v.total_insertions} | Del: -{v.total_deletions} | Net: {v.net_lines_added:+d} lines across {v.total_commits} commits (avg {v.avg_churn_per_commit} lines/commit)"
+    )
 ```
 
 ---
@@ -790,32 +837,63 @@ from rush.hotspots.velocity import CodeVelocityForecaster
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_hotspots_analyze", description="Identify prioritized defect risk hotspots combining churn and AST complexity.")
+
+@mcp.tool(
+    name="rush_hotspots_analyze",
+    description="Identify prioritized defect risk hotspots combining churn and AST complexity.",
+)
 def rush_hotspots_analyze(limit: int = 10) -> str:
     matrix = DefectRiskMatrix(Path.cwd())
     reports = matrix.analyze_hotspots()
-    return json.dumps([
-        {
-            "file": r.file_path,
-            "risk_score": r.defect_risk_score,
-            "churn": r.churn_score,
-            "complexity": r.complexity_score,
-            "authors": r.author_count,
-        }
-        for r in reports[:limit]
-    ], indent=2)
+    return json.dumps(
+        [
+            {
+                "file": r.file_path,
+                "risk_score": r.defect_risk_score,
+                "churn": r.churn_score,
+                "complexity": r.complexity_score,
+                "authors": r.author_count,
+            }
+            for r in reports[:limit]
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_hotspots_coupling", description="Identify temporal file co-change coupling across Git commit history.")
+
+@mcp.tool(
+    name="rush_hotspots_coupling",
+    description="Identify temporal file co-change coupling across Git commit history.",
+)
 def rush_hotspots_coupling(min_co_changes: int = 3) -> str:
     analyzer = TemporalCouplingAnalyzer(Path.cwd())
     pairs = analyzer.analyze_coupling(min_co_changes=min_co_changes)
-    return json.dumps([{"file_a": p.file_a, "file_b": p.file_b, "co_changes": p.co_change_count} for p in pairs], indent=2)
+    return json.dumps(
+        [
+            {"file_a": p.file_a, "file_b": p.file_b, "co_changes": p.co_change_count}
+            for p in pairs
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_hotspots_bus_factor", description="Flag files with single-maintainer knowledge concentration.")
+
+@mcp.tool(
+    name="rush_hotspots_bus_factor",
+    description="Flag files with single-maintainer knowledge concentration.",
+)
 def rush_hotspots_bus_factor() -> str:
     assessor = BusFactorAssessor(Path.cwd())
     findings = assessor.assess_risk()
-    return json.dumps([{"file": f.file_path, "author": f.primary_author, "share": f.author_share_percent} for f in findings], indent=2)
+    return json.dumps(
+        [
+            {
+                "file": f.file_path,
+                "author": f.primary_author,
+                "share": f.author_share_percent,
+            }
+            for f in findings
+        ],
+        indent=2,
+    )
 ```
 
 ---
@@ -843,7 +921,9 @@ from rush.hotspots.velocity import CodeVelocityForecaster
 
 
 def test_secret_scrubber():
-    raw = "fix: updated api_key = 'sk-1234567890abcdef1234567890abcdef12345678' in client"
+    raw = (
+        "fix: updated api_key = 'sk-1234567890abcdef1234567890abcdef12345678' in client"
+    )
     scrubbed = SecretScrubber.scrub_text(raw)
     assert "sk-1234567890abcdef1234567890abcdef12345678" not in scrubbed
     assert "[REDACTED]" in scrubbed
@@ -862,7 +942,8 @@ def test_time_decay_calculator():
 
 def test_cyclomatic_complexity_calculator(tmp_path: Path):
     f = tmp_path / "complex.py"
-    f.write_text("""
+    f.write_text(
+        """
 def process(x, y):
     if x > 0:
         for i in range(y):
@@ -872,7 +953,9 @@ def process(x, y):
         while y > 0:
             y -= 1
     return True
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     score = CyclomaticComplexityCalculator.calculate_file(f)
     assert score >= 5
@@ -880,7 +963,8 @@ def process(x, y):
 
 def test_function_churn_mapper(tmp_path: Path):
     f = tmp_path / "mod.py"
-    f.write_text("""
+    f.write_text(
+        """
 def fn_a():
     x = 1
     return x
@@ -888,7 +972,9 @@ def fn_a():
 def fn_b():
     y = 2
     return y
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     findings = FunctionChurnMapper.map_file_function_churn(f, {3})
     assert len(findings) == 1

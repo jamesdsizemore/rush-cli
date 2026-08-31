@@ -83,3 +83,175 @@ def test_install_engine_package_security_rejection() -> None:
 
     with pytest.raises(ValueError, match="Invalid or hostile package name"):
         install_engine_package("npm", "malicious; rm -rf /")
+
+
+def test_tool_config_preserves_declared_typed_options(tmp_path) -> None:
+    from rush.catalog import TOOL_SPECS, ToolOptionSpec, ToolSpec
+
+    # Inject a temporary tool spec with typed options
+    opt1 = ToolOptionSpec(name="prefix", value_type=str, default="ERR_")
+    opt2 = ToolOptionSpec(
+        name="since_days", value_type=int, default=90, minimum=1, maximum=3650
+    )
+    opt3 = ToolOptionSpec(
+        name="ratio", value_type=float, default=0.5, minimum=0.0, maximum=1.0
+    )
+    opt4 = ToolOptionSpec(name="enabled", value_type=bool, default=True)
+    opt5 = ToolOptionSpec(
+        name="trailers", value_type=tuple, default=("Co-authored-by",)
+    )
+    opt6 = ToolOptionSpec(
+        name="out_file", value_type=str, path_kind="file", default="out.json"
+    )
+
+    spec = ToolSpec(
+        name="dummy-tool",
+        category="security",
+        description="dummy",
+        mcp_description="dummy",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(opt1, opt2, opt3, opt4, opt5, opt6),
+    )
+    TOOL_SPECS["dummy-tool"] = spec
+    try:
+        config = _parse(
+            {
+                "tools": {
+                    "dummy-tool": {
+                        "prefix": "CUSTOM_",
+                        "since_days": 30,
+                        "ratio": 0.8,
+                        "enabled": False,
+                        "trailers": ["AI-Author"],
+                        "out_file": "dist/report.json",
+                    }
+                }
+            },
+            tmp_path / "rush.toml",
+        )
+        opts = config.tools["dummy-tool"].options
+        assert opts["prefix"] == "CUSTOM_"
+        assert opts["since_days"] == 30
+        assert opts["ratio"] == 0.8
+        assert opts["enabled"] is False
+        assert opts["trailers"] == ("AI-Author",)
+        assert opts["out_file"] == "dist/report.json"
+    finally:
+        TOOL_SPECS.pop("dummy-tool", None)
+
+
+def test_tool_config_rejects_undeclared_option(tmp_path) -> None:
+    from rush.catalog import TOOL_SPECS, ToolSpec
+
+    spec = ToolSpec(
+        name="dummy-strict",
+        category="security",
+        description="dummy",
+        mcp_description="dummy",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(),
+    )
+    TOOL_SPECS["dummy-strict"] = spec
+    try:
+        with pytest.raises(RushConfigError, match="unknown option"):
+            _parse(
+                {"tools": {"dummy-strict": {"unsupported_key": "val"}}},
+                tmp_path / "rush.toml",
+            )
+    finally:
+        TOOL_SPECS.pop("dummy-strict", None)
+
+
+def test_tool_config_rejects_wrong_type_range_choice_and_path(tmp_path) -> None:
+    from rush.catalog import TOOL_SPECS, ToolOptionSpec, ToolSpec
+
+    opt_int = ToolOptionSpec(
+        name="count", value_type=int, default=10, minimum=1, maximum=100
+    )
+    opt_choice = ToolOptionSpec(
+        name="mode", value_type=str, default="static", choices=("static", "dynamic")
+    )
+    opt_path = ToolOptionSpec(name="path", value_type=str, path_kind="file")
+
+    spec = ToolSpec(
+        name="dummy-validated",
+        category="security",
+        description="dummy",
+        mcp_description="dummy",
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(opt_int, opt_choice, opt_path),
+    )
+    TOOL_SPECS["dummy-validated"] = spec
+    try:
+        # bool passed for int
+        with pytest.raises(RushConfigError):
+            _parse(
+                {"tools": {"dummy-validated": {"count": True}}}, tmp_path / "rush.toml"
+            )
+        # out of range
+        with pytest.raises(RushConfigError):
+            _parse(
+                {"tools": {"dummy-validated": {"count": 200}}}, tmp_path / "rush.toml"
+            )
+        # invalid choice
+        with pytest.raises(RushConfigError):
+            _parse(
+                {"tools": {"dummy-validated": {"mode": "invalid"}}},
+                tmp_path / "rush.toml",
+            )
+        # absolute path
+        with pytest.raises(RushConfigError):
+            _parse(
+                {"tools": {"dummy-validated": {"path": "/etc/passwd"}}},
+                tmp_path / "rush.toml",
+            )
+        # parent traversing path
+        with pytest.raises(RushConfigError):
+            _parse(
+                {"tools": {"dummy-validated": {"path": "../secret.txt"}}},
+                tmp_path / "rush.toml",
+            )
+    finally:
+        TOOL_SPECS.pop("dummy-validated", None)
+
+
+def test_tool_config_options_are_immutable_and_precedence_is_default_config_explicit(
+    tmp_path,
+) -> None:
+    """Tool options are immutable and merge default -> TOML -> invocation once."""
+    import rush.config as config_module
+
+    config = _parse(
+        {"tools": {"benchmark": {"threshold_percent": 7.5}}},
+        tmp_path / "rush.toml",
+    )
+    options = config.tools["benchmark"].options
+
+    with pytest.raises(TypeError):
+        options["threshold_percent"] = 9.0  # type: ignore[index]
+
+    resolve = getattr(config_module, "resolve_tool_options", None)
+    assert callable(resolve)
+    assert resolve("benchmark") == {
+        "threshold_percent": 5.0,
+        "record": False,
+        "operation": "check",
+        "baseline_name": "default",
+    }
+    assert resolve("benchmark", options) == {
+        "threshold_percent": 7.5,
+        "record": False,
+        "operation": "check",
+        "baseline_name": "default",
+    }
+    assert resolve("benchmark", options, {"threshold_percent": "3.5"})[
+        "threshold_percent"
+    ] == 3.5
+
+    with pytest.raises(RushConfigError, match="unknown option"):
+        resolve("benchmark", options, {"unknown": True})
+    with pytest.raises(RushConfigError, match="must be float"):
+        resolve("benchmark", options, {"threshold_percent": "invalid"})

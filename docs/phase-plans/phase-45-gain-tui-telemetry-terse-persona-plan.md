@@ -140,8 +140,15 @@ Interactive full-screen terminal HUD renders token compression metrics in real-t
 
 ```python
 class TelemetryStore:
-    def record_savings(self, tool_name: str, raw_tokens: int, compressed_tokens: int, duration_ms: float) -> None: ...
+    def record_savings(
+        self,
+        tool_name: str,
+        raw_tokens: int,
+        compressed_tokens: int,
+        duration_ms: float,
+    ) -> None: ...
     def get_summary(self) -> dict[str, Any]: ...
+
 
 class OutputShaper:
     def shape_response(self, text: str, style: str = "terse") -> str: ...

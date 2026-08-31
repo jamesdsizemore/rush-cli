@@ -244,7 +244,15 @@ class CodeGraphStore:
                 INSERT OR REPLACE INTO nodes (id, file_path, symbol_name, kind, start_line, end_line, content)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (node.id, node.file_path, node.symbol_name, node.kind, node.start_line, node.end_line, node.content),
+                (
+                    node.id,
+                    node.file_path,
+                    node.symbol_name,
+                    node.kind,
+                    node.start_line,
+                    node.end_line,
+                    node.content,
+                ),
             )
 
     def insert_edge(self, edge: GraphEdge) -> None:
@@ -349,7 +357,13 @@ class CallGraphTraverser:
                 )
                 for row in cur.fetchall():
                     callee_node = GraphNode(*row)
-                    paths.append(CallPathStep(caller=current_node, callee=callee_node, depth=current_depth + 1))
+                    paths.append(
+                        CallPathStep(
+                            caller=current_node,
+                            callee=callee_node,
+                            depth=current_depth + 1,
+                        )
+                    )
                     dfs(callee_node, current_depth + 1)
 
         for rn in root_nodes:
@@ -357,7 +371,9 @@ class CallGraphTraverser:
 
         return paths
 
-    def trace_callers(self, target_symbol: str, max_depth: int = 3) -> list[CallPathStep]:
+    def trace_callers(
+        self, target_symbol: str, max_depth: int = 3
+    ) -> list[CallPathStep]:
         target_nodes = self.store.find_nodes_by_symbol(target_symbol)
         if not target_nodes:
             return []
@@ -382,7 +398,13 @@ class CallGraphTraverser:
                 )
                 for row in cur.fetchall():
                     caller_node = GraphNode(*row)
-                    paths.append(CallPathStep(caller=caller_node, callee=current_node, depth=current_depth + 1))
+                    paths.append(
+                        CallPathStep(
+                            caller=caller_node,
+                            callee=current_node,
+                            depth=current_depth + 1,
+                        )
+                    )
                     dfs(caller_node, current_depth + 1)
 
         for tn in target_nodes:
@@ -409,11 +431,16 @@ class PolyglotSymbolExtractor:
     """Extracts symbols from TypeScript, Rust, and Go files without requiring external LSP servers."""
 
     @staticmethod
-    def extract_typescript_symbols(file_path: Path, source_code: str, store: CodeGraphStore) -> None:
+    def extract_typescript_symbols(
+        file_path: Path, source_code: str, store: CodeGraphStore
+    ) -> None:
         lines = source_code.splitlines()
         for idx, line in enumerate(lines, start=1):
             line_clean = line.strip()
-            m = re.match(r"^(export\s+)?(function|class|interface|type)\s+([a-zA-Z_][a-zA-Z0-9_]*)", line_clean)
+            m = re.match(
+                r"^(export\s+)?(function|class|interface|type)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                line_clean,
+            )
             if m:
                 sym_kind = m.group(2)
                 sym_name = m.group(3)
@@ -431,11 +458,16 @@ class PolyglotSymbolExtractor:
                 )
 
     @staticmethod
-    def extract_rust_symbols(file_path: Path, source_code: str, store: CodeGraphStore) -> None:
+    def extract_rust_symbols(
+        file_path: Path, source_code: str, store: CodeGraphStore
+    ) -> None:
         lines = source_code.splitlines()
         for idx, line in enumerate(lines, start=1):
             line_clean = line.strip()
-            m = re.match(r"^(pub\s+)?(fn|struct|enum|trait|type)\s+([a-zA-Z_][a-zA-Z0-9_]*)", line_clean)
+            m = re.match(
+                r"^(pub\s+)?(fn|struct|enum|trait|type)\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                line_clean,
+            )
             if m:
                 sym_kind = m.group(2)
                 sym_name = m.group(3)
@@ -471,7 +503,9 @@ class HierarchyTracer:
     """Tracks EXTENDS and IMPLEMENTS relationships across classes."""
 
     @staticmethod
-    def index_python_inheritance(file_path: Path, source_code: str, store: CodeGraphStore) -> None:
+    def index_python_inheritance(
+        file_path: Path, source_code: str, store: CodeGraphStore
+    ) -> None:
         try:
             tree = ast.parse(source_code)
         except SyntaxError:
@@ -484,7 +518,11 @@ class HierarchyTracer:
                     if isinstance(base, ast.Name):
                         base_name = base.id
                         store.insert_edge(
-                            GraphEdge(source_id=cls_id, target_id=base_name, edge_type="EXTENDS")
+                            GraphEdge(
+                                source_id=cls_id,
+                                target_id=base_name,
+                                edge_type="EXTENDS",
+                            )
                         )
 ```
 
@@ -521,7 +559,7 @@ class PolyglotAstIndexer:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 start_l = node.lineno
                 end_l = getattr(node, "end_lineno", start_l + 1)
-                content = "\n".join(lines[start_l - 1:end_l])
+                content = "\n".join(lines[start_l - 1 : end_l])
                 node_id = f"{rel_path}:{node.name}:{start_l}"
                 kind = "class" if isinstance(node, ast.ClassDef) else "function"
 
@@ -594,10 +632,12 @@ from rush.codegraph.tree_sitter_poly import PolyglotSymbolExtractor
 from rush.codegraph.slicer import VerbatimAstSlicer
 from rush.codegraph.traverser import CallGraphTraverser
 
+
 @click.group(name="codegraph")
 def codegraph_group():
     """Polyglot AST slicing and Code Property Graph exploration."""
     pass
+
 
 @codegraph_group.command(name="index")
 def codegraph_index_cmd():
@@ -623,6 +663,7 @@ def codegraph_index_cmd():
 
     click.echo(f"[INDEXED] Processed {count} source file(s) into CodeGraph.")
 
+
 @codegraph_group.command(name="explore")
 @click.argument("symbol_name")
 def codegraph_explore_cmd(symbol_name: str):
@@ -639,7 +680,10 @@ def codegraph_explore_cmd(symbol_name: str):
     if calls:
         click.echo("\n// Call Graph Invocations:")
         for step in calls:
-            click.echo(f"  [{step.depth}] {step.caller.symbol_name} -> {step.callee.symbol_name} ({step.callee.file_path}:{step.callee.start_line})")
+            click.echo(
+                f"  [{step.depth}] {step.caller.symbol_name} -> {step.callee.symbol_name} ({step.callee.file_path}:{step.callee.start_line})"
+            )
+
 
 @codegraph_group.command(name="callers")
 @click.argument("symbol_name")
@@ -654,7 +698,10 @@ def codegraph_callers_cmd(symbol_name: str):
     else:
         click.echo(f"Callers of '{symbol_name}':")
         for step in callers:
-            click.echo(f"  [{step.depth}] {step.caller.symbol_name} ({step.caller.file_path}:{step.caller.start_line})")
+            click.echo(
+                f"  [{step.depth}] {step.caller.symbol_name} ({step.caller.file_path}:{step.caller.start_line})"
+            )
+
 
 @codegraph_group.command(name="slice")
 @click.argument("symbol_name")
@@ -683,7 +730,11 @@ from rush.codegraph.traverser import CallGraphTraverser
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_codegraph_explore", description="Explore verbatim symbol AST slice and call graph paths in one turn.")
+
+@mcp.tool(
+    name="rush_codegraph_explore",
+    description="Explore verbatim symbol AST slice and call graph paths in one turn.",
+)
 def rush_codegraph_explore(symbol_name: str) -> str:
     store = CodeGraphStore(Path.cwd() / ".rush" / "codegraph.db")
     slicer = VerbatimAstSlicer(store)
@@ -691,22 +742,51 @@ def rush_codegraph_explore(symbol_name: str) -> str:
 
     slices = slicer.slice_symbol(symbol_name)
     calls = traverser.trace_callees(symbol_name, max_depth=2)
-    call_records = [{"caller": c.caller.symbol_name, "callee": c.callee.symbol_name, "file": c.callee.file_path, "line": c.callee.start_line} for c in calls]
+    call_records = [
+        {
+            "caller": c.caller.symbol_name,
+            "callee": c.callee.symbol_name,
+            "file": c.callee.file_path,
+            "line": c.callee.start_line,
+        }
+        for c in calls
+    ]
 
-    return json.dumps({
-        "symbol": symbol_name,
-        "slices": slices,
-        "calls": call_records,
-    }, indent=2)
+    return json.dumps(
+        {
+            "symbol": symbol_name,
+            "slices": slices,
+            "calls": call_records,
+        },
+        indent=2,
+    )
 
-@mcp.tool(name="rush_codegraph_callers", description="Identify all caller functions that invoke a target symbol.")
+
+@mcp.tool(
+    name="rush_codegraph_callers",
+    description="Identify all caller functions that invoke a target symbol.",
+)
 def rush_codegraph_callers(symbol_name: str) -> str:
     store = CodeGraphStore(Path.cwd() / ".rush" / "codegraph.db")
     traverser = CallGraphTraverser(store)
     callers = traverser.trace_callers(symbol_name, max_depth=2)
-    return json.dumps([{"caller": c.caller.symbol_name, "file": c.caller.file_path, "line": c.caller.start_line} for c in callers], indent=2)
+    return json.dumps(
+        [
+            {
+                "caller": c.caller.symbol_name,
+                "file": c.caller.file_path,
+                "line": c.caller.start_line,
+            }
+            for c in callers
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_codegraph_slice", description="Extract exact line-numbered source code for a symbol.")
+
+@mcp.tool(
+    name="rush_codegraph_slice",
+    description="Extract exact line-numbered source code for a symbol.",
+)
 def rush_codegraph_slice(symbol_name: str) -> str:
     store = CodeGraphStore(Path.cwd() / ".rush" / "codegraph.db")
     slicer = VerbatimAstSlicer(store)
@@ -779,7 +859,9 @@ def test_polyglot_symbol_extractor_typescript(tmp_path: Path):
     db_file = tmp_path / "cpg.db"
     store = CodeGraphStore(db_file)
     ts_code = "export class UserService {}\nexport function getUser() {}"
-    PolyglotSymbolExtractor.extract_typescript_symbols(Path("src/user.ts"), ts_code, store)
+    PolyglotSymbolExtractor.extract_typescript_symbols(
+        Path("src/user.ts"), ts_code, store
+    )
 
     classes = store.find_nodes_by_symbol("UserService")
     funcs = store.find_nodes_by_symbol("getUser")
@@ -831,11 +913,29 @@ def test_callgraph_traverser_callees(tmp_path: Path):
     db_file = tmp_path / "cpg.db"
     store = CodeGraphStore(db_file)
 
-    caller = GraphNode(id="main:run:1", file_path="main.py", symbol_name="run", kind="function", start_line=1, end_line=5, content="def run(): exec_task()")
-    callee = GraphNode(id="tasks:exec_task:1", file_path="tasks.py", symbol_name="exec_task", kind="function", start_line=1, end_line=3, content="def exec_task(): pass")
+    caller = GraphNode(
+        id="main:run:1",
+        file_path="main.py",
+        symbol_name="run",
+        kind="function",
+        start_line=1,
+        end_line=5,
+        content="def run(): exec_task()",
+    )
+    callee = GraphNode(
+        id="tasks:exec_task:1",
+        file_path="tasks.py",
+        symbol_name="exec_task",
+        kind="function",
+        start_line=1,
+        end_line=3,
+        content="def exec_task(): pass",
+    )
     store.insert_node(caller)
     store.insert_node(callee)
-    store.insert_edge(GraphEdge(source_id=caller.id, target_id=callee.id, edge_type="CALLS"))
+    store.insert_edge(
+        GraphEdge(source_id=caller.id, target_id=callee.id, edge_type="CALLS")
+    )
 
     traverser = CallGraphTraverser(store)
     paths = traverser.trace_callees("run", max_depth=2)
@@ -848,11 +948,29 @@ def test_callgraph_traverser_callers(tmp_path: Path):
     db_file = tmp_path / "cpg.db"
     store = CodeGraphStore(db_file)
 
-    caller = GraphNode(id="main:run:1", file_path="main.py", symbol_name="run", kind="function", start_line=1, end_line=5, content="def run(): exec_task()")
-    callee = GraphNode(id="tasks:exec_task:1", file_path="tasks.py", symbol_name="exec_task", kind="function", start_line=1, end_line=3, content="def exec_task(): pass")
+    caller = GraphNode(
+        id="main:run:1",
+        file_path="main.py",
+        symbol_name="run",
+        kind="function",
+        start_line=1,
+        end_line=5,
+        content="def run(): exec_task()",
+    )
+    callee = GraphNode(
+        id="tasks:exec_task:1",
+        file_path="tasks.py",
+        symbol_name="exec_task",
+        kind="function",
+        start_line=1,
+        end_line=3,
+        content="def exec_task(): pass",
+    )
     store.insert_node(caller)
     store.insert_node(callee)
-    store.insert_edge(GraphEdge(source_id=caller.id, target_id=callee.id, edge_type="CALLS"))
+    store.insert_edge(
+        GraphEdge(source_id=caller.id, target_id=callee.id, edge_type="CALLS")
+    )
 
     traverser = CallGraphTraverser(store)
     callers = traverser.trace_callers("exec_task", max_depth=2)
@@ -863,7 +981,15 @@ def test_callgraph_traverser_callers(tmp_path: Path):
 def test_dynamic_dispatch_resolver(tmp_path: Path):
     db_file = tmp_path / "cpg.db"
     store = CodeGraphStore(db_file)
-    node = GraphNode(id="n1", file_path="f.py", symbol_name="handle", kind="function", start_line=1, end_line=2, content="def handle(): pass")
+    node = GraphNode(
+        id="n1",
+        file_path="f.py",
+        symbol_name="handle",
+        kind="function",
+        start_line=1,
+        end_line=2,
+        content="def handle(): pass",
+    )
     store.insert_node(node)
 
     resolver = DynamicDispatchResolver(store)
@@ -874,7 +1000,15 @@ def test_dynamic_dispatch_resolver(tmp_path: Path):
 def test_symbol_search_engine(tmp_path: Path):
     db_file = tmp_path / "cpg.db"
     store = CodeGraphStore(db_file)
-    node = GraphNode(id="n2", file_path="f.py", symbol_name="search_target", kind="function", start_line=1, end_line=2, content="def search_target(): pass")
+    node = GraphNode(
+        id="n2",
+        file_path="f.py",
+        symbol_name="search_target",
+        kind="function",
+        start_line=1,
+        end_line=2,
+        content="def search_target(): pass",
+    )
     store.insert_node(node)
 
     engine = SymbolSearchEngine(store)

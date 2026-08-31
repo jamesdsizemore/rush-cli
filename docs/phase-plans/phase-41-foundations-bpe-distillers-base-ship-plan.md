@@ -169,12 +169,14 @@ from enum import Enum
 from typing import Protocol, Any
 from pydantic import BaseModel, Field
 
+
 class ContentType(str, Enum):
     AST_CODE = "ast_code"
     TEST_LOG = "test_log"
     TABULAR_DATA = "tabular_data"
     PROSE_MARKDOWN = "prose_markdown"
     UNKNOWN = "unknown"
+
 
 class DistilledResult(BaseModel):
     summary: str
@@ -185,9 +187,12 @@ class DistilledResult(BaseModel):
     distilled_lines: int
     savings_pct: float
 
+
 class CommandDistiller(Protocol):
     def can_distill(self, command: list[str]) -> bool: ...
-    def distill(self, raw_stdout: str, raw_stderr: str, exit_code: int) -> DistilledResult: ...
+    def distill(
+        self, raw_stdout: str, raw_stderr: str, exit_code: int
+    ) -> DistilledResult: ...
 ```
 
 ---

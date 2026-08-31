@@ -200,7 +200,14 @@ class StagedFileScanner:
 
     def get_staged_files(self) -> list[Path]:
         proc = run_subprocess(
-            ["git", "--no-pager", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            [
+                "git",
+                "--no-pager",
+                "diff",
+                "--cached",
+                "--name-only",
+                "--diff-filter=ACMR",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode != 0:
@@ -238,7 +245,15 @@ class DirtyStateStashSupervisor:
 
     def stash_unstaged(self) -> bool:
         proc = run_subprocess(
-            ["git", "stash", "push", "--keep-index", "-u", "-m", "rush-pre-commit-isolation"],
+            [
+                "git",
+                "stash",
+                "push",
+                "--keep-index",
+                "-u",
+                "-m",
+                "rush-pre-commit-isolation",
+            ],
             cwd=self.repo_root,
         )
         if proc.returncode == 0 and "No local changes to save" not in proc.stdout:
@@ -265,8 +280,17 @@ from pathlib import Path
 
 # Dangerous Trojan Source Unicode Bidirectional characters
 BIDI_CHARS = {
-    "\u202A", "\u202B", "\u202C", "\u202D", "\u202E",
-    "\u2066", "\u2067", "\u2068", "\u2069", "\u200E", "\u200F",
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
+    "\u2066",
+    "\u2067",
+    "\u2068",
+    "\u2069",
+    "\u200e",
+    "\u200f",
 }
 
 
@@ -316,7 +340,9 @@ class FastIncrementalAstLinter:
                 try:
                     ast.parse(p.read_text(encoding="utf-8", errors="replace"))
                 except SyntaxError as e:
-                    errors.append(f"{p.name}:{e.lineno}:{e.offset}: SyntaxError: {e.msg}")
+                    errors.append(
+                        f"{p.name}:{e.lineno}:{e.offset}: SyntaxError: {e.msg}"
+                    )
         return errors
 ```
 
@@ -351,7 +377,10 @@ class BranchProtectionGuard:
 
         current = proc.stdout.strip()
         if current in PROTECTED_BRANCHES:
-            return False, f"Direct commits to protected branch '{current}' are prohibited. Please use a feature branch."
+            return (
+                False,
+                f"Direct commits to protected branch '{current}' are prohibited. Please use a feature branch.",
+            )
         return True, None
 ```
 
@@ -390,7 +419,9 @@ class ConflictMarkerGuard:
         for idx, line in enumerate(text.splitlines(), start=1):
             for pat in CONFLICT_MARKERS:
                 if pat.search(line):
-                    findings.append(f"{file_path.name}:{idx}: Unresolved merge conflict marker: '{line.strip()}'")
+                    findings.append(
+                        f"{file_path.name}:{idx}: Unresolved merge conflict marker: '{line.strip()}'"
+                    )
         return findings
 ```
 
@@ -431,7 +462,9 @@ class HookTamperDetector:
 
     def verify_signatures(self) -> tuple[bool, list[str]]:
         if not self.sig_file.exists():
-            return False, ["Hook signatures not recorded in .rush/hook_signatures.json."]
+            return False, [
+                "Hook signatures not recorded in .rush/hook_signatures.json."
+            ]
 
         try:
             expected = json.loads(self.sig_file.read_text(encoding="utf-8"))
@@ -446,7 +479,9 @@ class HookTamperDetector:
             else:
                 actual_sha = hashlib.sha256(p.read_bytes()).hexdigest()
                 if actual_sha != exp_sha:
-                    tampered.append(f"Hook '{name}' has been modified (tampered SHA: {actual_sha[:8]}).")
+                    tampered.append(
+                        f"Hook '{name}' has been modified (tampered SHA: {actual_sha[:8]})."
+                    )
 
         return len(tampered) == 0, tampered
 ```
@@ -511,7 +546,7 @@ class LargeFileGuard:
                 sz = p.stat().st_size
                 if sz > self.max_file_size_bytes:
                     violations.append(
-                        f"{p.name} ({sz/1024/1024:.1f} MB): Exceeds max allowed commit size ({self.max_file_size_bytes/1024/1024:.1f} MB)."
+                        f"{p.name} ({sz / 1024 / 1024:.1f} MB): Exceeds max allowed commit size ({self.max_file_size_bytes / 1024 / 1024:.1f} MB)."
                     )
         return violations
 ```
@@ -530,7 +565,9 @@ from pathlib import Path
 from rush.tools.common import run_subprocess
 
 SECRET_PATTERNS = [
-    re.compile(r"(?i)(api[_-]?key|secret|token|password|bearer|auth)\s*[:=]\s*['\"]?([a-zA-Z0-9_\-\.]{12,})['\"]?"),
+    re.compile(
+        r"(?i)(api[_-]?key|secret|token|password|bearer|auth)\s*[:=]\s*['\"]?([a-zA-Z0-9_\-\.]{12,})['\"]?"
+    ),
     re.compile(r"ghp_[a-zA-Z0-9]{36}"),
     re.compile(r"sk-[a-zA-Z0-9]{48}"),
 ]
@@ -556,7 +593,9 @@ class StagedSecretScanner:
                 added_text = line[1:].strip()
                 for pat in SECRET_PATTERNS:
                     if pat.search(added_text):
-                        findings.append(f"Potential secret exposed in staged diff: {pat.pattern}")
+                        findings.append(
+                            f"Potential secret exposed in staged diff: {pat.pattern}"
+                        )
         return findings
 ```
 
@@ -643,7 +682,9 @@ class WhitespaceEolChecker:
             findings.append(f"{file_path.name}: Missing newline at end of file.")
         for idx, line in enumerate(content.splitlines(), start=1):
             if line.rstrip() != line:
-                findings.append(f"{file_path.name}:{idx}: Trailing whitespace detected.")
+                findings.append(
+                    f"{file_path.name}:{idx}: Trailing whitespace detected."
+                )
         return findings
 ```
 
@@ -666,17 +707,22 @@ from rush.hook.large_file_guard import LargeFileGuard
 from rush.hook.staged_secrets import StagedSecretScanner
 from rush.hook.installer import PreCommitHookInstaller
 
+
 @click.group(name="hook")
 def hook_group():
     """Git pre-commit intelligence and hook guards."""
     pass
+
 
 @hook_group.command(name="install")
 def hook_install_cmd():
     """Install native Git pre-commit and commit-msg hooks."""
     installer = PreCommitHookInstaller(Path.cwd())
     installed = installer.install_hooks()
-    click.echo(f"[INSTALLED] Configured {len(installed)} Git hook(s) with SHA-256 tamper signatures.")
+    click.echo(
+        f"[INSTALLED] Configured {len(installed)} Git hook(s) with SHA-256 tamper signatures."
+    )
+
 
 @hook_group.command(name="run")
 def hook_run_cmd():
@@ -713,14 +759,18 @@ def hook_run_cmd():
         for f in staged:
             trojans = TrojanSourceDetector.inspect_file(f)
             if trojans:
-                click.echo(f"[FAIL] Trojan Source Unicode detected in {f.name}:", err=True)
+                click.echo(
+                    f"[FAIL] Trojan Source Unicode detected in {f.name}:", err=True
+                )
                 for t in trojans:
                     click.echo(f"  - {t}", err=True)
                 raise SystemExit(1)
 
             conflicts = ConflictMarkerGuard.inspect_file(f)
             if conflicts:
-                click.echo(f"[FAIL] Staged conflict markers detected in {f.name}:", err=True)
+                click.echo(
+                    f"[FAIL] Staged conflict markers detected in {f.name}:", err=True
+                )
                 for c in conflicts:
                     click.echo(f"  - {c}", err=True)
                 raise SystemExit(1)
@@ -747,6 +797,7 @@ def hook_run_cmd():
     finally:
         stash_sup.pop_stash()
 
+
 @hook_group.command(name="commit-msg")
 @click.argument("msg_file", type=click.Path(exists=True))
 def hook_commit_msg_cmd(msg_file: str):
@@ -757,6 +808,7 @@ def hook_commit_msg_cmd(msg_file: str):
         click.echo(f"[FAIL] Commit message validation error: {err}", err=True)
         raise SystemExit(1)
     click.echo("[PASS] Conventional Commit format validated.")
+
 
 @hook_group.command(name="verify")
 def hook_verify_cmd():
@@ -788,13 +840,21 @@ from rush.hook.conventional_commit import ConventionalCommitValidator
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_hook_verify", description="Verify cryptographic SHA-256 signatures of repository Git hooks.")
+
+@mcp.tool(
+    name="rush_hook_verify",
+    description="Verify cryptographic SHA-256 signatures of repository Git hooks.",
+)
 def rush_hook_verify() -> str:
     detector = HookTamperDetector(Path.cwd())
     ok, violations = detector.verify_signatures()
     return json.dumps({"verified": ok, "violations": violations}, indent=2)
 
-@mcp.tool(name="rush_hook_validate_commit", description="Validate Conventional Commits 1.0.0 formatting.")
+
+@mcp.tool(
+    name="rush_hook_validate_commit",
+    description="Validate Conventional Commits 1.0.0 formatting.",
+)
 def rush_hook_validate_commit(commit_message: str) -> str:
     ok, err = ConventionalCommitValidator.validate_message(commit_message)
     return json.dumps({"valid": ok, "error": err}, indent=2)
@@ -825,11 +885,15 @@ from rush.hook.installer import PreCommitHookInstaller
 
 
 def test_conventional_commit_validator():
-    ok, err = ConventionalCommitValidator.validate_message("feat(core): add intelligent pre-commit guard")
+    ok, err = ConventionalCommitValidator.validate_message(
+        "feat(core): add intelligent pre-commit guard"
+    )
     assert ok is True
     assert err is None
 
-    ok_breaking, _ = ConventionalCommitValidator.validate_message("fix(api)!: remove deprecated v1 endpoint")
+    ok_breaking, _ = ConventionalCommitValidator.validate_message(
+        "fix(api)!: remove deprecated v1 endpoint"
+    )
     assert ok_breaking is True
 
     ok_bad, err_bad = ConventionalCommitValidator.validate_message("updated some code")
@@ -851,7 +915,10 @@ def test_fast_ast_linter(tmp_path: Path):
 
 def test_trojan_source_detector(tmp_path: Path):
     f = tmp_path / "bidi.py"
-    f.write_text("def check_admin():\n    # check admin \u202E return True\n    return False\n", encoding="utf-8")
+    f.write_text(
+        "def check_admin():\n    # check admin \u202e return True\n    return False\n",
+        encoding="utf-8",
+    )
 
     findings = TrojanSourceDetector.inspect_file(f)
     assert len(findings) == 1
@@ -860,14 +927,17 @@ def test_trojan_source_detector(tmp_path: Path):
 
 def test_conflict_marker_guard(tmp_path: Path):
     f = tmp_path / "conflict.py"
-    f.write_text("""
+    f.write_text(
+        """
 def calculate():
 <<<<<<< HEAD
     return 1
 =======
     return 2
 >>>>>>> feature
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     findings = ConflictMarkerGuard.inspect_file(f)
     assert len(findings) == 3

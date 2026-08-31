@@ -247,7 +247,9 @@ DEFAULT_IGNORES = [
 class PathFilter:
     """Evaluates paths against default and custom ignore patterns."""
 
-    def __init__(self, repo_root: Path | None = None, custom_ignores: list[str] | None = None) -> None:
+    def __init__(
+        self, repo_root: Path | None = None, custom_ignores: list[str] | None = None
+    ) -> None:
         self.repo_root = (repo_root or Path.cwd()).resolve()
         self.patterns = list(DEFAULT_IGNORES) + (custom_ignores or [])
         self._load_gitignore()
@@ -256,7 +258,9 @@ class PathFilter:
         gitignore = self.repo_root / ".gitignore"
         if gitignore.exists():
             try:
-                lines = gitignore.read_text(encoding="utf-8", errors="replace").splitlines()
+                lines = gitignore.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
                 for line in lines:
                     line_clean = line.strip()
                     if line_clean and not line_clean.startswith("#"):
@@ -271,7 +275,9 @@ class PathFilter:
     def is_ignored(self, path: Path) -> bool:
         path_str = path.as_posix()
         for pattern in self.patterns:
-            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(path.name, pattern):
+            if fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(
+                path.name, pattern
+            ):
                 return True
         return False
 ```
@@ -408,7 +414,9 @@ class WatchEventHistory:
 
     def __init__(self, capacity: int = 500) -> None:
         self.capacity = capacity
-        self._events: collections.deque[FileHistoryEvent] = collections.deque(maxlen=capacity)
+        self._events: collections.deque[FileHistoryEvent] = collections.deque(
+            maxlen=capacity
+        )
 
     def record_event(
         self,
@@ -568,17 +576,25 @@ class WatcherTerminalRenderer:
     def __init__(self, console: Console | None = None) -> None:
         self.console = console or Console()
 
-    def render_event(self, modified_paths: list[Path], triggered_tools: list[str]) -> None:
+    def render_event(
+        self, modified_paths: list[Path], triggered_tools: list[str]
+    ) -> None:
         timestamp = time.strftime("%H:%M:%S")
         file_list = ", ".join(p.name for p in modified_paths[:4])
         if len(modified_paths) > 4:
             file_list += f" (+{len(modified_paths) - 4} more)"
 
         tool_list = ", ".join(triggered_tools)
-        self.console.print(f"[dim]{timestamp}[/dim] [bold cyan]Modified:[/bold cyan] {file_list}")
-        self.console.print(f"[dim]{timestamp}[/dim] [bold yellow]Running:[/bold yellow] {tool_list}")
+        self.console.print(
+            f"[dim]{timestamp}[/dim] [bold cyan]Modified:[/bold cyan] {file_list}"
+        )
+        self.console.print(
+            f"[dim]{timestamp}[/dim] [bold yellow]Running:[/bold yellow] {tool_list}"
+        )
 
-    def render_summary(self, passed: bool, duration_ms: float, findings_count: int) -> None:
+    def render_summary(
+        self, passed: bool, duration_ms: float, findings_count: int
+    ) -> None:
         color = "green" if passed else "red"
         status_text = "PASSED" if passed else "FAILED"
         self.console.print(
@@ -628,7 +644,9 @@ class QualitySentinel:
         self.callback = callback
         self.debounce_ms = debounce_ms
         self.clear_screen = clear_screen
-        self.filter = PathFilter(repo_root=self.repo_root, custom_ignores=custom_ignores)
+        self.filter = PathFilter(
+            repo_root=self.repo_root, custom_ignores=custom_ignores
+        )
         self.renderer = WatcherTerminalRenderer()
         self.coalescer = EventCoalescer(window_ms=debounce_ms)
         self._suppressed_paths: dict[Path, float] = {}
@@ -640,7 +658,9 @@ class QualitySentinel:
 
     def _is_suppressed(self, path: Path) -> bool:
         now = time.time()
-        self._suppressed_paths = {p: exp for p, exp in self._suppressed_paths.items() if exp > now}
+        self._suppressed_paths = {
+            p: exp for p, exp in self._suppressed_paths.items() if exp > now
+        }
         return path.resolve() in self._suppressed_paths
 
     def stop(self) -> None:
@@ -659,7 +679,11 @@ class QualitySentinel:
             for change_type, file_path_str in changes:
                 if change_type in (Change.added, Change.modified):
                     p = Path(file_path_str).resolve()
-                    if not self._is_suppressed(p) and not self.filter.is_ignored(p) and p.is_file():
+                    if (
+                        not self._is_suppressed(p)
+                        and not self.filter.is_ignored(p)
+                        and p.is_file()
+                    ):
                         modified_paths.append(p)
 
             if modified_paths:
@@ -682,19 +706,27 @@ from pathlib import Path
 from rush.watcher.sentinel import QualitySentinel
 from rush.workflows.runner import SuiteRunner
 
+
 def handle_file_changes(paths: list[Path], tools: list[str]):
     click.echo(f"[WATCH] {len(paths)} file(s) changed. Triggering: {', '.join(tools)}")
     runner = SuiteRunner([])
     summary = runner.run_suite(paths)
-    click.echo(f"[WATCH] Finished in {summary.duration_ms}ms ({summary.passed_count} passed, {summary.failed_count} failed)")
+    click.echo(
+        f"[WATCH] Finished in {summary.duration_ms}ms ({summary.passed_count} passed, {summary.failed_count} failed)"
+    )
+
 
 @click.command(name="watch")
-@click.option("--debounce", type=int, default=300, help="Debounce duration in milliseconds.")
+@click.option(
+    "--debounce", type=int, default=300, help="Debounce duration in milliseconds."
+)
 @click.option("--clear", is_flag=True, help="Clear terminal screen between test runs.")
 def watch_cmd(debounce: int, clear: bool):
     """Start continuous file system quality sentinel."""
     repo_root = Path.cwd()
-    click.echo(f"Starting Rush Quality Sentinel on '{repo_root}' (debounce: {debounce}ms)...")
+    click.echo(
+        f"Starting Rush Quality Sentinel on '{repo_root}' (debounce: {debounce}ms)..."
+    )
     sentinel = QualitySentinel(
         repo_root=repo_root,
         callback=handle_file_changes,
@@ -722,12 +754,20 @@ from rush.watcher.router import ToolRouter
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_watch_route", description="Determine which quality tools must run for a list of modified files.")
+
+@mcp.tool(
+    name="rush_watch_route",
+    description="Determine which quality tools must run for a list of modified files.",
+)
 def rush_watch_route(files: list[str]) -> list[str]:
     paths = [Path(f) for f in files]
     return ToolRouter.get_tools_for_paths(paths)
 
-@mcp.tool(name="rush_watch_extensions", description="List supported extensions for a specific quality tool.")
+
+@mcp.tool(
+    name="rush_watch_extensions",
+    description="List supported extensions for a specific quality tool.",
+)
 def rush_watch_extensions(tool_name: str) -> list[str]:
     return ToolRouter.get_extensions_for_tool(tool_name)
 ```
@@ -754,8 +794,13 @@ from rush.watcher.renderer import WatcherTerminalRenderer
 def test_path_filter_ignores_standard_directories():
     filter_engine = PathFilter()
     assert filter_engine.is_ignored(Path(".git/objects/12345")) is True
-    assert filter_engine.is_ignored(Path(".venv/lib/python3.12/site-packages/x.py")) is True
-    assert filter_engine.is_ignored(Path("src/__pycache__/module.cpython-312.pyc")) is True
+    assert (
+        filter_engine.is_ignored(Path(".venv/lib/python3.12/site-packages/x.py"))
+        is True
+    )
+    assert (
+        filter_engine.is_ignored(Path("src/__pycache__/module.cpython-312.pyc")) is True
+    )
     assert filter_engine.is_ignored(Path("node_modules/react/index.js")) is True
     assert filter_engine.is_ignored(Path(".rush/cache.db")) is True
     assert filter_engine.is_ignored(Path("src/main.py")) is False
@@ -846,14 +891,20 @@ async def test_fastmcp_watcher_subscription():
 
 def test_process_group_manager_safe_on_inactive():
     class DummyProc:
-        def poll(self): return 0
+        def poll(self):
+            return 0
+
         @property
-        def pid(self): return 99999
+        def pid(self):
+            return 99999
+
     ProcessGroupManager.terminate_process_tree(DummyProc())
 
 
 def test_path_filter_custom_patterns(tmp_path: Path):
-    filter_engine = PathFilter(repo_root=tmp_path, custom_ignores=["*.log", "secret_folder/*"])
+    filter_engine = PathFilter(
+        repo_root=tmp_path, custom_ignores=["*.log", "secret_folder/*"]
+    )
     assert filter_engine.is_ignored(tmp_path / "debug.log") is True
     assert filter_engine.is_ignored(tmp_path / "secret_folder" / "keys.txt") is True
     assert filter_engine.is_ignored(tmp_path / "src" / "index.ts") is False
@@ -880,13 +931,16 @@ def test_watch_config_loader_defaults(tmp_path: Path):
 
 def test_watch_config_loader_custom(tmp_path: Path):
     cfg_file = tmp_path / "rush.toml"
-    cfg_file.write_text("""
+    cfg_file.write_text(
+        """
 [watcher]
 debounce_ms = 500
 clear_screen = true
 custom_ignores = ["build/*", "*.tmp"]
 auto_fix = true
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     settings = WatchConfigLoader.load_from_repo(tmp_path)
     assert settings.debounce_ms == 500
@@ -907,6 +961,8 @@ def test_watch_event_history_capacity(tmp_path: Path):
     recent = history.get_recent(limit=10)
     assert len(recent) == 3
     assert recent[-1].duration_ms == 13.0
+
+
 def test_path_filter_windows_backslashes(tmp_path: Path):
     filter_engine = PathFilter(repo_root=tmp_path)
     win_path = Path("src\\__pycache__\\test.pyc")

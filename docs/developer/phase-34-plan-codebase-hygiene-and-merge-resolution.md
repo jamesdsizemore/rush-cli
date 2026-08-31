@@ -309,8 +309,16 @@ class AstClassMerger:
 
     @staticmethod
     def merge_classes(class_a: ast.ClassDef, class_b: ast.ClassDef) -> ast.ClassDef:
-        methods_a = {n.name: n for n in class_a.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        methods_b = {n.name: n for n in class_b.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        methods_a = {
+            n.name: n
+            for n in class_a.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        methods_b = {
+            n.name: n
+            for n in class_b.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
 
         all_method_names = sorted(set(methods_a.keys()) | set(methods_b.keys()))
         merged_body: list[ast.AST] = []
@@ -469,14 +477,24 @@ class UnusedImportAstCleaner:
 
         class ImportCleaner(ast.NodeTransformer):
             def visit_Import(self, node: ast.Import) -> ast.AST | None:
-                remaining = [alias for alias in node.names if alias.name not in unused_names and (alias.asname or alias.name) not in unused_names]
+                remaining = [
+                    alias
+                    for alias in node.names
+                    if alias.name not in unused_names
+                    and (alias.asname or alias.name) not in unused_names
+                ]
                 if not remaining:
                     return None
                 node.names = remaining
                 return node
 
             def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.AST | None:
-                remaining = [alias for alias in node.names if alias.name not in unused_names and (alias.asname or alias.name) not in unused_names]
+                remaining = [
+                    alias
+                    for alias in node.names
+                    if alias.name not in unused_names
+                    and (alias.asname or alias.name) not in unused_names
+                ]
                 if not remaining:
                     return None
                 node.names = remaining
@@ -540,18 +558,25 @@ class ThreeWayAstMergeResolver:
     """Reconciles 3-way git conflicts by analyzing Python AST structural boundaries."""
 
     @staticmethod
-    def resolve_python_conflict(base_code: str, ours_code: str, theirs_code: str) -> tuple[bool, str]:
+    def resolve_python_conflict(
+        base_code: str, ours_code: str, theirs_code: str
+    ) -> tuple[bool, str]:
         try:
             tree_base = ast.parse(base_code)
             tree_ours = ast.parse(ours_code)
             tree_theirs = ast.parse(theirs_code)
         except SyntaxError:
-            return False, "Syntax error in conflicting source files; unable to construct AST."
+            return (
+                False,
+                "Syntax error in conflicting source files; unable to construct AST.",
+            )
 
         def get_top_level_symbols(tree: ast.Module) -> dict[str, ast.AST]:
             syms = {}
             for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
                     syms[node.name] = node
             return syms
 
@@ -563,7 +588,9 @@ class ThreeWayAstMergeResolver:
         resolved_nodes: list[ast.AST] = []
 
         # Merge imports
-        merged_imports_src = AstImportMerger.merge_import_blocks("", ours_code, theirs_code)
+        merged_imports_src = AstImportMerger.merge_import_blocks(
+            "", ours_code, theirs_code
+        )
         if merged_imports_src:
             try:
                 imp_tree = ast.parse(merged_imports_src)
@@ -575,11 +602,17 @@ class ThreeWayAstMergeResolver:
         for name in all_sym_names:
             if name in syms_ours and name not in syms_base and name not in syms_theirs:
                 resolved_nodes.append(syms_ours[name])
-            elif name in syms_theirs and name not in syms_base and name not in syms_ours:
+            elif (
+                name in syms_theirs and name not in syms_base and name not in syms_ours
+            ):
                 resolved_nodes.append(syms_theirs[name])
             elif name in syms_ours and name in syms_theirs:
-                if isinstance(syms_ours[name], ast.ClassDef) and isinstance(syms_theirs[name], ast.ClassDef):
-                    merged_cls = AstClassMerger.merge_classes(syms_ours[name], syms_theirs[name])  # type: ignore
+                if isinstance(syms_ours[name], ast.ClassDef) and isinstance(
+                    syms_theirs[name], ast.ClassDef
+                ):
+                    merged_cls = AstClassMerger.merge_classes(
+                        syms_ours[name], syms_theirs[name]
+                    )  # type: ignore
                     resolved_nodes.append(merged_cls)
                 else:
                     resolved_nodes.append(syms_ours[name])
@@ -723,10 +756,12 @@ from rush.hygiene.ast_merger import ThreeWayAstMergeResolver
 from rush.hygiene.stale_branches import StaleBranchAnalyzer
 from rush.hygiene.artifact_cleaner import OrphanedArtifactCleaner
 
+
 @click.group(name="hygiene")
 def hygiene_group():
     """Codebase hygiene, dead code analysis, and artifact pruning."""
     pass
+
 
 @hygiene_group.command(name="dead-code")
 @click.option("--min-confidence", default=80, help="Confidence threshold (0-100).")
@@ -741,6 +776,7 @@ def hygiene_dead_code_cmd(min_confidence: int):
         for f in findings:
             click.echo(f"  - {f.file_path}:{f.line_number}: {f.symbol_name}")
 
+
 @hygiene_group.command(name="stale-branches")
 def hygiene_stale_branches_cmd():
     """List merged Git branches eligible for safe deletion."""
@@ -753,6 +789,7 @@ def hygiene_stale_branches_cmd():
         for b in branches:
             click.echo(f"  - {b}")
 
+
 @hygiene_group.command(name="prune-artifacts")
 def hygiene_prune_artifacts_cmd():
     """Prune intermediate build caches and test artifacts."""
@@ -760,10 +797,12 @@ def hygiene_prune_artifacts_cmd():
     pruned = cleaner.prune_artifacts()
     click.echo(f"[PRUNED] Cleaned up {pruned} cache directory(ies).")
 
+
 @click.group(name="conflict")
 def conflict_group():
     """AST-aware merge conflict resolution."""
     pass
+
 
 @conflict_group.command(name="solve")
 @click.argument("base_file", type=click.Path(exists=True))
@@ -775,7 +814,9 @@ def conflict_solve_cmd(base_file: str, ours_file: str, theirs_file: str):
     ours_src = Path(ours_file).read_text(encoding="utf-8")
     theirs_src = Path(theirs_file).read_text(encoding="utf-8")
 
-    success, resolved = ThreeWayAstMergeResolver.resolve_python_conflict(base_src, ours_src, theirs_src)
+    success, resolved = ThreeWayAstMergeResolver.resolve_python_conflict(
+        base_src, ours_src, theirs_src
+    )
     if success:
         click.echo(resolved)
     else:
@@ -799,18 +840,38 @@ from rush.hygiene.artifact_cleaner import OrphanedArtifactCleaner
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_hygiene_dead_code", description="Scan codebase for unreferenced dead symbols.")
+
+@mcp.tool(
+    name="rush_hygiene_dead_code",
+    description="Scan codebase for unreferenced dead symbols.",
+)
 def rush_hygiene_dead_code(min_confidence: int = 80) -> str:
     detector = PolyglotDeadCodeDetector(Path.cwd())
     findings = detector.scan_python(min_confidence=min_confidence)
-    return json.dumps([{"file": f.file_path, "line": f.line_number, "symbol": f.symbol_name} for f in findings], indent=2)
+    return json.dumps(
+        [
+            {"file": f.file_path, "line": f.line_number, "symbol": f.symbol_name}
+            for f in findings
+        ],
+        indent=2,
+    )
 
-@mcp.tool(name="rush_conflict_solve_ast", description="Reconcile 3-way Python merge conflict using AST analysis.")
+
+@mcp.tool(
+    name="rush_conflict_solve_ast",
+    description="Reconcile 3-way Python merge conflict using AST analysis.",
+)
 def rush_conflict_solve_ast(base_code: str, ours_code: str, theirs_code: str) -> str:
-    success, result = ThreeWayAstMergeResolver.resolve_python_conflict(base_code, ours_code, theirs_code)
+    success, result = ThreeWayAstMergeResolver.resolve_python_conflict(
+        base_code, ours_code, theirs_code
+    )
     return json.dumps({"success": success, "result": result}, indent=2)
 
-@mcp.tool(name="rush_hygiene_prune_caches", description="Prune temporary build caches and test artifacts.")
+
+@mcp.tool(
+    name="rush_hygiene_prune_caches",
+    description="Prune temporary build caches and test artifacts.",
+)
 def rush_hygiene_prune_caches() -> str:
     cleaner = OrphanedArtifactCleaner(Path.cwd())
     cnt = cleaner.prune_artifacts()
@@ -909,7 +970,9 @@ def test_ast_merge_resolver_independent_functions():
     ours = "def existing():\n    return 0\n\ndef added_in_ours():\n    return 1\n"
     theirs = "def existing():\n    return 0\n\ndef added_in_theirs():\n    return 2\n"
 
-    success, resolved = ThreeWayAstMergeResolver.resolve_python_conflict(base, ours, theirs)
+    success, resolved = ThreeWayAstMergeResolver.resolve_python_conflict(
+        base, ours, theirs
+    )
     assert success is True
     assert "def added_in_ours():" in resolved
     assert "def added_in_theirs():" in resolved

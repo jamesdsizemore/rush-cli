@@ -159,12 +159,17 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 from pathlib import Path
 
+
 class ToonEncoder:
     def encode(self, data: list[dict[str, Any]]) -> str: ...
     def decode(self, text: str) -> list[dict[str, Any]]: ...
 
+
 class AstSkeletonizer:
-    def skeletonize(self, source_code: str, language: str, focus_symbol: str | None = None) -> str: ...
+    def skeletonize(
+        self, source_code: str, language: str, focus_symbol: str | None = None
+    ) -> str: ...
+
 
 class ShipGateVerdict(BaseModel):
     passed: bool

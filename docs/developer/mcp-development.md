@@ -18,7 +18,9 @@ Rush uses the `mcp` Python library (FastMCP) to register tools. Each tool is nam
 
 ```python
 # Server creation
-mcp = FastMCP("rush", instructions="Deterministic code review and quality verification engine.")
+mcp = FastMCP(
+    "rush", instructions="Deterministic code review and quality verification engine."
+)
 
 # Tool registration from canonical catalog
 for tool_name, tool_obj in ALL_TOOLS.items():

@@ -240,8 +240,14 @@ class SnapshotJournal:
         if resolved not in self._snapshots or not resolved.is_file():
             return ""
 
-        original_lines = self._snapshots[resolved].decode("utf-8", errors="replace").splitlines(keepends=True)
-        current_lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        original_lines = (
+            self._snapshots[resolved]
+            .decode("utf-8", errors="replace")
+            .splitlines(keepends=True)
+        )
+        current_lines = resolved.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines(keepends=True)
 
         diff = difflib.unified_diff(
             original_lines,
@@ -266,7 +272,9 @@ class SnapshotJournal:
 class FixTool(ToolFn):
     name: ToolName = "fix"
 
-    def __init__(self, repo_root: Path | None = None, engines: list[Engine] | None = None) -> None:
+    def __init__(
+        self, repo_root: Path | None = None, engines: list[Engine] | None = None
+    ) -> None:
         self.repo_root = (repo_root or Path.cwd()).resolve()
         self.engines = engines or []
 
@@ -290,7 +298,10 @@ class FixTool(ToolFn):
                 ast.parse(content, filename=str(path))
                 return True, None
             except SyntaxError as e:
-                return False, f"Python SyntaxError at line {e.lineno}, col {e.offset}: {e.msg}"
+                return (
+                    False,
+                    f"Python SyntaxError at line {e.lineno}, col {e.offset}: {e.msg}",
+                )
 
         # 2. JSON syntax parsing
         elif path.suffix == ".json":
@@ -298,7 +309,10 @@ class FixTool(ToolFn):
                 json.loads(content)
                 return True, None
             except json.JSONDecodeError as e:
-                return False, f"JSON syntax error at line {e.lineno}, col {e.colno}: {e.msg}"
+                return (
+                    False,
+                    f"JSON syntax error at line {e.lineno}, col {e.colno}: {e.msg}",
+                )
 
         # 3. TOML syntax parsing
         elif path.suffix == ".toml":
@@ -460,220 +474,348 @@ class FixTool(ToolFn):
 
 #### 1. `src/rush/engines/ruff.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="ruff not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="ruff not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file()]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No files to fix.", findings=[])
-
-        proc1 = run_subprocess(["ruff", "check", "--fix", *target_args])
-        proc2 = run_subprocess(["ruff", "format", *target_args])
-
-        status = "ok" if proc1.returncode == 0 and proc2.returncode == 0 else "warn"
+    target_args = [str(p) for p in paths if p.is_file()]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status=status,
+            status="ok",
             duration_ms=0,
-            summary="Ruff automated fixes and formatting applied.",
+            summary="No files to fix.",
             findings=[],
         )
+
+    proc1 = run_subprocess(["ruff", "check", "--fix", *target_args])
+    proc2 = run_subprocess(["ruff", "format", *target_args])
+
+    status = "ok" if proc1.returncode == 0 and proc2.returncode == 0 else "warn"
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status=status,
+        duration_ms=0,
+        summary="Ruff automated fixes and formatting applied.",
+        findings=[],
+    )
 ```
 
 #### 2. `src/rush/engines/biome.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="biome not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="biome not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file()]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No files to fix.", findings=[])
-
-        proc = run_subprocess(["biome", "check", "--write", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file()]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="Biome automated fixes and formatting applied.",
+            summary="No files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["biome", "check", "--write", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="Biome automated fixes and formatting applied.",
+        findings=[],
+    )
 ```
 
 #### 3. `src/rush/engines/eslint.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="eslint not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="eslint not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file()]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No files to fix.", findings=[])
-
-        proc = run_subprocess(["eslint", "--fix", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file()]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="ESLint automated fixes applied.",
+            summary="No files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["eslint", "--fix", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="ESLint automated fixes applied.",
+        findings=[],
+    )
 ```
 
 #### 4. `src/rush/engines/prettier.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="prettier not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="prettier not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file()]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No files to fix.", findings=[])
-
-        proc = run_subprocess(["prettier", "--write", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file()]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="Prettier formatting applied.",
+            summary="No files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["prettier", "--write", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="Prettier formatting applied.",
+        findings=[],
+    )
 ```
 
 #### 5. `src/rush/engines/black.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="black not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="black not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file()]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No files to fix.", findings=[])
-
-        proc = run_subprocess(["black", "-q", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file()]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="Black formatting applied.",
+            summary="No files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["black", "-q", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="Black formatting applied.",
+        findings=[],
+    )
 ```
 
 #### 6. `src/rush/engines/isort.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="isort not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="isort not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file()]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No files to fix.", findings=[])
-
-        proc = run_subprocess(["isort", "-q", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file()]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="Isort import ordering applied.",
+            summary="No files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["isort", "-q", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="Isort import ordering applied.",
+        findings=[],
+    )
 ```
 
 #### 7. `src/rush/engines/gofmt.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="gofmt not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="gofmt not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file() and p.suffix == ".go"]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No Go files to fix.", findings=[])
-
-        proc = run_subprocess(["gofmt", "-w", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file() and p.suffix == ".go"]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="gofmt code formatting applied.",
+            summary="No Go files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["gofmt", "-w", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="gofmt code formatting applied.",
+        findings=[],
+    )
 ```
 
 #### 8. `src/rush/engines/rustfmt.py`
 ```python
-    def run_fix(
-        self,
-        paths: list[Path],
-        permissions=None,
-    ) -> ToolResult:
-        if not self.is_available():
-            return ToolResult(tool="fix", engine=self.name, engine_version=None, status="skipped", duration_ms=0, summary="rustfmt not installed", findings=[])
+def run_fix(
+    self,
+    paths: list[Path],
+    permissions=None,
+) -> ToolResult:
+    if not self.is_available():
+        return ToolResult(
+            tool="fix",
+            engine=self.name,
+            engine_version=None,
+            status="skipped",
+            duration_ms=0,
+            summary="rustfmt not installed",
+            findings=[],
+        )
 
-        target_args = [str(p) for p in paths if p.is_file() and p.suffix == ".rs"]
-        if not target_args:
-            return ToolResult(tool="fix", engine=self.name, engine_version=self.version(), status="ok", duration_ms=0, summary="No Rust files to fix.", findings=[])
-
-        proc = run_subprocess(["rustfmt", *target_args])
-
+    target_args = [str(p) for p in paths if p.is_file() and p.suffix == ".rs"]
+    if not target_args:
         return ToolResult(
             tool="fix",
             engine=self.name,
             engine_version=self.version(),
-            status="ok" if proc.returncode == 0 else "warn",
+            status="ok",
             duration_ms=0,
-            summary="rustfmt code formatting applied.",
+            summary="No Rust files to fix.",
             findings=[],
         )
+
+    proc = run_subprocess(["rustfmt", *target_args])
+
+    return ToolResult(
+        tool="fix",
+        engine=self.name,
+        engine_version=self.version(),
+        status="ok" if proc.returncode == 0 else "warn",
+        duration_ms=0,
+        summary="rustfmt code formatting applied.",
+        findings=[],
+    )
 ```
 
 ---
@@ -686,14 +828,24 @@ from pathlib import Path
 from rush.tools.fix import FixTool
 from rush.discovery.git import get_staged_files, get_changed_files
 
+
 @click.command(name="fix")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
-@click.option("--dry-run", is_flag=True, help="Preview unified diff without modifying disk.")
+@click.option(
+    "--dry-run", is_flag=True, help="Preview unified diff without modifying disk."
+)
 @click.option("--force", is_flag=True, help="Allow running on dirty Git working tree.")
 @click.option("--staged", is_flag=True, help="Only apply fixes to staged Git files.")
 @click.option("--changed", is_flag=True, help="Only apply fixes to modified Git files.")
-@click.option("--engine", type=str, default=None, help="Restrict remediation to a specific engine (e.g. ruff, biome).")
-def fix_cmd(paths, dry_run: bool, force: bool, staged: bool, changed: bool, engine: str | None):
+@click.option(
+    "--engine",
+    type=str,
+    default=None,
+    help="Restrict remediation to a specific engine (e.g. ruff, biome).",
+)
+def fix_cmd(
+    paths, dry_run: bool, force: bool, staged: bool, changed: bool, engine: str | None
+):
     """Apply safe automated fixes across formatters, linters, and AST transformers."""
     repo_root = Path.cwd()
     target_paths: list[Path] = []
@@ -729,14 +881,22 @@ from rush.tools.fix import FixTool
 
 mcp = FastMCP("rush")
 
-@mcp.tool(name="rush_fix", description="Apply safe automated fixes to modified files with atomic rollback.")
+
+@mcp.tool(
+    name="rush_fix",
+    description="Apply safe automated fixes to modified files with atomic rollback.",
+)
 def rush_fix(files: list[str], dry_run: bool = False, force: bool = False) -> str:
     tool = FixTool(repo_root=Path.cwd())
     target_paths = [Path(f) for f in files]
     res = tool.run(target_paths, dry_run=dry_run, force=force)
     return json.dumps(res)
 
-@mcp.tool(name="rush_fix_preview", description="Preview unified diff of automated fixes without writing to disk.")
+
+@mcp.tool(
+    name="rush_fix_preview",
+    description="Preview unified diff of automated fixes without writing to disk.",
+)
 def rush_fix_preview(files: list[str]) -> str:
     tool = FixTool(repo_root=Path.cwd())
     target_paths = [Path(f) for f in files]
@@ -793,13 +953,30 @@ def test_fix_dry_run_generates_diff_without_modifying_file(tmp_path: Path):
         name = "mock_fixer"
         binary = "mock_fixer"
         file_extensions = ("py",)
-        def is_available(self): return True
-        def version(self): return "1.0"
+
+        def is_available(self):
+            return True
+
+        def version(self):
+            return "1.0"
+
         def run_fix(self, paths, permissions=None):
             f.write_text("x = 1\n", encoding="utf-8")
-            return {"tool": "fix", "engine": self.name, "engine_version": "1.0", "status": "ok", "duration_ms": 0, "summary": "fixed", "findings": []}
-        def run(self, path, args, cwd=None): pass
-        def normalize(self, raw, path, tool_name): pass
+            return {
+                "tool": "fix",
+                "engine": self.name,
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": "fixed",
+                "findings": [],
+            }
+
+        def run(self, path, args, cwd=None):
+            pass
+
+        def normalize(self, raw, path, tool_name):
+            pass
 
     tool = FixTool(repo_root=tmp_path, engines=[MockEngine()])
     res = tool.run(path=[f], dry_run=True, force=True)
@@ -819,13 +996,30 @@ def test_fix_atomic_rollback_on_syntax_corruption(tmp_path: Path):
         name = "bad_fixer"
         binary = "bad_fixer"
         file_extensions = ("py",)
-        def is_available(self): return True
-        def version(self): return "1.0"
+
+        def is_available(self):
+            return True
+
+        def version(self):
+            return "1.0"
+
         def run_fix(self, paths, permissions=None):
             f.write_text("def broken(:\n", encoding="utf-8")
-            return {"tool": "fix", "engine": self.name, "engine_version": "1.0", "status": "ok", "duration_ms": 0, "summary": "corrupted", "findings": []}
-        def run(self, path, args, cwd=None): pass
-        def normalize(self, raw, path, tool_name): pass
+            return {
+                "tool": "fix",
+                "engine": self.name,
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": "corrupted",
+                "findings": [],
+            }
+
+        def run(self, path, args, cwd=None):
+            pass
+
+        def normalize(self, raw, path, tool_name):
+            pass
 
     tool = FixTool(repo_root=tmp_path, engines=[CorruptingEngine()])
     res = tool.run(path=[f], force=True)
@@ -843,13 +1037,30 @@ def test_fix_json_syntax_validation(tmp_path: Path):
         name = "bad_json"
         binary = "bad_json"
         file_extensions = ("json",)
-        def is_available(self): return True
-        def version(self): return "1.0"
+
+        def is_available(self):
+            return True
+
+        def version(self):
+            return "1.0"
+
         def run_fix(self, paths, permissions=None):
-            j.write_text('{invalid json syntax', encoding="utf-8")
-            return {"tool": "fix", "engine": self.name, "engine_version": "1.0", "status": "ok", "duration_ms": 0, "summary": "edited", "findings": []}
-        def run(self, path, args, cwd=None): pass
-        def normalize(self, raw, path, tool_name): pass
+            j.write_text("{invalid json syntax", encoding="utf-8")
+            return {
+                "tool": "fix",
+                "engine": self.name,
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": "edited",
+                "findings": [],
+            }
+
+        def run(self, path, args, cwd=None):
+            pass
+
+        def normalize(self, raw, path, tool_name):
+            pass
 
     tool = FixTool(repo_root=tmp_path, engines=[BadJsonEngine()])
     res = tool.run(path=[j], force=True)
@@ -867,13 +1078,30 @@ def test_fix_toml_syntax_validation(tmp_path: Path):
         name = "bad_toml"
         binary = "bad_toml"
         file_extensions = ("toml",)
-        def is_available(self): return True
-        def version(self): return "1.0"
+
+        def is_available(self):
+            return True
+
+        def version(self):
+            return "1.0"
+
         def run_fix(self, paths, permissions=None):
-            t.write_text('[unclosed section\n', encoding="utf-8")
-            return {"tool": "fix", "engine": self.name, "engine_version": "1.0", "status": "ok", "duration_ms": 0, "summary": "edited", "findings": []}
-        def run(self, path, args, cwd=None): pass
-        def normalize(self, raw, path, tool_name): pass
+            t.write_text("[unclosed section\n", encoding="utf-8")
+            return {
+                "tool": "fix",
+                "engine": self.name,
+                "engine_version": "1.0",
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": "edited",
+                "findings": [],
+            }
+
+        def run(self, path, args, cwd=None):
+            pass
+
+        def normalize(self, raw, path, tool_name):
+            pass
 
     tool = FixTool(repo_root=tmp_path, engines=[BadTomlEngine()])
     res = tool.run(path=[t], force=True)
@@ -886,7 +1114,9 @@ def test_fix_toml_syntax_validation(tmp_path: Path):
 def test_fix_dirty_tree_aborts_without_force(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "rush.tools.fix.run_subprocess",
-        lambda cmd, cwd=None: subprocess.CompletedProcess(cmd, 0, stdout=" M modified_file.py\n", stderr=""),
+        lambda cmd, cwd=None: subprocess.CompletedProcess(
+            cmd, 0, stdout=" M modified_file.py\n", stderr=""
+        ),
     )
     f = tmp_path / "test.py"
     f.write_text("x = 1\n", encoding="utf-8")
