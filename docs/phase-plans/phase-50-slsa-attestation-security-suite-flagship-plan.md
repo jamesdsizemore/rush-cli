@@ -374,7 +374,7 @@ The task runbook is the implementation authority. Each block is independently ex
 
 Implement establish the implementation baseline in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-001 | P50-SHARED | EVIDENCE | establish the implementation baseline
 
@@ -433,7 +433,7 @@ Successor: P50-002. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin immutable typed option declarations in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-002 | P50-SHARED | RED | pin shared option, result, effect, process, parser, and statistics contracts
 
@@ -485,7 +485,7 @@ Successor: P50-003. Report exact changed paths, commands, exits, evidence, block
 
 Implement immutable typed option declarations in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-003 | P50-SHARED | GREEN | implement immutable typed option declarations
 
@@ -541,7 +541,7 @@ Successor: P50-004. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin declared-option parsing and rejection in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-004 | P50-SHARED | RED | pin declared-option parsing and rejection
 
@@ -593,7 +593,7 @@ Successor: P50-005. Report exact changed paths, commands, exits, evidence, block
 
 Implement validate and preserve declared options in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-005 | P50-SHARED | GREEN | validate and preserve declared options
 
@@ -648,7 +648,7 @@ Successor: P50-006. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin shared contained atomic output semantics in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-006 | P50-SHARED | RED | pin shared contained atomic output semantics
 
@@ -702,7 +702,7 @@ Successor: P50-007. Report exact changed paths, commands, exits, evidence, block
 
 Implement shared contained atomic byte output in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-007 | P50-SHARED | GREEN | implement shared contained atomic byte output
 
@@ -757,7 +757,7 @@ Successor: P50-008. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin canonical MCP name normalization in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-008 | P50-SHARED | RED | pin canonical MCP name normalization
 
@@ -811,7 +811,7 @@ Successor: P50-009. Report exact changed paths, commands, exits, evidence, block
 
 Implement normalize shared MCP names and isolate the compatibility alias in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-009 | P50-SHARED | GREEN | normalize shared MCP names and isolate the compatibility alias
 
@@ -865,7 +865,7 @@ Successor: P50-010. Report exact changed paths, commands, exits, evidence, block
 
 Implement canonical ToolResult and ToolFn contract in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-010 | P50-SHARED | GREEN | canonical ToolResult and ToolFn contract
 
@@ -922,7 +922,7 @@ Successor: P50-011.
 
 Implement immutable ToolSpec and closed typed configuration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-011 | P50-SHARED | GREEN | immutable ToolSpec and closed typed configuration
 
@@ -978,7 +978,7 @@ Successor: P50-012.
 
 Implement deny-default effect permissions in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-012 | P50-SHARED | GREEN | deny-default effect permissions
 
@@ -1034,7 +1034,7 @@ Successor: P50-013.
 
 Implement contained atomic artifact output in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-013 | P50-SHARED | GREEN | contained atomic artifact output
 
@@ -1090,7 +1090,7 @@ Successor: P50-014.
 
 Implement safe subprocess execution in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-014 | P50-SHARED | GREEN | safe subprocess execution
 
@@ -1146,7 +1146,7 @@ Successor: P50-015.
 
 Implement recursive redaction boundary in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-015 | P50-SHARED | GREEN | recursive redaction boundary
 
@@ -1202,7 +1202,7 @@ Successor: P50-016.
 
 Implement polyglot parser pack in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-016 | P50-SHARED | GREEN | polyglot parser pack
 
@@ -1258,7 +1258,7 @@ Successor: P50-017.
 
 Implement statistical measurement primitives in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-017 | P50-SHARED | GREEN | statistical measurement primitives
 
@@ -1314,7 +1314,7 @@ Successor: P50-018.
 
 Implement capture legacy public contracts in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-018 | P50-SHARED | EVIDENCE | capture legacy public contracts
 
@@ -1371,7 +1371,7 @@ Successor: P50-019.
 
 Implement predecessor admission and dependency capability proof in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-019 | P50-SHARED | DEPENDENCY-GREEN | admit the exact shared dependency set
 
@@ -1432,7 +1432,7 @@ Successor: P50-020.
 
 Implement pin deterministic prompt-evaluation result math in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-020 | P50-I13 | RED | pin deterministic prompt-evaluation result math
 
@@ -1484,7 +1484,7 @@ Successor: P50-021. Report exact changed paths, commands, exits, evidence, block
 
 Implement deterministic evaluation scoring core in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-021 | P50-I13 | GREEN | implement deterministic evaluation scoring core
 
@@ -1539,7 +1539,7 @@ Successor: P50-022. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin prompt-eval catalog, CLI, and MCP absence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-022 | P50-I13 | RED | pin prompt-eval catalog, CLI, and MCP absence
 
@@ -1593,7 +1593,7 @@ Successor: P50-023. Report exact changed paths, commands, exits, evidence, block
 
 Implement register prompt-eval CLI and verify MCP absence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-023 | P50-I13 | GREEN | register prompt-eval CLI and preserve public MCP absence
 
@@ -1647,7 +1647,7 @@ Successor: P50-024. Report exact changed paths, commands, exits, evidence, block
 
 Implement document complete live prompt evaluation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-024 | P50-I13 | DOCS | document complete live prompt evaluation
 
@@ -1700,7 +1700,7 @@ Successor: P50-025. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin live FastMCP target execution in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-025 | P50-I13-EXEC | RED | pin live FastMCP target execution
 
@@ -1759,7 +1759,7 @@ Evidence: `.rush/phase50-evidence/P50-025.json`; retain exact baseline and focus
 Successor: P50-026. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement live FastMCP target execution in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-026 | P50-I13-EXEC | GREEN | implement live FastMCP target execution
 
@@ -1817,7 +1817,7 @@ Evidence: `.rush/phase50-evidence/P50-026.json`; retain focused, broader, and pa
 Successor: P50-027. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin CodeBLEU score fields in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-027 | P50-I13-SCORE | RED | pin CodeBLEU score fields
 
@@ -1876,7 +1876,7 @@ Evidence: `.rush/phase50-evidence/P50-027.json`; retain baseline/focused output 
 Successor: P50-028. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement CodeBLEU score fields in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-028 | P50-I13-SCORE | GREEN | implement CodeBLEU score fields
 
@@ -1934,7 +1934,7 @@ Evidence: `.rush/phase50-evidence/P50-028.json`; retain score JSON, dependency o
 Successor: P50-029. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin prompt-eval effect permissions in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-029 | P50-I13-OPS | EFFECT-RED | pin prompt-eval effect permissions
 
@@ -1993,7 +1993,7 @@ Evidence: `.rush/phase50-evidence/P50-029.json`; retain refusal, redaction, abse
 Successor: P50-030. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement prompt-eval permission and telemetry effects in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-030 | P50-I13-OPS | EFFECT-GREEN | implement prompt-eval permission and telemetry effects
 
@@ -2051,7 +2051,7 @@ Evidence: `.rush/phase50-evidence/P50-030.json`; retain permission, redaction, a
 Successor: P50-031. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin installed prompt-eval acceptance in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-031 | P50-I13-INSTALLED | INSTALLED | verify installed prompt-eval acceptance
 
@@ -2111,7 +2111,7 @@ Evidence: `.rush/phase50-evidence/P50-031.json`; retain exact wheel/import/stdio
 Successor: P50-032. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin deterministic Python, TypeScript, and Rust extraction in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-032 | P50-I14 | RED | pin deterministic Python, TypeScript, and Rust extraction
 
@@ -2165,7 +2165,7 @@ Successor: P50-033. Report exact changed paths, commands, exits, evidence, block
 
 Implement deterministic polyglot error extraction in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-033 | P50-I14 | GREEN | implement deterministic polyglot error extraction
 
@@ -2220,7 +2220,7 @@ Successor: P50-034. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin typed catalogs, RFC 7807, and generated documentation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-034 | P50-I14 | RED | pin typed catalogs, RFC 7807, and generated documentation
 
@@ -2272,7 +2272,7 @@ Successor: P50-035. Report exact changed paths, commands, exits, evidence, block
 
 Implement generate guarded typed catalogs, RFC 7807, and documentation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-035 | P50-I14 | GREEN | generate guarded typed catalogs, RFC 7807, and documentation
 
@@ -2326,7 +2326,7 @@ Successor: P50-036. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin error-catalog registry, CLI options, and MCP arguments in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-036 | P50-I14 | RED | pin error-catalog registry, CLI options, and MCP arguments
 
@@ -2378,7 +2378,7 @@ Successor: P50-037. Report exact changed paths, commands, exits, evidence, block
 
 Implement register error-catalog and add a thin CLI adapter in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-037 | P50-I14 | GREEN | register error-catalog and add a thin CLI adapter
 
@@ -2432,7 +2432,7 @@ Successor: P50-038. Report exact changed paths, commands, exits, evidence, block
 
 Implement document complete polyglot extraction and generation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-038 | P50-I14 | DOCS | document complete polyglot extraction and generation
 
@@ -2484,7 +2484,7 @@ Successor: P50-039. Report exact changed paths, commands, exits, evidence, block
 
 Implement the I14 error-catalog MCP contract tests in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-039 | P50-I14-S | RED-MCP | pin rush_error_catalog object and result parity
 
@@ -2534,7 +2534,7 @@ Successor: P50-040. Report the exact test, fixtures, compared fields, transport-
 
 Implement the I14 error-catalog MCP route in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-040 | P50-I14-S | GREEN-MCP | register rush_error_catalog
 
@@ -2584,7 +2584,7 @@ Successor: P50-041. Report the exact src/rush/mcp.py registrar, forwarded argume
 
 Implement pin typed RFC7807 generation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-041 | P50-I14-GEN | RED | pin typed RFC7807 generation
 
@@ -2643,7 +2643,7 @@ Evidence: `.rush/phase50-evidence/P50-041.json`; retain field failure, generatio
 Successor: P50-042. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement typed RFC7807 generation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-042 | P50-I14-GEN | GREEN | implement typed RFC7807 generation
 
@@ -2701,7 +2701,7 @@ Evidence: `.rush/phase50-evidence/P50-042.json`; retain generated bytes, hashes,
 Successor: P50-043. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin installed error-catalog acceptance in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-043 | P50-I14-INSTALLED | INSTALLED | verify installed error-catalog acceptance
 
@@ -2761,7 +2761,7 @@ Evidence: `.rush/phase50-evidence/P50-043.json`; retain wheel/import/grammar/std
 Successor: P50-044. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin trailer and session attribution evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-044 | P50-I15 | RED | pin trailer and session attribution evidence
 
@@ -2813,7 +2813,7 @@ Successor: P50-045. Report exact changed paths, commands, exits, evidence, block
 
 Implement grounded attribution evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-045 | P50-I15 | GREEN | implement grounded attribution evidence
 
@@ -2867,7 +2867,7 @@ Successor: P50-046. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin provenance-ai registration and public route equality in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-046 | P50-I15 | RED | pin provenance-ai registration and public route equality
 
@@ -2920,7 +2920,7 @@ Successor: P50-047. Report exact changed paths, commands, exits, evidence, block
 
 Implement register provenance-ai through shared transports in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-047 | P50-I15 | GREEN | register provenance-ai through shared transports
 
@@ -2974,7 +2974,7 @@ Successor: P50-048. Report exact changed paths, commands, exits, evidence, block
 
 Implement document attribution, survival, defects, and evidence limits in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-048 | P50-I15 | DOCS | document attribution, survival, defects, and evidence limits
 
@@ -3026,7 +3026,7 @@ Successor: P50-049. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin Kaplan–Meier survival windows in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-049 | P50-I15-SURV | RED | pin Kaplan–Meier survival windows
 
@@ -3085,7 +3085,7 @@ Evidence: `.rush/phase50-evidence/P50-049.json`; retain deterministic commits, c
 Successor: P50-050. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement Kaplan–Meier survival windows in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-050 | P50-I15-SURV | GREEN | implement Kaplan–Meier survival windows
 
@@ -3143,7 +3143,7 @@ Evidence: `.rush/phase50-evidence/P50-050.json`; retain all curve and unknown ou
 Successor: P50-051. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin defect correlation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-051 | P50-I15-ATTR | RED | pin defect correlation
 
@@ -3202,7 +3202,7 @@ Evidence: `.rush/phase50-evidence/P50-051.json`; retain graph, markers, focused 
 Successor: P50-052. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement defect correlation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-052 | P50-I15-ATTR | GREEN | implement defect correlation
 
@@ -3260,7 +3260,7 @@ Evidence: `.rush/phase50-evidence/P50-052.json`; retain correlation, unknown, fo
 Successor: P50-053. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin provenance cache telemetry boundary in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-053 | P50-I15-OPS | EFFECT-RED | pin provenance cache telemetry boundary
 
@@ -3319,7 +3319,7 @@ Evidence: `.rush/phase50-evidence/P50-053.json`; retain denial, redaction, atomi
 Successor: P50-054. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement provenance cache telemetry boundary in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-054 | P50-I15-OPS | EFFECT-GREEN | implement provenance cache telemetry boundary
 
@@ -3377,7 +3377,7 @@ Evidence: `.rush/phase50-evidence/P50-054.json`; retain denied/granted/redaction
 Successor: P50-055. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin installed provenance acceptance in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-055 | P50-I15-INSTALLED | INSTALLED | verify installed provenance acceptance
 
@@ -3437,7 +3437,7 @@ Evidence: `.rush/phase50-evidence/P50-055.json`; retain wheel/import/full/shallo
 Successor: P50-056. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin signed modern and legacy artifact-bound provenance profiles in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-056 | P50-I16 | RED | pin signed modern and legacy artifact-bound provenance profiles
 
@@ -3489,7 +3489,7 @@ Successor: P50-057. Report exact changed paths, commands, exits, evidence, block
 
 Implement signed Statement v1 and SLSA Provenance v1 core in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-057 | P50-I16 | GREEN | implement signed modern and legacy artifact-bound provenance core
 
@@ -3543,7 +3543,7 @@ Successor: P50-058. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin permissioned attestation export in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-058 | P50-I16 | RED | pin permissioned attestation export
 
@@ -3595,7 +3595,7 @@ Successor: P50-059. Report exact changed paths, commands, exits, evidence, block
 
 Implement add guarded signed-envelope export in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-059 | P50-I16 | GREEN | add guarded signed-envelope export
 
@@ -3649,7 +3649,7 @@ Successor: P50-060. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin attest catalog, CLI, canonical MCP, and deprecated alias in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-060 | P50-I16 | RED | pin attest catalog, CLI, canonical MCP, and deprecated alias
 
@@ -3702,7 +3702,7 @@ Successor: P50-061. Report exact changed paths, commands, exits, evidence, block
 
 Implement migrate attest routes to one ToolFn in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-061 | P50-I16 | GREEN | migrate attest routes to one ToolFn
 
@@ -3756,7 +3756,7 @@ Successor: P50-062. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin signing dependencies and external verifier policy in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-062 | P50-I16 | DEPENDENCY-VERIFY | verify signing dependencies and external verifier policy
 
@@ -3811,7 +3811,7 @@ Successor: P50-063. Report exact changed paths, commands, exits, evidence, block
 
 Implement document exact signed provenance and assurance limits in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-063 | P50-I16 | DOCS | document exact signed provenance and assurance limits
 
@@ -3863,7 +3863,7 @@ Successor: P50-064. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin modern and legacy signed-profile interoperability in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-064 | P50-I16-SIGN | RED | pin modern and legacy signed-profile interoperability
 
@@ -3922,7 +3922,7 @@ Evidence: .rush/phase50-evidence/P50-064.json; retain profile/signer matrix, env
 Successor: P50-065. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement modern and legacy signed-profile interoperability in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-065 | P50-I16-SIGN | GREEN | implement modern and legacy signed-profile interoperability
 
@@ -3980,7 +3980,7 @@ Evidence: `.rush/phase50-evidence/P50-065.json`; retain envelope bytes, PAE veri
 Successor: P50-066. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin hosted-builder Level 3 trust policy in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-066 | P50-I16-GATE | RED | pin hosted-builder Level 3 trust policy
 
@@ -4039,7 +4039,7 @@ Evidence: `.rush/phase50-evidence/P50-066.json`; retain policy/trust cases, loca
 Successor: P50-067. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement hosted-builder Level 3 trust policy and installed readiness in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-067 | P50-I16-GATE | GREEN | implement hosted-builder Level 3 trust policy and installed readiness
 
@@ -4099,7 +4099,7 @@ Evidence: `.rush/phase50-evidence/P50-067.json`; retain policy matrix, Level 3/r
 Successor: P50-068. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin polyglot dependency license evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-068 | P50-I17 | RED | pin polyglot dependency license evidence
 
@@ -4151,7 +4151,7 @@ Successor: P50-069. Report exact changed paths, commands, exits, evidence, block
 
 Implement extract deterministic polyglot license evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-069 | P50-I17 | GREEN | extract deterministic polyglot license evidence
 
@@ -4205,7 +4205,7 @@ Successor: P50-070. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin exact allowlist and manual-review policy in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-070 | P50-I17 | RED | pin exact allowlist and manual-review policy
 
@@ -4257,7 +4257,7 @@ Successor: P50-071. Report exact changed paths, commands, exits, evidence, block
 
 Implement apply SPDX compatibility and manual-review policy in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-071 | P50-I17 | GREEN | apply SPDX compatibility and manual-review policy
 
@@ -4311,7 +4311,7 @@ Successor: P50-072. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin license-matrix registry and route migration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-072 | P50-I17 | RED | pin license-matrix registry and route migration
 
@@ -4363,7 +4363,7 @@ Successor: P50-073. Report exact changed paths, commands, exits, evidence, block
 
 Implement register license-matrix and remove transport business logic in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-073 | P50-I17 | GREEN | register license-matrix and remove transport business logic
 
@@ -4417,7 +4417,7 @@ Successor: P50-074. Report exact changed paths, commands, exits, evidence, block
 
 Implement document license evidence, linking mechanics, and SPDX outcomes in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-074 | P50-I17 | DOCS | document license evidence, linking mechanics, and SPDX outcomes
 
@@ -4469,7 +4469,7 @@ Successor: P50-075. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin dependency link edge analysis in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-075 | P50-I17-LINK | RED | pin dependency link edge analysis
 
@@ -4528,7 +4528,7 @@ Evidence: `.rush/phase50-evidence/P50-075.json`; retain inputs, expected edge ca
 Successor: P50-076. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement dependency link edge analysis in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-076 | P50-I17-LINK | GREEN | implement dependency link edge analysis
 
@@ -4586,7 +4586,7 @@ Evidence: `.rush/phase50-evidence/P50-076.json`; retain edge matrix, provenance,
 Successor: P50-077. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin SPDX compatibility evaluation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-077 | P50-I17-INPUT | RED | pin SPDX compatibility evaluation
 
@@ -4645,7 +4645,7 @@ Evidence: `.rush/phase50-evidence/P50-077.json`; retain expressions, provenance,
 Successor: P50-078. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement SPDX compatibility evaluation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-078 | P50-I17-INPUT | GREEN | implement SPDX compatibility evaluation
 
@@ -4703,7 +4703,7 @@ Evidence: `.rush/phase50-evidence/P50-078.json`; retain statuses, provenance, fo
 Successor: P50-079. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin installed license acceptance in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-079 | P50-I17-INSTALLED | INSTALLED | verify installed license acceptance
 
@@ -4763,7 +4763,7 @@ Evidence: `.rush/phase50-evidence/P50-079.json`; retain wheel/import/matrix/ship
 Successor: P50-080. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement declare three-cloud IAM-audit configuration and bundled mapping inputs in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-080 | P50-I18-CONFIG | GREEN | declare three-cloud IAM-audit inputs and bundled mappings
 
@@ -4825,7 +4825,7 @@ Report the exact option/resource/dependency declarations, test path and exits, c
 Successor: P50-081. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin exact SDK-to-action and IaC comparison behavior in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-081 | P50-I18 | RED | pin exact SDK-to-action and IaC comparison behavior
 
@@ -4877,7 +4877,7 @@ Successor: P50-082. Report exact changed paths, commands, exits, evidence, block
 
 Implement extract exact actions, resources, wildcards, unused grants, and unknowns in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-082 | P50-I18 | GREEN | extract exact actions, resources, wildcards, unused grants, and unknowns
 
@@ -4932,7 +4932,7 @@ Successor: P50-083. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin iam-audit registry and route migration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-083 | P50-I18 | RED | pin iam-audit registry and route migration
 
@@ -4984,7 +4984,7 @@ Successor: P50-084. Report exact changed paths, commands, exits, evidence, block
 
 Implement register iam-audit and remove transport synthesis in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-084 | P50-I18 | GREEN | register iam-audit and remove transport synthesis
 
@@ -5038,7 +5038,7 @@ Successor: P50-085. Report exact changed paths, commands, exits, evidence, block
 
 Implement document three-cloud IAM synthesis and evidence limits in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-085 | P50-I18 | DOCS | document three-cloud IAM synthesis and evidence limits
 
@@ -5090,7 +5090,7 @@ Successor: P50-086. Report exact changed paths, commands, exits, evidence, block
 
 Implement GREEN shared ToolResult route in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-086 | I18 IAM-audit CLI route | GREEN | GREEN shared ToolResult route
 
@@ -5151,7 +5151,7 @@ Report the exact changed CLI/test/fixture paths, command exit codes, provider an
 Successor: P50-087. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement expose the missing shared-object seam in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-087 | I18 IAM-audit MCP contract | RED | expose the missing shared-object seam
 
@@ -5212,7 +5212,7 @@ Report the exact test path, fixture inputs, assertion fields, transport-effect c
 Successor: P50-088. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement GREEN shared implementation parity in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-088 | I18 IAM-audit MCP route | GREEN | GREEN shared implementation parity
 
@@ -5272,7 +5272,7 @@ Report exact src/rush/mcp.py symbols, test paths, route invocation, result-equal
 Successor: P50-089. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement document three-provider least privilege in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-089 | I18 IAM-audit documentation | DOCS-VERIFY | verify three-provider least-privilege documentation
 
@@ -5332,7 +5332,7 @@ Report the exact documentation/reference paths, headings or search matches, comm
 Successor: P50-090. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement verify three-provider resources from wheel and sdist in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-090 | I18 IAM-audit installed artifact | INSTALLED | verify three-provider resources from wheel and sdist
 
@@ -5396,7 +5396,7 @@ Report artifact filenames and hashes, environment and external-CWD paths, provid
 Successor: P50-091. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement record auditable P12 fragment in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-091 | I18 IAM-audit readiness evidence | EVIDENCE | record auditable P12 fragment
 
@@ -5462,7 +5462,7 @@ Report the fragment path, JSON parse result, ignored-status output, requirement 
 Successor: P50-092. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin dependency-free static potential-resource findings in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-092 | P50-I19 | RED | pin dependency-free static potential-resource findings
 
@@ -5514,7 +5514,7 @@ Successor: P50-093. Report exact changed paths, commands, exits, evidence, block
 
 Implement static potential-resource findings in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-093 | P50-I19 | GREEN | implement static potential-resource findings
 
@@ -5568,7 +5568,7 @@ Successor: P50-094. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin dynamic pytest and Vitest runtime matrix in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-094 | P50-I19 | EVIDENCE | pin dynamic pytest and Vitest runtime matrix
 
@@ -5620,7 +5620,7 @@ Successor: P50-095. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin slow permission, required sampling, retention, and child failure in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-095 | P50-I19 | RED | pin slow permission, required sampling, retention, and child failure
 
@@ -5672,7 +5672,7 @@ Successor: P50-096. Report exact changed paths, commands, exits, evidence, block
 
 Implement add the required psutil sampling runtime in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-096 | P50-I19 | DEPENDENCY-VERIFY | verify the admitted psutil sampling runtime
 
@@ -5726,7 +5726,7 @@ Successor: P50-097. Report exact changed paths, commands, exits, evidence, block
 
 Implement required pytest and Vitest dynamic profiling in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-097 | P50-I19 | GREEN | implement required pytest and Vitest dynamic profiling
 
@@ -5782,7 +5782,7 @@ Successor: P50-098. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin mem-profile registration and public modes in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-098 | P50-I19 | RED | pin mem-profile registration and public modes
 
@@ -5834,7 +5834,7 @@ Successor: P50-099. Report exact changed paths, commands, exits, evidence, block
 
 Implement register complete static and dynamic mem-profile modes in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-099 | P50-I19 | GREEN | register complete static and dynamic mem-profile modes
 
@@ -5889,7 +5889,7 @@ Successor: P50-100. Report exact changed paths, commands, exits, evidence, block
 
 Implement document static findings and dynamic memory measurements in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-100 | P50-I19 | DOCS | document static findings and dynamic memory measurements
 
@@ -5941,7 +5941,7 @@ Successor: P50-101. Report exact changed paths, commands, exits, evidence, block
 
 Implement document static and dynamic leak analysis in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-101 | I19 memory-profile documentation | DOCS-VERIFY | verify static and dynamic leak-analysis documentation
 
@@ -6001,7 +6001,7 @@ Report exact documentation/reference paths, search matches, command exit codes, 
 Successor: P50-102. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement run real Python and Node probes from wheel and sdist in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-102 | I19 memory-profile installed artifact | INSTALLED | run real Python and Node probes from wheel and sdist
 
@@ -6065,7 +6065,7 @@ Report wheel/sdist hashes, environment and CWD, Python/Node/Vitest/psutil versio
 Successor: P50-103. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement record auditable P12 fragment in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-103 | I19 memory-profile readiness evidence | EVIDENCE | record auditable P12 fragment
 
@@ -6131,7 +6131,7 @@ Report the fragment path, JSON parse and ignored-status results, requirement IDs
 Successor: P50-104. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin deterministic Python import inventory without execution in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-104 | P50-I20 | RED | pin deterministic Python import inventory without execution
 
@@ -6183,7 +6183,7 @@ Successor: P50-105. Report exact changed paths, commands, exits, evidence, block
 
 Implement Python import inventory without execution in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-105 | P50-I20 | GREEN | implement Python import inventory without execution
 
@@ -6237,7 +6237,7 @@ Successor: P50-106. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin explicit slow `-X importtime` execution in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-106 | P50-I20 | RED | pin explicit slow `-X importtime` execution
 
@@ -6289,7 +6289,7 @@ Successor: P50-107. Report exact changed paths, commands, exits, evidence, block
 
 Implement add permission-gated Python import timing in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-107 | P50-I20 | GREEN | add permission-gated Python import timing
 
@@ -6343,7 +6343,7 @@ Successor: P50-108. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin cold-start registration, CLI flags, and MCP equality in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-108 | P50-I20 | RED | pin cold-start registration, CLI flags, and MCP equality
 
@@ -6396,7 +6396,7 @@ Successor: P50-109. Report exact changed paths, commands, exits, evidence, block
 
 Implement register cold-start with a thin CLI adapter in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-109 | P50-I20 | GREEN | register cold-start with a thin CLI adapter
 
@@ -6450,7 +6450,7 @@ Successor: P50-110. Report exact changed paths, commands, exits, evidence, block
 
 Implement document Python and Node waterfalls and validated patches in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-110 | P50-I20 | DOCS | document Python and Node waterfalls and validated patches
 
@@ -6502,7 +6502,7 @@ Successor: P50-111. Report exact changed paths, commands, exits, evidence, block
 
 Implement expose the missing shared-object seam in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-111 | I20 cold-start MCP contract | RED | expose the missing shared-object seam
 
@@ -6563,7 +6563,7 @@ Report the test path, fixture entries, compared fields, transport no-execution/n
 Successor: P50-112. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement GREEN shared implementation parity in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-112 | I20 cold-start MCP route | GREEN | GREEN shared implementation parity
 
@@ -6624,7 +6624,7 @@ Report exact src/rush/mcp.py symbols, test paths, route options, result-equality
 Successor: P50-113. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement document measured waterfalls and safe lazy-load patches in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-113 | I20 cold-start documentation | DOCS-VERIFY | verify measured waterfalls and safe lazy-load patch documentation
 
@@ -6684,7 +6684,7 @@ Report exact docs/reference paths, search matches, command exit codes, documente
 Successor: P50-114. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement prove Python and Node probes and exact patches from packaged artifacts in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-114 | I20 cold-start installed artifact | INSTALLED | prove Python and Node probes and exact patches from packaged artifacts
 
@@ -6748,7 +6748,7 @@ Report artifact names/hashes, environment/CWD, Python/Node versions, fixture pat
 Successor: P50-115. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement record auditable P12 fragment in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-115 | I20 cold-start readiness evidence | EVIDENCE | record auditable P12 fragment
 
@@ -6814,7 +6814,7 @@ Report the fragment path, parse and ignored-status results, requirement IDs, rev
 Successor: P50-116. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin byte-identical SVG, CLS, and raster audit in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-116 | P50-I21 | RED | pin byte-identical SVG, CLS, and raster audit
 
@@ -6866,7 +6866,7 @@ Successor: P50-117. Report exact changed paths, commands, exits, evidence, block
 
 Implement deterministic read-only media audit in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-117 | P50-I21 | GREEN | implement deterministic read-only media audit
 
@@ -6920,7 +6920,7 @@ Successor: P50-118. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin explicit SVG sanitization output in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-118 | P50-I21 | RED | pin explicit SVG sanitization output
 
@@ -6972,7 +6972,7 @@ Successor: P50-119. Report exact changed paths, commands, exits, evidence, block
 
 Implement add permissioned contained SVG sanitization in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-119 | P50-I21 | GREEN | add permissioned contained SVG sanitization
 
@@ -7025,7 +7025,7 @@ Successor: P50-120. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin measured PNG/WebP candidate output in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-120 | P50-I21 | RED | pin measured PNG/WebP candidate output
 
@@ -7077,7 +7077,7 @@ Successor: P50-121. Report exact changed paths, commands, exits, evidence, block
 
 Implement add measured explicit raster output in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-121 | P50-I21 | GREEN | add measured explicit raster output
 
@@ -7130,7 +7130,7 @@ Successor: P50-122. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin media-opt registration and public operations in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-122 | P50-I21 | RED | pin media-opt registration and public operations
 
@@ -7182,7 +7182,7 @@ Successor: P50-123. Report exact changed paths, commands, exits, evidence, block
 
 Implement register media-opt with thin CLI routing in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-123 | P50-I21 | GREEN | register media-opt with thin CLI routing
 
@@ -7237,7 +7237,7 @@ Successor: P50-124. Report exact changed paths, commands, exits, evidence, block
 
 Implement document lossless formats, SVG safety, dimensions, and savings in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-124 | P50-I21 | DOCS | document lossless formats, SVG safety, dimensions, and savings
 
@@ -7289,7 +7289,7 @@ Successor: P50-125. Report exact changed paths, commands, exits, evidence, block
 
 Implement document lossless media, SVG, and markup safety in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-125 | I21 media-optimization documentation | DOCS-VERIFY | verify lossless media, SVG, and markup-safety documentation
 
@@ -7349,7 +7349,7 @@ Report exact docs/reference paths, search matches, command exit codes, documente
 Successor: P50-126. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement prove media equivalence and safe patches from packaged artifacts in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-126 | I21 media-optimization installed artifact | INSTALLED | prove media equivalence and safe patches from packaged artifacts
 
@@ -7413,7 +7413,7 @@ Report artifact names/hashes, environment/CWD, package versions, corpus files, d
 Successor: P50-127. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement record auditable P12 fragment in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-127 | I21 media-optimization readiness evidence | EVIDENCE | record auditable P12 fragment
 
@@ -7479,7 +7479,7 @@ Report the fragment path, parse and ignored-status results, requirement IDs, rev
 Successor: P50-128. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin canonical commit/finding deltas in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-128 | P50-I22 | RED | pin canonical commit/finding deltas
 
@@ -7531,7 +7531,7 @@ Successor: P50-129. Report exact changed paths, commands, exits, evidence, block
 
 Implement canonical delta data in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-129 | P50-I22 | GREEN | implement canonical delta data
 
@@ -7585,7 +7585,7 @@ Successor: P50-130. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin the full-screen keyboard TUI, deterministic CI fallback, and terminal-restoration contract in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-130 | P50-I22-APP | RED | pin full-screen keyboard TUI and deterministic CI fallback
 
@@ -7645,7 +7645,7 @@ Report test and fixture paths, pilot events, fallback fields, terminal/cache ass
 Successor: P50-131. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement the full-screen keyboard TUI and deterministic CI fallback in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-131 | P50-I22-APP | GREEN | implement full-screen TUI and deterministic CI fallback
 
@@ -7707,7 +7707,7 @@ Report changed symbols, pilot and fallback results, raw-data/cache provenance, t
 Successor: P50-132. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin tui-diff registration, nested CLI, and MCP data in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-132 | P50-I22 | RED | pin tui-diff registration, nested CLI, and MCP data
 
@@ -7761,7 +7761,7 @@ Successor: P50-133. Report exact changed paths, commands, exits, evidence, block
 
 Implement register tui-diff CLI and data-only MCP in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-133 | P50-I22 | GREEN | register tui-diff CLI and data-only MCP
 
@@ -7815,7 +7815,7 @@ Successor: P50-134. Report exact changed paths, commands, exits, evidence, block
 
 Implement document full-screen TUI, fallback, and data-only MCP in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-134 | P50-I22 | DOCS | document full-screen TUI, fallback, and data-only MCP
 
@@ -7867,7 +7867,7 @@ Successor: P50-135. Report exact changed paths, commands, exits, evidence, block
 
 Implement expose raw data parity without terminal controls in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-135 | I22 TUI-diff MCP contract | RED | expose raw data parity without terminal controls
 
@@ -7928,7 +7928,7 @@ Report the test path, Git/cache fixtures, compared data fields, cache API/path e
 Successor: P50-136. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement GREEN raw data parity and terminal isolation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-136 | I22 TUI-diff MCP route | GREEN | GREEN raw data parity and terminal isolation
 
@@ -7989,7 +7989,7 @@ Report exact src/rush/mcp.py symbols, test paths, route options, raw-data/result
 Successor: P50-137. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement document interactive, CI, Git, and cache evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-137 | I22 TUI-diff documentation | DOCS-VERIFY | verify interactive, CI, Git, and cache documentation
 
@@ -8049,7 +8049,7 @@ Report exact docs/reference paths, search matches, command exit codes, documente
 Successor: P50-138. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement prove pilot and CI fallback outside a checkout in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-138 | I22 TUI-diff installed artifact | INSTALLED | prove pilot and CI fallback outside a checkout
 
@@ -8113,7 +8113,7 @@ Report artifact names/hashes, environment/CWD, Python/Textual/Rich versions, TTY
 Successor: P50-139. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement record auditable P12 fragment in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-139 | I22 TUI-diff readiness evidence | EVIDENCE | record auditable P12 fragment
 
@@ -8179,7 +8179,7 @@ Report the fragment path, parse and ignored-status results, requirement IDs, rev
 Successor: P50-140. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin ONNX and GGUF runtimes, devices, grammar, and zero-network review in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-140 | P50-I24 | RED | pin ONNX and GGUF runtimes, devices, grammar, and zero-network review
 
@@ -8231,7 +8231,7 @@ Successor: P50-141. Report exact changed paths, commands, exits, evidence, block
 
 Implement ONNX and GGUF offline review adapters in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-141 | P50-I24 | GREEN | implement ONNX and GGUF offline review adapters
 
@@ -8285,7 +8285,7 @@ Successor: P50-142. Report exact changed paths, commands, exits, evidence, block
 
 Implement add isolated ONNX, CUDA, and GGUF optional extras in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-142 | P50-I24 | DEPENDENCY-VERIFY | verify isolated ONNX, CUDA, and GGUF optional extras
 
@@ -8340,7 +8340,7 @@ Successor: P50-143. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin offline-review registry, CLI adapter, and MCP equality in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-143 | P50-I24 | RED | pin offline-review registry, CLI adapter, and MCP equality
 
@@ -8394,7 +8394,7 @@ Successor: P50-144. Report exact changed paths, commands, exits, evidence, block
 
 Implement register offline-review and adapt `review --offline` in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-144 | P50-I24 | GREEN | register offline-review and adapt `review --offline`
 
@@ -8449,7 +8449,7 @@ Successor: P50-145. Report exact changed paths, commands, exits, evidence, block
 
 Implement document complete air-gapped offline review and model lifecycle in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-145 | P50-I24 | DOCS | document complete air-gapped offline review and model lifecycle
 
@@ -8502,7 +8502,7 @@ Successor: P50-146. Report exact changed paths, commands, exits, evidence, block
 
 Implement complete air-gapped ONNX/GGUF local-model runtime adapters in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-146 | P50-I24-RUNTIME | GREEN | complete air-gapped ONNX/GGUF local-model runtime adapters
 
@@ -8560,7 +8560,7 @@ Transition: RED tests prove missing adapters, model formats, devices, bounds, an
 Successor: P50-147. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement signed model registry and contained acquisition lifecycle in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-147 | P50-I24-REGISTRY | GREEN | signed model registry and contained acquisition lifecycle
 
@@ -8620,7 +8620,7 @@ Transition: RED tests reject unsigned, mutable, redirected, hash-mismatched, lic
 Successor: P50-148. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement OS-enforced air-gap and connection denial in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-148 | P50-I24-AIRGAP | GREEN | OS-enforced air-gap and connection denial
 
@@ -8679,7 +8679,7 @@ Transition: RED tests show socket/network and path-escape violations; GREEN runs
 Successor: P50-149. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement bounded grammar-constrained local inference in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-149 | P50-I24-INFERENCE | GREEN | bounded grammar-constrained local inference
 
@@ -8738,7 +8738,7 @@ Transition: RED tests reject unbounded prompts, malformed grammar, invalid JSON,
 Successor: P50-150. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement offline review public surfaces and compatibility routing in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-150 | P50-I24-TRANSPORT | GREEN | offline review public surfaces and compatibility routing
 
@@ -8796,7 +8796,7 @@ Transition: RED tests prove missing CLI/MCP/ADR routes, untyped options, acquisi
 Successor: P50-151. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement installed offline review acceptance and documentation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-151 | P50-I24-ACCEPTANCE | INSTALLED | installed offline review acceptance and documentation verification
 
@@ -8855,7 +8855,7 @@ Transition: RED installed tests/docs checks expose missing resources, routes, cl
 Successor: P50-152. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin benchmark sample and descriptive statistics in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-152 | P50-I26 | RED | pin benchmark sample and descriptive statistics
 
@@ -8907,7 +8907,7 @@ Successor: P50-153. Report exact changed paths, commands, exits, evidence, block
 
 Implement deterministic benchmark statistics core in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-153 | P50-I26 | GREEN | implement deterministic benchmark statistics core
 
@@ -8961,7 +8961,7 @@ Successor: P50-154. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin permissioned atomic baseline storage in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-154 | P50-I26 | RED | pin permissioned atomic baseline storage
 
@@ -9013,7 +9013,7 @@ Successor: P50-155. Report exact changed paths, commands, exits, evidence, block
 
 Implement add explicit atomic baseline recording in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-155 | P50-I26 | GREEN | add explicit atomic baseline recording
 
@@ -9066,7 +9066,7 @@ Successor: P50-156. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin benchmark registration and operation routes in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-156 | P50-I26 | RED | pin benchmark registration and operation routes
 
@@ -9118,7 +9118,7 @@ Successor: P50-157. Report exact changed paths, commands, exits, evidence, block
 
 Implement register benchmark with thin CLI operations in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-157 | P50-I26 | GREEN | register benchmark with thin CLI operations
 
@@ -9172,7 +9172,7 @@ Successor: P50-158. Report exact changed paths, commands, exits, evidence, block
 
 Implement document repeated suites, significance, thresholds, and baselines in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-158 | P50-I26 | DOCS | document repeated suites, significance, thresholds, and baselines
 
@@ -9224,7 +9224,7 @@ Successor: P50-159. Report exact changed paths, commands, exits, evidence, block
 
 Implement repeated benchmark suite orchestration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-159 | P50-I26-BENCHMARK | GREEN | repeated benchmark suite orchestration
 
@@ -9282,7 +9282,7 @@ Transition: RED tests demonstrate recorded-only or single-run benchmark gaps; GR
 Successor: P50-160. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement benchmark statistics and significance analysis in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-160 | P50-I26-STATISTICS | GREEN | benchmark statistics and significance analysis
 
@@ -9341,7 +9341,7 @@ Transition: RED tests reject mean-only, p95-only, threshold-only, or non-signifi
 Successor: P50-161. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement benchmark baseline persistence and recovery in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-161 | P50-I26-BASELINE | GREEN | benchmark baseline persistence and recovery
 
@@ -9400,7 +9400,7 @@ Transition: RED tests show partial/corrupt/untyped baseline writes and history l
 Successor: P50-162. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement benchmark public surfaces and typed configuration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-162 | P50-I26-TRANSPORT | GREEN | benchmark public surfaces and typed configuration
 
@@ -9457,7 +9457,7 @@ Transition: RED tests expose missing routes, options, baseline permissions, and 
 Successor: P50-163. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement installed benchmark acceptance and performance evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-163 | P50-I26-ACCEPTANCE | INSTALLED | installed benchmark acceptance and performance evidence
 
@@ -9516,7 +9516,7 @@ Transition: RED installed checks reveal missing benchmark resources, metrics, st
 Successor: P50-164. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin the complete polyglot asset, CSS, and design-token reference graph in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-164 | P50-I27-PARSE | RED | pin the complete polyglot asset, CSS, and design-token reference graph
 
@@ -9573,7 +9573,7 @@ Retain .rush/phase50-evidence/P50-164-red.json and the focused/full-file command
 Successor: P50-165. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement complete dead-asset and CSS-token reference graph in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-165 | P50-I27-GRAPH | GREEN | complete dead-asset and CSS-token reference graph
 
@@ -9631,7 +9631,7 @@ Transition: RED tests expose false positives from static-only scanning; GREEN bu
 Successor: P50-166. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement the complete read-only polyglot asset, CSS, and design-token graph in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-166 | P50-I27-PARSE | GREEN | implement the complete read-only polyglot asset, CSS, and design-token graph
 
@@ -9691,7 +9691,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-167. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin no-write dry run, deterministic manifest export, and guarded prune refusal in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-167 | P50-I27-PRUNE | RED | pin no-write dry run, deterministic manifest export, and guarded prune refusal
 
@@ -9752,7 +9752,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-168. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement permissioned manifest export and manifest-hash-rescan guarded pruning in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-168 | P50-I27-PRUNE | GREEN | implement permissioned manifest export and manifest-hash-rescan guarded pruning
 
@@ -9812,7 +9812,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-169. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin dead-asset CLI inventory, manifest, dry-run, and prune forwarding in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-169 | P50-I27-CLI | RED | pin dead-asset CLI inventory, manifest, dry-run, and prune forwarding
 
@@ -9868,7 +9868,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-170. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement register dead-asset CLI as a thin canonical adapter in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-170 | P50-I27-CLI | GREEN | register dead-asset CLI as a thin canonical adapter
 
@@ -9924,7 +9924,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-171. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin dead-asset MCP data parity and prune permission refusal in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-171 | P50-I27-MCP | RED | pin dead-asset MCP data parity and prune permission refusal
 
@@ -9980,7 +9980,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-172. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement register canonical dead-asset MCP data routing in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-172 | P50-I27-MCP | GREEN | register canonical dead-asset MCP data routing
 
@@ -10036,7 +10036,7 @@ Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-r
 Successor: P50-173. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement document the two-step prune protocol in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-173 | P50-I27 | DOCS | document the two-step prune protocol
 
@@ -10088,7 +10088,7 @@ Successor: P50-174. Report exact changed paths, commands, exits, evidence, block
 
 Implement dead-asset effect protocol and guarded prune in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-174 | P50-I27-EFFECT | GREEN | dead-asset effect protocol and guarded prune
 
@@ -10146,7 +10146,7 @@ Transition: RED tests expose deletion without explicit effect, stale graph, part
 Successor: P50-175. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement dead-asset public surfaces and installed evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-175 | P50-I27-ACCEPTANCE | INSTALLED | verify dead-asset public surfaces and installed evidence
 
@@ -10205,7 +10205,7 @@ Transition: RED checks expose missing routes, typed options, package resources, 
 Successor: P50-176. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement pin verified Git and ToolResult evidence aggregation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-176 | P50-I28 | RED | pin verified Git and ToolResult evidence aggregation
 
@@ -10257,7 +10257,7 @@ Successor: P50-177. Report exact changed paths, commands, exits, evidence, block
 
 Implement aggregate verified Git and ToolResult evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-177 | P50-I28 | GREEN | aggregate verified Git and ToolResult evidence
 
@@ -10311,7 +10311,7 @@ Successor: P50-178. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin permissioned contained PR Markdown export in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-178 | P50-I28 | RED | pin permissioned contained PR Markdown export
 
@@ -10363,7 +10363,7 @@ Successor: P50-179. Report exact changed paths, commands, exits, evidence, block
 
 Implement add guarded PR Markdown export in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-179 | P50-I28 | GREEN | add guarded PR Markdown export
 
@@ -10416,7 +10416,7 @@ Successor: P50-180. Report exact changed paths, commands, exits, evidence, block
 
 Implement pin pr-synthesize registration and route migration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-180 | P50-I28 | RED | pin pr-synthesize registration and route migration
 
@@ -10468,7 +10468,7 @@ Successor: P50-181. Report exact changed paths, commands, exits, evidence, block
 
 Implement register pr-synthesize and remove transport synthesis in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-181 | P50-I28 | GREEN | register pr-synthesize and remove transport synthesis
 
@@ -10522,7 +10522,7 @@ Successor: P50-182. Report exact changed paths, commands, exits, evidence, block
 
 Implement document evidence, risk, reviewers, formats, and missing states in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-182 | P50-I28 | DOCS | document evidence, risk, reviewers, formats, and missing states
 
@@ -10574,7 +10574,7 @@ Successor: P50-183. Report exact changed paths, commands, exits, evidence, block
 
 Implement complete PR evidence ingestion and provenance in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-183 | P50-I28-EVIDENCE | GREEN | complete PR evidence ingestion and provenance
 
@@ -10631,7 +10631,7 @@ Transition: RED tests prove PR cards lose evidence families or fabricate absent 
 Successor: P50-184. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement PR risk tiers, ownership, blame, and reviewer evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-184 | P50-I28-RISK | GREEN | PR risk tiers, ownership, blame, and reviewer evidence
 
@@ -10688,7 +10688,7 @@ Transition: RED tests expose ungrounded risk/reviewer badges or missing ownershi
 Successor: P50-185. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement deterministic dual-format PR card rendering in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-185 | P50-I28-RENDER | GREEN | deterministic dual-format PR card rendering
 
@@ -10745,7 +10745,7 @@ Transition: RED tests expose missing fields, unstable ordering, source-link loss
 Successor: P50-186. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement PR synthesis public surfaces and compatibility in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-186 | P50-I28-TRANSPORT | GREEN | PR synthesis public surfaces and compatibility
 
@@ -10801,7 +10801,7 @@ Transition: RED tests expose missing public routes, typed options, transport par
 Successor: P50-187. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement installed PR synthesis and source-bound delivery evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-187 | P50-I28-ACCEPTANCE | INSTALLED | installed PR synthesis and source-bound delivery evidence
 
@@ -10860,7 +10860,7 @@ Transition: RED installed checks expose missing package resources, routes, forma
 Successor: P50-188. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement prove one object per tool and preserve the explicit compatibility alias in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-188 | P50-INTEGRATION | EVIDENCE | prove one object per tool and preserve the explicit compatibility alias
 
@@ -10912,7 +10912,7 @@ Successor: P50-189. Report exact changed paths, commands, exits, evidence, block
 
 Implement author installed-artifact acceptance probes in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-189 | P50-INTEGRATION | ACCEPTANCE-PROBE | author installed-artifact acceptance probes
 
@@ -10973,7 +10973,7 @@ Successor: P50-190. Report exact changed paths, commands, exits, evidence, block
 
 Implement independently reproduce and record installed-artifact behavior in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-190 | P50-INTEGRATION | EVIDENCE | independently reproduce and record installed-artifact behavior
 
@@ -11030,7 +11030,7 @@ Successor: P50-191. Report exact changed paths, commands, exits, evidence, block
 
 Implement run the exact phase gate and freeze evidence in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-191 | P50-INTEGRATION | HANDOFF | run the exact phase gate and freeze evidence
 
@@ -11098,7 +11098,7 @@ Successor: P50-192. Report exact changed paths, commands, exits, evidence, block
 
 Implement Phase 49 admission and all-42 baseline in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-192 | P50-INTEGRATION-ADMISSION | VERIFY | Phase 49 admission and all-42 baseline
 
@@ -11106,7 +11106,7 @@ Transition: RED tests fail on missing predecessor, wrong worktree, dirty tracked
 
 ## Required behavior
 
-1. Implement tests/test_phase50_admission.py to verify the accepted Phase 49 close SHA, designated non-main implementation worktree C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration, clean tracked state, Python 3.12 project interpreter, and passing recorded Phase 49 baselines before any behavior-changing Phase 50 task.
+1. Implement tests/test_phase50_admission.py to verify the accepted Phase 49 close SHA, designated non-main implementation worktree C:\Users\james\developer\rush-cli\.worktrees\phase50-implementation, clean tracked state, Python 3.12 project interpreter, and passing recorded Phase 49 baselines before any behavior-changing Phase 50 task.
 2. Enumerate every innovation I01 through I42 from `docs/developer/rush-token-innovation-enhancement-report-plan.md`, reconcile it against `docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md` and `docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md`, and capture each exact source heading, line span, SHA-256, requirement slices, current implementation status, test/doc/evidence owner, baseline command, exit code, and blocker truth; missing or unavailable predecessor evidence blocks admission without narrowing scope.
 3. Verify pyproject.toml/uv.lock consistency and all shared dependencies/engines required by the plan, including codebleu, tree-sitter-language-pack, license-expression, python-hcl2, psutil, textual, scipy, optional onnxruntime/onnxruntime-gpu/llama-cpp-python, external Node 22.15+, Cosign, and slsa-verifier; record unavailable optional engines as explicit skips only where the contract permits.
 4. Emit .rush/phase50-evidence/P50-192.json with revision/worktree/runtime, all-42 rows, the three authority-file digests plus exact heading/line-span map, command/exit ledger, baseline digests, dependency/lock disposition, and blockers; do not alter source, tests, dependencies, version, Git history, release state, or evidence inputs.
@@ -11156,7 +11156,7 @@ Transition: RED tests fail on missing predecessor, wrong worktree, dirty tracked
 Successor: P50-193. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement the 38-current-plus-14 52-row integration matrix and historical all-42 subset in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-193 | P50-INTEGRATION-MATRIX | VERIFY | 38-current-plus-14 matrix with separate historical subset
 
@@ -11214,7 +11214,7 @@ Transition: RED tests expose missing rows or arithmetic/scope drift; GREEN valid
 Successor: P50-194. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement transport identity and legacy parity in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-194 | P50-INTEGRATION-TRANSPORT | VERIFY | transport identity and legacy parity
 
@@ -11271,7 +11271,7 @@ Transition: RED tests detect duplicate ToolFn logic, route-only behavior, JSON-R
 Successor: P50-195. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement quality evidence to SLSA attestation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-195 | P50-INTEGRATION-ATTESTATION | VERIFY | quality evidence to SLSA attestation
 
@@ -11329,7 +11329,7 @@ Transition: RED tests show quality results absent or unbound from signed provena
 Successor: P50-196. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement attribution and TUI correlation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-196 | P50-INTEGRATION-ATTRIBUTION | VERIFY | attribution and TUI correlation
 
@@ -11387,7 +11387,7 @@ Transition: RED tests show trailer/session attribution or TUI deltas without sha
 Successor: P50-197. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement complete I28 evidence integration in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-197 | P50-INTEGRATION-PR | VERIFY | complete I28 evidence integration
 
@@ -11445,7 +11445,7 @@ Transition: RED tests show PR synthesis dropping one evidence family or displayi
 Successor: P50-198. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement performance corpus manifest and coverage in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-198 | P50-INTEGRATION-PERFORMANCE | VERIFY | performance corpus manifest and coverage
 
@@ -11503,7 +11503,7 @@ Transition: RED tests expose missing language/size/tool/runtime/quality cases; G
 Successor: P50-199. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement measured performance evidence and release decisions in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-199 | P50-INTEGRATION-PERFORMANCE-EVIDENCE | VERIFY | measured performance evidence and release decisions
 
@@ -11561,7 +11561,7 @@ Transition: RED tests reject unmeasured, single-run, mean-only, or non-significa
 Successor: P50-200. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement packaging contract in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-200 | P50-INTEGRATION-PACKAGING | RED | packaging contract
 
@@ -11618,7 +11618,7 @@ Transition: RED tests fail only at missing complete package-data/resource/route 
 Successor: P50-201. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement package-data-only installation in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-201 | P50-INTEGRATION-PACKAGING | GREEN | package-data-only installation
 
@@ -11677,7 +11677,7 @@ Transition: GREEN satisfies the unchanged P50-200 contract from clean wheel/sdis
 Successor: P50-202. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement documentation claim contract in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-202 | P50-INTEGRATION-DOCS | RED | documentation claim contract
 
@@ -11734,7 +11734,7 @@ Transition: RED tests identify missing, stale, narrowed, contradictory, or undis
 Successor: P50-203. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement source-bound documentation claims in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-203 | P50-INTEGRATION-DOCS | GREEN | source-bound documentation claims
 
@@ -11791,7 +11791,7 @@ Transition: GREEN passes unchanged P50-202 checks with complete, exact, source-b
 Successor: P50-204. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement release workflow contract in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-204 | P50-INTEGRATION-RELEASE | RED | release workflow contract
 
@@ -11847,7 +11847,7 @@ Transition: RED tests fail on missing or unsafe workflow/provenance/package/ship
 Successor: P50-205. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement release workflow and ship-boundary verification in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-205 | P50-INTEGRATION-RELEASE | GREEN | release workflow and ship-boundary verification
 
@@ -11913,7 +11913,7 @@ Transition: GREEN passes unchanged release RED contracts and proves complete rel
 Successor: P50-206. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement installed public behavior matrix in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-206 | P50-INTEGRATION-INSTALLED | INSTALLED | installed public behavior matrix
 
@@ -11970,7 +11970,7 @@ Installed acceptance exposes source-only or transport-only success and verifies 
 Successor: P50-207. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement full regression gate in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-207 | P50-INTEGRATION-SHIP | RED | pin seven-vector ship gate against the full-regression baseline
 
@@ -12029,7 +12029,7 @@ Transition: RED preserves the complete regression baseline and exposes the missi
 Successor: P50-208. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement ship gate and no-release boundary in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-208 | P50-INTEGRATION-SHIP | GREEN | ship gate and no-release boundary
 
@@ -12085,7 +12085,7 @@ Transition: RED blocks on any incomplete requirement/evidence; GREEN produces a 
 Successor: P50-209. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement evidence ledger contract in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-209 | P50-INTEGRATION-EVIDENCE | RED | evidence ledger contract
 
@@ -12142,7 +12142,7 @@ Transition: RED tests identify missing fields, stale digests, absent commands, u
 Successor: P50-210. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement evidence ledger and reproducibility in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-210 | P50-INTEGRATION-EVIDENCE | GREEN | evidence ledger and reproducibility
 
@@ -12198,7 +12198,7 @@ Transition: GREEN passes unchanged P50-209 with one-revision, source-bound, comp
 Successor: P50-211. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement release-note and architecture consistency in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-211 | P50-INTEGRATION-CONSISTENCY | VERIFY | release-note and architecture consistency
 
@@ -12254,7 +12254,7 @@ Transition: RED tests identify claims in release notes/architecture docs that di
 Successor: P50-212. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement security claim review in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-212 | P50-INTEGRATION-SECURITY | VERIFY | security claim review
 
@@ -12311,7 +12311,7 @@ Transition: RED tests expose overclaims or missing proof; GREEN verifies every s
 Successor: P50-213. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement v0.2 config migration and compatibility in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-213 | P50-INTEGRATION-CONFIG | VERIFY | v0.2 config migration and compatibility
 
@@ -12367,7 +12367,7 @@ Transition: RED tests identify unknown keys, invalid typed values, catalog/confi
 Successor: P50-214. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement public reference parity in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-214 | P50-INTEGRATION-REFERENCES | VERIFY | public reference parity
 
@@ -12424,7 +12424,7 @@ Transition: RED tests identify route/options/symbol/schema/help/docs drift; GREE
 Successor: P50-215. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement scope fidelity and path ownership audit in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-215 | P50-INTEGRATION-SCOPE | VERIFY | scope fidelity and path ownership audit
 
@@ -12480,7 +12480,7 @@ Transition: RED identifies omitted/narrowed requirements, unowned/duplicate path
 Successor: P50-216. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement one-revision ledger and artifact identity in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-216 | P50-INTEGRATION-REVISION | VERIFY | one-revision ledger and artifact identity
 
@@ -12538,7 +12538,7 @@ Successor: P50-217. Report exact changed paths, commands, exits, evidence, block
 
 Implement final verification gate in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-217 | P50-INTEGRATION-FINAL | VERIFY | final verification gate
 
@@ -12595,7 +12595,7 @@ Transition: RED blocks on any uncovered, failed, skipped, unsupported, unowned, 
 Successor: P50-218. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement flagship readiness handoff in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-218 | P50-INTEGRATION-HANDOFF | HANDOFF | flagship readiness handoff
 
@@ -12652,7 +12652,7 @@ Transition: RED identifies absent handoff artifacts or unsupported readiness cla
 Successor: P50-219. Report exact changed paths, commands, exits, evidence, blockers, and this successor; claim no later task complete.
 Implement lifecycle boundary and clean worktree audit in rush-cli in the current working directory.
 
-Read AGENTS.md and C:\Users\james\developer\rush-cli\.worktrees\p50-plan-scope-restoration\docs\phase-plans\phase-50-slsa-attestation-security-suite-flagship-plan.md first; both are binding.
+Read AGENTS.md and docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md from the current working directory first; both are binding.
 
 # Feature: P50-219 | P50-INTEGRATION-LIFECYCLE | VERIFY | lifecycle boundary and clean worktree audit
 
