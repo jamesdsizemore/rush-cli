@@ -199,3 +199,10 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - `ProvenanceAiTool`: Git log trailer analyzer and code survival rate baseline evaluator.
 - `DeadAssetTool`: Polyglot static asset reference scanner with space savings calculation and guarded deletion.
 - `PrSynthesizeTool`: Semantic PR description card synthesizer with risk tiering and CODEOWNERS routing.
+
+### Phase 50c Architecture: Performance Profiling & Honest Provenance
+- `AttestationTool`: Generates honest unsigned SLSA provenance drafts binding built artifacts in `dist/`.
+- `MemProfileTool`: Static resource leak analyzer and dynamic memory slope profiler.
+- `ColdStartTool`: Top-level heavy import detector and cold-start waterfall analyzer.
+- `OfflineReviewTool`: Air-gapped local ONNX model reviewer with zero network dependency.
+- `BenchmarkTool`: Performance regression guard using stdlib statistics against `.rush/baselines.json`.

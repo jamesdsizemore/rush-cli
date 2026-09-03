@@ -79,3 +79,9 @@ When contributing to `provenance-ai`, `dead-asset`, or `pr-synthesize`, ensure:
 1. All tools remain strictly read-only by default; zero unprompted Git mutations or file deletions.
 2. File writes require explicit `--allow-artifact-write` and path containment validation.
 3. Tests use temporary Git repositories initialized via `subprocess.run(['git', 'init', ...])`.
+
+### Phase 50c Tools: Profiling, Benchmarking & Provenance
+When contributing to Phase 50c tools:
+1. Never add `scipy`, `onnxruntime`, or `llama-cpp-python` as required dependencies. Rush uses stdlib `statistics`.
+2. Never claim SLSA Build Level 3 for local CLI runs. Mark attestations as `unsigned_draft`.
+3. Keep dynamic executions strictly guarded behind `--allow-slow`.

@@ -102,3 +102,24 @@ export_manifest = ""
 base_ref = "main"
 export_path = ""
 ```
+
+### Phase 50c Tool Configuration Tables
+```toml
+[tools.attest]
+builder_id = "https://rush-cli.org/builder/v1"
+output_path = ""
+
+[tools.mem-profile]
+dynamic = false
+
+[tools.cold-start]
+dynamic = false
+
+[tools.offline-review]
+model_path = ".rush/models/review.onnx"
+defect_threshold = 0.5
+
+[tools.benchmark]
+threshold_percent = 5.0
+baseline_name = "default"
+```

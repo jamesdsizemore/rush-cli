@@ -14,7 +14,7 @@ This guide explains how Rush exposes its 52 catalogued tools as a Model Context 
 
 ## 1. FastMCP Server Architecture (`src/rush/mcp.py`)
 
-Rush uses the `mcp` Python library (FastMCP) to register tools. Each tool is registered with `tool.__call__` named `rush_<canonical_name>` (hyphens normalized to underscores, e.g. `rush_error_catalog`, `rush_license_matrix`, `rush_iam_audit`), with `rush_attest_generate` preserved as an explicit alias. Duplicate wrapper functions are strictly prohibited.
+Rush uses the `mcp` Python library (FastMCP) to register tools. Each tool is registered with `tool.__call__` named `rush_<canonical_name>` (hyphens normalized to underscores, e.g. `rush_error_catalog`, `rush_license_matrix`, `rush_iam_audit`, `rush_provenance_ai`, `rush_dead_asset`, `rush_pr_synthesize`, `rush_attest`, `rush_mem_profile`, `rush_cold_start`, `rush_offline_review`, `rush_benchmark`), with `rush_attest_generate` preserved as an explicit alias. Duplicate wrapper functions are strictly prohibited.
 
 ---
 

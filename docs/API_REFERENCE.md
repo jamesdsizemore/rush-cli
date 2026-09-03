@@ -313,3 +313,10 @@ For guidelines on creating new tools or engines, see the [Developer Guide](DEVEL
 - `ProvenanceAiTool`: Subclasses `ToolFn`. Audits AI code attribution and provenance via Git trailers.
 - `DeadAssetTool`: Subclasses `ToolFn`. Scans unreferenced static assets and computes space savings.
 - `PrSynthesizeTool`: Subclasses `ToolFn`. Synthesizes semantic PR markdown card with risk tiering and CODEOWNERS routing.
+
+## 14. Phase 50c Tools (`src/rush/tools/`)
+- `AttestationTool`: Generates in-toto Statement v1 unsigned provenance drafts.
+- `MemProfileTool`: Analyzes static unclosed resources and samples dynamic RSS memory.
+- `ColdStartTool`: Identifies heavy top-level imports and parses `-X importtime`.
+- `OfflineReviewTool`: Executes air-gapped local ONNX code review.
+- `BenchmarkTool`: Compares performance samples against baselines using stdlib `statistics`.

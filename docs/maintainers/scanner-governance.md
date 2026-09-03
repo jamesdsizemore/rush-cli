@@ -73,6 +73,11 @@ may remain `skipped`; they must not be represented as passing evidence.
 - **Dead Asset**: Strictly read-only analysis by default. Pruning requires explicit `--prune` and `--allow-artifact-write` with SHA-256 pre-deletion validation.
 - **PR Synthesize**: Offline diff extraction, risk tier computation, and CODEOWNERS routing with zero network calls.
 
+## Performance Profiling, Offline Review & Provenance Governance (Phase 50c)
+- **Honest SLSA Drafts**: Local runs must explicitly label build attestations as unsigned drafts; zero fraudulent Level 3 claims.
+- **Zero Heavy AI Dependencies**: Never require `onnxruntime` or `scipy`; use stdlib statistics and optional external engines.
+- **Dynamic Profiling Safeguard**: Subprocess profiling is strictly gated under `--allow-slow`.
+
 ## Deprecation policy
 
 Do not silently remove or relabel a visible scanner. Deprecation requires a

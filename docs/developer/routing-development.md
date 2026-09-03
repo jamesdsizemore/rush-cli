@@ -40,3 +40,10 @@ Never treat a `Path.glob()` generator itself as truthy; use `any()` over matches
 - `provenance-ai` routes Git commit parsing through `git log --format` subprocess isolation.
 - `dead-asset` routes asset references across polyglot source trees.
 - `pr-synthesize` routes file diffs against CODEOWNERS pattern registries.
+
+### Phase 50c Routing
+- `attest` routes artifact discovery to `dist/` or direct file targets.
+- `mem-profile` routes static AST checks immediately and dynamic probes under `--allow-slow`.
+- `cold-start` routes static AST import scans and `-X importtime` subprocesses.
+- `offline-review` routes local ONNX model paths to optional `onnxruntime`.
+- `benchmark` routes baseline read/write operations to `.rush/baselines.json`.

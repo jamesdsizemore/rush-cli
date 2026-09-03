@@ -52,3 +52,10 @@ See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md
 - **`provenance-ai` returns `shallow_history: True`**: The repository is a shallow clone (`.git/shallow` exists or `git rev-parse --is-shallow-repository` is true). Historical commit trailers prior to clone depth are omitted.
 - **`dead-asset` unreferenced warnings**: Assets are flagged if neither filename nor relative path appears in source files. Check for dynamic string interpolation in templates.
 - **`pr-synthesize` CODEOWNERS matching**: Rules are matched against relative file paths from repository root using standard `fnmatch` patterns.
+
+### Phase 50c Troubleshooting
+- **`attest` subject is `source-tree` instead of package**: No built distribution file (`.whl` or `.tar.gz`) was found in `dist/`. Run `uv build` first, or specify `--artifact-path`.
+- **`mem-profile` returns `skipped` for dynamic mode**: Dynamic profiling requires explicit `--allow-slow` permission.
+- **`cold-start` heavy import warnings**: Move heavy package imports (`torch`, `pandas`, `boto3`) inside the function or method where they are used.
+- **`offline-review` returns `skipped`**: The ONNX model `.rush/models/review.onnx` or the `onnxruntime` package is not present.
+- **`benchmark` returns `skipped`**: No baseline was found in `.rush/baselines.json`. Run `rush benchmark check . --record --allow-cache-write` to establish a baseline.

@@ -32,3 +32,9 @@ Unused image and font files bloat application repositories and Docker containers
 rush dead-asset .
 ```
 Rush identifies unreferenced assets and calculates potential disk space savings.
+
+## Resource Lifecycle & Leak Auditing (`rush mem-profile`)
+Detect unclosed file handles, database connections, and sockets outside context managers:
+```bash
+rush mem-profile .
+```

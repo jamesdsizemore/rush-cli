@@ -65,6 +65,12 @@ Run `rush provenance-ai .`, `rush dead-asset .`, and `rush pr-synthesize .` to g
 rush pr-synthesize . --export-path artifacts/PR_CARD.md --allow-artifact-write
 ```
 
-## Step 12: Generate Build Attestation (Phase 50c)
+## Step 12: Cold-Start Check & Build Attestation (Phase 50c)
+Check for heavy imports and generate honest build provenance drafts:
+```bash
+rush cold-start .
+rush attest . --export-path artifacts/provenance.json --allow-artifact-write
+```
+
 Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.
 

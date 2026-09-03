@@ -92,3 +92,18 @@ Scans unreferenced assets at `<path>`, calculates space savings, and generates m
 
 ### `rush_pr_synthesize`
 Synthesizes semantic PR markdown card with risk tiering and CODEOWNERS routing.
+
+### `rush_attest`
+Generates in-toto Statement v1 SLSA provenance draft at `<path>`.
+
+### `rush_mem_profile`
+Performs static resource lifecycle audit and dynamic memory sampling.
+
+### `rush_cold_start`
+Performs static import analysis and dynamic `-X importtime` audit.
+
+### `rush_offline_review`
+Runs air-gapped local ONNX review model at `<path>`.
+
+### `rush_benchmark`
+Compares performance samples against baseline thresholds at `<path>`.

@@ -38,6 +38,12 @@ Produce in-toto Statement v1 / SLSA Provenance v1 unsigned drafts with SHA-256 d
 rush attest . --target-artifact dist/app-0.1.0-py3-none-any.whl --export-path dist/app-0.1.0.intoto.json --allow-artifact-write
 ```
 
+## 5a. Performance Baseline & Regression Check (Phase 50c)
+Compare execution samples against recorded baselines in `.rush/baselines.json`:
+```bash
+rush benchmark check .
+```
+
 ## 6. Synthesizing PR Release Cards (Phase 50b)
 Synthesize structured pull request release markdown cards from Git diff and test evidence:
 ```bash

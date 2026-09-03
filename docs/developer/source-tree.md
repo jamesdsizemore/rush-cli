@@ -122,16 +122,14 @@ src/rush/tools/
 └── pr_synthesize.py  # Semantic PR card synthesizer, risk tiering & CODEOWNERS router
 ```
 
-## Phase 50c Performance Profiling & Flagship Provenance Modules (Planned)
+## Phase 50c Performance Profiling, Offline Review & Provenance Modules
 ```
 src/rush/tools/
-├── attest.py         # SLSA Level 3 provenance generator
-├── prompt_eval.py    # Golden prompt evaluation runner
-├── mem_profile.py    # Memory leak & profiler
-├── cold_start.py     # Module cold-start analyzer
-├── benchmark.py      # Baseline comparator
-├── offline_review.py # Local ONNX reviewer
-└── tui_diff.py       # Rich table commit differ
+├── attest.py         # in-toto Statement v1 & SLSA provenance unsigned draft generator
+├── mem_profile.py    # Static AST unclosed resource auditor & dynamic tracemalloc sampler
+├── cold_start.py     # Static heavy import detector & -X importtime waterfall analyzer
+├── offline_runner.py # Air-gapped local ONNX model reviewer
+└── benchmark.py      # Performance baseline comparator with stdlib statistics
 ```
 
 ## Benchmark Harness & Verification Modules (Phases B1–B6)

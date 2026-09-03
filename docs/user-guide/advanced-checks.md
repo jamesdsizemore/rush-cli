@@ -119,3 +119,10 @@ Generate a production-ready PR card with diff stats, risk tiering, and CODEOWNER
 ```bash
 rush pr-synthesize . --export-path reports/PR_CARD.md --allow-artifact-write
 ```
+
+## 6. Cold-Start Profiling & Benchmark Baselines
+Detect slow top-level imports and enforce performance regression gates:
+```bash
+rush cold-start .
+rush benchmark check .
+```

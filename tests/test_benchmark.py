@@ -76,3 +76,23 @@ def test_benchmark_detects_regression(tmp_path: Path) -> None:
     assert len(res["findings"]) == 1
     assert res["findings"][0]["rule"] == "benchmark/performance-regression"
     assert "Performance regressed by 20.00%" in res["findings"][0]["message"]
+
+
+def test_benchmark_ignores_nan_and_inf_samples(tmp_path: Path) -> None:
+    tool = BenchmarkTool()
+    tool.run(
+        tmp_path,
+        samples=[100.0, float("nan"), float("inf"), 100.0],
+        record=True,
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+    # Clean samples only: mean should be 100.0
+    baselines_file = tmp_path / ".rush" / "baselines.json"
+    assert baselines_file.is_file()
+
+    import json
+
+    data = json.loads(baselines_file.read_text(encoding="utf-8"))
+    assert data["default"]["mean"] == 100.0
+    assert data["default"]["count"] == 2

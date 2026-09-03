@@ -5,9 +5,9 @@
 [![PyPI Version](https://img.shields.io/badge/version-0.3.0-00ffff.svg?style=flat-square)](pyproject.toml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB.svg?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![FastMCP stdio](https://img.shields.io/badge/MCP-FastMCP%20stdio-00ffff.svg?style=flat-square&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io)
-[![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203%20Attested-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
+[![SLSA Level 3](https://img.shields.io/badge/SLSA-Unsigned%20Draft%20Provenance-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-[![Tests Passing](https://img.shields.io/badge/tests-947%20passed%20%28223%20files%29-22c55e.svg?style=flat-square)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-955%20passed%20%28224%20files%29-22c55e.svg?style=flat-square)](tests/)
 [![Engine Adapters](https://img.shields.io/badge/engines-124%20adapters-blueviolet.svg?style=flat-square)](src/rush/engines/)
 [![Docs Synchronized](https://img.shields.io/badge/docs-295%20files%20synchronized-blue.svg?style=flat-square)](docs/)
 

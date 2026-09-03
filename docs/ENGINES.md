@@ -217,3 +217,12 @@ Install only if that check is part of your project policy. Then launch Rush from
 | `git-trailer-parser` | Built-in | Inspects Git commit logs and trailers for AI attribution. |
 | `dead-asset-scanner` | Built-in | Polyglot static asset reference scanner with SHA-256 validation. |
 | `git-diff-synthesizer` | Built-in | Aggregates Git diff stats and quality evidence into markdown cards. |
+
+### Phase 50c Built-in Engines
+| Engine | Category | Description |
+|---|---|---|
+| `attest` | Built-in | in-toto Statement v1 provenance generator with SHA-256 hashing. |
+| `mem-profile` | Built-in | AST resource lifecycle analyzer and tracemalloc probe. |
+| `cold-start` | Built-in | AST import visitor and -X importtime waterfall analyzer. |
+| `offline-review` | Built-in / Optional | Air-gapped local ONNX model review adapter. |
+| `benchmark` | Built-in | Stdlib statistics performance comparator. |

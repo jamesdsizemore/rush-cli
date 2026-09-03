@@ -124,3 +124,19 @@ def test_attest_legacy_generator_backward_compatibility(tmp_path: Path) -> None:
     assert stmt["predicateType"] == "https://slsa.dev/provenance/v1"
     assert stmt["subject"][0]["name"] == "rush.whl"
     assert "sha256" in stmt["subject"][0]["digest"]
+
+
+def test_attest_auto_discovers_dist_artifacts(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    wheel_file = dist_dir / "rush_cli-0.3.0-py3-none-any.whl"
+    wheel_file.write_bytes(b"built wheel binary artifact")
+    expected_digest = hashlib.sha256(b"built wheel binary artifact").hexdigest()
+
+    tool = AttestationTool()
+    result = tool.run(tmp_path)
+
+    assert result["status"] == "ok"
+    raw = result.get("raw") or {}
+    assert raw["subject"][0]["name"] == "rush_cli-0.3.0-py3-none-any.whl"
+    assert raw["subject"][0]["digest"]["sha256"] == expected_digest

@@ -141,14 +141,12 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush dead-asset`: Polyglot static asset reference scanner with potential disk space savings calculation ([guide](tools/dead_asset.md)).
 * `rush pr-synthesize`: Structured semantic GitHub PR card generator with risk tiering and CODEOWNERS routing ([guide](tools/pr_synthesize.md)).
 
-### Phase 50c: Performance Profiling & Provenance
-* `rush attest`: in-toto Statement v1 unsigned provenance draft generator ([guide](tools/attest.md)).
-* `rush prompt-eval`: Golden prompt evaluation runner and cost matrix ([guide](tools/prompt_eval.md)).
-* `rush mem-profile`: Static resource leak and dynamic memory profiler ([guide](tools/mem_profile.md)).
-* `rush cold-start`: Module import latency and cold-start analyzer ([guide](tools/cold_start.md)).
-* `rush offline-review`: Air-gapped local ONNX model review runner ([guide](tools/offline_runner.md)).
-* `rush tui-diff`: Git commit finding delta computer and Rich table renderer ([guide](tools/tui_diff.md)).
-* `rush benchmark`: Performance sample comparator against `.rush/baselines.json` thresholds ([guide](tools/benchmark.md)).
+### Phase 50c: Performance Profiling, Offline Review & Provenance
+* `rush attest`: Honest in-toto Statement v1 / SLSA v1.0 unsigned draft generator binding distribution artifacts ([guide](tools/attest.md)).
+* `rush mem-profile`: Static AST unclosed resource auditor and dynamic RSS memory sampling under `--allow-slow` ([guide](tools/mem_profile.md)).
+* `rush cold-start`: Static heavy import detector and dynamic `-X importtime` waterfall analyzer under `--allow-slow` ([guide](tools/cold_start.md)).
+* `rush offline-review`: Air-gapped local ONNX review runner and external local engine discovery ([guide](tools/offline_runner.md)).
+* `rush benchmark`: Repeated performance sample comparator with stdlib `statistics` against `.rush/baselines.json` ([guide](tools/benchmark.md)).
 
 
 ## Benchmark Harness & Verification Framework (Phases B1–B6)

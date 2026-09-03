@@ -84,3 +84,9 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 - **Read-Only Git Inspection**: `provenance-ai` and `pr-synthesize` only read Git logs and diffs. They never rewrite history or create commits.
 - **Zero-Deletion Default**: `dead-asset` never deletes files unless explicit `--prune` and `--allow-artifact-write` are provided with SHA-256 validation.
 - **Offline Card Synthesis**: PR cards are generated locally without external GitHub API tokens.
+
+## Phase 50c Security: Honest Provenance & Profiling Safety
+- **Honest SLSA Drafts**: In-toto statements clearly state `assurance: unsigned_draft` without fraudulent Level 3 assertions.
+- **Dynamic Execution Permission Gates**: Dynamic profiling (`tracemalloc`, `-X importtime`) requires explicit `--allow-slow`.
+- **Cache Write Guard**: Benchmark baselines write only under `--allow-cache-write`.
+- **Air-Gapped Offline Review**: Local model evaluation never performs outbound HTTP/HTTPS network calls.

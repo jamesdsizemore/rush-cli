@@ -85,7 +85,13 @@ class BenchmarkTool(ToolFn):
         baseline_file = rush_dir / "baselines.json"
         granted_perms = permissions or ExecutionPermissions()
 
-        sample_list = [float(s) for s in (samples or [])]
+        import math
+
+        sample_list = [
+            float(s)
+            for s in (samples or [])
+            if not math.isnan(float(s)) and not math.isinf(float(s))
+        ]
         is_record = record or (operation == "record")
 
         if is_record:

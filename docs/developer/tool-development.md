@@ -83,3 +83,10 @@ See [Engine Development](engine-development.md) and [Coding Standards](coding-st
 - `provenance-ai`: Parses Git log trailers (`Co-authored-by:`, `Generated-by:`, `Model:`, `Agent:`), detects shallow clones, and records survival state.
 - `dead-asset`: Polyglot asset cross-referencing across templates, styles, and scripts; computes potential savings; guarded pruning strictly gated.
 - `pr-synthesize`: Evaluates `git diff --numstat`, aggregates quality evidence, computes risk tier (`low`/`medium`/`high`), and routes CODEOWNERS.
+
+### Phase 50c: Performance Profiling, Offline Review & Provenance Tools
+- `attest`: Generates in-toto Statement v1 / SLSA v1.0 unsigned drafts binding real artifact hashes from `dist/`.
+- `mem-profile`: Static AST unclosed resource analysis and dynamic memory sampling guarded by `--allow-slow`.
+- `cold-start`: Static heavy top-level import detection and dynamic `-X importtime` execution under `--allow-slow`.
+- `offline-review`: Local air-gapped ONNX review runner; gracefully skips when ONNX models or runners are absent.
+- `benchmark`: Repeated benchmark execution using stdlib `statistics`, storing baselines in `.rush/baselines.json`.

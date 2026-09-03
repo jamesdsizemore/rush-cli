@@ -90,3 +90,10 @@ See [Tool Development](tool-development.md) and [Coding Standards](coding-standa
 - `git-trailer-parser`: Uses `git log` with format `%H%x00%an%x00%ae%x00%at%x00%B%x01` to parse commit metadata and trailers.
 - `dead-asset-scanner`: In-memory polyglot regex and AST reference scanner with SHA-256 validation.
 - `git-diff-synthesizer`: Runs `git diff --stat` and `--numstat`, parses CODEOWNERS, and synthesizes markdown card.
+
+### Phase 50c Engines
+- `attest`: Built-in in-toto Statement v1 generator with SHA-256 artifact hashing.
+- `mem-profile`: Built-in AST `_ResourceLifecycleVisitor` and stdlib `tracemalloc` dynamic probe.
+- `cold-start`: Built-in AST `_ImportVisitor` and Python `-X importtime` parser.
+- `offline-review`: Optional `onnxruntime` inference adapter; returns `skipped` when absent.
+- `benchmark`: Built-in stdlib `statistics` mean/median regression calculator.

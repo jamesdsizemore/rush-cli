@@ -9,4 +9,9 @@
 6. `dead-asset` is strictly read-only by default; pruning requires explicit `--prune` and `--allow-artifact-write` with SHA-256 validation.
 7. `pr-synthesize` artifact export requires `--allow-artifact-write` and operates completely offline with local Git diff extraction.
 
+8. `attest` produces honest unsigned local provenance drafts (`assurance: unsigned_draft`) and binds built distribution artifacts in `dist/`; it intentionally does not claim SLSA Level 3 without external cryptographic signing.
+9. `mem-profile` and `cold-start` run static AST analyses by default (0s overhead); dynamic profiling requires explicit `--allow-slow`.
+10. `offline-review` requires a local ONNX model file and `onnxruntime` or external local runner on PATH; returns `status='skipped'` if uninstalled.
+11. `benchmark check` compares against recorded baselines; updating or recording baselines requires `--allow-cache-write`.
+
 These reflect current design constraints and boundaries.

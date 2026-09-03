@@ -187,3 +187,18 @@ Scan repository for unreferenced static media, fonts, and assets with potential 
 
 ### `rush pr-synthesize`
 Synthesize semantic PR markdown card from Git diff, risk tiering, and CODEOWNERS routing.
+
+### `rush attest`
+Generate in-toto Statement v1 SLSA provenance draft for built distribution artifacts in `dist/`.
+
+### `rush mem-profile`
+Scan Python code for unclosed resources (files, sockets, handles) and sample RSS memory.
+
+### `rush cold-start`
+Detect heavy top-level imports and analyze import latency waterfall.
+
+### `rush offline-review`
+Run air-gapped local ONNX code review model over codebase files.
+
+### `rush benchmark`
+Compare performance execution samples against recorded thresholds in `.rush/baselines.json`.

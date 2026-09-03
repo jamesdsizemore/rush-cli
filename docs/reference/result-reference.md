@@ -101,3 +101,9 @@ Adapt shell syntax to your platform. Preserve the JSON in CI artifacts when it h
 - `metadata.risk_tier`: Overall risk assessment (`"low"`, `"medium"`, `"high"`).
 - `metadata.recommended_reviewers`: List of CODEOWNERS matched for the diff.
 - `metadata.potential_savings_bytes`: Unreferenced asset byte savings.
+
+### Phase 50c Result Metadata
+- `metadata.slsa_predicate`: in-toto v1 SLSA provenance predicate dictionary.
+- `metadata.unclosed_resources`: List of unclosed files/connections detected.
+- `metadata.heavy_imports`: List of heavy top-level package imports flagged.
+- `metadata.benchmark_stats`: Sample statistics (`mean`, `median`, `min`, `max`, `count`).

@@ -1,6 +1,7 @@
 # Attestation Tool (`rush attest`)
 
 ## Overview
+`rush attest` generates in-toto Statement v1 SLSA Provenance drafts binding real distribution artifacts in `dist/`. Per R-013, local runs produce explicit unsigned drafts (`assurance: unsigned_draft`) without fraudulent Level 3 claims.
 `rush attest` generates in-toto Statement v1 build provenance draft statements complying with SLSA Provenance v1 specifications. It links build artifacts to source commits and repository metadata without requiring network calls or uncontained file system access.
 
 ## Usage

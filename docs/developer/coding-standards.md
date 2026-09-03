@@ -57,3 +57,8 @@ See [Contributor Onboarding](contributor-onboarding.md) and [Tool Development Gu
 - **Zero Git History Mutation**: Attribution tools inspect commit logs and trailers; they must never rewrite commits, rebase, or alter Git state.
 - **Read-Only Asset Scans**: `dead-asset` scans assets and calculates savings. Pruning requires explicit `--prune` and `--allow-artifact-write`.
 - **Offline PR Synthesis**: `pr-synthesize` runs offline without external HTTP calls.
+
+### Phase 50c Honest Provenance & Profiling Standards
+- **Honest SLSA Claims (R-013)**: Local provenance generation must never claim SLSA Level 3 without external signing. Set `assurance: unsigned_draft`.
+- **Stdlib Statistics**: Compute statistical aggregations exclusively with `statistics` and `math`.
+- **Zero Heavy AI Bundling**: Never vendor large C++ inference runtimes. Gracefully skip when missing.

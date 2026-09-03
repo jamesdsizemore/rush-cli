@@ -148,3 +148,6 @@ See [Configuration cookbook](configuration-cookbook.md) and [developer configura
 
 ### `tools.provenance-ai`, `tools.dead-asset`, `tools.pr-synthesize`
 Configures commit depth, asset prune permissions, and PR base branches.
+
+### `tools.attest`, `tools.mem-profile`, `tools.cold-start`, `tools.offline-review`, `tools.benchmark`
+Configures builder identifiers, dynamic profiling flags, model paths, and benchmark thresholds.

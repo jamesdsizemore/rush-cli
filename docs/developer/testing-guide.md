@@ -80,3 +80,11 @@ Key invariants:
 - `tests/test_phase50b_integration.py`: End-to-end CLI JSON emission and FastMCP registration parity for all Phase 50b tools.
 
 
+
+## 7. Phase 50c Test Suites
+- `tests/test_attest.py`: in-toto v1 Statement generation, dist/ artifact discovery, unsigned draft assurance, export permission checks.
+- `tests/test_mem_profile.py`: Static AST unclosed resource detection, clean context managers, dynamic tracemalloc sampling.
+- `tests/test_cold_start.py`: Heavy top-level package detection, wildcard imports, dynamic importtime waterfall analysis.
+- `tests/test_offline_review.py`: Model absence handling, onnxruntime skip semantics, mocked inference session.
+- `tests/test_benchmark.py`: Missing baseline handling, cache write permission gating, regression detection.
+- `tests/test_phase50c_integration.py`: End-to-end CLI JSON emission and FastMCP registration parity for all 5 tools.

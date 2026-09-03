@@ -102,3 +102,9 @@ Audit Git commit history for AI generation trailers and track code survival:
 ```bash
 rush provenance-ai .
 ```
+
+## 9. Honest Build Provenance Drafts (`rush attest`)
+Generate an in-toto Statement v1 binding real distribution artifact digests from `dist/`:
+```bash
+rush attest . --export-path artifacts/provenance.json --allow-artifact-write
+```

@@ -104,14 +104,36 @@ class AttestationTool(ToolFn):
             subject_name = path.name
             subject_digest = hashlib.sha256(path.read_bytes()).hexdigest()
         else:
-            commit_res = run_subprocess(["git", "rev-parse", "HEAD"], cwd=target_dir)
-            commit_out = (
-                commit_res.stdout.strip()
-                if commit_res.returncode == 0 and commit_res.stdout.strip()
-                else "unknown"
+            dist_dir = target_dir / "dist"
+            dist_files = (
+                [
+                    f
+                    for f in dist_dir.iterdir()
+                    if f.is_file()
+                    and (
+                        f.suffix in (".whl", ".zip", ".tar", ".gz")
+                        or f.name.endswith(".tar.gz")
+                    )
+                ]
+                if dist_dir.is_dir()
+                else []
             )
-            subject_name = path.name or "source-tree"
-            subject_digest = hashlib.sha256(commit_out.encode("utf-8")).hexdigest()
+            if dist_files:
+                dist_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                target_art = dist_files[0]
+                subject_name = target_art.name
+                subject_digest = hashlib.sha256(target_art.read_bytes()).hexdigest()
+            else:
+                commit_res = run_subprocess(
+                    ["git", "rev-parse", "HEAD"], cwd=target_dir
+                )
+                commit_out = (
+                    commit_res.stdout.strip()
+                    if commit_res.returncode == 0 and commit_res.stdout.strip()
+                    else "unknown"
+                )
+                subject_name = path.name or "source-tree"
+                subject_digest = hashlib.sha256(commit_out.encode("utf-8")).hexdigest()
 
         # Git commit and origin metadata
         commit_res = run_subprocess(["git", "rev-parse", "HEAD"], cwd=target_dir)

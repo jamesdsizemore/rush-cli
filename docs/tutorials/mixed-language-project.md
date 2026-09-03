@@ -75,3 +75,9 @@ Rush extracts exceptions across Python, TypeScript, and Rust, audits dependency 
 You run standard, consistent commands (`tdd`, `review`, `lint`, `complexity`, `slop`, `security`, `test`) regardless of how many languages exist in the repo.
 
 See [Tutorials Overview](../TUTORIALS.md) and [CI Integration Guide](ci-integration.md).
+
+### Step 8: Cold-Start Profiling & Honest Provenance (Phase 50c)
+```bash
+rush cold-start . --json
+rush attest . --json
+```

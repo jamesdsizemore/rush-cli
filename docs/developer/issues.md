@@ -50,6 +50,11 @@
 | **ISS-050B-01** | Phase 50b | Provenance AI | Git trailer attribution parsing, shallow history handling, and code survival rate baseline | Implemented `ProvenanceAiTool` with trailer parsing and shallow clone detection | **Closed** |
 | **ISS-050B-02** | Phase 50b | Dead Asset | Polyglot asset reference scanner with potential disk space savings calculation and strictly read-only reporting | Implemented `DeadAssetTool` with space savings calculation and SHA-256 validation | **Closed** |
 | **ISS-050B-03** | Phase 50b | PR Synthesize | Multi-tool evidence aggregation, risk tiering (low/medium/high), and CODEOWNERS reviewer routing | Implemented `PrSynthesizeTool` with CODEOWNERS parser and risk tier evaluator | **Closed** |
+| **ISS-050C-01** | Phase 50c | Honest Attestation | R-013 SLSA Level 3 remediation: generated in-toto v1 unsigned draft binding dist/ artifacts | Implemented `AttestationTool` with dist artifact discovery and draft assurance | **Closed** |
+| **ISS-050C-02** | Phase 50c | Memory Profile | Static AST unclosed resource detection and dynamic tracemalloc sampling | Implemented `MemProfileTool` with _ResourceLifecycleVisitor and slow gating | **Closed** |
+| **ISS-050C-03** | Phase 50c | Cold Start | Top-level heavy package import detection and -X importtime execution | Implemented `ColdStartTool` with _ImportVisitor and importtime analyzer | **Closed** |
+| **ISS-050C-04** | Phase 50c | Offline Review | Air-gapped local ONNX model review and external runner discovery | Implemented `OfflineReviewTool` with graceful skip when uninstalled | **Closed** |
+| **ISS-050C-05** | Phase 50c | Benchmark Guard | Stdlib statistics calculation and baseline comparison with regression gate | Implemented `BenchmarkTool` with .rush/baselines.json cache write gate | **Closed** |
 | **ISS-BENCH-01** | Benchmark | Provider Subprocess | Subprocess execution missing check=False in provider probe | Added explicit `check=False` to `subprocess.run` in `providers.py` | **Closed** |
 | **ISS-BENCH-02** | Benchmark | Context Budgeting | Skeletonizer stripping AST comments containing facts | Preserved docstrings and added explicit target_symbol support | **Closed** |
 | **ISS-BENCH-03** | Benchmark | Local Model Security | Ollama runtime and in-repo cache containment violations | Implemented strict rejection in `validate_local_runtime_command` | **Closed** |
@@ -68,7 +73,7 @@
 * [x] **Phase 49**: Spec-to-code traceability scanner, agent flight recorder, and swarm 3-way AST merge solver.
 * [x] **Phase 50a**: Polyglot Quality & Security Catalog (`rush error-catalog`, `rush license-matrix`, `rush iam-audit`), multi-cloud SDK parsing, Terraform wildcard detection, immutable tool option resolution.
 * [x] **Phase 50b**: Attribution, Dead Assets & PR Evidence (`rush provenance-ai`, `rush dead-asset`, `rush pr-synthesize`, `rush media-opt`).
-* [ ] **Phase 50c**: Performance Profiling, Provenance & Verification (`rush attest`, `rush prompt-eval`, `rush mem-profile`, `rush cold-start`, `rush benchmark`, `rush offline-review`, `rush tui-diff`).
+* [x] **Phase 50c**: Performance Profiling, Provenance & Verification (`rush attest`, `rush prompt-eval`, `rush mem-profile`, `rush cold-start`, `rush benchmark`, `rush offline-review`, `rush tui-diff`).
 * [x] **Benchmark Harness (B1–B6)**: Typed contracts, atomic reporting, 40 declared fixtures, provider descriptors, privacy secret redactions, ContextPacker/CCR probes, multi-agent lock mesh verification, and consumer hardware profiling.
 
 ---

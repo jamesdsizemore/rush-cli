@@ -44,7 +44,7 @@
 | **Phase 48** | DB Drift, Simplify & Strictify | `rush db-drift`, `rush simplify`, `rush strictify`, `rush_db_drift`, `rush_simplify` | **Complete** |
 | **Phase 50a** | Polyglot Quality & Security Catalog | `rush error-catalog`, `rush license-matrix`, `rush iam-audit` | **Complete** |
 | **Phase 50b** | Attribution, Dead Assets & PR Evidence | `rush provenance-ai`, `rush dead-asset`, `rush pr-synthesize` | **Complete** |
-| **Phase 50c** | Performance Profiling, Provenance & Verification | `rush attest`, `rush prompt-eval`, `rush mem-profile`, `rush cold-start`, `rush benchmark`, `rush offline-review`, `rush tui-diff` | Planned |
+| **Phase 50c** | Performance Profiling, Offline Review & Honest Provenance | `rush attest`, `rush mem-profile`, `rush cold-start`, `rush offline-review`, `rush benchmark` | **Complete** |
 | **Benchmark Harness** | Reproducible Verification & Provider Routing (Phases B1–B6) | `scripts.benchmarks.run`, 40 declared scenarios, 11 decision records, CI harness | **Complete** |
 
 ---
