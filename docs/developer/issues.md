@@ -55,6 +55,11 @@
 | **ISS-050C-03** | Phase 50c | Cold Start | Top-level heavy package import detection and -X importtime execution | Implemented `ColdStartTool` with _ImportVisitor and importtime analyzer | **Closed** |
 | **ISS-050C-04** | Phase 50c | Offline Review | Air-gapped local ONNX model review and external runner discovery | Implemented `OfflineReviewTool` with graceful skip when uninstalled | **Closed** |
 | **ISS-050C-05** | Phase 50c | Benchmark Guard | Stdlib statistics calculation and baseline comparison with regression gate | Implemented `BenchmarkTool` with .rush/baselines.json cache write gate | **Closed** |
+| **ISS-051-01** | Phase 51 | Coverage Boundary | Unclassified repository files causing governance blind spots | Implemented `CoverageManifest` with 1,085 classified paths and fail-closed validation | **Closed** |
+| **ISS-051-02** | Phase 51 | Operations Inventory | Divergence between Click commands and FastMCP registered routes | Implemented `PublicOperationsInventory` reconciling 146 operations with safe probes | **Closed** |
+| **ISS-051-03** | Phase 51 | Artifact Probes | Installed wheel/sdist packaging untested outside repository checkout | Implemented `probe_installed_artifacts.py` with scrubbed virtualenvs and R-001 reproduction | **Closed** |
+| **ISS-051-04** | Phase 51 | Engine Taxonomy | Ambiguity between mandatory, supported-optional, and best-effort engines | Created `governance/engine-support.toml` with strict skip prohibitions | **Closed** |
+| **ISS-051-05** | Phase 51 | Remediation Contracts | Findings R-001 through R-016 unassigned to concrete future tasks | Created `governance/remediation-contracts.toml` mapping all findings to Phases 52–60 | **Closed** |
 | **ISS-BENCH-01** | Benchmark | Provider Subprocess | Subprocess execution missing check=False in provider probe | Added explicit `check=False` to `subprocess.run` in `providers.py` | **Closed** |
 | **ISS-BENCH-02** | Benchmark | Context Budgeting | Skeletonizer stripping AST comments containing facts | Preserved docstrings and added explicit target_symbol support | **Closed** |
 | **ISS-BENCH-03** | Benchmark | Local Model Security | Ollama runtime and in-repo cache containment violations | Implemented strict rejection in `validate_local_runtime_command` | **Closed** |

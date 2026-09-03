@@ -1,0 +1,50 @@
+[phase]
+id = 51
+name = "remediation-scope-operation-inventory-and-release-probes"
+remediation_phase = 0
+status = "completed"
+revision = "b05fe81ff3d2d02f3ce544b26e3298f118fd8171"
+branch = "feat/phase-51-implementation"
+worktree = "C:/Users/james/developer/rush-cli/.worktrees/phase51-implementation"
+created_at = "2026-09-03T12:16:00-07:00"
+completed_at = "2026-09-03T12:23:45-07:00"
+
+[environment]
+python_version = "3.12.13"
+uv_version = "0.6.14"
+test_baseline = 963
+catalog_tools_count = 52
+click_commands_count = 129
+fastmcp_tools_count = 73
+
+[authorities]
+roadmap = "docs/developer/repository-remediation-plan.md"
+agents_guide = "AGENTS.md"
+phase_plan = "docs/phase-plans/phase-51-remediation-scope-release-gates-plan.md"
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = [
+    "R-001", "R-002", "R-003", "R-004", "R-005", "R-006", "R-007", "R-008",
+    "R-009", "R-010", "R-011", "R-012", "R-013", "R-014", "R-015", "R-016"
+]
+
+[manifests]
+coverage = "governance/first-party-coverage.toml"
+operations = "governance/public-operations.toml"
+engines = "governance/engine-support.toml"
+contracts = "governance/remediation-contracts.toml"
+
+[successors]
+phases = [52, 53, 54, 55, 56, 57, 58, 59, 60]
+
+[evidence]
+total_tests_passing = 975
+first_party_coverage_records = 1085
+public_operations_count = 146
+engine_families_count = 19
+remediation_findings_mapped = 16
+artifact_probes_wheel = "tested-isolated-failed-r001"
+artifact_probes_sdist = "tested-isolated-failed-r001"
+r001_reproduced = true
+

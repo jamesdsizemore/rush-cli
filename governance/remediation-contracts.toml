@@ -1,0 +1,231 @@
+# Remediation Finding & Contract Ownership Ledger (RM-P0-05)
+# Governs the single-owner assignment of R-001 through R-016 to later RED/GREEN pairs.
+
+[manifest]
+generator_version = "1.0.0"
+authority = "docs/developer/repository-remediation-plan.md"
+total_findings = 16
+
+[[findings]]
+id = "R-001"
+title = "Installed artifacts cannot start reliably"
+owner_phase = 52
+severity = "critical"
+release_blocker = true
+red_task = "P52.1.1"
+green_task = "P52.1.2"
+target_seam = "pyproject.toml, src/rush/ imports"
+test_file = "tests/test_phase52_packaging.py"
+test_function = "test_wheel_and_sdist_start_without_src_rush"
+predecessor = "Phase 51 accepted artifact harness"
+docs_owner = "docs/DISTRIBUTION.md, docs/developer/ci-and-packaging.md"
+
+[[findings]]
+id = "R-002"
+title = "Redaction is not a complete serialization and write boundary"
+owner_phase = 53
+severity = "critical"
+release_blocker = true
+red_task = "P53.1.1"
+green_task = "P53.1.2"
+target_seam = "src/rush/tools/common.py:SecretRedactor"
+test_file = "tests/test_phase53_sanitization.py"
+test_function = "test_secrets_redacted_at_all_serialization_boundaries"
+predecessor = "Phase 51 accepted coverage manifest"
+docs_owner = "docs/SECURITY.md"
+
+[[findings]]
+id = "R-003"
+title = "Plugin execution lacks a complete immutable content identity"
+owner_phase = 56
+severity = "critical"
+release_blocker = true
+red_task = "P56.1.1"
+green_task = "P56.1.2"
+target_seam = "src/rush/plugins/"
+test_file = "tests/test_phase56_plugin_trust.py"
+test_function = "test_plugin_execution_fails_closed_without_content_digest"
+predecessor = "Phases 53-55"
+docs_owner = "docs/SECURITY.md, docs/developer/architecture.md"
+
+[[findings]]
+id = "R-004"
+title = "Public operation surface is undocumented and transport contracts diverge"
+owner_phase = 57
+severity = "high"
+release_blocker = true
+red_task = "P57.1.1"
+green_task = "P57.1.2"
+target_seam = "src/rush/cli.py, src/rush/mcp.py"
+test_file = "tests/test_phase57_operations.py"
+test_function = "test_transport_contracts_reconcile_with_operation_manifest"
+predecessor = "Phases 52-54"
+docs_owner = "docs/CLI_REFERENCE.md, docs/MCP_REFERENCE.md"
+
+[[findings]]
+id = "R-005"
+title = "Scope and execution-cache contracts are absent from generic invocation"
+owner_phase = 57
+severity = "high"
+release_blocker = true
+red_task = "P57.2.1"
+green_task = "P57.2.2"
+target_seam = "src/rush/core/cache.py"
+test_file = "tests/test_phase57_cache.py"
+test_function = "test_cache_identity_and_bypass_contracts"
+predecessor = "Phase 51 public operations manifest"
+docs_owner = "docs/developer/architecture.md"
+
+[[findings]]
+id = "R-006"
+title = "Output egress and error states diverge from documented semantics"
+owner_phase = 57
+severity = "high"
+release_blocker = true
+red_task = "P57.3.1"
+green_task = "P57.3.2"
+target_seam = "src/rush/cli.py:exit_with_result"
+test_file = "tests/test_phase57_egress.py"
+test_function = "test_output_egress_and_error_codes"
+predecessor = "Phase 51 public operations manifest"
+docs_owner = "docs/CLI_REFERENCE.md"
+
+[[findings]]
+id = "R-007"
+title = "Transport parity and capability coverage are unenforced"
+owner_phase = 57
+severity = "high"
+release_blocker = true
+red_task = "P57.4.1"
+green_task = "P57.4.2"
+target_seam = "src/rush/mcp.py"
+test_file = "tests/test_phase57_parity.py"
+test_function = "test_dual_transport_parity_across_transports"
+predecessor = "Phase 51 public operations manifest"
+docs_owner = "docs/MCP_REFERENCE.md"
+
+[[findings]]
+id = "R-008"
+title = "Diagnostic and operational logging leak into standard transport streams"
+owner_phase = 53
+severity = "medium"
+release_blocker = true
+red_task = "P53.2.1"
+green_task = "P53.2.2"
+target_seam = "src/rush/cli.py, src/rush/mcp.py"
+test_file = "tests/test_phase53_diagnostics.py"
+test_function = "test_mcp_stdout_is_pure_jsonrpc_stderr_only_logs"
+predecessor = "Phase 51 accepted operation inventory"
+docs_owner = "docs/developer/mcp-development.md"
+
+[[findings]]
+id = "R-009"
+title = "Coordination lock acquisition and release lack verified identity and cleanup"
+owner_phase = 58
+severity = "high"
+release_blocker = true
+red_task = "P58.1.1"
+green_task = "P58.1.2"
+target_seam = "src/rush/core/distributed_mesh.py"
+test_file = "tests/test_phase58_locks.py"
+test_function = "test_lock_acquisition_requires_caller_capability"
+predecessor = "Phase 55 AtomicFile"
+docs_owner = "docs/developer/architecture.md"
+
+[[findings]]
+id = "R-010"
+title = "Persistence operations bypass AtomicFile and lack schema migration"
+owner_phase = 58
+severity = "high"
+release_blocker = true
+red_task = "P58.2.1"
+green_task = "P58.2.2"
+target_seam = "src/rush/core/persistence.py"
+test_file = "tests/test_phase58_persistence.py"
+test_function = "test_persistence_uses_atomic_file_with_schema_version"
+predecessor = "Phase 55 AtomicFile"
+docs_owner = "docs/developer/architecture.md"
+
+[[findings]]
+id = "R-011"
+title = "ToolResult schema kernel is not enforced across all engines and normalizers"
+owner_phase = 54
+severity = "critical"
+release_blocker = true
+red_task = "P54.1.1"
+green_task = "P54.1.2"
+target_seam = "src/rush/models/result.py"
+test_file = "tests/test_phase54_schema_kernel.py"
+test_function = "test_tool_result_kernel_strict_validation"
+predecessor = "Phase 51 accepted operation inventory"
+docs_owner = "docs/reference/result-reference.md"
+
+[[findings]]
+id = "R-012"
+title = "Package metadata, entry points, and version sources diverge"
+owner_phase = 52
+severity = "high"
+release_blocker = true
+red_task = "P52.3.1"
+green_task = "P52.3.2"
+target_seam = "src/rush/__init__.py:__version__"
+test_file = "tests/test_phase52_version.py"
+test_function = "test_single_version_authority_from_importlib_metadata"
+predecessor = "Phase 51 baseline"
+docs_owner = "docs/developer/release-process.md"
+
+[[findings]]
+id = "R-013"
+title = "Build provenance claims SLSA Level 3 without cryptographic attestation"
+owner_phase = 59
+severity = "critical"
+release_blocker = true
+red_task = "P59.1.1"
+green_task = "P59.1.2"
+target_seam = "src/rush/tools/attest.py"
+test_file = "tests/test_phase59_provenance.py"
+test_function = "test_slsa_provenance_cryptographic_verification"
+predecessor = "Phase 52 single packaging artifact source"
+docs_owner = "docs/specs/slsa-attestation-spec.md"
+
+[[findings]]
+id = "R-014"
+title = "Engine adapters lack deterministic environment discovery and capability verification"
+owner_phase = 59
+severity = "high"
+release_blocker = true
+red_task = "P59.2.1"
+green_task = "P59.2.2"
+target_seam = "src/rush/engines/"
+test_file = "tests/test_phase59_engines.py"
+test_function = "test_engine_discovery_and_capability_matrix"
+predecessor = "Phase 51 engine taxonomy"
+docs_owner = "docs/ENGINES.md"
+
+[[findings]]
+id = "R-015"
+title = "Maintainability hotspots in central transport and orchestration modules"
+owner_phase = 60
+severity = "low"
+release_blocker = false
+red_task = "P60.1.1"
+green_task = "P60.1.2"
+target_seam = "src/rush/cli.py, src/rush/mcp.py"
+test_file = "tests/test_phase60_refactor.py"
+test_function = "test_hotspot_complexity_and_modularity_reduction"
+predecessor = "Release-ready Phases 52-59"
+docs_owner = "docs/developer/architecture.md"
+
+[[findings]]
+id = "R-016"
+title = "Patch workflow creates uncontained workspaces and lacks atomic rollback"
+owner_phase = 58
+severity = "critical"
+release_blocker = true
+red_task = "P58.3.1"
+green_task = "P58.3.2"
+target_seam = "src/rush/core/git_sandbox.py"
+test_file = "tests/test_phase58_patch.py"
+test_function = "test_patch_sandbox_enforces_physical_containment_and_rollback"
+predecessor = "Phase 55 AtomicFile and containment"
+docs_owner = "docs/developer/architecture.md"

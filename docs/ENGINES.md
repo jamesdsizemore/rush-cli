@@ -226,3 +226,20 @@ Install only if that check is part of your project policy. Then launch Rush from
 | `cold-start` | Built-in | AST import visitor and -X importtime waterfall analyzer. |
 | `offline-review` | Built-in / Optional | Air-gapped local ONNX model review adapter. |
 | `benchmark` | Built-in | Stdlib statistics performance comparator. |
+
+---
+
+## Engine Support Taxonomy & Governance (Phase 51: RM-P0-04)
+
+Rush governs engine discovery and conformance through `governance/engine-support.toml`. Every engine family belongs to exactly one deterministic support class:
+
+1. **Mandatory (`support_class = "mandatory"`)**:
+   - `python-ast`, `git-subprocess`, `statistics`, `tomllib`.
+   - Core internal runtimes that cannot be skipped under any circumstances (`permitted_skip_reason = "none"`).
+2. **Supported-Optional (`support_class = "supported-optional"`)**:
+   - `ruff`, `mypy`, `pytest`, `cargo`, `vitest`, `eslint`, `prettier`, `pip-audit`, `trivy`, `semgrep`, `gitleaks`.
+   - Production quality and security engines. Must pass when installed; strictly prohibited from passing if all runs are skipped (`can_pass_all_skipped = false`).
+3. **Best-Effort (`support_class = "best-effort"`)**:
+   - `onnxruntime`, `ollama`, `vulture`, `radon`.
+   - Experimental or advisory tools with permissive skip semantics (`can_pass_all_skipped = true`).
+

@@ -156,3 +156,12 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * Host hardware profiling and strict Ollama rejection.
 * Formal gate decision records in [`docs/reports/final-handoff.md`](reports/final-handoff.md).
 
+## Remediation Program & Release Probes (Phase 51)
+* First-party coverage boundary over 1,085 paths (`governance/first-party-coverage.toml`).
+* Reconciled inventory across 129 Click commands and 73 FastMCP routes (`governance/public-operations.toml`).
+* Isolated wheel and sdist installation probe harness reproducing R-001 (`scripts/probe_installed_artifacts.py`).
+* Deterministic engine support taxonomy across 19 families (`governance/engine-support.toml`).
+* Cross-phase ownership ledger mapping R-001–R-016 to Phases 52–60 (`governance/remediation-contracts.toml`).
+* Full evidence and verification in [`docs/developer/phase-51-implementation-evidence.md`](developer/phase-51-implementation-evidence.md).
+
+

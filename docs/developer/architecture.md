@@ -206,3 +206,11 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - `ColdStartTool`: Top-level heavy import detector and cold-start waterfall analyzer.
 - `OfflineReviewTool`: Air-gapped local ONNX model reviewer with zero network dependency.
 - `BenchmarkTool`: Performance regression guard using stdlib statistics against `.rush/baselines.json`.
+
+### Phase 51 Architecture: Remediation Governance & Release Probes
+- `CoverageManifest` (`src/rush/governance/coverage_manifest.py`): Deterministic first-party file boundary generator emitting byte-stable `governance/first-party-coverage.toml` across 1,085 repository paths.
+- `PublicOperationsInventory` (`src/rush/governance/public_operations.py`): Reconciled public operations registry emitting `governance/public-operations.toml` mapping all 129 Click leaves and 73 FastMCP tools to 146 operations with safe probes.
+- `probe_installed_artifacts.py` (`scripts/probe_installed_artifacts.py`): Clean wheel/sdist virtualenv harness executing outside checkout with scrubbed `PYTHONPATH` and reproducing R-001 packaging failures.
+- `EngineSupportPolicy` (`governance/engine-support.toml`): 19 engine families classified into `mandatory`, `supported-optional`, and `best-effort` with strict skip prohibitions.
+- `RemediationContracts` (`governance/remediation-contracts.toml`): Single-owner ledger assigning findings R-001 through R-016 to distinct RED/GREEN pairs across successor Phases 52–60.
+

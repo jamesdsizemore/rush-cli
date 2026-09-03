@@ -88,3 +88,10 @@ Key invariants:
 - `tests/test_offline_review.py`: Model absence handling, onnxruntime skip semantics, mocked inference session.
 - `tests/test_benchmark.py`: Missing baseline handling, cache write permission gating, regression detection.
 - `tests/test_phase50c_integration.py`: End-to-end CLI JSON emission and FastMCP registration parity for all 5 tools.
+
+## 8. Phase 51 Contract Test Suites (Remediation Governance)
+- `tests/test_phase51_coverage_manifest.py`: First-party coverage boundary, single classification, byte-stable TOML rendering, unclassified path rejection.
+- `tests/test_phase51_public_operations.py`: Full Click leaf (129) and FastMCP route (73) reconciliation, unique operation IDs, non-live safe probes, canonical implementation parity.
+- `tests/test_phase51_artifact_probes.py`: Independent wheel and sdist installation into isolated virtualenvs, environment scrubbing, origin verification, R-001 negative import control.
+- `tests/test_phase51_engine_policy.py`: Engine support taxonomy across 19 families, support class validation (`mandatory`, `supported-optional`, `best-effort`), skip prohibitions for supported engines.
+

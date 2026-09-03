@@ -41,3 +41,21 @@ Before distributing any release artifact, verify:
 4. **Reproducibility**: Ensure hash verification matches `uv.lock` frozen pins.
 
 See [CI and Packaging Guide](developer/ci-and-packaging.md) and [Release Process](developer/release-process.md).
+
+---
+
+## 4. Isolated Installed Artifact Probes (Phase 51: RM-P0-03)
+
+To ensure packaging correctness outside the source tree checkout, Rush employs `scripts/probe_installed_artifacts.py`:
+1. Installs built wheel and sdist into separate, temporary virtual environments outside the repository checkout.
+2. Scrubs `PYTHONPATH` and `VIRTUAL_ENV` completely to prevent source-tree shadowing.
+3. Probes execution from an empty external working directory.
+4. Verifies module origin (`verify_package_origin`) to ensure imports resolve to site-packages rather than the source checkout.
+5. Evaluates the R-001 negative import control to detect broken `src.rush` imports before publishing.
+
+Execute locally:
+```bash
+uv build
+python scripts/probe_installed_artifacts.py --json
+```
+

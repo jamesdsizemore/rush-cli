@@ -18,6 +18,15 @@ Use `rush session resume NAME --provider claude_code|codex_cli|antigravity_cli -
 
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
+## Operations Reconciliation & Inventory (Phase 51: RM-P0-02)
+
+All 129 Click command leaves and subcommands are formally inventoried and reconciled in `governance/public-operations.toml`. Each operation declares:
+- **Canonical Implementation**: `src/rush/tools/` or `src/rush/cli.py`
+- **FastMCP Route**: Paired `rush_<name>` tool name
+- **Contract Classes**: Input contract (`ToolInputOptions`, `ClickArguments`) and output contract (`ToolResult`, `ClickExitCode`)
+- **Effect Classification**: `read-only`, `idempotent-write`, or `stateful-mutation`
+- **Safe Probe**: Non-live, non-destructive probe command (`rush <cmd> --help`)
+
 ## Which command should I run?
 
 ```text

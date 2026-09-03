@@ -45,6 +45,7 @@
 | **Phase 50a** | Polyglot Quality & Security Catalog | `rush error-catalog`, `rush license-matrix`, `rush iam-audit` | **Complete** |
 | **Phase 50b** | Attribution, Dead Assets & PR Evidence | `rush provenance-ai`, `rush dead-asset`, `rush pr-synthesize` | **Complete** |
 | **Phase 50c** | Performance Profiling, Offline Review & Honest Provenance | `rush attest`, `rush mem-profile`, `rush cold-start`, `rush offline-review`, `rush benchmark` | **Complete** |
+| **Phase 51** | Remediation Scope & Release Gates | `governance/*.toml` manifests (coverage, 146 operations, 19 engines, 16 findings), isolated artifact probe harness | **Complete** |
 | **Benchmark Harness** | Reproducible Verification & Provider Routing (Phases B1–B6) | `scripts.benchmarks.run`, 40 declared scenarios, 11 decision records, CI harness | **Complete** |
 
 ---

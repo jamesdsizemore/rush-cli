@@ -122,3 +122,13 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_benchmark(path, metric=None, value=None, threshold_pct=10.0, record=False)`**: Compare performance samples against baseline thresholds.
 * **`rush_context_skeletonize(path)`**: Extract compressed AST outline skeletons for a target source file.
 * **`rush_context_cache_manifest()`**: Retrieve Merkle DAG content-addressable cache block manifests.
+
+---
+
+## FastMCP Route Reconciliation & Governance (Phase 51: RM-P0-02)
+
+All 73 FastMCP registered tools are cataloged in `governance/public-operations.toml`:
+- Each catalog tool is registered dynamically with snake_case normalization pointing to canonical implementations in `src/rush/tools/`.
+- Safe probes are provided via MCP protocol list/schema requests (`mcp:inspect:<name>`).
+- Transport invariant: stdio stdout is strictly JSON-RPC; all logs and diagnostics belong on stderr.
+

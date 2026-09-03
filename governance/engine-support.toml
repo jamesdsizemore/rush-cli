@@ -1,0 +1,239 @@
+# Engine Support Policy Manifest (RM-P0-04)
+# Governs engine classification, version discovery, fixture evidence, and skip policies.
+
+[manifest]
+generator_version = "1.0.0"
+policy_version = "2026-08-27"
+total_engine_families = 19
+
+[[engines]]
+family = "python-ast"
+support_class = "mandatory"
+executable = "python-built-in"
+version_command = "python -c 'import platform; print(platform.python_version())'"
+can_pass_all_skipped = false
+permitted_skip_reason = "none"
+
+[engines.fixture_matrix]
+clean = "tests/test_mem_profile.py::test_mem_profile_clean_with_context_manager"
+finding = "tests/test_mem_profile.py::test_mem_profile_detects_unclosed_resource"
+malformed = "tests/test_tools.py::test_review_skip_on_non_python"
+
+[[engines]]
+family = "git-subprocess"
+support_class = "mandatory"
+executable = "git"
+version_command = "git --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "none"
+
+[engines.fixture_matrix]
+clean = "tests/test_tools.py::test_review_heuristics_on_clean_repo"
+finding = "tests/test_tools.py::test_review_heuristics_on_dirty_repo"
+malformed = "tests/test_provenance_ai.py::test_provenance_ai_detects_co_authored_by"
+
+[[engines]]
+family = "statistics"
+support_class = "mandatory"
+executable = "python-stdlib"
+version_command = "python -c 'import statistics; print(\"stdlib\")'"
+can_pass_all_skipped = false
+permitted_skip_reason = "none"
+
+[engines.fixture_matrix]
+clean = "tests/test_benchmark.py::test_benchmark_record_and_evaluate_passing"
+finding = "tests/test_benchmark.py::test_benchmark_detects_regression"
+malformed = "tests/test_benchmark.py::test_benchmark_ignores_nan_and_inf_samples"
+
+[[engines]]
+family = "tomllib"
+support_class = "mandatory"
+executable = "python-stdlib"
+version_command = "python -c 'import tomllib; print(\"stdlib\")'"
+can_pass_all_skipped = false
+permitted_skip_reason = "none"
+
+[engines.fixture_matrix]
+clean = "tests/test_config.py"
+finding = "tests/test_config.py"
+malformed = "tests/test_config.py"
+
+[[engines]]
+family = "ruff"
+support_class = "supported-optional"
+executable = "ruff"
+version_command = "ruff --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "ruff not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/fixtures/quality/clean_python.py"
+finding = "tests/fixtures/quality/failing_python.py"
+
+[[engines]]
+family = "mypy"
+support_class = "supported-optional"
+executable = "mypy"
+version_command = "mypy --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "mypy not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_static_tools.py"
+finding = "tests/test_static_tools.py"
+
+[[engines]]
+family = "pytest"
+support_class = "supported-optional"
+executable = "pytest"
+version_command = "pytest --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "pytest not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_tools.py::test_test_runs_pytest_on_python_repo"
+finding = "tests/test_tools.py::test_test_skipped_when_no_project_markers"
+
+[[engines]]
+family = "cargo"
+support_class = "supported-optional"
+executable = "cargo"
+version_command = "cargo --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "cargo not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_cargo_distiller.py"
+finding = "tests/test_cargo_distiller.py"
+
+[[engines]]
+family = "vitest"
+support_class = "supported-optional"
+executable = "vitest"
+version_command = "vitest --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "vitest not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_vitest_reference.py"
+finding = "tests/test_vitest_reference.py"
+
+[[engines]]
+family = "eslint"
+support_class = "supported-optional"
+executable = "eslint"
+version_command = "eslint --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "eslint not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_eslint_reference.py"
+finding = "tests/test_eslint_reference.py"
+
+[[engines]]
+family = "prettier"
+support_class = "supported-optional"
+executable = "prettier"
+version_command = "prettier --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "prettier not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_prettier_reference.py"
+finding = "tests/test_prettier_reference.py"
+
+[[engines]]
+family = "pip-audit"
+support_class = "supported-optional"
+executable = "pip-audit"
+version_command = "pip-audit --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "pip-audit not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_pip_audit_reference.py"
+finding = "tests/test_pip_audit_reference.py"
+
+[[engines]]
+family = "trivy"
+support_class = "supported-optional"
+executable = "trivy"
+version_command = "trivy --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "trivy not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_trivy_reference.py"
+finding = "tests/test_trivy_reference.py"
+
+[[engines]]
+family = "semgrep"
+support_class = "supported-optional"
+executable = "semgrep"
+version_command = "semgrep --version"
+can_pass_all_skipped = false
+permitted_skip_reason = "semgrep not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_semgrep_reference.py"
+finding = "tests/test_semgrep_reference.py"
+
+[[engines]]
+family = "gitleaks"
+support_class = "supported-optional"
+executable = "gitleaks"
+version_command = "gitleaks version"
+can_pass_all_skipped = false
+permitted_skip_reason = "gitleaks not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_supply_chain_tools.py"
+finding = "tests/test_supply_chain_tools.py"
+
+[[engines]]
+family = "onnxruntime"
+support_class = "best-effort"
+executable = "python-module"
+version_command = "python -c 'import onnxruntime; print(onnxruntime.__version__)'"
+can_pass_all_skipped = true
+permitted_skip_reason = "onnxruntime not installed or model missing"
+
+[engines.fixture_matrix]
+clean = "tests/test_offline_review.py"
+finding = "tests/test_offline_review.py"
+
+[[engines]]
+family = "ollama"
+support_class = "best-effort"
+executable = "ollama"
+version_command = "ollama --version"
+can_pass_all_skipped = true
+permitted_skip_reason = "ollama not running or model unavailable"
+
+[engines.fixture_matrix]
+clean = "tests/test_tools.py::test_review_llm_with_env_key_returns_llm_kind"
+finding = "tests/test_tools.py::test_review_llm_requires_env_key"
+
+[[engines]]
+family = "vulture"
+support_class = "best-effort"
+executable = "vulture"
+version_command = "vulture --version"
+can_pass_all_skipped = true
+permitted_skip_reason = "vulture not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_vulture_reference.py"
+finding = "tests/test_vulture_reference.py"
+
+[[engines]]
+family = "radon"
+support_class = "best-effort"
+executable = "radon"
+version_command = "radon --version"
+can_pass_all_skipped = true
+permitted_skip_reason = "radon not installed on PATH"
+
+[engines.fixture_matrix]
+clean = "tests/test_static_tools.py"
+finding = "tests/test_static_tools.py"

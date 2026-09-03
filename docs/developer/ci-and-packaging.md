@@ -15,7 +15,7 @@ unset VIRTUAL_ENV PYTHONPATH
 # 2. Synchronize exact pinned dependencies
 uv sync --all-extras --frozen
 
-# 3. Run all pytest test suites (955+ tests including benchmark suites, 100% pass rate required)
+# 3. Run all pytest test suites (975+ tests including contract suites, 100% pass rate required)
 .venv/Scripts/python.exe -m pytest tests/ -q
 
 # 4. Verify benchmark harness execution across all 40 scenarios
@@ -42,6 +42,7 @@ The repository CI workflow runs across Ubuntu, macOS, and Windows runners:
 3. **Unit & Engine Reference Tests**: `pytest tests/ -q`.
 4. **Vulnerability Audit**: `pip-audit`.
 5. **Distribution Build**: `uv build`.
+6. **Isolated Artifact Probes (RM-P0-03)**: Matrix job across `ubuntu-latest` and `windows-latest` executing `scripts/probe_installed_artifacts.py` in scrubbed virtual environments.
 
 ---
 

@@ -1,0 +1,5437 @@
+# First-Party Coverage Manifest (RM-P0-01)
+# Generated deterministically by rush.governance.coverage_manifest
+
+[manifest]
+revision = "b05fe81ff3d2d02f3ce544b26e3298f118fd8171"
+generator_version = "1.0.0"
+total_records = 1086
+
+[[records]]
+path = ".github/workflows/ci.yml"
+classification = "workflow"
+inclusion_rule = "directory-tree:.github/"
+
+[[records]]
+path = ".github/workflows/release.yml"
+classification = "workflow"
+inclusion_rule = "directory-tree:.github/"
+
+[[records]]
+path = ".gitignore"
+classification = "metadata"
+inclusion_rule = "root-metadata-config"
+
+[[records]]
+path = ".ignore"
+classification = "metadata"
+inclusion_rule = "root-metadata-config"
+
+[[records]]
+path = ".python-version"
+classification = "metadata"
+inclusion_rule = "root-metadata-config"
+
+[[records]]
+path = "AGENTS.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "CHANGELOG.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "CONTRIBUTING.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "LICENSE"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "README2.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "README3.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/AGENTIC_RUSH.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/ALTERNATIVES.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/API_REFERENCE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/ARCHITECTURE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/BUNDLE_DIAGRAMS.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/CI_INTEGRATION.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/CLI_COOKBOOK.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/CLI_REFERENCE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/COMPATIBILITY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/CONFIGURATION.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/CONFIG_SCHEMA.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/DECISIONS.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/DEPENDENCY_POLICY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/DESIGN_PRINCIPLES.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/DEVELOPER_GUIDE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/DISTRIBUTION.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/DOCUMENTATION_BRIEF.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/EDITOR_INTEGRATION.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/ENGINES.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/ENGINE_COMPATIBILITY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/ENVIRONMENT_VARIABLES.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/EXAMPLES.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/FAQ.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/GLOSSARY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/INTEGRATIONS.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/JSON_SCHEMA.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/KNOWN_ISSUES.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/LIMITATIONS.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/MAINTAINER_PLAYBOOK.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/MCP.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/MCP_REFERENCE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/MIGRATION_GUIDE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/PRE_COMMIT.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/PRIVACY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/RECIPE_BOOK.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/RELEASE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/SAFETY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/SCOPE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/SECURITY.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/SEMANTIC_DRIFT.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/SUPPORT.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/TESTING.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/TOOL_CATALOG.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/TROUBLESHOOTING.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/TROUBLESHOOTING_MATRIX.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/TUTORIALS.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/USER_GUIDE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/V0_2_SCOPE.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/VERSIONING.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/VIBECODING.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0001-external-engine-boundary.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0002-normalized-finding-and-evidence-model.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0003-tool-catalog-cli-mcp-parity.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0004-subprocess-timeout-cancellation-and-redaction.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0005-optional-engine-version-compatibility.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0006-report-import-vs-live-adapter.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0007-slow-network-and-destructive-permissions.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0008-browser-evidence-final-program.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0009-testing-fixtures-and-optional-ci.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0010-review-and-remediation-gates.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0011-html-and-sarif-artifact-export.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0012-pluggable-llm-provider-abstraction.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0013-tdd-guard-and-continuous-architectural-sensors.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0014-incremental-content-hash-result-cache.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0015-extensible-plugin-architecture-and-agent-skills.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0016-local-web-dashboard-and-rich-interactive-tui.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0017-composite-workflow-suites-and-file-watcher.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0018-closed-loop-ai-agent-patch-remediation-and-session-memory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0019-native-graft-semantic-slicing-and-tree-sitter.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0020-cryptographic-hmac-context-boundary-framing.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0021-ephemeral-git-worktree-sandboxing.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0022-offline-bpe-token-accounting.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0023-async-local-model-bridge.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0024-hardened-subprocess-git-invocations.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0025-polyglot-grammar-expansion.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0026-multi-ide-agent-governance-and-canonical-rule-compilation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0027-sub-second-git-pre-commit-intelligence-and-hook-guard.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0028-multi-model-consensus-reconciliation-and-quality-scorecard.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0029-unified-vibecoder-toolkit-and-sub-second-feedback-loop.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0030-unified-dual-layer-agent-context-memory-subsystem.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0031-pre-flight-ship-readiness-cockpit-and-zero-downtime-gates.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0032-code-property-graph-pruned-context-packing-and-token-budgeting.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0033-real-time-ast-package-hallucination-and-phantom-import-guard.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0034-autonomous-flaky-test-stress-perturbation-and-self-healing.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0035-multi-agent-fastmcp-mesh-lock-daemon-and-3-way-ast-reconciliation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0036-air-gapped-slm-local-onnx-runtime-and-slsa-attestation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0037-polyglot-ast-grammars-tree-sitter-dependency-pinning.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0038-context-intelligence-engine-and-ccr-architecture.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0039-toon-format-wire-serialization-for-fastmcp.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0040-command-output-distillation-and-test-log-pruning.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0041-bi-temporal-git-revert-mistake-memory-spine.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0042-ast-grounding-and-phantom-symbol-verification.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0043-stale-tool-result-deduplication-and-not-modified-hashes.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0044-clean-room-implementation-of-codebase-indexing-algorithms.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0045-real-time-terminal-gain-hud-and-telemetry.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0046-pre-flight-ship-readiness-cockpit.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0047-multi-agent-fastmcp-mesh-and-ast-3way-merge.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/0048-hybrid-dual-engine-architecture-graft-and-codegraph.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/adr/README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/ai-safety-and-sandboxing.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/anti-hallucination.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/codebase-hygiene-and-ast-merging.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/codegraph-and-semantic-slicing.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/governance-and-multi-ide-rules.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/multi-model-consensus-and-scoring.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/patch-remediation-and-memory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/plugins-and-agent-skills.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/pre-commit-intelligence.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/token-economy-and-context.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/agentic-rush/token-efficiency.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/architecture/rush-epistemic-memory-and-agent-substrate.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/benchmarking-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/architecture.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/backlog.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/benchmarking-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/brainstorm-agentic-coding-support-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/brainstorm-git-intelligence-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/brainstorm-innovation-custom-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/ci-and-packaging.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/coding-standards.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/configuration-development.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/contributor-onboarding.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/debugging-guide.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/engine-development.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/headrushtoolsurls.txt"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/innovation-enhancement-funcionality-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/innovation-enhancement-functionality-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/innovation-remediation-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/integrations-scope-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/issues.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/master-brainstorm-innovation-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/master-innovation-remediation-build-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/master-pm-build-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/mcp-development.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-07-08-coding-agent-handoff.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-09-19-coding-agent-handoff.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-20-plan-ai-anti-slop-modular-boundaries-and-continuous-sensors.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-21-plan-incremental-cache-and-git-scoping.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-22-plan-unified-automated-remediation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-23-plan-sanitized-stack-onboarding-and-config-init.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-24-plan-hardened-workflow-suites-and-environment-doctor.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-25-plan-real-time-file-system-watcher.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-26-plan-monorepo-and-workspace-boundaries.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-27-plan-authenticated-in-memory-dashboard-and-tui.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-28-plan-trust-gated-plugin-system-and-agent-skills.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-29-plan-isolated-ai-patch-remediation-and-memory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-30-plan-standalone-packaging-versioning-and-ci.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-31-plan-agent-safety-and-worktree-sandboxing.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-32-plan-token-economy-and-context-optimization.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-33-plan-full-stack-sync-and-type-safety-gates.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-34-plan-codebase-hygiene-and-merge-resolution.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-35-plan-polyglot-ast-slicing-and-semantic-codegraph.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-36-plan-frontend-asset-and-bundle-optimization.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-37-plan-git-hotspots-churn-and-code-velocity.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-38-plan-agent-governance-and-repo-scaffolding.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-39-plan-git-pre-commit-intelligence-and-hook-guard.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-40-plan-multi-model-consensus-and-quality-scorecard.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-41-plan-foundations-bpe-distillers-and-base-ship.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-42-plan-toon-ast-skeletons-and-ship-gate.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-43-plan-ccr-grounding-and-mistake-memory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-44-plan-context-pack-and-prompt-cache-alignment.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-45-plan-gain-tui-telemetry-and-terse-persona.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-46-plan-blast-radius-and-architecture-guard.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-47-plan-test-heal-and-api-diff.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-48-plan-db-drift-simplify-and-strictify.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-49-plan-traceability-flight-recorder-and-swarm-merge.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-50-implementation-evidence.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/phase-51-implementation-evidence.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/pm-review.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/release-process.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/routing-development.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/rush-integrations-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/rush-token-innovation-enhancement-report-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/ship-readiness-deep-research-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/source-tree.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/testing-guide.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/token-reduction-innovation-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/tool-development.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/vibecoder-toolkit-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/developer/vibers-code-review.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/getting-started/first-run.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/getting-started/glossary.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/getting-started/installation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/innovation-enhancement-funcionality-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/innovation-enhancement-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/integrations/ci-overview.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/integrations/github-actions.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/integrations/mcp-client-setup.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/integrations/mcp-overview.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/integrations/scripts-and-automation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/001-stdio-only-mcp.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/002-external-engine-discovery.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/003-catalog-driven-metadata.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/004-explicit-safety-gates.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/005-fixture-first-adapter-tests.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/006-bounded-ci.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/007-git-root-bounded-configuration.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/008-html-and-sarif-artifact-export.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/009-pluggable-llm-providers.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/010-tdd-guard-and-continuous-sensors.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/011-incremental-content-hash-cache.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/012-extensible-plugin-architecture.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/013-local-web-dashboard-and-tui.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/014-composite-workflow-suites-and-watcher.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/015-agent-remediation-and-memory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/adr/README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/architecture-lifecycle.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/documentation-style-guide.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/incident-and-security.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/release-playbook.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/scanner-governance.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/support-runbook.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/maintainers/versioning-and-compatibility.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/P50-development-remediation-audit-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-41-foundations-bpe-distillers-base-ship-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-42-toon-ast-skeletons-ship-gate-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-43-ccr-grounding-mistake-memory-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-44-context-pack-prompt-cache-alignment-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-45-gain-tui-telemetry-terse-persona-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-46-blast-radius-architecture-guard-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-47-test-heal-api-diff-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-48-db-drift-simplify-strictify-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-49-traceability-flight-recorder-swarm-merge-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/prompts/AGENTIC_INNOVATION_MASTER_PROMPT.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/cli-reference.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/compatibility.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/configuration-cookbook.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/configuration-reference.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/engine-directory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/environment-variables.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/mcp-tool-reference.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/research-repo-inventory.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reference/result-reference.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/continuity-gates/BG-AUTH.json"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/continuity-gates/BG-COORD.json"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/continuity-gates/BG-CTX.json"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/continuity-gates/BG-PRIV.json"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/final-handoff.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/memory-innovation-enhancement-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/runtime-memory-and-agent-skills.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/rush-benchmark-plan-implementation-review.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/rush-benchmark-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/rush-frontier-unclaimed-opportunities-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/rush-unified-agent-intelligence-development-plan-agy.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/reports/rush-unified-agent-intelligence-development-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/rush-token-innovation-enhancement-report-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/safety/permissions.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/safety/privacy-and-data-handling.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/safety/safety-overview.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/safety/security-model.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/ai-attribution-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/arch-guard-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/blast-radius-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/cognitive-complexity-decomposition-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/context-compression-and-recovery-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/db-migration-drift-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/flaky-test-healer-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/flight-recorder-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/iam-policy-synthesis-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/license-compliance-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/performance-profiling-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/pr-synthesis-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/prompt-cache-alignment-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/public-api-diff-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/slsa-attestation-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/spec-to-code-traceability-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/stale-sweeper-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/swarm-3way-ast-merge-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/telemetry-ledger-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/terse-persona-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/toon-serialization-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/specs/type-guard-synthesis-spec.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/token-reduction-innovation-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/attest.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/benchmark.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/cold_start.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/dead_asset.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/error_catalog.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/iam_audit.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/license_matrix.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/media_opt.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/mem_profile.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/offline_runner.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/pr_synthesize.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/prompt_eval.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/provenance_ai.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tools/tui_diff.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/ai-coding-assistant.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/before-a-pull-request.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/ci-integration.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/first-10-minutes.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/mixed-language-project.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/python-project.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/team-adoption.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/tutorials/typescript-project.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/advanced-checks.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/checking-code.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/checking-project-files.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/everyday-workflow.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/faq.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/index.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/security-and-supply-chain.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/testing-confidence.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/troubleshooting.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/understanding-results.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/user-guide/working-with-ai-agents.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/README.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/cheat-sheet.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/instant-fix-and-auto-remediation.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/setting-up-your-agent.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/shipping-with-swagger.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/slop-busting-and-hallucination-defense.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/the-vibecoder-workflow.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/token-diet-for-vibecoders.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/vibecoding/what-is-vibecoding-with-rush.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/agent_grounding.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/bi-temporal-mistake-pre-mortem.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/blast_radius_and_architecture_governance.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/context_packing_and_budgeting.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/database_drift_and_code_simplification.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/flaky_test_healing_and_api_contracts.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/gain_tui_and_telemetry.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/multi_agent_mesh_and_traceability.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/workflows/supply_chain_security_and_flagship_release.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "examples/README.md"
+classification = "example"
+inclusion_rule = "directory-tree:examples/"
+
+[[records]]
+path = "examples/monorepo.rush.toml"
+classification = "example"
+inclusion_rule = "directory-tree:examples/"
+
+[[records]]
+path = "examples/python-app.rush.toml"
+classification = "example"
+inclusion_rule = "directory-tree:examples/"
+
+[[records]]
+path = "examples/rush.toml"
+classification = "example"
+inclusion_rule = "directory-tree:examples/"
+
+[[records]]
+path = "examples/typescript-app.rush.toml"
+classification = "example"
+inclusion_rule = "directory-tree:examples/"
+
+[[records]]
+path = "findings.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "governance/engine-support.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "governance/first-party-coverage.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "governance/public-operations.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "governance/remediation-contracts.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "governance/remediation-phase-51.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "innovations-llm-memory-dev-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-development-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-features-plan-agy.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-features-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-local-models-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-local-models-research-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-research-report.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "innovations-memory-technical-evaluation-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "packaging/homebrew/rush.rb"
+classification = "packaging"
+inclusion_rule = "directory-tree:packaging/"
+
+[[records]]
+path = "packaging/scoop/rush.json"
+classification = "packaging"
+inclusion_rule = "directory-tree:packaging/"
+
+[[records]]
+path = "packaging/winget/rush.yaml"
+classification = "packaging"
+inclusion_rule = "directory-tree:packaging/"
+
+[[records]]
+path = "pm-review.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "progress.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "pyproject.toml"
+classification = "metadata"
+inclusion_rule = "root-metadata-config"
+
+[[records]]
+path = "requirements.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "rush-agentic-expansion-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "scripts/__init__.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/__init__.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/context.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/contracts.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/coordination.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/fixtures.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/jobs.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/local.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/privacy.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/protocol.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/providers.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/reporting.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/run.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/benchmarks/worker.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/build_remediation_manifests.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/install.ps1"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/install.sh"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/probe_installed_artifacts.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/update_phase_docs.py"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "src/rush/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/barrel_auditor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/budget_gate.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/chunk_calculator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/code_splitting.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/css_duplication.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/dead_assets.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/bundle/polyfill_auditor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/cache.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/capabilities.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/catalog.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/cli.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/context_packer.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/grounding_verifier.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/python_ast.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/slicer.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/store.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/traverser.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/codegraph/tree_sitter_poly.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/config.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/core/git_sandbox.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/auth.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/keymaps.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/metrics.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/server.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/state.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/dashboard/static_assets.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/discovery/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/discovery/git.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/discovery/stack.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/discovery/workspace.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/_actionlint-empty.yaml"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/_hadolint-empty.yaml"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/_markdownlint-empty.ignore"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/_markdownlint-empty.json"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/_spectral-ruleset.yaml"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/_sqlfluff.ini"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/a11ywatch.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/actionlint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/aislop.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/alex.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/ast_grep.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/atlas.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/axe.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/backstop.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/base.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/bearer.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/biome.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/blc.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/bloaty.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/buf.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cargo_mutants.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cdxgen.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cejel.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/checkov.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cherrybomb.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/clines.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/comby.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/commitlint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/conftest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cosign.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cosmic_ray.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/critical.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/cspell.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/deadfinder.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/deepeval.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/depcruise.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/detect_secrets.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/diff_cover.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/djlint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/dockle.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/eslint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/fawltydeps.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/flake8_bugbear.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/font_spider.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/garak.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/git_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/gitleaks.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/globstar.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/graphql_inspector.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/grype.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/guac.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/guardrails.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/hadolint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/horusec.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/html_validate.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/iac_parser.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/infection.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/jscpd.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/knip.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/kube_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/kube_score.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/kubeconform.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/lighthouse.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/lost_pixel.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/lychee.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/markdown_unfluff.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/markdownlint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/medusa.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/megalinter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/memray.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/mypy.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/ncu.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/newman.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/no_jargon.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/npm_audit.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/osv.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pa11y.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pagespeed.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pip_audit.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pip_licenses.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pitest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/playwright.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/polaris.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pr_agent.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/prettier.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/prisma_lint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/promptfoo.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pyclean.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pyrefly.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/pytest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/radon.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/readability.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/redpen.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/refurb.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/ruff.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/safe_env.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/scancode.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/scaphandre.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/schemathesis.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/scorecard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/secretlint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/semantic_drift.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/semantic_release.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/semgrep.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/sentrux.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/sloppylint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/slsa_verifier.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/spectral.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/sqlfluff.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/squawk.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/squoosh.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/statoscope.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/stryker.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/stylelint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/tach.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/terrascan.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/text_lint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/tflint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/trivy.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/trufflehog.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/ts_prune.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/tsc.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/undercover.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/vale.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/vitest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/vulture.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/wait_on.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/wasm_tools.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/zally.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/engines/zap.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/audit_manifest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/boundary_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/coverage_manifest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/mcp_configs.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/parity_checker.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/public_operations.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/scaffolder.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/subagent_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/governance/synchronizer.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/ast_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/branch_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/conflict_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/conventional_commit.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/dirty_state.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/staged_scanner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/tamper_detector.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hook/trojan_source.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/bus_factor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/churn.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/complexity.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/coupling.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/function_churn.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/risk_matrix.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/secret_scrubber.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hotspots/time_decay.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/html_export.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/ast_merger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/class_merger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/dead_code.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/dict_merger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/import_merger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/list_merger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/set_merger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/hygiene/unused_import_cleaner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/integrations/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/integrations/graft.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/logging.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/mcp.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/mcp_mesh/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/mcp_mesh/daemon.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/mcp_mesh/lock_manager.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/memory/checkpoint_journal.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/memory/failure_ledger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/memory/invariant_graph.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/memory/merkle_invalidator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/memory/mistake_miner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/memory/preference_store.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/applier.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/circuit_breaker.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/diff_parser.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/memory.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/promoter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/sandbox.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/syntax_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch/verifier.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/patch_generator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/permissions.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/executor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/hash_verifier.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/loader.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/manifest_schema.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/sandboxed_env.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/skills_generator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/trust.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/trust_store.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/plugins/validator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/providers/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/providers/anthropic.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/providers/base.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/providers/openai.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/providers/registry.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/py.typed"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/changelog_gen.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/ci_generator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/docker_generator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/multi_arch.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/provenance.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/release/semver.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/audit_logger.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/dirty_tracker.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/ephemeral_mount.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/interceptor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/network_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/path_confiner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/safety/redactor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sarif.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/calculator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/consensus.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/html_report.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/pr_card.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/sarif_export.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/score/svg_badge.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/session_memory.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/skills/plugin_builder.md"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/skills/plugin_installer.md"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/django_ninja.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/env_sync.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/fastapi_extractor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/openapi_checker.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/orm_validator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/sync/ts_generator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/templates/dashboard.html"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/theme.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/ast_skeletonizer.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/cache_advisor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/cache_aligner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/ccr_store.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/compressor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/counter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/distillers/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/distillers/base.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/distillers/cargo_distiller.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/distillers/pytest_distiller.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/distillers/ruff_distiller.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/distillers/vitest_distiller.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/output_shaper.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/paginator.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/polyglot_compressor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/prompt_compressor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/router.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/stale_sweeper.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/telemetry.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/toon/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/toon/decoder.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/toon/encoder.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/token_economy/tui_gain.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/actions.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ai_eval.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/api_diff.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/arch_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/attest.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/base.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/benchmark.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/blast_radius.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ci.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/codeql.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/cold_start.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/commit_msg.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/common.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/complexity.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/containerfile.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/content.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/continuity.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/contract.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/coverage.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/db_drift.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/dead.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/dead_asset.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/doctor.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/e2e.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/error_catalog.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/fix.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/flaky.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/flight_recorder.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/format.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/fuzz.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/hallu_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/iac.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/iam_audit.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/init_config.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/license_matrix.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/lint.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/load.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/markdown.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/media_opt.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/mem_profile.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/mutation.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/offline_runner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/pbt.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/pr_synthesize.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/prompt_eval.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/provenance_ai.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/quality.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/release.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/review.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/routing.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/sbom.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/secrets.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/security.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/semantic_drift.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/setup_wizard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/cleaner.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/cockpit.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/docs_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/env_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/migration_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/package_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/ship/semver_linter.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/simplify.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/simulate_ci.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/slop.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/snapshot.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/sql.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/strictify.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/swarm_merge.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/tdd_guard.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/templates.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/test.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/test_heal.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/trace.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/tui_diff.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/typecheck.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/visual.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tools/yaml.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/tui.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/watcher.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workflows/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workflows/suites.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/__init__.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/affected.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/boundary.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/discovery.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/graph.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/locks.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/matrix.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "src/rush/workspaces/models.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
+path = "task_plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "tests/conftest.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/context_cases.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/coordination_cases.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/local_candidates.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/privacy_cases.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/protocol_cases.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/provider_routes.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/routers.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/benchmarks/scenarios.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/aislop/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/aislop/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/aislop/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/cejel/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/cejel/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/cejel/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/clines/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/clines/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/clines/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/cobertura.xml"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/coverage.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/coverage.lcov"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/globstar/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/globstar/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/globstar/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/jscpd.txt"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/junit.xml"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/knip.txt"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/medusa/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/medusa/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/medusa/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/mypy.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/mypy.txt"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/pyrefly/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/pyrefly/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/pyrefly/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/radon.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/sentrux/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/sentrux/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/sentrux/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/sloppylint.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/tach/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/tach/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/tach/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/tsc.txt"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/undercover/clean.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/undercover/findings.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/undercover/malformed.json"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/engine_reports/vulture.txt"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/fixtures/live_polyglot_generator.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_a11ywatch_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_actionlint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_agent_governance.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_agent_safety_guard.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ai_eval.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_aislop_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_alex_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ast_grep_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ast_skeletonizer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_atlas_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_attest.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_axe_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_backstop_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_base.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_bearer_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_context.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_contracts.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_coordination.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_jobs.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_local.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_privacy.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_providers.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_benchmark_runner.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_biome_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_blc_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_bloaty_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_browser_evidence.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_buf_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cache.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_capabilities.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cargo_mutants_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_catalog.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ccr_store.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cdxgen_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cejel_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_checkov_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cherrybomb_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cli_benchmark.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cli_registry.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cli_subcommands_phase20_40.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_clines_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_codebase_hygiene.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_codeql_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cold_start.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_comby_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_command_distillers.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_commitlint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_config.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_conftest_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_content_infra_tools.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_content_router.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_contract_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cosign_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cosmic_ray_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_coverage_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_critical_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_cspell_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_dashboard.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_dashboard_and_tui.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_dead_asset.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_deadfinder_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_deepeval_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_depcruise_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_dependency_policy.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_detect_secrets_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_diff_cover_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_djlint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_dockle_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_doctor.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_engines.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_error_catalog.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_eslint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_executed_modes.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_execution_metadata.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_fawltydeps_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_fix.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_flake8_bugbear_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_flaky_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_font_spider_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_frontend_bundle.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_full_stack_sync.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_fuzz_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_garak_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_git_guard_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_git_hook_guard.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_git_hotspots.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_git_scoping.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_gitleaks_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_globstar_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_graft_integration.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_graphql_inspector_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_grounding_verifier.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_grype_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_guac_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_guardrails_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_hadolint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_horusec_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_html_export.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_html_validate_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_iac_parser.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_iam_audit.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_infection_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_jscpd_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_knip_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_kube_linter_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_kube_score_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_kubeconform_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_language_routing.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_license_matrix.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_lighthouse_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_live_engine_execution.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_load_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_lost_pixel_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_lychee_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_markdown_unfluff_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_markdownlint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_mcp.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_media_opt.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_medusa_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_megalinter_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_mem_profile.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_memray_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_mistake_miner.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_monorepo_workspaces.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_mutation_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_mypy_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ncu_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_newman_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_no_jargon_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_npm_audit_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_offline_review.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_osv_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pa11y_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_packaging_and_versioning.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pagespeed_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_patch_generator.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_patch_sandbox_and_memory.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pbt_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_permissions.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase00_catalog_maturity.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase00_contract.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase00_subprocess.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase01_truth_audit.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase20_slop_tdd.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase41_memory_ship.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase41_router_distillers.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase42_ship_cockpit.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase42_toon_skeleton.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase43_ccr_grounding.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase43_mistake_memory.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase44_context_pack_cache.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase45_telemetry_gain.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase46_blast_radius_arch.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase47_heal_apidiff.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase48_db_simplify_strict.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase49_trace_swarm_recorder.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase50_packaging.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase50_slsa_attestation.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase50a_integration.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase50b_integration.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase50c_integration.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase51_artifact_probes.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase51_coverage_manifest.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase51_engine_policy.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase51_public_operations.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pip_audit_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pip_licenses_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pitest_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_playwright_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_plugin_trust.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_plugins.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_polaris_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_polyglot_codegraph.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pr_agent_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pr_synthesize.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_prettier_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_prisma_lint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_prompt_eval.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_promptfoo_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_provenance_ai.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_providers.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pyclean_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pyrefly_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_pytest_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_quality_scorecard.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_radon_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_readability_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_redpen_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_refurb_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_release_packaging_ci.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_routing.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ruff_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_safe_env_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_sarif.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_scancode_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_scaphandre_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_schemathesis_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_scorecard_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_secretlint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_semantic_drift.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_semantic_release_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_semgrep_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_sentrux_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_session_memory.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_setup_and_init.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ship_clean_env_docs.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ship_gate_cockpit.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ship_vectors_advanced.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_skeleton.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_sloppylint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_slsa_verifier_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_snapshot_importer.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_spectral_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_sqlfluff_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_squawk_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_squoosh_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_stack_discovery.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_static_tools.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_statoscope_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_stryker_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_stylelint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_subprocess_contract.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_supply_chain_tools.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tach_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tdd_guard.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_terrascan_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_test_quality_tools.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tflint_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_theme.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_token_counter_tiktoken.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_token_economy.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tool_common.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tools.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_toon_serialization.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_trivy_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_trufflehog_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_ts_prune_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tsc_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tui.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_tui_diff.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_undercover_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_vale_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_vitest_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_vulture_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_wait_on_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_wasm_tools_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_watcher.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_workflow_tools.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_workflows.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_workspace.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_zally_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_zap_reference.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "uv.lock"
+classification = "metadata"
+inclusion_rule = "root-metadata-config"
