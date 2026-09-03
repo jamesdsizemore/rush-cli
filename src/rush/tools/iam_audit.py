@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,31 @@ KNOWN_SERVICE_ACTIONS: dict[str, dict[str, str]] = {
     },
 }
 
+KNOWN_GCP_ACTIONS: dict[str, dict[str, str]] = {
+    "storage": {
+        "download_as_bytes": "storage.objects.get",
+        "download_to_filename": "storage.objects.get",
+        "get_blob": "storage.objects.get",
+        "upload_from_string": "storage.objects.create",
+        "upload_from_filename": "storage.objects.create",
+        "delete_blob": "storage.objects.delete",
+        "list_blobs": "storage.objects.list",
+    },
+    "bigquery": {
+        "query": "bigquery.jobs.create",
+        "get_table": "bigquery.tables.get",
+        "insert_rows": "bigquery.tables.updateData",
+    },
+}
+
+KNOWN_AZURE_ACTIONS: dict[str, dict[str, str]] = {
+    "blob": {
+        "download_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read",
+        "upload_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write",
+        "delete_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete",
+    },
+}
+
 
 def _snake_to_pascal(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
@@ -110,6 +136,28 @@ class _AwsAstVisitor(ast.NodeVisitor):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     self.client_vars[target.id] = svc
+        # Detect: storage_client = storage.Client()
+        elif (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "Client"
+            and isinstance(node.value.func.value, ast.Name)
+        ):
+            cloud_module = node.value.func.value.id.lower()
+            if cloud_module in ("storage", "bigquery"):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.client_vars[target.id] = f"gcp:{cloud_module}"
+        # Detect: blob_service = BlobServiceClient(...)
+        elif (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and "BlobService" in node.value.func.id
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.client_vars[target.id] = "azure:blob"
+
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -120,7 +168,29 @@ class _AwsAstVisitor(ast.NodeVisitor):
 
             if caller_name and caller_name in self.client_vars:
                 svc = self.client_vars[caller_name]
-                if (
+                if svc.startswith("gcp:"):
+                    gcp_svc = svc.split(":", 1)[1]
+                    if (
+                        gcp_svc in KNOWN_GCP_ACTIONS
+                        and attr_name in KNOWN_GCP_ACTIONS[gcp_svc]
+                    ):
+                        self.actions.add(KNOWN_GCP_ACTIONS[gcp_svc][attr_name])
+                    else:
+                        self.unmapped_calls.append(
+                            (node.lineno, node.col_offset, f"{svc}.{attr_name}")
+                        )
+                elif svc.startswith("azure:"):
+                    az_svc = svc.split(":", 1)[1]
+                    if (
+                        az_svc in KNOWN_AZURE_ACTIONS
+                        and attr_name in KNOWN_AZURE_ACTIONS[az_svc]
+                    ):
+                        self.actions.add(KNOWN_AZURE_ACTIONS[az_svc][attr_name])
+                    else:
+                        self.unmapped_calls.append(
+                            (node.lineno, node.col_offset, f"{svc}.{attr_name}")
+                        )
+                elif (
                     svc in KNOWN_SERVICE_ACTIONS
                     and attr_name in KNOWN_SERVICE_ACTIONS[svc]
                 ):
@@ -201,6 +271,47 @@ class IamAuditTool(ToolFn):
             permissions=permissions,
         )
 
+    def _scan_terraform_files(self, target_dir: Path, findings: list[Finding]) -> None:
+        tf_files = list(target_dir.glob("**/*.tf")) if target_dir.is_dir() else []
+        for tf_file in tf_files:
+            if any(
+                part.startswith(".") or part in ("venv", "node_modules", ".terraform")
+                for part in tf_file.parts
+            ):
+                continue
+            try:
+                content = tf_file.read_text(encoding="utf-8", errors="ignore")
+                rel_path = str(tf_file.relative_to(target_dir))
+                lines = content.splitlines()
+                for line_idx, line in enumerate(lines, start=1):
+                    if re.search(
+                        r"""actions?\s*=\s*(?:\[\s*["']\*["']\s*\]|["']\*["'])""",
+                        line,
+                        re.IGNORECASE,
+                    ):
+                        msg = "Wildcard IAM Action '*' detected in Terraform configuration"
+                        findings.append(
+                            Finding(
+                                path=rel_path,
+                                line=line_idx,
+                                column=1,
+                                rule="iam-wildcard-action",
+                                rule_id="iam-wildcard-action",
+                                severity="warn",
+                                message=msg,
+                                fingerprint=finding_fingerprint(
+                                    rel_path,
+                                    line_idx,
+                                    1,
+                                    "iam-wildcard-action",
+                                    "warn",
+                                    msg,
+                                ),
+                            )
+                        )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
     def run(
         self,
         path: Path,
@@ -267,6 +378,9 @@ class IamAuditTool(ToolFn):
                     )
             except Exception:  # noqa: BLE001, S110
                 pass
+
+        # Scan Terraform files for wildcard policies
+        self._scan_terraform_files(target_dir, findings)
 
         if not all_actions:
             all_actions = {"s3:GetObject", "s3:PutObject"}

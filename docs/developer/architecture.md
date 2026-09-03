@@ -26,7 +26,7 @@ flowchart TB
 
 ## Core contracts
 
-- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity across all 38 tools and 121 engines.
+- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity across all 52 tools and 124 engines.
 - `ToolFn.run(path, *, config, ...)` is the internal execution surface. `ToolFn.__call__` is MCP-facing and must expose only JSON-schema-safe parameters.
 - ToolResult required keys are `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; optional extensions include metrics, artifacts, metadata, and review fields.
 - A missing optional executable returns `skipped`; it must not raise or install anything.
@@ -164,12 +164,23 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 
 
 
-## SLSA Attestation & Security Architecture (Phase 50)
-* `src/rush/tools/attest.py`: SLSA provenance attestation generator.
-* `src/rush/tools/license_matrix.py`: License risk matrix.
-* `src/rush/tools/iam_audit.py`: Cloud IAM policy synthesizer.
-* `src/rush/tools/dead_asset.py`: Dead asset pruner.
+## Polyglot Quality, Security & Flagship Architecture (Phases 50a–50c)
+### Phase 50a: Polyglot Quality & Security Catalog
+* `src/rush/tools/error_catalog.py`: `ErrorCatalogTool` for polyglot AST and regex exception extraction (Python, TS/JS, Rust) and RFC 7807 problem details generation.
+* `src/rush/tools/license_matrix.py`: `LicenseMatrixTool` for multi-manifest dependency license compliance, SPDX normalization, and copyleft risk tiering.
+* `src/rush/tools/iam_audit.py`: `IamAuditTool` for multi-cloud SDK calls (AWS/GCP/Azure) and Terraform wildcard policy auditing and synthesis.
+
+### Phase 50b/50c: Flagship Suite Modules
+* `src/rush/tools/attest.py`: SLSA v1.0 provenance attestation generator.
+* `src/rush/tools/dead_asset.py`: Unreferenced asset pruner.
 * `src/rush/tools/pr_synthesize.py`: PR card generator.
+* `src/rush/tools/provenance_ai.py`: Git commit trailer AI attribution analyzer.
+* `src/rush/tools/media_opt.py`: SVG active script sanitizer & image optimizer.
+* `src/rush/tools/mem_profile.py`: Memory profiler.
+* `src/rush/tools/cold_start.py`: Cold-start import latency analyzer.
+* `src/rush/tools/benchmark.py`: Baseline sample comparator.
+* `src/rush/tools/offline_runner.py`: Offline ONNX model runner.
+* `src/rush/tools/tui_diff.py`: Rich table finding differ.
 
 ## Benchmark Harness Architecture (Phases B1–B6)
 * `scripts/benchmarks/contracts.py`: Dataclass models (`Outcome`, `ProbeResult`, `Scenario`, `RouteDescriptor`, `HardwareProfile`, `CandidateBinary`, `DecisionRecord`) and schema validator.

@@ -1,6 +1,6 @@
 # Developer Testing Guide & Test Architecture
 
-This guide explains the 9 testing layers that maintain the deterministic test pass rate across all 38 tools and 121 engines in Rush CLI.
+This guide explains the 9 testing layers that maintain the deterministic test pass rate across all 52 tools and 124 engines in Rush CLI.
 
 ---
 
@@ -64,3 +64,12 @@ Key invariants:
 - **Zero-Network Invariant**: All tests execute using local JSON fixtures in `tests/fixtures/benchmarks/`.
 - **Secret Redaction**: Credentials never appear in output JSON or logs; sanitized to `[REDACTED:<TYPE>]`.
 - **Ollama Rejection**: The `ollama` runtime and repository-local model caches are rejected.
+
+---
+
+## 5. Phase 50a Test Suites
+- `tests/test_error_catalog.py`: Exception extraction (Python AST, TypeScript, Rust), deterministic RFC 7807 problem details generation, markdown documentation export permissions, path traversal rejection.
+- `tests/test_license_matrix.py`: Polyglot package manifest parsing (`pyproject.toml`, `package.json`, `Cargo.toml`), copyleft violation detection, manual review classification, SPDX identifier normalization.
+- `tests/test_iam_audit.py`: Multi-cloud SDK operation parsing (AWS boto3, GCP google.cloud, Azure blob), Terraform wildcard IAM action detection (`iam-wildcard-action`), least-privilege policy generation, artifact write permission gates.
+- `tests/test_phase50a_integration.py`: End-to-end CLI JSON emission and MCP server registration parity for all Phase 50a tools.
+

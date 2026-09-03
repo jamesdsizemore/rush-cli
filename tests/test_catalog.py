@@ -6,7 +6,6 @@ from rush.catalog import TOOL_SPECS
 from rush.tools import ALL_TOOLS
 from rush.tools.base import ToolResult
 
-
 PHASE50_OPTION_TYPES: dict[str, dict[str, type]] = {
     "attest": {"artifact_path": str, "output_path": str, "builder_id": str},
     "license-matrix": {"allowed_licenses": tuple},
@@ -101,6 +100,7 @@ def test_phase50_option_specs_cover_every_admitted_behavior() -> None:
     """Every Phase 50 public option is declared once with its exact type."""
     for tool_name, expected_options in PHASE50_OPTION_TYPES.items():
         declared = {
-            option.name: option.value_type for option in TOOL_SPECS[tool_name].option_specs
+            option.name: option.value_type
+            for option in TOOL_SPECS[tool_name].option_specs
         }
         assert declared == expected_options

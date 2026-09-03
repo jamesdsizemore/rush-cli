@@ -12,7 +12,7 @@ This guide defines the architectural rules, coding conventions, type safety stan
 
 - **Python 3.12 Target**: Use modern Python 3.12 features (built-in generic syntax, `match` statements, union syntax `A | B`, typed dictionaries).
 - **Strict Typing**: All function signatures and public classes must have complete type annotations. Use `TypedDict` for structured dictionary shapes like `ToolResult` and `Finding`.
-- **Immutable Configurations**: Use `@dataclass(frozen=True)` for configuration models (`RushConfig`, `ExecutionPermissions`).
+- **Immutable Configurations**: Use `@dataclass(frozen=True)` for configuration models (`RushConfig`, `ExecutionPermissions`), and wrap dictionary options in `types.MappingProxyType`.
 
 ---
 
@@ -42,6 +42,7 @@ Subprocess Execution (run_subprocess)
 1. **Secret Masking**: Any finding or error message that contains high-entropy strings, passwords, or tokens must be redacted as `[REDACTED]`.
 2. **Offline-First Defaults**: Engine adapters must never query external remote endpoints without explicit `--allow-network` permissions.
 3. **No Stealth Installs**: If an engine is missing, return `status: "skipped"` with an install hint. Never invoke `pip install`, `npm install`, or `brew install` automatically.
+4. **Path Traversal Defense**: Any export or artifact destination path must be checked against directory traversal (`..` or root drive escapes) before filesystem writes are attempted. Output writes require explicit `--allow-artifact-write` permission.
 
 ---
 

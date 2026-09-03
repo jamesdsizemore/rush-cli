@@ -58,7 +58,8 @@ rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
 rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
 rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
 rush_guard, rush_token, rush_sync, rush_hygiene, rush_codegraph,
-rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score
+rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score,
+rush_error_catalog, rush_license_matrix, rush_iam_audit
 ```
 
 ## Protocol guarantees
@@ -102,7 +103,7 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_mesh_release_lock(path, agent_id)`**: Release multi-agent file lock.
 * **`rush_swarm_merge(base_code, ours_code, theirs_code)`**: Execute 3-way AST merge conflict resolution.
 
-## Phase 50 FastMCP Tool Additions
+## Phase 50a FastMCP Tool Additions
 
 * **`rush_attest(path, target_artifact, export_path=None)`**: Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifact.
 * **`rush_attest_generate(artifact_path="")`**: *(Deprecated compatibility alias)* Delegates directly to `rush_attest`.

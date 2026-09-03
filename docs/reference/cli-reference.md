@@ -152,6 +152,14 @@ The following flags are supported across evaluation commands:
 - `--since <REF>`: Restrict analysis scope to files modified since the specified git revision.
 - `--branch <NAME>`: Restrict analysis scope to files modified on the given git branch.
 
+## Polyglot Quality & Security Commands (Phase 50a)
+
+| Command | Purpose | Key Flags & Arguments | Modification |
+|---|---|---|---|
+| `error-catalog PATH` | Extract exceptions across Python AST, TypeScript, and Rust, mapping to RFC 7807 problem details. | `--operation audit|generate`, `--export-docs <PATH>`, `--output-module <PATH>` | Writes markdown/code with `--allow-artifact-write` |
+| `license-matrix PATH` | Audit dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` for copyleft risk. | `--project-license <SPDX>`, `--allowed-licenses <LIST>`, `--export-path <PATH>` | Writes JSON matrix with `--allow-artifact-write` |
+| `iam-audit PATH` | Statically inspect multi-cloud SDKs (AWS/GCP/Azure) and Terraform wildcard permissions to synthesize minimal IAM policy. | `--export-path <PATH>` | Writes policy JSON with `--allow-artifact-write` |
+
 ## Workflow commands
 
 | Command | Current behavior |

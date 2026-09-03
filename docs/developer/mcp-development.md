@@ -8,25 +8,13 @@ Do not add transport-specific provider logic. `provider_resume` is routed throug
 
 `SessionContinuityTool` belongs in `ALL_TOOLS`; `_register_tools` exposes it as `rush_continuity` through its shared `__call__`. Do not add separate session-save MCP handlers, because they would bypass the common result and permission contract.
 
-This guide explains how Rush exposes its 38 catalogued tools as a Model Context Protocol (MCP) server over local standard input/output (`stdio`) for AI coding assistants.
+This guide explains how Rush exposes its 52 catalogued tools as a Model Context Protocol (MCP) server over local standard input/output (`stdio`) for AI coding assistants.
 
 ---
 
 ## 1. FastMCP Server Architecture (`src/rush/mcp.py`)
 
-Rush uses the `mcp` Python library (FastMCP) to register tools. Each tool is named `rush_<canonical_name>` (e.g. `rush_lint`, `rush_security`, `rush_ai_eval`).
-
-```python
-# Server creation
-mcp = FastMCP(
-    "rush", instructions="Deterministic code review and quality verification engine."
-)
-
-# Tool registration from canonical catalog
-for tool_name, tool_obj in ALL_TOOLS.items():
-    safe_name = f"rush_{tool_name.replace('-', '_')}"
-    mcp.tool(name=safe_name, description=tool_obj.description)(tool_obj)
-```
+Rush uses the `mcp` Python library (FastMCP) to register tools. Each tool is registered with `tool.__call__` named `rush_<canonical_name>` (hyphens normalized to underscores, e.g. `rush_error_catalog`, `rush_license_matrix`, `rush_iam_audit`), with `rush_attest_generate` preserved as an explicit alias. Duplicate wrapper functions are strictly prohibited.
 
 ---
 

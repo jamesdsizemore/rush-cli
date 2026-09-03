@@ -129,3 +129,65 @@ def test_iam_audit_legacy_synthesizer_backward_compatibility(
     assert policy["Version"] == "2012-10-17"
     assert len(policy["Statement"]) > 0
     assert "s3:GetObject" in policy["Statement"][0]["Action"]
+
+
+def test_iam_audit_parses_gcp_and_azure_calls(tmp_path: Path) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "cloud_service.py").write_text(
+        """
+from google.cloud import storage
+from azure.storage.blob import BlobServiceClient
+
+def gcp_ops():
+    client = storage.Client()
+    blob = client.get_blob("bucket", "obj")
+    client.upload_from_string("data")
+
+def azure_ops():
+    az = BlobServiceClient("conn_str")
+    az.download_blob("container", "blob")
+""",
+        encoding="utf-8",
+    )
+
+    tool = IamAuditTool()
+    res = tool.run(tmp_path)
+
+    assert res["status"] == "ok"
+    actions = set(res["raw"]["actions"])
+    assert "storage.objects.get" in actions
+    assert "storage.objects.create" in actions
+    assert (
+        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"
+        in actions
+    )
+
+
+def test_iam_audit_detects_terraform_wildcard_actions(tmp_path: Path) -> None:
+    infra_dir = tmp_path / "terraform"
+    infra_dir.mkdir(parents=True, exist_ok=True)
+    (infra_dir / "main.tf").write_text(
+        """
+resource "aws_iam_policy" "wildcard_policy" {
+  name = "dangerous_policy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "*"
+        Effect = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+""",
+        encoding="utf-8",
+    )
+
+    tool = IamAuditTool()
+    res = tool.run(tmp_path)
+
+    assert res["status"] == "warn"
+    assert any(f.get("rule_id") == "iam-wildcard-action" for f in res["findings"])

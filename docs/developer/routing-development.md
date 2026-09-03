@@ -29,3 +29,9 @@ Never treat a `Path.glob()` generator itself as truthy; use `any()` over matches
 
 ## Content Routing Architecture (Phase 41)
 `ContentRouter` (`src/rush/token_economy/router.py`) handles automated detection of payload types and calculates exact BPE token budgets via `tiktoken`.
+
+## Polyglot Manifest & AST Routing (Phase 50a)
+* `error-catalog`: Routes source file inspection by suffix (`.py` -> Python AST visitor, `.ts`/`.tsx`/`.js`/`.jsx` -> TypeScript/JavaScript regex, `.rs` -> Rust enum/struct/Result extractor). Automatically excludes `.git`, `.venv`, `node_modules`, `dist`, `build`.
+* `license-matrix`: Scans project targets for package manifests (`pyproject.toml`, `package.json`, `Cargo.toml`). Aggregates dependencies across ecosystems and maps licenses against SPDX copyleft risk lists.
+* `iam-audit`: Inspects Python source trees for multi-cloud SDK patterns (`boto3`, `google.cloud`, `azure.storage`) and scans `.tf` files for Terraform IAM policy definitions.
+

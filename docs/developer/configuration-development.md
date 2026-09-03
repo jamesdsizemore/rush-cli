@@ -77,4 +77,14 @@ When adding a configuration field:
    - Git boundary stopping behavior
 5. **Documentation**: Update `docs/reference/configuration-reference.md`, `docs/reference/configuration-cookbook.md`, and `docs/CONFIG_SCHEMA.md`.
 
+## 4. Tool Options & Precedence Resolution
+
+Tool options are declared declaratively via `ToolOptionSpec` in `TOOL_SPECS` (`src/rush/catalog.py`) and parsed into `ToolConfig.options`:
+* **Immutability**: `ToolConfig.options` is wrapped in `types.MappingProxyType` to prevent in-place mutation at runtime.
+* **Precedence Resolution**: The helper `resolve_tool_options(tool_name, config_options, invocation_options)` merges options with strict three-tier precedence:
+  1. Hardcoded defaults from `ToolOptionSpec.default`
+  2. `rush.toml` values from `[tools.<tool_name>]`
+  3. Explicit CLI/MCP invocation options
+* **Validation**: Any undeclared option or type violation raises `RushConfigError`.
+
 See [Configuration Reference](../reference/configuration-reference.md).

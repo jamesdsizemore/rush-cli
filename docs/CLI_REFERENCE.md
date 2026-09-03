@@ -310,7 +310,7 @@ Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifac
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush license-matrix`
-Audit project dependencies for copyleft and license risks across manifests.
+Audit project dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` for copyleft and license risks.
 * `PATH`: Project root directory.
 * `--project-license`: Declared project license string.
 * `--allowed-licenses`: Comma-separated list of approved SPDX licenses.
@@ -318,7 +318,7 @@ Audit project dependencies for copyleft and license risks across manifests.
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush iam-audit`
-Audit AWS SDK (boto3) usage and synthesize least-privilege cloud IAM JSON policy.
+Audit multi-cloud SDK (AWS boto3, GCP, Azure) and Terraform wildcard usage and synthesize least-privilege cloud IAM JSON policy.
 * `PATH`: Project root directory.
 * `--export-path, -o`: Contained output path for policy JSON (requires `--allow-artifact-write`).
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
@@ -347,7 +347,7 @@ Evaluate recorded golden coding prompt execution runs against deterministic acce
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush error-catalog`
-Extract error definitions and generate RFC 7807 problem details and markdown catalog.
+Extract Python, TypeScript, and Rust exceptions and generate RFC 7807 problem details and markdown catalog.
 * `PATH`: Project root directory.
 * `--operation`: Operation mode (`audit` | `generate`, default: `audit`).
 * `--export-docs, -o`: Path for generated Markdown documentation (requires `--allow-artifact-write`).

@@ -107,8 +107,9 @@ rush bundle analyze dist/
 
 
 
-## SLSA Attestation & Security
-* `rush attest`: Cryptographic build provenance.
-* `rush license-matrix`: Dependency compliance audit.
-* `rush iam-audit`: Cloud IAM policy synthesis.
+## Polyglot Quality & Security (Phase 50a)
+* `rush error-catalog`: Statically extracts exception paths across Python, TypeScript, and Rust to build RFC 7807 problem details catalogs.
+* `rush license-matrix`: Audits multi-ecosystem package manifests (`pyproject.toml`, `package.json`, `Cargo.toml`) for copyleft license risks.
+* `rush iam-audit`: Analyzes multi-cloud SDK calls and flags wildcard actions in Terraform configurations.
+* `rush attest`: Cryptographic build provenance (Phase 50b/c).
 

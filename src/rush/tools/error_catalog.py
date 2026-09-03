@@ -71,12 +71,19 @@ class ErrorCatalogTool(ToolFn):
 
     name = "error-catalog"
 
-    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {".py", ".ts", ".tsx", ".js", ".jsx"}
+    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".rs",
+    }
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Extract Python and TS exceptions at <path>, generate RFC 7807 problem "
+            "Extract Python, TypeScript, and Rust exceptions at <path>, generate RFC 7807 problem "
             "catalog; export markdown requires --allow-artifact-write."
         )
 
@@ -156,6 +163,10 @@ class ErrorCatalogTool(ToolFn):
             )
             if src_file.suffix == ".py":
                 self._extract_python_exceptions(
+                    src_file, rel_path, raw_occurrences, findings
+                )
+            elif src_file.suffix == ".rs":
+                self._extract_rust_exceptions(
                     src_file, rel_path, raw_occurrences, findings
                 )
             else:
@@ -384,6 +395,76 @@ class ErrorCatalogTool(ToolFn):
                     message = str_match.group(1)
                 else:
                     continue
+
+            code = _pascal_to_screaming_snake(class_name)
+            occurrences.append(
+                {
+                    "path": rel_path,
+                    "line": line_idx,
+                    "class_name": class_name,
+                    "code": code,
+                    "message": message,
+                }
+            )
+            findings.append(
+                Finding(
+                    path=rel_path,
+                    line=line_idx,
+                    column=1,
+                    rule="error-catalog",
+                    rule_id=code,
+                    severity="info",
+                    message=f"{class_name}: {message}" if message else class_name,
+                    fingerprint=f"{rel_path}:{line_idx}:{code}",
+                )
+            )
+
+    def _extract_rust_exceptions(
+        self,
+        src_file: Path,
+        rel_path: str,
+        occurrences: list[dict[str, Any]],
+        findings: list[Finding],
+    ) -> None:
+        try:
+            content = src_file.read_text(encoding="utf-8", errors="ignore")
+        except Exception:  # noqa: BLE001
+            return
+
+        lines = content.splitlines()
+        err_enum_pattern = re.compile(
+            r"""(?:pub\s+)?enum\s+([A-Za-z0-9_]+Error)\s*\{"""
+        )
+        err_struct_pattern = re.compile(
+            r"""(?:pub\s+)?struct\s+([A-Za-z0-9_]+Error)\b"""
+        )
+        err_return_pattern = re.compile(
+            r"""Err\s*\(\s*([A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)?)\s*(?:\((.*?)\))?\s*\)"""
+        )
+        panic_pattern = re.compile(r"""panic!\s*\(\s*['"`](.*?)['"`]\s*\)""")
+
+        for line_idx, line_text in enumerate(lines, start=1):
+            class_name = ""
+            message = ""
+            m = err_enum_pattern.search(line_text) or err_struct_pattern.search(
+                line_text
+            )
+            if m:
+                class_name = m.group(1)
+                message = f"Rust error definition: {class_name}"
+            else:
+                m2 = err_return_pattern.search(line_text)
+                if m2:
+                    class_name = m2.group(1).split("::")[-1]
+                    message = m2.group(2) or ""
+                else:
+                    m3 = panic_pattern.search(line_text)
+                    if m3:
+                        class_name = "PanicError"
+                        message = m3.group(1)
+
+            if not class_name:
+                continue
 
             code = _pascal_to_screaming_snake(class_name)
             occurrences.append(

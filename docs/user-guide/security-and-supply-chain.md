@@ -76,5 +76,23 @@ Rush coordinates `Promptfoo`, `Garak`, and `DeepEval` to test that your AI syste
 - Learn about monorepos and advanced checks in [Advanced Checks & Monorepos](advanced-checks.md).
 - Discover solutions to common issues in [Troubleshooting Guide](troubleshooting.md).
 
+## 5. Polyglot Error Cataloging (`rush error-catalog`)
+Extracts and documents exception pathways across Python, TypeScript, and Rust without leaking sensitive runtime details:
+```bash
+rush error-catalog src/ --export-docs docs/errors.md --allow-artifact-write
+```
+
+## 6. Copyleft Dependency Risk Matrix (`rush license-matrix`)
+Audits dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` against an allowlist of permissive SPDX licenses:
+```bash
+rush license-matrix . --allowed-licenses "MIT,Apache-2.0,BSD-3-Clause"
+```
+
+## 7. Cloud IAM Policy Synthesis & Terraform Wildcards (`rush iam-audit`)
+Statically extracts multi-cloud SDK operations and verifies that Terraform configurations do not contain dangerous wildcard actions (`*`):
+```bash
+rush iam-audit . --export-path policy.json --allow-artifact-write
+```
+
 ## Phantom Package Defense (Phase 43)
 `rush hallu-guard` validates all import statements in your project against Python's standard library and installed distribution metadata, blocking supply-chain risks from unvetted AI hallucinations.

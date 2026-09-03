@@ -195,6 +195,14 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Cejel (`cejel`) | Offline trust certificate verifier | `release` | `install cejel` | Self-contained offline cryptographic certificates verifying quality/security suite pass states. |
 | Sentrux (`sentrux`) | Architectural sensor & code decay monitor | `complexity` | `cargo install sentrux` | Real-time sensor tracking code decay and complexity spikes. |
 
+## Polyglot Quality & Security Engines (Phase 50a)
+
+| Engine | What / who | Command | Catalog install hint | Applicability and recovery |
+|---|---|---|---|---|
+| `error-catalog` | Polyglot AST/regex exception extractor & RFC 7807 generator | `error-catalog` | built-in | Python, TypeScript/JavaScript, and Rust source files. |
+| `license-matrix` | Dependency manifest copyleft and license risk auditor | `license-matrix` | built-in | `pyproject.toml`, `package.json`, `Cargo.toml`. |
+| `iam-audit` | Multi-cloud SDK & Terraform wildcard least-privilege synthesizer | `iam-audit` | built-in | Python SDKs (AWS boto3, GCP, Azure) and Terraform `.tf` files. |
+
 ## Missing-engine experience
 
 ```json

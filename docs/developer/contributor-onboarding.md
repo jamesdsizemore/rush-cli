@@ -67,7 +67,9 @@ When contributing to Rush:
 
 
 
-## Contributing to Security and Release Suite
+## Contributing to Phase 50a Quality & Security Tools
+* Place polyglot error extraction and RFC 7807 problem details in `src/rush/tools/error_catalog.py`.
+* Place dependency license matrix and copyleft risk checks in `src/rush/tools/license_matrix.py`.
+* Place multi-cloud SDK calls and Terraform IAM policy synthesizers in `src/rush/tools/iam_audit.py`.
 * Place cryptographic attestation tools in `src/rush/tools/attest.py`.
-* Place compliance tools in `src/rush/tools/license_matrix.py`.
 

@@ -55,6 +55,14 @@ Rush runs pytest for the Python backend and Vitest for the TypeScript frontend, 
 
 ---
 
+### Step 6: Polyglot Quality Catalog & Cloud Infrastructure Audit (Phase 50a)
+```bash
+rush error-catalog . --json
+rush license-matrix . --json
+rush iam-audit . --json
+```
+Rush extracts exceptions across Python, TypeScript, and Rust, audits dependency licenses across `pyproject.toml` and `package.json`, and verifies least-privilege cloud IAM policies while detecting wildcard actions in `infra/*.tf`.
+
 ## 3. Key Takeaway
 
 You run standard, consistent commands (`tdd`, `review`, `lint`, `complexity`, `slop`, `security`, `test`) regardless of how many languages exist in the repo.

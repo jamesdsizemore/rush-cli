@@ -4,5 +4,6 @@
 2. `release` CLI exposes dry-run planning and signature/provenance verification; package publishing/uploading is intentionally unavailable by design.
 3. `review.fail_on`, project path lists, and generic tool `check` configuration are parsed but not universally enforced across all tools.
 4. Human terminal renderer uses ASCII/Rich formatting; automated tools should rely on `--json` for machine-readable invariants.
+5. `error-catalog` and `iam-audit` write markdown catalogs or policy JSON artifacts only when explicitly authorized via `--allow-artifact-write` (or `permissions.artifact_write=True`). In absence of authorization, they return status `skipped` with zero filesystem mutation.
 
 These reflect current design constraints and boundaries.

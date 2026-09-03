@@ -8,7 +8,7 @@
 [![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203%20Attested-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square)](https://github.com/astral-sh/ruff)
-[![Tests Passing](https://img.shields.io/badge/tests-750%20passed%20%28221%20files%29-22c55e.svg?style=flat-square)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-939%20passed%20%28222%20files%29-22c55e.svg?style=flat-square)](tests/)
 [![Engine Adapters](https://img.shields.io/badge/engines-124%20adapters-blueviolet.svg?style=flat-square)](src/rush/engines/)
 [![Docs Synchronized](https://img.shields.io/badge/docs-295%20files%20synchronized-blue.svg?style=flat-square)](docs/)
 
@@ -297,6 +297,7 @@ Add to `.cursor/mcp.json` or `.opencode/mcp.json`:
 | `rush_mesh_release_lock` | `path, agent_id` | Releases multi-agent file mutex lock. |
 | `rush_swarm_merge` | `base_code, ours_code, theirs_code` | Resolves concurrent agent edits via 3-way AST merge. |
 | `rush_attest_generate` | `artifact_path` | Generates in-toto SLSA Level 3 cryptographic build provenance. |
+| `rush_error_catalog` | `path, export_path` | Extracts exceptions into RFC 7807 problem details catalog. |
 | `rush_license_matrix` | None | Audits open-source dependencies for copyleft compliance risks. |
 | `rush_iam_audit` | None | Synthesizes least-privilege cloud IAM JSON policies from SDK usage. |
 | `rush_pr_synthesize` | `base_branch` | Synthesizes structured semantic GitHub pull request descriptions. |
@@ -352,6 +353,7 @@ Every single CLI command and FastMCP call in Rush returns the exact same determi
 * **`rush dead`**: Unused code detection (Vulture, ts-prune, knip).
 * **`rush complexity`**: Cyclomatic and cognitive complexity scoring.
 * **`rush slop`**: Detects AI slop, hallucinated imports, and boilerplate bloat.
+* **`rush error-catalog`**: RFC 7807 problem details exception extractor across Python, TypeScript, and Rust.
 * **`rush tdd`**: Enforces test-driven development invariants before edits.
 
 </td>

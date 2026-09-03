@@ -56,6 +56,9 @@ Run `rush trace` to ensure 100% requirement coverage and `rush simulate-ci` to v
 
 
 
-## Step 10: Generate PR Card and Build Attestation
+## Step 10: Run Quality & Security Checks (Phase 50a)
+Run `rush error-catalog .`, `rush license-matrix .`, and `rush iam-audit .` to audit exceptions, copyleft dependencies, and cloud IAM policies before opening your PR.
+
+## Step 11: Generate PR Card and Build Attestation
 Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.
 

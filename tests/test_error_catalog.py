@@ -145,3 +145,31 @@ def test_error_catalog_canonical_schema_and_call_interface(tmp_path: Path) -> No
     assert "path" in finding
     assert "line" in finding
     assert finding["severity"] in ("info", "warn", "error")
+
+
+def test_error_catalog_extracts_rust_exceptions(tmp_path: Path) -> None:
+    rs_file = tmp_path / "lib.rs"
+    rs_file.write_text(
+        """
+pub enum NetworkError {
+    Timeout,
+    ConnectionReset,
+}
+
+pub struct DatabaseError;
+
+fn query() -> Result<(), NetworkError> {
+    Err(NetworkError::Timeout)
+}
+""",
+        encoding="utf-8",
+    )
+
+    tool = ErrorCatalogTool()
+    res = tool.run(tmp_path)
+
+    assert res["status"] == "ok"
+    catalog = res["raw"]["catalog"]
+    codes = {entry["code"] for entry in catalog}
+    assert any("NETWORK" in c for c in codes)
+    assert any("DATABASE" in c for c in codes)

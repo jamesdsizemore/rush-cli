@@ -154,6 +154,9 @@ Every tool returns structured `metadata.execution` capturing:
 | Clines (`clines`) | `complexity` | clines 0.2+ (token density & complexity analyzer) | `tests/test_clines_reference.py` |
 | Cejel (`cejel`) | `release` | cejel 0.1+ (offline trust certificate verifier) | `tests/test_cejel_reference.py` |
 | Sentrux (`sentrux`) | `complexity` | sentrux 0.5+ (codebase decay sensor) | `tests/test_sentrux_reference.py` |
+| error-catalog | `error-catalog` | internal AST/regex (Python, TS, Rust) | `tests/test_error_catalog.py` |
+| license-matrix | `license-matrix` | internal manifest parser & SPDX mapper | `tests/test_license_matrix.py` |
+| iam-audit | `iam-audit` | internal multi-cloud AST & TF scanner | `tests/test_iam_audit.py` |
 
 ## Browser Runtime Contract (Phase 08)
 

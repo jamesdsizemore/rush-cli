@@ -39,6 +39,8 @@ class MyEngine(Engine):
         return self.normalize(stdout, stderr, code, str(target))
 ```
 
+> **Note on Binary Execution**: `run_subprocess` catches `FileNotFoundError` if a resolved binary disappears or fails to spawn on Windows/POSIX, safely returning exit code `127` and stderr diagnostic so the engine fails closed with structured results rather than crashing the runtime.
+
 ---
 
 ## 2. Specialized Engine Patterns

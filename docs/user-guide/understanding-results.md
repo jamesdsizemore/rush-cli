@@ -39,6 +39,8 @@ Each result includes:
 | **`SKIPPED`** | Gray | An optional engine is not installed on your system or requires explicit permission flags. | If you want that engine, install it (e.g. via `uv pip install` or `npm install -g`). Otherwise, you can safely ignore it. |
 | **`ERROR`** | Red | The engine crashed, was given an invalid argument, or hit a timeout. | Read the error traceback or run `rush doctor .` to check your environment. |
 
+> **Permission Gates**: Commands like `rush error-catalog` (with `--export-docs`) or `rush iam-audit` (with `--export-path`) return `SKIPPED` if `--allow-artifact-write` is omitted, protecting repositories from unintended file mutations.
+
 ---
 
 ## 3. The "Worst Status Wins" Rule

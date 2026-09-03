@@ -4,7 +4,7 @@
 
 Manages local session checkpoints through `save`, `list`, and `restore`. It is implemented by `SessionContinuityTool`, has no external engine, and uses explicit cache-write permission for `save`; it is registered as MCP `rush_continuity`.
 
-The catalog contains 38 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
+The catalog contains 52 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
 
 | Tool | Category | Maturity | Engines / behavior |
 |---|---|---|---|
@@ -56,11 +56,11 @@ The catalog contains 38 user-visible tools. **Maturity matters:** a listed tool 
 | `hook` | workflow | real adapter | sub-second staged AST linter, Trojan Source detector, hook tamper guard |
 | `score` | workflow | real adapter | 6-pillar composite quality scorecard, SARIF 2.1.0 exporter, SVG badge generator, multi-model consensus reconciler |
 | `prompt-eval` | test | real adapter | golden task evaluation matrix, tool sequence and patch matching, token/cost budgets, pass rate thresholds |
-| `error-catalog` | security | real adapter | Python AST and TypeScript exception extractor; deterministic RFC 7807 problem details and Markdown docs generator |
+| `error-catalog` | security | real adapter | Python, TypeScript, and Rust AST/regex exception extractor; deterministic RFC 7807 problem details and Markdown docs generator |
 | `provenance-ai` | workflow | real adapter | Git commit trailer attribution (Co-authored-by, Generated-by), shallow history detection, unknown survival states |
 | `attest` | security | real adapter | in-toto Statement v1 unsigned provenance draft for a local artifact with SHA-256 digest |
-| `license-matrix` | security | real adapter | multi-manifest dependency license auditor with exact allowlist matching and manual review classification |
-| `iam-audit` | security | real adapter | static Python AST AWS SDK usage auditor and least-privilege IAM policy synthesizer |
+| `license-matrix` | security | real adapter | multi-manifest dependency license auditor across pyproject.toml, package.json, and Cargo.toml with SPDX normalization and copyleft tiering |
+| `iam-audit` | security | real adapter | static multi-cloud SDK (AWS, GCP, Azure) and Terraform wildcard usage auditor and least-privilege IAM policy synthesizer |
 | `mem-profile` | quality | real adapter | static AST unclosed resource detection and optional dynamic memory probe under `--allow-slow` |
 | `cold-start` | quality | real adapter | static Python AST import inventory and dynamic `-X importtime` module timing under `--allow-slow` |
 | `media-opt` | quality | real adapter | SVG script security audit/sanitization and Pillow PNG/WebP raster optimization under `--allow-artifact-write` |

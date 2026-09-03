@@ -29,6 +29,8 @@ Welcome to the **Rush User Guide**! Whether you are writing your first line of c
   *Managing multi-package monorepos, tracking Git defect hotspots, and compiling multi-IDE governance rules.*
 - [Troubleshooting & FAQs](troubleshooting.md)  
   *Friendly, plain-language solutions for common questions, missing tool warnings, and error diagnostics.*
+- [Polyglot Quality & Security Catalog](../tools/error_catalog.md)  
+  *Extracting polyglot exceptions to RFC 7807 problem details, auditing copyleft dependency licenses, and synthesizing minimal cloud IAM policies.*
 
 ---
 

@@ -53,7 +53,8 @@ rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
 rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
 rush_get_patch, rush_apply_fix, rush_session_context,
 rush_guard, rush_token, rush_sync, rush_hygiene, rush_codegraph,
-rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score
+rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score,
+rush_error_catalog, rush_license_matrix, rush_iam_audit
 ```
 
 ## AI Agent Remediation & Safety Tools (Phases 29–40)
@@ -66,6 +67,12 @@ rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score
 - `rush_codegraph`: Explores polyglot Code Property Graph and extracts verbatim symbol slices.
 - `rush_score`: Computes 6-pillar composite quality scores and generates SARIF/SVG artifacts.
 
+
+## Polyglot Quality & Security Tools (Phase 50a)
+
+- `rush_error_catalog`: Statically extracts exceptions across Python AST, TypeScript, and Rust, mapping to RFC 7807 problem details.
+- `rush_license_matrix`: Audits dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` for copyleft risk.
+- `rush_iam_audit`: Parses multi-cloud SDK calls (AWS/GCP/Azure) and Terraform wildcard permissions to synthesize minimal IAM policies.
 
 ## Protocol guarantees
 

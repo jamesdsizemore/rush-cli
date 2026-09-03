@@ -70,5 +70,12 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 
 
 
-## In-Toto Provenance Draft & Security Analysis (Phase 50)
-`rush attest` produces in-toto Statement v1 / SLSA Provenance v1 unsigned drafts with SHA-256 artifact digests for release builds. `rush license-matrix` and `rush iam-audit` provide static dependency compliance and least-privilege cloud IAM policy synthesis. Note: `rush attest` emits unsigned drafts; cryptographic signing and trusted builder verification are handled by downstream CI release workflows.
+## Polyglot Quality & Security Catalog (Phase 50a)
+`rush error-catalog`, `rush license-matrix`, and `rush iam-audit` provide offline static security checks:
+1. `rush error-catalog`: Statically indexes raised exceptions across Python, TypeScript, and Rust without executing code, normalizing error codes to RFC 7807 problem details to prevent leaking internal stack traces.
+2. `rush license-matrix`: Audits polyglot package dependencies against an SPDX allowlist and flags copyleft risks (GPL, AGPL, LGPL, SSPL) across manifests.
+3. `rush iam-audit`: Enforces least-privilege cloud IAM policies from static multi-cloud SDK calls (AWS, GCP, Azure) and detects dangerous wildcard actions (`*`) in Terraform configurations.
+Exporting artifacts requires explicit `--allow-artifact-write` permission and strictly validates target paths against directory traversal (`..`).
+
+## Flagship Provenance & Verification (Phase 50b/50c)
+`rush attest` produces in-toto Statement v1 / SLSA Provenance v1 unsigned drafts with SHA-256 artifact digests for release builds. Cryptographic signing and builder verification are handled by downstream CI release workflows.

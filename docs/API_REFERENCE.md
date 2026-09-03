@@ -20,7 +20,7 @@ Rush is packaged as a local CLI application and stdio Model Context Protocol (MC
 
 ### `ToolFn`
 ### `ToolFn`
-The abstract base class for all 35 Rush tools.
+The abstract base class for all 52 Rush tools.
 ```python
 class ToolFn:
     name: str
@@ -286,6 +286,24 @@ class CompositeScorecardCalculator:
 
     @classmethod
     def compute_scorecard(cls, pillars: PillarScores) -> ScorecardReport: ...
+```
+
+## 12. Phase 50a Quality & Security Subsystem Contracts (`src/rush/tools/`)
+
+```python
+class ErrorCatalogTool(ToolFn):
+    """Polyglot exception parser producing RFC 7807 problem details catalogs across Python, TypeScript, and Rust."""
+    name: str = "error-catalog"
+
+
+class LicenseMatrixTool(ToolFn):
+    """Audits pyproject.toml, package.json, and Cargo.toml for copyleft and license risks."""
+    name: str = "license-matrix"
+
+
+class IamAuditTool(ToolFn):
+    """Statically parses multi-cloud SDK calls (AWS/GCP/Azure) and Terraform wildcard actions to synthesize minimal policies."""
+    name: str = "iam-audit"
 ```
 
 For guidelines on creating new tools or engines, see the [Developer Guide](DEVELOPER_GUIDE.md), [Tool Development Guide](developer/tool-development.md), and [Engine Development Guide](developer/engine-development.md).

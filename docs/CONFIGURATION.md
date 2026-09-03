@@ -75,7 +75,24 @@ ccr_cache_path = ".rush/cache/ccr.db"
 failures_db_path = ".rush/memory/failures.db"
 invariants_path = ".rush/memory/invariants.json"
 
-## Phase 50 Security & Quality Suite Tool Configuration
+## Phase 50a Quality & Security Suite Tool Configuration
+
+```toml
+[tools.error-catalog]
+operation = "audit"
+export_docs = "docs/ERROR_CATALOG.md"
+output_module = "src/rush/errors.py"
+
+[tools.license-matrix]
+project_license = "Apache-2.0"
+allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC"]
+export_path = "reports/licenses.json"
+
+[tools.iam-audit]
+export_path = "reports/iam-policy.json"
+```
+
+## Phase 50b/50c Flagship Tool Configuration
 
 ```toml
 [tools.attest]

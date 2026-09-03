@@ -348,9 +348,11 @@ def test_mcp_catalog_names_normalize_toolfn_hyphens_to_underscores() -> None:
         )
 
 
-def test_phase50_mcp_registration_has_one_object_per_tool_and_only_attest_alias() -> None:
+def test_phase50_mcp_registration_has_one_object_per_tool_and_only_attest_alias() -> (
+    None
+):
     """Phase 50 MCP routes are the registered objects plus one explicit alias."""
-    import rush.mcp as mcp
+    from rush import mcp
 
     source = inspect.getsource(mcp._register_tools)
     assert "_call_registered_tool" not in source

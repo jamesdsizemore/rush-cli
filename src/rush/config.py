@@ -20,9 +20,11 @@ Override order (last wins):
 from __future__ import annotations
 
 import tomllib
+import types
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .catalog import ToolOptionSpec, ToolOptionValue
@@ -245,7 +247,7 @@ def _parse(raw: dict, source: Path) -> RushConfig:
         tools[tool_name] = ToolConfig(
             engine_args=list(tr.get("engine_args", [])),
             check=bool(tr.get("check", False)),
-            options=parsed_options,
+            options=types.MappingProxyType(parsed_options),
         )
 
     review_raw = raw.get("review", {}) or {}
@@ -272,3 +274,79 @@ def _parse(raw: dict, source: Path) -> RushConfig:
         log_level=str(raw.get("log_level", "warn")),
         source=source,
     )
+
+
+def resolve_tool_options(
+    tool_name: str,
+    config_options: Mapping[str, Any] | None = None,
+    invocation_options: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve tool options with precedence: default -> config -> invocation."""
+    from .catalog import TOOL_SPECS
+
+    spec = TOOL_SPECS.get(tool_name) or TOOL_SPECS.get(tool_name.replace("_", "-"))
+    if not spec:
+        return {}
+
+    declared_options = {opt.name: opt for opt in getattr(spec, "option_specs", ())}
+    resolved: dict[str, Any] = {}
+    for name, opt in declared_options.items():
+        resolved[name] = opt.default
+
+    if config_options:
+        for name, val in config_options.items():
+            if name not in declared_options:
+                raise RushConfigError(f"unknown option '{name}' for tool '{tool_name}'")
+            opt = declared_options[name]
+            if opt.value_type is float:
+                try:
+                    resolved[name] = float(val)
+                except (ValueError, TypeError):
+                    raise RushConfigError(
+                        f"option '{name}' for tool '{tool_name}' must be float"
+                    )
+            elif opt.value_type is int and not isinstance(val, bool):
+                try:
+                    resolved[name] = int(val)
+                except (ValueError, TypeError):
+                    raise RushConfigError(
+                        f"option '{name}' for tool '{tool_name}' must be int"
+                    )
+            elif opt.value_type is bool:
+                resolved[name] = (
+                    str(val).lower() in ("true", "1", "yes")
+                    if isinstance(val, str)
+                    else bool(val)
+                )
+            else:
+                resolved[name] = val
+
+    if invocation_options:
+        for name, val in invocation_options.items():
+            if name not in declared_options:
+                raise RushConfigError(f"unknown option '{name}' for tool '{tool_name}'")
+            opt = declared_options[name]
+            if opt.value_type is float:
+                try:
+                    resolved[name] = float(val)
+                except (ValueError, TypeError):
+                    raise RushConfigError(
+                        f"option '{name}' for tool '{tool_name}' must be float"
+                    )
+            elif opt.value_type is int and not isinstance(val, bool):
+                try:
+                    resolved[name] = int(val)
+                except (ValueError, TypeError):
+                    raise RushConfigError(
+                        f"option '{name}' for tool '{tool_name}' must be int"
+                    )
+            elif opt.value_type is bool:
+                resolved[name] = (
+                    str(val).lower() in ("true", "1", "yes")
+                    if isinstance(val, str)
+                    else bool(val)
+                )
+            else:
+                resolved[name] = val
+
+    return resolved

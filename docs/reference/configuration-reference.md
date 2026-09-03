@@ -120,6 +120,25 @@ confine_workspace_paths = true
 
 Configures agent safety boundaries, destructive command interception, and tree depth constraints.
 
+## Phase 50a Quality & Security Tools Configuration
+
+```toml
+[tools.error-catalog]
+operation = "audit"
+export_docs = "docs/ERROR_CATALOG.md"
+output_module = "src/rush/errors.py"
+
+[tools.license-matrix]
+project_license = "Apache-2.0"
+allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC"]
+export_path = "reports/licenses.json"
+
+[tools.iam-audit]
+export_path = "reports/iam-policy.json"
+```
+
+Tool options are stored in immutable `types.MappingProxyType` inside `ToolConfig.options` and merged via `resolve_tool_options`.
+
 ## Validation behavior
 
 Malformed TOML, unknown log levels, wrong value types, and unknown tool names fail configuration loading. Rush does not merge multiple files: nearest discovered file wins. Validate anytime with `rush config check .`.

@@ -8,7 +8,7 @@ No `[tools.continuity]` credential, endpoint, executable, or persistent network-
 
 There is no `[tools.continuity]` permission field. Checkpoint creation is controlled only by the per-invocation cache-write permission, so configuration remains unable to escalate local persistence.
 
-Rush uses a typed TOML configuration model defined via Python dataclasses in `src/rush/config.py`. Configuration is discovery-driven, bounded by the repository root, and validated against the canonical catalog of all 38 tools.
+Rush uses a typed TOML configuration model defined via Python dataclasses in `src/rush/config.py`. Configuration is discovery-driven, bounded by the repository root, and validated against the canonical catalog of all 52 tools.
 
 ---
 
@@ -75,11 +75,12 @@ confine_workspace_paths = true
 ## 2. Table Validation & Precedence Rules
 
 
-1. **Exact Tool Matching**: Every `[tools.NAME]` table header must match one of the 34 valid tool names in `rush.catalog.TOOL_SPECS`. Any unrecognized tool name raises `RushConfigError`.
+1. **Exact Tool Matching**: Every `[tools.NAME]` table header must match one of the 52 valid tool names in `rush.catalog.TOOL_SPECS`. Any unrecognized tool name raises `RushConfigError`.
 2. **Precedence Hierarchy**:
    ```text
    Built-in Defaults -> Nearest rush.toml (upward walk to .git root) -> Explicit CLI Arguments
    ```
 3. **Safety Isolation**: Rush stops walking upward upon reaching the `.git` directory boundary, preventing accidental inheritance of parent directory configuration.
+4. **Option Immutability**: Tool options in `ToolConfig.options` are wrapped in immutable `types.MappingProxyType` to prevent runtime mutation.
 
 See [Configuration Reference](reference/configuration-reference.md) and [Configuration Cookbook](reference/configuration-cookbook.md).

@@ -247,11 +247,15 @@ def test_tool_config_options_are_immutable_and_precedence_is_default_config_expl
         "operation": "check",
         "baseline_name": "default",
     }
-    assert resolve("benchmark", options, {"threshold_percent": "3.5"})[
-        "threshold_percent"
-    ] == 3.5
+    assert (
+        resolve("benchmark", options, {"threshold_percent": "3.5"})["threshold_percent"]
+        == 3.5
+    )
 
     with pytest.raises(RushConfigError, match="unknown option"):
         resolve("benchmark", options, {"unknown": True})
     with pytest.raises(RushConfigError, match="must be float"):
         resolve("benchmark", options, {"threshold_percent": "invalid"})
+
+    # Underscore normalization
+    assert "export_path" in resolve("error_catalog")

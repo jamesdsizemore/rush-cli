@@ -358,59 +358,15 @@ def _register_tools(server) -> None:
         description="Execute 3-way AST merge conflict resolution",
     )
 
-    # Phase 50 Tools
-    def _call_registered_tool(name: str, path_str: str = ".", **kwargs):
-        for tool in ALL_TOOLS:
-            if tool.name == name or tool.name.replace("-", "_") == name:
-                return tool(Path(path_str), **kwargs)
-        return {"status": "skipped", "summary": f"Tool {name} is not registered."}
-
-    def mcp_rush_attest_generate(artifact_path: str = "") -> dict:
-        """Deprecated alias for rush_attest."""
-        return _call_registered_tool("attest", artifact_path or ".")
-
-    def mcp_rush_license_matrix(path: str = ".") -> dict:
-        return _call_registered_tool("license-matrix", path)
-
-    def mcp_rush_iam_audit(path: str = ".") -> dict:
-        return _call_registered_tool("iam-audit", path)
-
-    def mcp_rush_dead_asset(path: str = ".") -> dict:
-        return _call_registered_tool("dead-asset", path)
-
-    def mcp_rush_pr_synthesize(path: str = ".", base_branch: str = "main") -> dict:
-        return _call_registered_tool("pr-synthesize", path, base_ref=base_branch)
-
-    registered_mcp_names = {t.name.replace("-", "_") for t in ALL_TOOLS}
-    if "license_matrix" not in registered_mcp_names:
-        server.add_tool(
-            fn=mcp_rush_license_matrix,
-            name="rush_license_matrix",
-            description="Audit open-source dependencies for license risks",
-        )
-    if "iam_audit" not in registered_mcp_names:
-        server.add_tool(
-            fn=mcp_rush_iam_audit,
-            name="rush_iam_audit",
-            description="Synthesize least-privilege cloud IAM policy",
-        )
-    if "dead_asset" not in registered_mcp_names:
-        server.add_tool(
-            fn=mcp_rush_dead_asset,
-            name="rush_dead_asset",
-            description="Scan for unreferenced assets and dead media",
-        )
-    if "pr_synthesize" not in registered_mcp_names:
-        server.add_tool(
-            fn=mcp_rush_pr_synthesize,
-            name="rush_pr_synthesize",
-            description="Synthesize structured semantic pull request card",
-        )
-    server.add_tool(
-        fn=mcp_rush_attest_generate,
-        name="rush_attest_generate",
-        description="Deprecated alias for rush_attest",
-    )
+    # Backward compatibility alias for rush_attest
+    for tool in ALL_TOOLS:
+        if tool.name == "attest":
+            server.add_tool(
+                fn=tool.__call__,
+                name="rush_attest_generate",
+                description="Deprecated alias for rush_attest",
+            )
+            break
 
 
 async def run_stdio() -> None:

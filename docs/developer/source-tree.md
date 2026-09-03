@@ -106,14 +106,27 @@ src/rush/
 
 
 
-## SLSA Attestation & Security Modules
+## Phase 50a Polyglot Quality & Security Modules
+```
+src/rush/tools/
+├── error_catalog.py  # Polyglot AST/regex exception extractor & RFC 7807 problem details generator
+├── license_matrix.py # Polyglot copyleft dependency risk auditor (pyproject/package.json/Cargo)
+└── iam_audit.py      # Multi-cloud SDK & Terraform least-privilege IAM policy auditor
+```
+
+## Phase 50b/50c Flagship Modules
 ```
 src/rush/tools/
 ├── attest.py         # SLSA Level 3 provenance generator
-├── license_matrix.py # Copyleft license scanner
-├── iam_audit.py      # Cloud IAM policy synthesizer
 ├── dead_asset.py     # Unreferenced asset pruner
-└── pr_synthesize.py  # Semantic PR card synthesizer
+├── pr_synthesize.py  # Semantic PR card synthesizer
+├── provenance_ai.py  # Git commit trailer AI attribution analyzer
+├── media_opt.py      # SVG script sanitizer & image optimizer
+├── mem_profile.py    # Memory leak & profiler
+├── cold_start.py     # Module cold-start analyzer
+├── benchmark.py      # Baseline comparator
+├── offline_review.py # Local ONNX reviewer
+└── tui_diff.py       # Rich table commit differ
 ```
 
 ## Benchmark Harness & Verification Modules (Phases B1–B6)

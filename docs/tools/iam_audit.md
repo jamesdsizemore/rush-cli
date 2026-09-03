@@ -1,7 +1,7 @@
 # Cloud IAM Audit Tool (`rush iam-audit`)
 
 ## Overview
-`rush iam-audit` statically parses Python AST calls to AWS SDKs (`boto3`, `botocore`) and synthesizes a minimal, least-privilege AWS IAM JSON policy. Any unmapped or unrecognized SDK method calls are reported as structured warnings to ensure security auditing coverage.
+`rush iam-audit` statically parses source code for cloud SDK calls across AWS (`boto3`), GCP (`google.cloud.storage`, `google.cloud.bigquery`), and Azure (`azure.storage.blob`), synthesizes minimal least-privilege IAM policies, and scans Terraform (`.tf`) files for dangerous wildcard permissions (`iam-wildcard-action`).
 
 ## Usage
 
@@ -17,15 +17,12 @@ rush iam-audit [PATH] [--output <policy.json>] [--allow-artifact-write] [--json]
   - `output_policy_file` (str, optional): Contained path to write synthesized IAM policy JSON.
   - `allow_artifact_write` (bool): Required when exporting policy JSON to `output_policy_file`.
 
-## Supported Services
-- **S3:** `GetObject`, `PutObject`, `DeleteObject`, `ListBucket`, `CreateBucket`, `DeleteBucket`, `ListAllMyBuckets`.
-- **DynamoDB:** `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem`, `CreateTable`, `DescribeTable`.
-- **SQS:** `SendMessage`, `ReceiveMessage`, `DeleteMessage`, `GetQueueUrl`, `CreateQueue`.
-- **SNS:** `Publish`, `CreateTopic`, `Subscribe`.
-- **Lambda:** `InvokeFunction`, `CreateFunction`, `GetFunction`.
-- **Secrets Manager:** `GetSecretValue`, `PutSecretValue`, `CreateSecret`, `DescribeSecret`.
-- **SSM:** `GetParameter`, `GetParameters`, `PutParameter`, `GetParameterHistory`.
-- **STS / KMS:** `GetCallerIdentity`, `AssumeRole`, `Encrypt`, `Decrypt`, `GenerateDataKey`, `DescribeKey`.
+## Supported Clouds & Services
+- **AWS:** S3, DynamoDB, SQS, SNS, Lambda, Secrets Manager, SSM, STS, KMS.
+- **GCP:** Cloud Storage (`storage.objects.*`), BigQuery (`bigquery.jobs.*`, `bigquery.tables.*`).
+- **Azure:** Azure Blob Storage (`Microsoft.Storage/...`).
+- **Terraform / IaC:** Scans `.tf` files for wildcard `Action = "*"` or `actions = ["*"]` blocks. Emits `iam-wildcard-action` finding.
+
 
 ## Output Schema
 Emits canonical `ToolResult` with synthesized IAM policy in `metadata.policy`:

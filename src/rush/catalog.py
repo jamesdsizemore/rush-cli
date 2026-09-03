@@ -502,6 +502,33 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Evaluate recorded prompt runs against golden task criteria at <path>. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="golden_path",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Path to golden tasks JSON file.",
+            ),
+            ToolOptionSpec(
+                name="pass_rate_threshold",
+                value_type=float,
+                default=1.0,
+                description="Minimum pass rate threshold.",
+            ),
+            ToolOptionSpec(
+                name="max_cost_threshold",
+                value_type=float,
+                default=0.05,
+                description="Maximum cost threshold in USD.",
+            ),
+            ToolOptionSpec(
+                name="max_tokens_threshold",
+                value_type=int,
+                default=50000,
+                description="Maximum total tokens threshold.",
+            ),
+        ),
     ),
     "mem-profile": ToolSpec(
         name="mem-profile",
@@ -510,6 +537,14 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Audit memory usage and unclosed resources at <path>; dynamic probe requires --allow-slow. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="dynamic",
+                value_type=bool,
+                default=False,
+                description="Enable dynamic runtime memory sampling.",
+            ),
+        ),
     ),
     "cold-start": ToolSpec(
         name="cold-start",
@@ -518,6 +553,14 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Audit import overhead and cold-start latency at <path>; dynamic -X importtime requires --allow-slow. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="dynamic",
+                value_type=bool,
+                default=False,
+                description="Enable dynamic importtime tracing.",
+            ),
+        ),
     ),
     "media-opt": ToolSpec(
         name="media-opt",
@@ -526,6 +569,20 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Audit media assets for CLS and SVG security at <path>; writes optimized assets with --allow-artifact-write. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="sanitize",
+                value_type=bool,
+                default=False,
+                description="Sanitize SVGs.",
+            ),
+            ToolOptionSpec(
+                name="optimize",
+                value_type=bool,
+                default=False,
+                description="Optimize media assets.",
+            ),
+        ),
     ),
     "offline-review": ToolSpec(
         name="offline-review",
@@ -534,6 +591,27 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Run local offline ONNX model review at <path>; returns skipped when onnxruntime or model is absent. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="model_path",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Path to local ONNX model.",
+            ),
+            ToolOptionSpec(
+                name="expected_sha256",
+                value_type=str,
+                default="",
+                description="Expected SHA-256 digest of the model.",
+            ),
+            ToolOptionSpec(
+                name="defect_threshold",
+                value_type=float,
+                default=0.5,
+                description="Defect probability threshold.",
+            ),
+        ),
     ),
     "tui-diff": ToolSpec(
         name="tui-diff",
@@ -542,6 +620,14 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Compute Git commit and quality findings deltas at <path>; renders Rich tables in CLI. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="base_ref",
+                value_type=str,
+                default="HEAD~1",
+                description="Base git reference for diff.",
+            ),
+        ),
     ),
     "benchmark": ToolSpec(
         name="benchmark",
@@ -550,6 +636,32 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         mcp_description="Compare performance samples against baseline thresholds at <path>; baseline recording requires --allow-cache-write. Returns {status, findings[], summary}.",
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="threshold_percent",
+                value_type=float,
+                default=5.0,
+                description="Regression threshold percentage.",
+            ),
+            ToolOptionSpec(
+                name="record",
+                value_type=bool,
+                default=False,
+                description="Record results to baseline.",
+            ),
+            ToolOptionSpec(
+                name="operation",
+                value_type=str,
+                default="check",
+                description="Benchmark operation mode.",
+            ),
+            ToolOptionSpec(
+                name="baseline_name",
+                value_type=str,
+                default="default",
+                description="Named benchmark baseline.",
+            ),
+        ),
     ),
     "error-catalog": ToolSpec(
         name="error-catalog",

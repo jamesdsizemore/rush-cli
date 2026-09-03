@@ -61,6 +61,13 @@ structured-error path must have a fixture, an owner, a recovery/documentation
 path, and a reviewed status mapping before promotion. Optional external engines
 may remain `skipped`; they must not be represented as passing evidence.
 
+## Built-in Quality & Security Tools (Phase 50a)
+
+`error-catalog`, `license-matrix`, and `iam-audit` are built-in static analyzers owned directly by Rush:
+- **Zero-Network Invariant**: Scanners operate strictly offline without outbound network queries.
+- **Artifact Confinement**: Exporting reports requires explicit `--allow-artifact-write` permission, and destination paths are checked against directory traversal (`..`).
+- **Deterministic Evaluation**: Status outcomes resolve deterministically (`fail` on copyleft violations or wildcard IAM, `warn` on manual review or unmapped SDK calls, `ok` on clean analysis).
+
 ## Deprecation policy
 
 Do not silently remove or relabel a visible scanner. Deprecation requires a

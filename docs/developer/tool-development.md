@@ -47,12 +47,12 @@ class MyTool(ToolFn):
 ## 2. 7-Step Tool Registration Checklist
 
 1. **Implement Tool Class**: Create `src/rush/tools/<name>.py` extending `ToolFn` (e.g. `TddGuardTool`).
-2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py` (maintaining 38 tools).
+2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py` (maintaining 52 tools across core and flagship suites).
 3. **Register in Catalog**: Add `ToolSpec` to `src/rush/catalog.py` under `TOOL_SPECS` and update `_TOOL_MATURITY`.
 4. **Register Engine Adapters**: Add engine classes in `src/rush/engines/` and register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
 5. **Add Fixtures & Reference Tests**: Add JSON fixtures to `tests/fixtures/engine_reports/` and reference test suite `tests/test_<engine>_reference.py`.
 6. **Update Parity Audit**: Add fixture suite path to `PARSER_FIXTURE_SUITES` in `src/rush/catalog.py`.
-7. **Synchronize All 130 Docs**: Run `python scripts/sync_docs.py --update` to verify and auto-sync all documentation files across the repository.
+7. **Synchronize Docs**: Update user guides, CLI reference, and tool guides under `docs/tools/`.
 
 ---
 
@@ -72,3 +72,9 @@ See [Engine Development](engine-development.md) and [Coding Standards](coding-st
 ## Developing Ship Vectors and Distillers (Phases 41–43)
 * Implement distillers by extending `BaseDistiller` in `src/rush/token_economy/distillers/base.py`.
 * Implement ship vectors by creating modular linters in `src/rush/tools/ship/` and adding them to `ShipCockpit.evaluate_gate()`.
+
+## Developing Phase 50a Quality & Security Catalog Tools
+* **Polyglot Error Extraction (`error-catalog`)**: Inherit from `ToolFn`, implement language-specific AST and regex extractors (`.py`, `.ts`, `.rs`), map exceptions to RFC 7807 problem details, and gate markdown export behind `--allow-artifact-write`.
+* **Dependency License Compliance (`license-matrix`)**: Parse package manifests (`pyproject.toml`, `package.json`, `Cargo.toml`), normalize licenses to SPDX identifiers, and classify into Permissive, Weak Copyleft, Strong Copyleft, or ManualReview.
+* **Least-Privilege IAM Audit (`iam-audit`)**: Parse multi-cloud SDK calls (AWS boto3, GCP google.cloud, Azure blob), scan Terraform `.tf` configurations for wildcard actions (`*`), synthesize minimal least-privilege JSON policies, and gate export behind `--allow-artifact-write`.
+

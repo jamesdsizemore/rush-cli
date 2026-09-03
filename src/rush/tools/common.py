@@ -107,19 +107,27 @@ def run_subprocess(
             exec_argv = [which_cmd, *argv[1:]]
     else:
         exec_argv = [resolved_cmd, *argv[1:]]
-    result = subprocess.run(
-        exec_argv,
-        cwd=str(cwd) if cwd is not None else None,
-        timeout=timeout,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        check=False,
-        shell=False,
-    )
+    try:
+        result = subprocess.run(
+            exec_argv,
+            cwd=str(cwd) if cwd is not None else None,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            check=False,
+            shell=False,
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(
+            argv,
+            127,
+            stdout="",
+            stderr=f"{argv[0]}: command not found",
+        )
 
     return subprocess.CompletedProcess(
         result.args,

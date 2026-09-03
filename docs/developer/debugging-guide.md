@@ -37,4 +37,13 @@ For continuity, run a JSON save/restore and inspect only `metadata.handoff`: it 
 - **Root Cause**: Fingerprint calculation algorithm drifted or paths were not normalized with forward slashes.
 - **Resolution**: Ensure finding paths are normalized relative to project root with forward slashes before hashing.
 
+### Symptom: `error-catalog` or `iam-audit` Returns `status: "skipped"` on Export
+- **Root Cause**: Writing output artifacts to disk requires explicit authorization.
+- **Resolution**: Pass `--allow-artifact-write` in the CLI or set `allow_artifact_write=True` in MCP invocations.
+
+### Symptom: `ToolConfig.options` Mutation Raises `TypeError`
+- **Root Cause**: Tool configuration options are wrapped in immutable `types.MappingProxyType` to prevent concurrency corruption.
+- **Resolution**: Call `resolve_tool_options(tool_name, config_options, invocation_options)` from `rush.config` to compute a merged dictionary.
+
 See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md).
+

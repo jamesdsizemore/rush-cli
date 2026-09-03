@@ -71,6 +71,12 @@ A finding always has path, line, rule, severity, and message values after normal
 
 Result status describes the whole operation. Finding severity (`info`, `warn`, `error`) describes one record. An advisory review can return `warn` while containing informational findings.
 
+## Phase 50a Result Shapes
+
+- `error-catalog`: `metadata.catalog` contains normalized RFC 7807 problem details dictionaries (`code`, `status`, `title`, `type`, `occurrences`). Exported markdown appears in `artifacts`.
+- `license-matrix`: `metrics` records `total_packages`, `allowed_count`, `copyleft_violations_count`, and `manual_review_count`. Copyleft licenses yield `fail` status; unknown or compound licenses yield `warn` status.
+- `iam-audit`: `metadata.policy` contains synthesized least-privilege IAM policy statement. Wildcard actions in Terraform emit `iam-wildcard-action` findings with `fail` status.
+
 ## Exit codes
 
 | Result | Exit code | Automation meaning |

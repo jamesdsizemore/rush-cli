@@ -129,18 +129,24 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 
 
 
-## Attestation, Security Suite & Quality Flagship (Phase 50)
-* `rush attest`: in-toto Statement v1 unsigned provenance draft generator ([guide](tools/attest.md)).
-* `rush license-matrix`: Open-source copyleft dependency risk auditor ([guide](tools/license_matrix.md)).
-* `rush iam-audit`: Least-privilege AWS IAM JSON policy synthesizer ([guide](tools/iam_audit.md)).
+## Polyglot Quality, Provenance & Flagship Suite (Phases 50a–50c)
+
+### Phase 50a: Polyglot Quality & Security Catalog
+* `rush error-catalog`: AST exception extractor and RFC 7807 problem details generator for Python, TypeScript, and Rust ([guide](tools/error_catalog.md)).
+* `rush license-matrix`: Polyglot open-source copyleft dependency risk auditor across pyproject.toml, package.json, and Cargo.toml ([guide](tools/license_matrix.md)).
+* `rush iam-audit`: Multi-cloud (AWS/GCP/Azure) static SDK call auditor and Terraform least-privilege IAM policy synthesizer ([guide](tools/iam_audit.md)).
+
+### Phase 50b: Attribution & PR Evidence
 * `rush dead-asset`: Unreferenced asset and dead media pruner ([guide](tools/dead_asset.md)).
 * `rush pr-synthesize`: Structured semantic GitHub PR card generator ([guide](tools/pr_synthesize.md)).
-* `rush prompt-eval`: Golden prompt evaluation runner and cost matrix ([guide](tools/prompt_eval.md)).
-* `rush error-catalog`: AST exception extractor and RFC 7807 problem details generator ([guide](tools/error_catalog.md)).
 * `rush provenance-ai`: Git commit trailer AI attribution analyzer ([guide](tools/provenance_ai.md)).
+* `rush media-opt`: SVG active script sanitizer and raster image optimizer ([guide](tools/media_opt.md)).
+
+### Phase 50c: Performance Profiling & Provenance
+* `rush attest`: in-toto Statement v1 unsigned provenance draft generator ([guide](tools/attest.md)).
+* `rush prompt-eval`: Golden prompt evaluation runner and cost matrix ([guide](tools/prompt_eval.md)).
 * `rush mem-profile`: Static resource leak and dynamic memory profiler ([guide](tools/mem_profile.md)).
 * `rush cold-start`: Module import latency and cold-start analyzer ([guide](tools/cold_start.md)).
-* `rush media-opt`: SVG active script sanitizer and raster image optimizer ([guide](tools/media_opt.md)).
 * `rush offline-review`: Air-gapped local ONNX model review runner ([guide](tools/offline_runner.md)).
 * `rush tui-diff`: Git commit finding delta computer and Rich table renderer ([guide](tools/tui_diff.md)).
 * `rush benchmark`: Performance sample comparator against `.rush/baselines.json` thresholds ([guide](tools/benchmark.md)).

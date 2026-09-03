@@ -21,5 +21,7 @@ rush ci .
 - **IaC** targets Terraform and Kubernetes through TFLint, Checkov, Kubeconform, Terrascan, Kube-score, Conftest, Polaris, and KubeLinter.
 - **Actions** checks GitHub workflow YAML with Actionlint while disabling external shellcheck/pyflakes integrations.
 - **CI** inspects local workflow files and checks OpenSSF Scorecard supply chain posture.
+- **IAM Policies & Terraform Wildcards** uses `rush iam-audit` to audit cloud SDK usage and detect wildcard actions (`*`) in `.tf` infrastructure files.
+- **Dependency License Manifests** uses `rush license-matrix` to verify open-source licenses across `pyproject.toml`, `package.json`, and `Cargo.toml` manifests.
 
 A missing helper yields `skipped`. Install only the checks your repository adopts. Exact engine boundaries are in the [Engine directory](../reference/engine-directory.md).

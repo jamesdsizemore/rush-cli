@@ -12,14 +12,15 @@
 ## Capabilities
 1. **Python AST Parsing**: Traverses Python AST to inspect all `ast.Raise` nodes, extracting exception classes (e.g. `ValueError`, `NotFoundError`, `PermissionError`), constant string arguments, line numbers, and file paths.
 2. **TypeScript/JavaScript Extraction**: Scans `.ts`, `.tsx`, `.js`, and `.jsx` files for `throw new <ErrorClass>(...)` and literal error throw constructs.
-3. **Deterministic RFC 7807 Mapping**: Maps each unique error definition to an RFC 7807 problem detail object:
+3. **Rust Error Extraction**: Scans `.rs` files for `enum <Name>Error`, `struct <Name>Error`, `Err(<Name>::...)`, and `panic!(...)` declarations.
+4. **Deterministic RFC 7807 Mapping**: Maps each unique error definition to an RFC 7807 problem detail object:
    - `code`: Normalized screaming-snake identifier (e.g. `ERR_NOT_FOUND`, `ERR_VALIDATION`).
    - `status`: Inferred HTTP status code (e.g. 404 for NotFound, 403 for Forbidden/Permission, 422 for Validation/Value, 500 default).
    - `title`: Short human-readable title derived from the error class.
    - `type`: Canonical URI reference `https://rush-cli.org/errors/<slug>`.
    - `detail`: Default message or observed exception detail.
    - `occurrences`: Array of file locations and line numbers where the error is raised.
-4. **Guarded Markdown Export**: Generates Markdown documentation tables. Writing export files requires explicit `--allow-artifact-write` permission and enforces path containment within the project root.
+5. **Guarded Markdown Export**: Generates Markdown documentation tables. Writing export files requires explicit `--allow-artifact-write` permission and enforces path containment within the project root.
 
 ## CLI Usage
 
