@@ -88,3 +88,17 @@ Tool options are declared declaratively via `ToolOptionSpec` in `TOOL_SPECS` (`s
 * **Validation**: Any undeclared option or type violation raises `RushConfigError`.
 
 See [Configuration Reference](../reference/configuration-reference.md).
+
+### Phase 50b Tool Configuration Tables
+```toml
+[tools.provenance-ai]
+max_commits = 500
+
+[tools.dead-asset]
+prune = false
+export_manifest = ""
+
+[tools.pr-synthesize]
+base_ref = "main"
+export_path = ""
+```

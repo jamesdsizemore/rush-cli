@@ -210,3 +210,10 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 ```
 
 Install only if that check is part of your project policy. Then launch Rush from the same environment and verify the binary directly. Desktop MCP clients often have a different `PATH` from an interactive shell; use absolute paths or environment configuration when needed.
+
+### Phase 50b Built-in Engines
+| Engine | Category | Description |
+|---|---|---|
+| `git-trailer-parser` | Built-in | Inspects Git commit logs and trailers for AI attribution. |
+| `dead-asset-scanner` | Built-in | Polyglot static asset reference scanner with SHA-256 validation. |
+| `git-diff-synthesizer` | Built-in | Aggregates Git diff stats and quality evidence into markdown cards. |

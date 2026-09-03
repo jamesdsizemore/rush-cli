@@ -78,3 +78,8 @@ See [Engine Development](engine-development.md) and [Coding Standards](coding-st
 * **Dependency License Compliance (`license-matrix`)**: Parse package manifests (`pyproject.toml`, `package.json`, `Cargo.toml`), normalize licenses to SPDX identifiers, and classify into Permissive, Weak Copyleft, Strong Copyleft, or ManualReview.
 * **Least-Privilege IAM Audit (`iam-audit`)**: Parse multi-cloud SDK calls (AWS boto3, GCP google.cloud, Azure blob), scan Terraform `.tf` configurations for wildcard actions (`*`), synthesize minimal least-privilege JSON policies, and gate export behind `--allow-artifact-write`.
 
+
+### Phase 50b: Attribution & PR Evidence Tools
+- `provenance-ai`: Parses Git log trailers (`Co-authored-by:`, `Generated-by:`, `Model:`, `Agent:`), detects shallow clones, and records survival state.
+- `dead-asset`: Polyglot asset cross-referencing across templates, styles, and scripts; computes potential savings; guarded pruning strictly gated.
+- `pr-synthesize`: Evaluates `git diff --numstat`, aggregates quality evidence, computes risk tier (`low`/`medium`/`high`), and routes CODEOWNERS.

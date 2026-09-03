@@ -145,3 +145,6 @@ Malformed TOML, unknown log levels, wrong value types, and unknown tool names fa
 
 See [Configuration cookbook](configuration-cookbook.md) and [developer configuration guide](../developer/configuration-development.md).
 
+
+### `tools.provenance-ai`, `tools.dead-asset`, `tools.pr-synthesize`
+Configures commit depth, asset prune permissions, and PR base branches.

@@ -96,3 +96,9 @@ rush iam-audit . --export-path policy.json --allow-artifact-write
 
 ## Phantom Package Defense (Phase 43)
 `rush hallu-guard` validates all import statements in your project against Python's standard library and installed distribution metadata, blocking supply-chain risks from unvetted AI hallucinations.
+
+## 8. AI Code Provenance & Attribution (`rush provenance-ai`)
+Audit Git commit history for AI generation trailers and track code survival:
+```bash
+rush provenance-ai .
+```

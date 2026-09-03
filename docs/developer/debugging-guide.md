@@ -47,3 +47,8 @@ For continuity, run a JSON save/restore and inspect only `metadata.handoff`: it 
 
 See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md).
 
+
+### Phase 50b Troubleshooting
+- **`provenance-ai` returns `shallow_history: True`**: The repository is a shallow clone (`.git/shallow` exists or `git rev-parse --is-shallow-repository` is true). Historical commit trailers prior to clone depth are omitted.
+- **`dead-asset` unreferenced warnings**: Assets are flagged if neither filename nor relative path appears in source files. Check for dynamic string interpolation in templates.
+- **`pr-synthesize` CODEOWNERS matching**: Rules are matched against relative file paths from repository root using standard `fnmatch` patterns.

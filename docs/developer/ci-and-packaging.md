@@ -15,7 +15,7 @@ unset VIRTUAL_ENV PYTHONPATH
 # 2. Synchronize exact pinned dependencies
 uv sync --all-extras --frozen
 
-# 3. Run all pytest test suites (939+ tests including benchmark suites, 100% pass rate required)
+# 3. Run all pytest test suites (947+ tests including benchmark suites, 100% pass rate required)
 .venv/Scripts/python.exe -m pytest tests/ -q
 
 # 4. Verify benchmark harness execution across all 40 scenarios

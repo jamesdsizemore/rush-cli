@@ -47,6 +47,9 @@
 | **ISS-050A-02** | Phase 50a | License Matrix | Dependency manifest parsing across pyproject.toml, package.json, and Cargo.toml | Implemented `LicenseMatrixTool` with SPDX normalization and copyleft tiering | **Closed** |
 | **ISS-050A-03** | Phase 50a | IAM Policy Audit | Multi-cloud SDK extraction (AWS/GCP/Azure) and Terraform wildcard detection | Implemented `IamAuditTool` with multi-cloud AST visitor and Terraform scanner | **Closed** |
 | **ISS-050A-04** | Phase 50a | Config Precedence | Immutability enforcement on `ToolConfig.options` and precedence resolution | Wrapped options in `MappingProxyType` and added `resolve_tool_options` | **Closed** |
+| **ISS-050B-01** | Phase 50b | Provenance AI | Git trailer attribution parsing, shallow history handling, and code survival rate baseline | Implemented `ProvenanceAiTool` with trailer parsing and shallow clone detection | **Closed** |
+| **ISS-050B-02** | Phase 50b | Dead Asset | Polyglot asset reference scanner with potential disk space savings calculation and strictly read-only reporting | Implemented `DeadAssetTool` with space savings calculation and SHA-256 validation | **Closed** |
+| **ISS-050B-03** | Phase 50b | PR Synthesize | Multi-tool evidence aggregation, risk tiering (low/medium/high), and CODEOWNERS reviewer routing | Implemented `PrSynthesizeTool` with CODEOWNERS parser and risk tier evaluator | **Closed** |
 | **ISS-BENCH-01** | Benchmark | Provider Subprocess | Subprocess execution missing check=False in provider probe | Added explicit `check=False` to `subprocess.run` in `providers.py` | **Closed** |
 | **ISS-BENCH-02** | Benchmark | Context Budgeting | Skeletonizer stripping AST comments containing facts | Preserved docstrings and added explicit target_symbol support | **Closed** |
 | **ISS-BENCH-03** | Benchmark | Local Model Security | Ollama runtime and in-repo cache containment violations | Implemented strict rejection in `validate_local_runtime_command` | **Closed** |
@@ -64,7 +67,7 @@
 * [x] **Phase 48**: ORM schema drift auditor, cognitive complexity decomposer, and runtime type guard synthesizer.
 * [x] **Phase 49**: Spec-to-code traceability scanner, agent flight recorder, and swarm 3-way AST merge solver.
 * [x] **Phase 50a**: Polyglot Quality & Security Catalog (`rush error-catalog`, `rush license-matrix`, `rush iam-audit`), multi-cloud SDK parsing, Terraform wildcard detection, immutable tool option resolution.
-* [ ] **Phase 50b**: Attribution, Dead Assets & PR Evidence (`rush provenance-ai`, `rush dead-asset`, `rush pr-synthesize`, `rush media-opt`).
+* [x] **Phase 50b**: Attribution, Dead Assets & PR Evidence (`rush provenance-ai`, `rush dead-asset`, `rush pr-synthesize`, `rush media-opt`).
 * [ ] **Phase 50c**: Performance Profiling, Provenance & Verification (`rush attest`, `rush prompt-eval`, `rush mem-profile`, `rush cold-start`, `rush benchmark`, `rush offline-review`, `rush tui-diff`).
 * [x] **Benchmark Harness (B1–B6)**: Typed contracts, atomic reporting, 40 declared fixtures, provider descriptors, privacy secret redactions, ContextPacker/CCR probes, multi-agent lock mesh verification, and consumer hardware profiling.
 

@@ -308,3 +308,8 @@ class IamAuditTool(ToolFn):
 
 For guidelines on creating new tools or engines, see the [Developer Guide](DEVELOPER_GUIDE.md), [Tool Development Guide](developer/tool-development.md), and [Engine Development Guide](developer/engine-development.md).
 
+
+## 13. Phase 50b Tools (`src/rush/tools/`)
+- `ProvenanceAiTool`: Subclasses `ToolFn`. Audits AI code attribution and provenance via Git trailers.
+- `DeadAssetTool`: Subclasses `ToolFn`. Scans unreferenced static assets and computes space savings.
+- `PrSynthesizeTool`: Subclasses `ToolFn`. Synthesizes semantic PR markdown card with risk tiering and CODEOWNERS routing.

@@ -73,3 +73,10 @@ Key invariants:
 - `tests/test_iam_audit.py`: Multi-cloud SDK operation parsing (AWS boto3, GCP google.cloud, Azure blob), Terraform wildcard IAM action detection (`iam-wildcard-action`), least-privilege policy generation, artifact write permission gates.
 - `tests/test_phase50a_integration.py`: End-to-end CLI JSON emission and MCP server registration parity for all Phase 50a tools.
 
+## 6. Phase 50b Test Suites
+- `tests/test_provenance_ai.py`: Git commit trailer parsing (`Co-authored-by:`, `Generated-by:`, `Model:`, `Agent:`), shallow clone detection, and deterministic survival curve baselines.
+- `tests/test_dead_asset.py`: Polyglot static asset reference scanning (HTML, CSS, JS/TS, Markdown), potential disk space savings calculation, and guarded SHA-256 pre-prune validation.
+- `tests/test_pr_synthesize.py`: Git diff aggregation, risk tier computation (`low`/`medium`/`high`), and CODEOWNERS pattern matching and reviewer recommendation.
+- `tests/test_phase50b_integration.py`: End-to-end CLI JSON emission and FastMCP registration parity for all Phase 50b tools.
+
+

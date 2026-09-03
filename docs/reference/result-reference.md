@@ -96,3 +96,8 @@ python -c 'import json,sys; s=json.load(sys.stdin)["status"]; raise SystemExit(0
 ```
 
 Adapt shell syntax to your platform. Preserve the JSON in CI artifacts when it helps debugging, but never publish sensitive raw scanner output.
+
+### Phase 50b Result Metadata
+- `metadata.risk_tier`: Overall risk assessment (`"low"`, `"medium"`, `"high"`).
+- `metadata.recommended_reviewers`: List of CODEOWNERS matched for the diff.
+- `metadata.potential_savings_bytes`: Unreferenced asset byte savings.

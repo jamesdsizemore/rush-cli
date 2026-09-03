@@ -20,7 +20,13 @@ Statically analyze cloud SDK calls and detect wildcard actions in Terraform conf
 rush iam-audit . --output reports/iam-policy.json --allow-artifact-write
 ```
 
-## 4. Pruning Dead Assets & Verifying Hashes (Phase 50b)
+## 3a. AI Code Attribution & Provenance (Phase 50b)
+Audit commit history trailers and track code attribution before release:
+```bash
+rush provenance-ai .
+```
+
+## 4. Scanning Dead Assets & Calculating Savings (Phase 50b)
 Identify and remove unreferenced media or font files:
 ```bash
 rush dead-asset . --operation audit

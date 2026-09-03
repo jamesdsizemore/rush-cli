@@ -117,3 +117,18 @@ def test_dead_asset_canonical_schema_and_call(tmp_path: Path) -> None:
     assert res["status"] in ("ok", "warn", "skipped")
     assert isinstance(res["duration_ms"], int)
     assert isinstance(res["findings"], list)
+
+
+def test_dead_asset_reports_potential_savings_bytes(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir(parents=True)
+    dead_file = assets_dir / "unused_bg.png"
+    dead_file.write_bytes(b"A" * 1234)
+
+    tool = DeadAssetTool()
+    res = tool.run(tmp_path)
+
+    assert res["status"] == "warn"
+    assert res["raw"]["potential_savings_bytes"] == 1234
+    assert res["metadata"]["potential_savings_bytes"] == 1234
+    assert "1234 bytes potential savings" in res["summary"]

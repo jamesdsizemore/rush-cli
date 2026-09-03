@@ -6,4 +6,7 @@
 4. Human terminal renderer uses ASCII/Rich formatting; automated tools should rely on `--json` for machine-readable invariants.
 5. `error-catalog` and `iam-audit` write markdown catalogs or policy JSON artifacts only when explicitly authorized via `--allow-artifact-write` (or `permissions.artifact_write=True`). In absence of authorization, they return status `skipped` with zero filesystem mutation.
 
+6. `dead-asset` is strictly read-only by default; pruning requires explicit `--prune` and `--allow-artifact-write` with SHA-256 validation.
+7. `pr-synthesize` artifact export requires `--allow-artifact-write` and operates completely offline with local Git diff extraction.
+
 These reflect current design constraints and boundaries.

@@ -25,3 +25,10 @@ rush ci .
 - **Dependency License Manifests** uses `rush license-matrix` to verify open-source licenses across `pyproject.toml`, `package.json`, and `Cargo.toml` manifests.
 
 A missing helper yields `skipped`. Install only the checks your repository adopts. Exact engine boundaries are in the [Engine directory](../reference/engine-directory.md).
+
+## Static Asset Hygiene (`rush dead-asset`)
+Unused image and font files bloat application repositories and Docker containers:
+```bash
+rush dead-asset .
+```
+Rush identifies unreferenced assets and calculates potential disk space savings.

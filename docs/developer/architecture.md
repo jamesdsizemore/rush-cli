@@ -194,3 +194,8 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `scripts/benchmarks/coordination.py`: `MeshLockManager` mutual exclusion, `CheckpointJournal` recovery, and `FlightRecorder` session replay validation.
 * `scripts/benchmarks/local.py`: Host hardware capability profiling, external model cache validation, and strict rejection of `ollama`.
 
+
+### Phase 50b Architecture: Attribution, Asset Hygiene & PR Evidence
+- `ProvenanceAiTool`: Git log trailer analyzer and code survival rate baseline evaluator.
+- `DeadAssetTool`: Polyglot static asset reference scanner with space savings calculation and guarded deletion.
+- `PrSynthesizeTool`: Semantic PR description card synthesizer with risk tiering and CODEOWNERS routing.

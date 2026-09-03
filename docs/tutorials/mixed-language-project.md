@@ -55,6 +55,13 @@ Rush runs pytest for the Python backend and Vitest for the TypeScript frontend, 
 
 ---
 
+### Step 7: Asset Hygiene & PR Evidence Card Synthesis (Phase 50b)
+```bash
+rush dead-asset . --json
+rush pr-synthesize . --json
+```
+Rush identifies unreferenced images/fonts and synthesizes a comprehensive PR card with risk tiering and CODEOWNERS reviewer routing.
+
 ### Step 6: Polyglot Quality Catalog & Cloud Infrastructure Audit (Phase 50a)
 ```bash
 rush error-catalog . --json

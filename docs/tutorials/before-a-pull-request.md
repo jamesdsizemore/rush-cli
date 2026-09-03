@@ -59,6 +59,12 @@ Run `rush trace` to ensure 100% requirement coverage and `rush simulate-ci` to v
 ## Step 10: Run Quality & Security Checks (Phase 50a)
 Run `rush error-catalog .`, `rush license-matrix .`, and `rush iam-audit .` to audit exceptions, copyleft dependencies, and cloud IAM policies before opening your PR.
 
-## Step 11: Generate PR Card and Build Attestation
+## Step 11: Verify Attribution & Generate Semantic PR Card (Phase 50b)
+Run `rush provenance-ai .`, `rush dead-asset .`, and `rush pr-synthesize .` to generate a verifiable PR card with risk tiering and CODEOWNERS routing:
+```bash
+rush pr-synthesize . --export-path artifacts/PR_CARD.md --allow-artifact-write
+```
+
+## Step 12: Generate Build Attestation (Phase 50c)
 Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.
 

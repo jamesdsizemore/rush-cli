@@ -178,3 +178,12 @@ The following flags are supported across evaluation commands:
 
 `ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](result-reference.md).
 
+
+### `rush provenance-ai`
+Audit Git commit trailers for AI attribution and compute code survival curves.
+
+### `rush dead-asset`
+Scan repository for unreferenced static media, fonts, and assets with potential space savings calculation.
+
+### `rush pr-synthesize`
+Synthesize semantic PR markdown card from Git diff, risk tiering, and CODEOWNERS routing.

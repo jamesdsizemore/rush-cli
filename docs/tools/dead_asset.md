@@ -10,6 +10,7 @@
 - **FastMCP Tool**: `rush_dead_asset`
 
 ## Capabilities
+0. **Potential Disk Space Savings**: Calculates the aggregate size in bytes of all unreferenced assets, reporting potential savings in summary, raw, and metadata.
 1. **Multi-Format Asset Discovery**: Scans for static assets including `.png`, `.jpg`, `.jpeg`, `.svg`, `.gif`, `.webp`, `.ttf`, `.woff`, `.woff2`, `.ico`, `.bmp`, `.mp4`, `.webm`, excluding `.git`, `.venv`, `.rush`, `node_modules`, `dist`, and `build`.
 2. **Comprehensive Source Cross-Referencing**: Searches across Python, TypeScript, JavaScript, HTML, CSS, SCSS, Markdown, JSON, YAML, and XML files to detect asset references by filename or relative path.
 3. **Deterministic Audit Manifest**: Computes SHA-256 digests and file sizes for every asset, tagging each as `referenced` or `unreferenced`.

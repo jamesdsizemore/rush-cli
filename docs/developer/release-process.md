@@ -12,7 +12,7 @@ Before cutting any release candidate:
 # 1. Clear foreign virtualenv contamination
 unset VIRTUAL_ENV PYTHONPATH
 
-# 2. Run the complete pytest test suite (939+ tests)
+# 2. Run the complete pytest test suite (947+ tests)
 .venv/Scripts/python.exe -m pytest tests/ -q
 
 # 3. Verify documentation parity & internal cross-links across all 128 doc files

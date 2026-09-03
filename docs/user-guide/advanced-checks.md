@@ -113,3 +113,9 @@ rush bundle analyze dist/
 * `rush iam-audit`: Analyzes multi-cloud SDK calls and flags wildcard actions in Terraform configurations.
 * `rush attest`: Cryptographic build provenance (Phase 50b/c).
 
+
+## 5. Pull Request Evidence Cards (`rush pr-synthesize`)
+Generate a production-ready PR card with diff stats, risk tiering, and CODEOWNERS routing:
+```bash
+rush pr-synthesize . --export-path reports/PR_CARD.md --allow-artifact-write
+```

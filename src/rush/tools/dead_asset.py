@@ -232,6 +232,10 @@ class DeadAssetTool(ToolFn):
         total_assets = scan_res["total_assets"]
         dead_assets = scan_res["dead_assets"]
         dead_count = scan_res["dead_assets_count"]
+        potential_savings_bytes = sum(
+            item["size_bytes"] for item in manifest if item["status"] == "unreferenced"
+        )
+        scan_res["potential_savings_bytes"] = potential_savings_bytes
 
         if total_assets == 0:
             res = skipped_result(
@@ -359,7 +363,8 @@ class DeadAssetTool(ToolFn):
         elif dead_count > 0:
             status = "warn"
             summary = (
-                f"dead-asset: found {dead_count} unreferenced assets out of "
+                f"dead-asset: found {dead_count} unreferenced assets "
+                f"({potential_savings_bytes} bytes potential savings) out of "
                 f"{total_assets} total assets."
             )
         else:
@@ -380,6 +385,7 @@ class DeadAssetTool(ToolFn):
                 "total_assets": total_assets,
                 "dead_assets_count": dead_count,
                 "dead_assets": dead_assets,
+                "potential_savings_bytes": potential_savings_bytes,
                 "bytes_freed": bytes_freed,
                 "pruned": bool(prune and perms.artifact_write),
                 "execution": build_execution_metadata(

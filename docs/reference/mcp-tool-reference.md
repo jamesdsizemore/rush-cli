@@ -83,3 +83,12 @@ rush_error_catalog, rush_license_matrix, rush_iam_audit
 - the client-provided process environment must preserve required Windows/runtime variables.
 
 See [MCP client setup](../integrations/mcp-client-setup.md) and [MCP development](../developer/mcp-development.md).
+
+### `rush_provenance_ai`
+Audits AI code attribution via Git trailers and shallow history check at `<path>`.
+
+### `rush_dead_asset`
+Scans unreferenced assets at `<path>`, calculates space savings, and generates manifests.
+
+### `rush_pr_synthesize`
+Synthesizes semantic PR markdown card with risk tiering and CODEOWNERS routing.

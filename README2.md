@@ -7,7 +7,7 @@
 [![FastMCP stdio](https://img.shields.io/badge/MCP-FastMCP%20stdio-00ffff.svg?style=flat-square&logo=anthropic&logoColor=white)](https://modelcontextprotocol.io)
 [![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203%20Attested-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-[![Tests Passing](https://img.shields.io/badge/tests-939%20passed%20%28222%20files%29-22c55e.svg?style=flat-square)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-947%20passed%20%28223%20files%29-22c55e.svg?style=flat-square)](tests/)
 [![Engine Adapters](https://img.shields.io/badge/engines-124%20adapters-blueviolet.svg?style=flat-square)](src/rush/engines/)
 [![Docs Synchronized](https://img.shields.io/badge/docs-295%20files%20synchronized-blue.svg?style=flat-square)](docs/)
 

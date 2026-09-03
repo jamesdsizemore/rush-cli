@@ -73,3 +73,9 @@ When contributing to Rush:
 * Place multi-cloud SDK calls and Terraform IAM policy synthesizers in `src/rush/tools/iam_audit.py`.
 * Place cryptographic attestation tools in `src/rush/tools/attest.py`.
 
+
+### Phase 50b Tools: Attribution & PR Evidence
+When contributing to `provenance-ai`, `dead-asset`, or `pr-synthesize`, ensure:
+1. All tools remain strictly read-only by default; zero unprompted Git mutations or file deletions.
+2. File writes require explicit `--allow-artifact-write` and path containment validation.
+3. Tests use temporary Git repositories initialized via `subprocess.run(['git', 'init', ...])`.

@@ -52,3 +52,8 @@ Subprocess Execution (run_subprocess)
 - Code must pass with zero warnings or errors.
 
 See [Contributor Onboarding](contributor-onboarding.md) and [Tool Development Guide](tool-development.md).
+
+### Phase 50b Read-Only Invariants
+- **Zero Git History Mutation**: Attribution tools inspect commit logs and trailers; they must never rewrite commits, rebase, or alter Git state.
+- **Read-Only Asset Scans**: `dead-asset` scans assets and calculates savings. Pruning requires explicit `--prune` and `--allow-artifact-write`.
+- **Offline PR Synthesis**: `pr-synthesize` runs offline without external HTTP calls.

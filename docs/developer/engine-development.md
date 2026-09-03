@@ -85,3 +85,8 @@ class MyEngine(Engine):
 5. **Documentation**: Run `python scripts/sync_docs.py --update` to verify and auto-sync all documentation files across the repository.
 
 See [Tool Development](tool-development.md) and [Coding Standards](coding-standards.md).
+
+### Phase 50b Engines
+- `git-trailer-parser`: Uses `git log` with format `%H%x00%an%x00%ae%x00%at%x00%B%x01` to parse commit metadata and trailers.
+- `dead-asset-scanner`: In-memory polyglot regex and AST reference scanner with SHA-256 validation.
+- `git-diff-synthesizer`: Runs `git diff --stat` and `--numstat`, parses CODEOWNERS, and synthesizes markdown card.

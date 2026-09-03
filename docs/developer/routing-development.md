@@ -35,3 +35,8 @@ Never treat a `Path.glob()` generator itself as truthy; use `any()` over matches
 * `license-matrix`: Scans project targets for package manifests (`pyproject.toml`, `package.json`, `Cargo.toml`). Aggregates dependencies across ecosystems and maps licenses against SPDX copyleft risk lists.
 * `iam-audit`: Inspects Python source trees for multi-cloud SDK patterns (`boto3`, `google.cloud`, `azure.storage`) and scans `.tf` files for Terraform IAM policy definitions.
 
+
+### Phase 50b Routing
+- `provenance-ai` routes Git commit parsing through `git log --format` subprocess isolation.
+- `dead-asset` routes asset references across polyglot source trees.
+- `pr-synthesize` routes file diffs against CODEOWNERS pattern registries.

@@ -114,14 +114,19 @@ src/rush/tools/
 └── iam_audit.py      # Multi-cloud SDK & Terraform least-privilege IAM policy auditor
 ```
 
-## Phase 50b/50c Flagship Modules
+## Phase 50b Attribution, Asset Hygiene & PR Evidence Modules
+```
+src/rush/tools/
+├── provenance_ai.py  # Git commit trailer AI attribution analyzer & survival curve baseline
+├── dead_asset.py     # Polyglot static asset reference scanner & disk space savings calculator
+└── pr_synthesize.py  # Semantic PR card synthesizer, risk tiering & CODEOWNERS router
+```
+
+## Phase 50c Performance Profiling & Flagship Provenance Modules (Planned)
 ```
 src/rush/tools/
 ├── attest.py         # SLSA Level 3 provenance generator
-├── dead_asset.py     # Unreferenced asset pruner
-├── pr_synthesize.py  # Semantic PR card synthesizer
-├── provenance_ai.py  # Git commit trailer AI attribution analyzer
-├── media_opt.py      # SVG script sanitizer & image optimizer
+├── prompt_eval.py    # Golden prompt evaluation runner
 ├── mem_profile.py    # Memory leak & profiler
 ├── cold_start.py     # Module cold-start analyzer
 ├── benchmark.py      # Baseline comparator

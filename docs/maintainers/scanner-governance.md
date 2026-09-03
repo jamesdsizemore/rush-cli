@@ -68,6 +68,11 @@ may remain `skipped`; they must not be represented as passing evidence.
 - **Artifact Confinement**: Exporting reports requires explicit `--allow-artifact-write` permission, and destination paths are checked against directory traversal (`..`).
 - **Deterministic Evaluation**: Status outcomes resolve deterministically (`fail` on copyleft violations or wildcard IAM, `warn` on manual review or unmapped SDK calls, `ok` on clean analysis).
 
+## Attribution, Asset Hygiene & PR Card Governance (Phase 50b)
+- **Provenance AI**: Zero Git mutations; strictly reads commit history.
+- **Dead Asset**: Strictly read-only analysis by default. Pruning requires explicit `--prune` and `--allow-artifact-write` with SHA-256 pre-deletion validation.
+- **PR Synthesize**: Offline diff extraction, risk tier computation, and CODEOWNERS routing with zero network calls.
+
 ## Deprecation policy
 
 Do not silently remove or relabel a visible scanner. Deprecation requires a

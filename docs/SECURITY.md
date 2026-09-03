@@ -79,3 +79,8 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 
 ## Flagship Provenance & Verification (Phase 50b/50c)
 `rush attest` produces in-toto Statement v1 / SLSA Provenance v1 unsigned drafts with SHA-256 artifact digests for release builds. Cryptographic signing and builder verification are handled by downstream CI release workflows.
+
+## Phase 50b Security: Read-Only Invariants & Safe PR Cards
+- **Read-Only Git Inspection**: `provenance-ai` and `pr-synthesize` only read Git logs and diffs. They never rewrite history or create commits.
+- **Zero-Deletion Default**: `dead-asset` never deletes files unless explicit `--prune` and `--allow-artifact-write` are provided with SHA-256 validation.
+- **Offline Card Synthesis**: PR cards are generated locally without external GitHub API tokens.

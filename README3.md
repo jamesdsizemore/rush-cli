@@ -8,7 +8,7 @@
 [![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203%20Attested-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square)](https://github.com/astral-sh/ruff)
-[![Tests Passing](https://img.shields.io/badge/tests-939%20passed%20%28222%20files%29-22c55e.svg?style=flat-square)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-947%20passed%20%28223%20files%29-22c55e.svg?style=flat-square)](tests/)
 [![Engine Adapters](https://img.shields.io/badge/engines-124%20adapters-blueviolet.svg?style=flat-square)](src/rush/engines/)
 [![Docs Synchronized](https://img.shields.io/badge/docs-295%20files%20synchronized-blue.svg?style=flat-square)](docs/)
 
@@ -72,7 +72,9 @@ flowchart TD
 * **Layer 1 (Traditional Persistence)**: Developer Preference Store (`preferences.json`), point-in-time Session Checkpoints (`rush session save/restore`), 4-tier taxonomy (Working, Policy, World, Skills), and append-only event stream (`.rush/events.jsonl`).
 * **Layer 2 (Cognitive Innovation)**:
   * **Negative Knowledge Failure Ledger (`FailureLedger`)**: Records failed patch AST hashes and anti-patterns to intercept repeated mistakes across prompt turns.
-  * **Bi-Temporal Git Revert Mistake Pre-Mortem (`rush context mistakes`, `MistakeMiner`)**: Extracts historical Git reverts into *Believed $ightarrow$ Found False $ightarrow$ Truth Now* guardrails.
+  * **Bi-Temporal Git Revert Mistake Pre-Mortem (`rush context mistakes`, `MistakeMiner`)**: Extracts historical Git reverts into *Believed $
+ightarrow$ Found False $
+ightarrow$ Truth Now* guardrails.
   * **AST-Merkle Reactive Invalidator (`MerkleInvalidator`)**: Binds memories and context caches to AST node hashes; the microsecond a file is edited, invalid memories are automatically marked stale.
   * **Causal Architectural Invariant Graph (`InvariantGraph`)**: Tracks cross-module dependency invariants before code edits.
 

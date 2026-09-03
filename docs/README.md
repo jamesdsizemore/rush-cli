@@ -137,10 +137,9 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush iam-audit`: Multi-cloud (AWS/GCP/Azure) static SDK call auditor and Terraform least-privilege IAM policy synthesizer ([guide](tools/iam_audit.md)).
 
 ### Phase 50b: Attribution & PR Evidence
-* `rush dead-asset`: Unreferenced asset and dead media pruner ([guide](tools/dead_asset.md)).
-* `rush pr-synthesize`: Structured semantic GitHub PR card generator ([guide](tools/pr_synthesize.md)).
-* `rush provenance-ai`: Git commit trailer AI attribution analyzer ([guide](tools/provenance_ai.md)).
-* `rush media-opt`: SVG active script sanitizer and raster image optimizer ([guide](tools/media_opt.md)).
+* `rush provenance-ai`: Git commit trailer AI attribution analyzer and code survival curve baseline ([guide](tools/provenance_ai.md)).
+* `rush dead-asset`: Polyglot static asset reference scanner with potential disk space savings calculation ([guide](tools/dead_asset.md)).
+* `rush pr-synthesize`: Structured semantic GitHub PR card generator with risk tiering and CODEOWNERS routing ([guide](tools/pr_synthesize.md)).
 
 ### Phase 50c: Performance Profiling & Provenance
 * `rush attest`: in-toto Statement v1 unsigned provenance draft generator ([guide](tools/attest.md)).

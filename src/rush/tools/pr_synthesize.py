@@ -78,6 +78,69 @@ class PrSynthesizeTool(ToolFn):
             permissions=permissions,
         )
 
+    def parse_codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
+        """Parse CODEOWNERS rules from .github/CODEOWNERS, CODEOWNERS, or docs/CODEOWNERS."""
+        candidates = [
+            root / ".github" / "CODEOWNERS",
+            root / "CODEOWNERS",
+            root / "docs" / "CODEOWNERS",
+        ]
+        for c in candidates:
+            if c.is_file():
+                rules: list[tuple[str, list[str]]] = []
+                for line in c.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if "#" in line:
+                        line = line.split("#", 1)[0]
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pattern = parts[0]
+                        owners = parts[1:]
+                        rules.append((pattern, owners))
+                return rules
+        return []
+
+    def match_reviewers(
+        self, changed_files: list[str], rules: list[tuple[str, list[str]]]
+    ) -> list[str]:
+        """Match changed files against CODEOWNERS rules to recommend reviewers."""
+        import fnmatch
+
+        reviewers: set[str] = set()
+        for file_path in changed_files:
+            norm_path = file_path.replace("\\", "/").lstrip("/")
+            for pattern, owners in rules:
+                p = pattern.replace("\\", "/").lstrip("/")
+                if (
+                    fnmatch.fnmatch(norm_path, pattern)
+                    or fnmatch.fnmatch(norm_path, p)
+                    or norm_path.startswith(p.rstrip("*"))
+                ):
+                    reviewers.update(owners)
+        return sorted(reviewers)
+
+    def calculate_risk_tier(
+        self, total_changes: int, evidence: list[dict[str, Any]] | None = None
+    ) -> str:
+        """Calculate PR risk tier (low, medium, high) based on line churn and evidence findings."""
+        has_fail = False
+        has_warn = False
+        if evidence:
+            for ev in evidence:
+                st = ev.get("status", "ok")
+                if st in ("fail", "error"):
+                    has_fail = True
+                elif st == "warn":
+                    has_warn = True
+
+        if total_changes > 500 or has_fail:
+            return "high"
+        if total_changes > 100 or has_warn:
+            return "medium"
+        return "low"
+
     def run(
         self,
         path: Path,
@@ -215,6 +278,24 @@ class PrSynthesizeTool(ToolFn):
                 ev_sum = ev.get("summary", "")
                 card_lines.append(f"- **{ev_name}** [{ev_status.upper()}]: {ev_sum}")
 
+        total_changes = total_insertions + total_deletions
+        risk_tier = self.calculate_risk_tier(total_changes, evidence)
+        codeowners_rules = self.parse_codeowners(root)
+        changed_paths = [f["path"] for f in changed_files]
+        recommended_reviewers = self.match_reviewers(changed_paths, codeowners_rules)
+
+        card_lines.extend(
+            [
+                "",
+                "## Risk Assessment",
+                f"- **Risk Tier**: `{risk_tier.upper()}`",
+            ]
+        )
+        if recommended_reviewers:
+            card_lines.append(
+                f"- **Recommended Reviewers**: {', '.join(recommended_reviewers)}"
+            )
+
         pr_card = "\n".join(card_lines) + "\n"
 
         # Handle Export if requested
@@ -262,14 +343,18 @@ class PrSynthesizeTool(ToolFn):
                         "pr_card": pr_card,
                         "diff_stat": diff_stat,
                         "changed_files": changed_files,
+                        "risk_tier": risk_tier,
+                        "recommended_reviewers": recommended_reviewers,
                     },
                     metadata={
+                        "risk_tier": risk_tier,
+                        "recommended_reviewers": recommended_reviewers,
                         "execution": build_execution_metadata(
                             mode="executed",
                             requested=perms,
                             granted=perms,
                             producer="pr-synthesize",
-                        )
+                        ),
                     },
                 )
 
@@ -279,7 +364,7 @@ class PrSynthesizeTool(ToolFn):
 
         summary = (
             f"pr-synthesize: synthesized PR card against '{base_ref}' "
-            f"({len(changed_files)} files changed, +{total_insertions}/-{total_deletions})"
+            f"({len(changed_files)} files changed, +{total_insertions}/-{total_deletions}, risk: {risk_tier})"
         )
 
         return ToolResult(
@@ -294,6 +379,8 @@ class PrSynthesizeTool(ToolFn):
                 "pr_card": pr_card,
                 "diff_stat": diff_stat,
                 "changed_files": changed_files,
+                "risk_tier": risk_tier,
+                "recommended_reviewers": recommended_reviewers,
             },
             artifacts=artifacts if artifacts else None,
             metadata={
@@ -301,6 +388,8 @@ class PrSynthesizeTool(ToolFn):
                 "files_changed": len(changed_files),
                 "insertions": total_insertions,
                 "deletions": total_deletions,
+                "risk_tier": risk_tier,
+                "recommended_reviewers": recommended_reviewers,
                 "execution": build_execution_metadata(
                     mode="executed",
                     requested=perms,

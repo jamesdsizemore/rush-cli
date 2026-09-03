@@ -138,3 +138,54 @@ def test_pr_synthesize_canonical_schema_and_call(tmp_path: Path) -> None:
     assert res["status"] in ("ok", "warn")
     assert isinstance(res["duration_ms"], int)
     assert isinstance(res["summary"], str)
+
+
+def test_pr_synthesize_parses_codeowners_and_recommends_reviewers(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo_with_diff(tmp_path)
+
+    github_dir = tmp_path / ".github"
+    github_dir.mkdir(parents=True, exist_ok=True)
+    (github_dir / "CODEOWNERS").write_text(
+        "*.py @python-team # primary owners\nnew_feature.py @feature-lead\n",
+        encoding="utf-8",
+    )
+
+    tool = PrSynthesizeTool()
+    res = tool.run(tmp_path, base_ref="HEAD~1")
+
+    assert res["status"] == "ok"
+    reviewers = res["metadata"]["recommended_reviewers"]
+    assert "@python-team" in reviewers
+    assert "@feature-lead" in reviewers
+    assert "#" not in reviewers
+    assert "primary" not in reviewers
+    assert "@python-team" in res["raw"]["pr_card"]
+
+
+def test_pr_synthesize_computes_risk_tier_from_diff_and_evidence(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo_with_diff(tmp_path)
+
+    tool = PrSynthesizeTool()
+
+    # Clean evidence, small diff -> low risk
+    res_low = tool.run(tmp_path, base_ref="HEAD~1")
+    assert res_low["metadata"]["risk_tier"] == "low"
+    assert "**Risk Tier**: `LOW`" in res_low["raw"]["pr_card"]
+
+    # Failing evidence -> high risk
+    evidence_fail = [
+        {"tool": "security", "status": "fail", "summary": "1 critical vulnerability"}
+    ]
+    res_high = tool.run(tmp_path, base_ref="HEAD~1", evidence=evidence_fail)
+    assert res_high["metadata"]["risk_tier"] == "high"
+    assert "**Risk Tier**: `HIGH`" in res_high["raw"]["pr_card"]
+
+    # Warning evidence -> medium risk
+    evidence_warn = [{"tool": "lint", "status": "warn", "summary": "2 style warnings"}]
+    res_med = tool.run(tmp_path, base_ref="HEAD~1", evidence=evidence_warn)
+    assert res_med["metadata"]["risk_tier"] == "medium"
+    assert "**Risk Tier**: `MEDIUM`" in res_med["raw"]["pr_card"]
