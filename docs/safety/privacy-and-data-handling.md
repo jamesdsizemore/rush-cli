@@ -34,3 +34,11 @@ freshness metadata in the current result only. A supplied report remains a
 user-owned local input; Rush neither writes a review baseline by default nor
 uses Git history to infer scope. See [scanner governance](../maintainers/scanner-governance.md)
 for maintainer retention, error-budget, and deprecation policy.
+
+## End-to-End Recursive Sanitization (Phase 53)
+
+Rush treats all persistent and public output boundaries as sanitization choke-points:
+- `sanitize_value` redacts secrets from dictionary values AND keys.
+- Dict key collision suffixing ensures no data loss occurs when separate keys share redaction targets.
+- Pre-truncation subprocess handling ensures secrets cut off by character limits are redacted before truncation.
+- Output formats (CLI, MCP, SARIF, HTML, Cache) and persistent writers (state, mesh, logs, artifacts) enforce deep sanitization.

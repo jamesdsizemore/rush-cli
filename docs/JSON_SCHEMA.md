@@ -108,3 +108,12 @@ Rush produces standardized, machine-readable JSON output for all 38 tools when i
 ```
 
 See [Result Reference](reference/result-reference.md).
+
+---
+
+## 2. Serialization Sanitization Invariant (Phase 53)
+
+All JSON emissions (CLI `--json`, FastMCP responses, SARIF, cache entries) conform to the recursive sanitization contract:
+1. **Key & Value Redaction**: Every string value and dictionary key within `ToolResult`, including nested `raw`, `findings`, and `metadata`, is stripped of recognized secret patterns (API keys, bearer tokens, private keys, passwords, URL credentials).
+2. **Loss-Visible Key Collisions**: If key redaction creates collision within an object, keys are suffixed with `__collision_{i}` to prevent silent loss of data.
+3. **Fail-Closed Placeholder**: Unsupported or opaque object types within `raw` or `metadata` serialize as `"[UNSUPPORTED_TYPE:<type>]"` rather than leaking uninspected string representations.

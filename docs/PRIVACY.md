@@ -28,3 +28,14 @@ When Rush runs as a local stdio MCP server for an AI coding assistant:
 - The AI assistant only receives the structured `ToolResult` JSON payload explicitly requested by the assistant.
 
 See [Privacy and Data Handling Guide](safety/privacy-and-data-handling.md) and [Security Model](safety/security-model.md).
+
+---
+
+## 3. Serialization & Persistent Storage Privacy (Phase 53)
+
+Rush enforces end-to-end recursive sanitization across all data boundaries:
+1. **Recursive Sanitizer Kernel**: `sanitize_value` redacts credentials, bearer tokens, API keys, and sensitive URL credentials from both dictionary keys and values.
+2. **Immutable Input Isolation**: Data passed to execution operations is never modified in-place; sanitization occurs strictly on detached serialization copies.
+3. **Loss-Visible Key Collisions**: Colliding redacted dictionary keys are preserved deterministically via suffixing rather than discarded, preventing silent state corruption while logging collision metadata.
+4. **Clean Persistent State**: Audit logs, SQLite patch memory, session flight logs, preferences, and generated artifacts (SARIF, HTML, in-toto statements, IAM policies) are sanitized before writing to disk.
+5. **Redacted Diagnostics**: Stderr NDJSON logs redact secrets from both log messages and full exception tracebacks, ensuring diagnostic clarity without credential exposure.

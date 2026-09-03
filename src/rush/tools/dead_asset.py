@@ -322,8 +322,11 @@ class DeadAssetTool(ToolFn):
                     },
                 )
 
+            from rush.safety.redactor import sanitize_value
+
+            clean_manifest = sanitize_value(manifest).value
             exp.parent.mkdir(parents=True, exist_ok=True)
-            exp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            exp.write_text(json.dumps(clean_manifest, indent=2), encoding="utf-8")
             artifacts.append(str(exp))
 
         # Handle Prune

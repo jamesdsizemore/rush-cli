@@ -29,11 +29,12 @@ severity = "critical"
 release_blocker = true
 red_task = "P53.1.1"
 green_task = "P53.1.2"
-target_seam = "src/rush/tools/common.py:SecretRedactor"
-test_file = "tests/test_phase53_sanitization.py"
-test_function = "test_secrets_redacted_at_all_serialization_boundaries"
-predecessor = "Phase 51 accepted coverage manifest"
-docs_owner = "docs/SECURITY.md"
+target_seam = "src/rush/safety/redactor.py:SecretRedactor, src/rush/tools/common.py"
+test_file = "tests/test_phase53_sanitizer_contract.py, tests/test_phase53_output_boundaries.py, tests/test_phase53_governance_writers.py, tests/test_phase53_state_writers.py"
+test_function = "test_fresh_sentinel_is_removed_from_values_and_keys, test_cli_mcp_html_sarif_cache_outputs_remove_fresh_sentinel"
+predecessor = "Phase 52 accepted package identity and version authority"
+status = "completed"
+docs_owner = "docs/SECURITY.md, docs/PRIVACY.md, docs/SAFETY.md"
 
 [[findings]]
 id = "R-003"
@@ -111,13 +112,14 @@ title = "Diagnostic and operational logging leak into standard transport streams
 owner_phase = 53
 severity = "medium"
 release_blocker = true
-red_task = "P53.2.1"
-green_task = "P53.2.2"
-target_seam = "src/rush/cli.py, src/rush/mcp.py"
-test_file = "tests/test_phase53_diagnostics.py"
-test_function = "test_mcp_stdout_is_pure_jsonrpc_stderr_only_logs"
-predecessor = "Phase 51 accepted operation inventory"
-docs_owner = "docs/developer/mcp-development.md"
+red_task = "P53.5.1"
+green_task = "P53.5.2"
+target_seam = "src/rush/logging.py:NdjsonHandler, src/rush/mcp.py"
+test_file = "tests/test_phase53_logging_diagnostics.py"
+test_function = "test_exception_emits_one_complete_redacted_ndjson_record, test_mcp_stdout_remains_json_rpc_only"
+predecessor = "Phase 52 baseline"
+status = "completed"
+docs_owner = "docs/MCP.md, docs/developer/debugging-guide.md"
 
 [[findings]]
 id = "R-009"

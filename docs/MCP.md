@@ -26,6 +26,11 @@ No port opens. Rush does not become a background network daemon. Configure a cli
 
 The assistant does not gain a working model review through Rush: default review remains deterministic and `--llm` remains a no-call stub.
 
+## Transport Purity & Response Sanitization (Phase 53)
+- **Stdout Invariant**: `sys.stdout` carries only valid JSON-RPC frames during `rush mcp serve`. Logging, progress indicators, and diagnostics are strictly confined to `sys.stderr`.
+- **Fail-Safe Diagnostics**: Diagnostic errors emitted to `sys.stderr` are serialized as structured NDJSON records with fully formatted, credential-redacted stack traces. If formatting encounters an error, a structured fallback line is written so diagnostics never silently vanish.
+- **Recursive Response Sanitization**: All `ToolResult` dictionaries and MCP responses are sanitized via `sanitize_value`, ensuring that secrets and API keys are redacted from both values and nested keys.
+
 ## Next
 
 Use [client setup](integrations/mcp-client-setup.md) and the [tool reference](reference/mcp-tool-reference.md).

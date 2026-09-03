@@ -100,4 +100,12 @@ Key invariants:
 - `tests/test_phase52_version_contract.py`: Single version authority verification (`importlib.metadata.version("rush-cli")`), CLI `--version` parity, zero stale `"0.2.0"` hardcoded literals across providers, templates, and generators, and `PackageNotFoundError` development fallback.
 - `tests/test_phase52_installed_artifacts.py`: Verification of environment scrubbing (`PYTHONPATH`, `VIRTUAL_ENV`), package origin isolation from repository checkout, and clean installation/execution of wheel and sdist in external working directories (resolving Finding R-001).
 
+## 10. Phase 53 Contract Test Suites (Sanitization, Write Boundaries & Diagnostics)
+- `tests/test_phase53_sanitizer_contract.py`: Deep recursive sanitization of values and keys, loss-visible key collision suffixing, fail-closed handling of unsupported objects, and execution input immutability.
+- `tests/test_phase53_output_boundaries.py`: Pre-truncation subprocess output redaction, SARIF and HTML report sanitization, ResultCache SQLite persistence sanitization, and consensus SARIF export.
+- `tests/test_phase53_governance_writers.py`: Sanitization across IDE governance synchronizers (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`), MCP mesh lock manager payloads, and SVG score badges.
+- `tests/test_phase53_state_writers.py`: Disk sanitization across security audit logger, SQLite patch memory store, session flight recorder, preference store, invariant graph, benchmarks, and artifact exports.
+- `tests/test_phase53_logging_diagnostics.py`: Non-swallowed NDJSON exception serialization to stderr, secret redaction across log messages and stack traces, stderr fallback logging on format failure, and strict stdout purity (resolving Findings R-002 and R-008).
+
+
 

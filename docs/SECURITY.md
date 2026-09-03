@@ -90,3 +90,11 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 - **Dynamic Execution Permission Gates**: Dynamic profiling (`tracemalloc`, `-X importtime`) requires explicit `--allow-slow`.
 - **Cache Write Guard**: Benchmark baselines write only under `--allow-cache-write`.
 - **Air-Gapped Offline Review**: Local model evaluation never performs outbound HTTP/HTTPS network calls.
+
+## Complete Recursive Sanitization & Safe Diagnostics (Phase 53)
+- **Universal Recursive Kernel (`sanitize_value`)**: Enforces deep sanitization across mappings, sequences, strings, and exceptions. Sanitizes dictionary keys as well as values.
+- **Deterministic Key Collision Handling**: If secret redaction produces colliding keys, entries are suffixed with `__collision_{i}` to prevent silent loss, and collision metadata is recorded.
+- **Fail-Closed Unsupported Objects**: Objects lacking safe serialization produce `[UNSUPPORTED_TYPE:<name>]` instead of disclosing raw internal representations.
+- **Pre-Truncation Redaction**: Subprocess stdout/stderr sanitization runs strictly before truncation to prevent secret leakage at slice boundaries.
+- **Sealed Serialization & Persistent Boundaries**: Output generators (SARIF, HTML, ResultCache, CLI JSON) and disk writers (governance rules, mesh locks, security audit logs, patch memory, session flights, preferences, invariant graphs, attestations, IAM policies, dead asset manifests, and benchmarks) enforce copy-sanitization prior to emission or disk writes without mutating execution inputs.
+- **Fail-Safe Structured Diagnostics**: `NdjsonHandler.emit` formats exception tracebacks with credential redaction and includes a structured fallback handler, guaranteeing stderr log records are never silently dropped. Stdout remains strictly dedicated to JSON-RPC and CLI outputs.

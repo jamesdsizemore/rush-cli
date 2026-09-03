@@ -25,7 +25,10 @@ class PreferenceStore:
             return {}
 
     def _write(self, data: dict[str, Any]) -> None:
-        self.store_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        clean_data = sanitize_value(data).value
+        self.store_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._read().get(key, default)

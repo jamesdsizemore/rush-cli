@@ -124,10 +124,13 @@ def _run_tool(
         html_doc = export_to_html(result, title=f"Rush {tool_name} Report")
         export_html.write_text(html_doc, encoding="utf-8")
 
+    from .safety.redactor import sanitize_value
+
+    clean_result = sanitize_value(result).value
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json.dumps(clean_result, indent=2, default=str))
     else:
-        render_result(result)
+        render_result(clean_result)
     from .tools.common import exit_code_for
 
     sys.exit(exit_code_for(result))

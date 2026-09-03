@@ -360,7 +360,10 @@ class PrSynthesizeTool(ToolFn):
                 )
 
             exp.parent.mkdir(parents=True, exist_ok=True)
-            exp.write_text(pr_card, encoding="utf-8")
+            from rush.safety.redactor import SecretRedactor
+
+            clean_card = SecretRedactor.redact_text(pr_card)
+            exp.write_text(clean_card, encoding="utf-8")
             artifacts.append(str(exp))
 
         summary = (

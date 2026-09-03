@@ -418,7 +418,10 @@ class IamAuditTool(ToolFn):
                     },
                 )
             try:
-                policy_bytes = json.dumps(policy, indent=2).encode("utf-8")
+                from rush.safety.redactor import sanitize_value
+
+                clean_policy = sanitize_value(policy).value
+                policy_bytes = json.dumps(clean_policy, indent=2).encode("utf-8")
                 written = atomic_write_bytes(
                     target_dir, output_policy_file, policy_bytes
                 )

@@ -261,7 +261,10 @@ class ErrorCatalogTool(ToolFn):
 
             exp.parent.mkdir(parents=True, exist_ok=True)
             markdown_content = self.generate_markdown(catalog_entries)
-            exp.write_text(markdown_content, encoding="utf-8")
+            from rush.safety.redactor import SecretRedactor
+
+            clean_markdown = SecretRedactor.redact_text(markdown_content)
+            exp.write_text(clean_markdown, encoding="utf-8")
             artifacts.append(str(exp))
 
         summary = (

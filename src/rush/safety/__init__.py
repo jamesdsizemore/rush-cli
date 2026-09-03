@@ -9,7 +9,7 @@ from rush.safety.guard import PROTECTED_GOVERNANCE_FILES, AgentSafetyGuard
 from rush.safety.interceptor import DangerousCommandInterceptor
 from rush.safety.network_guard import NetworkEgressGuard
 from rush.safety.path_confiner import WorkspacePathConfiner
-from rush.safety.redactor import SecretRedactor
+from rush.safety.redactor import SanitizationResult, SecretRedactor, sanitize_value
 
 __all__ = [
     "PROTECTED_GOVERNANCE_FILES",
@@ -17,8 +17,10 @@ __all__ = [
     "DangerousCommandInterceptor",
     "EphemeralMountManager",
     "NetworkEgressGuard",
+    "SanitizationResult",
     "SecretRedactor",
     "SecurityAuditLogger",
     "WorkingTreeDirtyTracker",
     "WorkspacePathConfiner",
+    "sanitize_value",
 ]

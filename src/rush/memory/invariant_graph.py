@@ -25,7 +25,10 @@ class InvariantGraph:
             return {}
 
     def _write(self, data: dict[str, Any]) -> None:
-        self.graph_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        clean_data = sanitize_value(data).value
+        self.graph_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
 
     def add_invariant(self, rule_id: str, description: str, rationale: str) -> None:
         data = self._read()

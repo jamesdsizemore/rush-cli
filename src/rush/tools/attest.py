@@ -212,7 +212,10 @@ class AttestationTool(ToolFn):
                     },
                 )
             try:
-                data_bytes = json.dumps(statement, indent=2).encode("utf-8")
+                from rush.safety.redactor import sanitize_value
+
+                clean_statement = sanitize_value(statement).value
+                data_bytes = json.dumps(clean_statement, indent=2).encode("utf-8")
                 written = atomic_write_bytes(target_dir, output_path, data_bytes)
                 artifacts.append(str(written))
             except Exception as exc:  # noqa: BLE001

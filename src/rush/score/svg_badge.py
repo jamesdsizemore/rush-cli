@@ -21,9 +21,12 @@ class SvgBadgeGenerator:
 
     @classmethod
     def generate_badge_svg(cls, score: float, grade: str) -> str:
-        color = cls.GRADE_COLORS.get(grade, "#9f9f9f")
+        from rush.safety.redactor import SecretRedactor
+
+        clean_grade = SecretRedactor.redact_text(grade)
+        color = cls.GRADE_COLORS.get(clean_grade, "#9f9f9f")
         text_label = "rush quality"
-        text_val = f"{score:.0f}% ({grade})"
+        text_val = f"{score:.0f}% ({clean_grade})"
 
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="130" height="20" role="img" aria-label="{text_label}: {text_val}">
   <linearGradient id="s" x2="0" y2="100%">

@@ -59,3 +59,8 @@ See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md
 - **`cold-start` heavy import warnings**: Move heavy package imports (`torch`, `pandas`, `boto3`) inside the function or method where they are used.
 - **`offline-review` returns `skipped`**: The ONNX model `.rush/models/review.onnx` or the `onnxruntime` package is not present.
 - **`benchmark` returns `skipped`**: No baseline was found in `.rush/baselines.json`. Run `rush benchmark check . --record --allow-cache-write` to establish a baseline.
+
+### Phase 53 Troubleshooting: Diagnostics & Write Boundaries
+- **Disappearing exception tracebacks (R-008)**: Previously, logging an exception with `exc_info` failed silently inside `NdjsonHandler.emit` due to tuple formatting. This is resolved: all exceptions emit complete single-line redacted NDJSON to stderr with a fallback JSON emitter on formatting failure.
+- **Sanitized dictionary keys & collision suffixing**: If two dictionary keys contain distinct secrets that both redact to `"[REDACTED — secret-like value]"`, the second key is deterministically suffixed with `__collision_1` and recorded in collision metadata rather than overwriting the first key.
+- **Strict stderr logging**: MCP JSON-RPC requires that stdout contain zero logging output. Logging must always go through `get_logger()` or `NdjsonHandler` to ensure only stderr is used.

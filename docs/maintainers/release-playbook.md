@@ -53,5 +53,18 @@ Before publishing any release or pushing tags:
    ```
 5. Confirm `governance/remediation-phase-52.toml` status is `completed` and R-001 and R-012 in `governance/remediation-contracts.toml` are marked `completed`.
 
+## Pre-Release Sanitization & Diagnostic Probes (Phase 53: Findings R-002 & R-008 Closed)
+Before finalizing any release candidate:
+1. Verify deep recursive sanitization and pre-truncation contracts:
+   ```bash
+   pytest tests/test_phase53_sanitizer_contract.py tests/test_phase53_output_boundaries.py tests/test_phase53_governance_writers.py tests/test_phase53_state_writers.py -v
+   ```
+2. Verify exception diagnostics and stderr logging invariants:
+   ```bash
+   pytest tests/test_phase53_logging_diagnostics.py -v
+   ```
+3. Confirm `governance/remediation-phase-53.toml` status is `completed` and R-002 and R-008 in `governance/remediation-contracts.toml` are marked `completed`.
+
+
 
 

@@ -23,10 +23,13 @@ class SecurityAuditLogger:
     def log_security_event(self, event_type: str, details: dict) -> str:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         timestamp = time.time()
+        from rush.safety.redactor import sanitize_value
+
+        clean_details = sanitize_value(details).value
         record_body = {
             "timestamp": timestamp,
             "event_type": event_type,
-            "details": details,
+            "details": clean_details,
             "prev_hash": self.last_hash,
         }
         record_bytes = json.dumps(record_body, sort_keys=True).encode("utf-8")

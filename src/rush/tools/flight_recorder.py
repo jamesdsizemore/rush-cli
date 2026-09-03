@@ -18,11 +18,14 @@ class FlightRecorder:
     def record_event(
         self, session_id: str, event_type: str, payload: dict[str, Any]
     ) -> None:
+        from rush.safety.redactor import sanitize_value
+
+        clean_payload = sanitize_value(payload).value
         flight_file = self.flights_dir / f"{session_id}.jsonl"
         entry = {
             "timestamp": time.time(),
             "event_type": event_type,
-            "payload": payload,
+            "payload": clean_payload,
         }
         with open(flight_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")

@@ -25,3 +25,13 @@ The following events are treated as high-priority security incidents:
 7. **Release Patch**: Bump patch version and publish updated wheel.
 
 See [Security Policy](../SECURITY.md) and [Permissions](../safety/permissions.md).
+
+---
+
+## 3. Sanitization & Diagnostic Invariants (Phase 53)
+
+Maintainers must verify that all newly added tools, exports, and logging calls comply with Phase 53 invariants:
+- **Zero Unredacted Persistent Writes**: Any write to `.rush/` or exported files (SARIF, HTML, attestation statements, IAM policies) must pass through `sanitize_value` or `SecretRedactor.redact_text`.
+- **Zero Raw Exceptions to Logs**: Exceptions logged to stderr must format tracebacks safely and redact secrets from messages and stack traces.
+- **Fail-Safe Logging Fallback**: `NdjsonHandler` must never raise unhandled exceptions or drop log records silently.
+- **Strict Stdout Purity**: Subprocesses, background threads, and logging handlers must never write directly to `sys.stdout`.

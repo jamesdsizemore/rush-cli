@@ -37,7 +37,9 @@ class AgentsMdSynchronizer:
         canonical_sha = hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
 
         header = f"<!-- AUTO-GENERATED FROM AGENTS.md (SHA: {canonical_sha[:12]}) - DO NOT EDIT MANUALLY -->\n\n"
-        full_content = header + canonical_text
+        from rush.safety.redactor import SecretRedactor
+
+        full_content = SecretRedactor.redact_text(header + canonical_text)
 
         results = []
         for rel_target in IDE_TARGETS:

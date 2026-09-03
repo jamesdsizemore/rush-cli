@@ -113,8 +113,11 @@ def export_to_sarif(
             }
         )
 
-    return {
+    from .safety.redactor import sanitize_value
+
+    doc = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": runs,
     }
+    return sanitize_value(doc).value

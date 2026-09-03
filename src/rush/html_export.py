@@ -18,10 +18,13 @@ def export_to_html(
     project_name: str = "rush-cli",
 ) -> str:
     """Render ToolResult(s) into a complete, standalone, self-contained HTML document."""
-    if isinstance(results, dict):
-        results_list = [results]
+    from .safety.redactor import sanitize_value
+
+    clean_results = sanitize_value(results).value
+    if isinstance(clean_results, dict):
+        results_list = [clean_results]
     else:
-        results_list = list(results)
+        results_list = list(clean_results)
 
     total_tools = len(results_list)
     total_findings = sum(len(r.get("findings", []) or []) for r in results_list)

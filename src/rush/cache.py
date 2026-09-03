@@ -113,8 +113,11 @@ class ResultCache:
                 row = cursor.fetchone()
                 if row:
                     data = json.loads(row["result_json"])
+                    from rush.safety.redactor import sanitize_value
+
+                    clean_data = sanitize_value(data).value
                     log_subsystem("cache", "INFO", f"Cache HIT for key {key[:12]}")
-                    return data
+                    return clean_data
             log_subsystem("cache", "INFO", f"Cache MISS for key {key[:12]}")
             return None
         except Exception as exc:  # noqa: BLE001
@@ -124,7 +127,10 @@ class ResultCache:
     def set(self, key: str, result: ToolResult, file_path: Path) -> None:
         """Store ToolResult in SQLite cache using parameterized query."""
         try:
-            result_json = json.dumps(result)
+            from rush.safety.redactor import sanitize_value
+
+            clean_result = sanitize_value(result).value
+            result_json = json.dumps(clean_result)
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(

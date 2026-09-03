@@ -6,13 +6,14 @@ NEVER write to stdout from any rush code path. stdout is reserved for
 MCP JSON-RPC frames and the final CLI output. Even debug logs go to stderr.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 import sys
+import traceback
 from datetime import UTC, datetime
-
-REDACT_KEYS = {"api_key", "token", "secret", "password", "authorization"}
 
 
 class NdjsonHandler(logging.Handler):
@@ -20,27 +21,45 @@ class NdjsonHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            payload = {
+            from rush.safety.redactor import SecretRedactor
+
+            msg = record.getMessage()
+            clean_msg = SecretRedactor.redact_text(msg)
+            payload: dict[str, str] = {
                 "ts": datetime.now(UTC).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
-                "msg": self._redact(record.getMessage()),
+                "msg": clean_msg,
             }
             if record.exc_info:
-                payload["exc"] = self.format(record.exc_info)
+                if isinstance(record.exc_info, tuple):
+                    tb_lines = traceback.format_exception(*record.exc_info)
+                else:
+                    tb_lines = traceback.format_exception(record.exc_info)
+                exc_text = "".join(tb_lines).strip()
+                payload["exc"] = SecretRedactor.redact_text(exc_text)
+
             sys.stderr.write(json.dumps(payload, default=str) + "\n")
             sys.stderr.flush()
         except Exception:  # noqa: BLE001 - logging must never interrupt the caller
-            # Logging must never raise. Swallow any formatter/IO failure.
-            return
+            # Logging must never raise. Emit safe structured fallback to stderr.
+            try:
+                fallback = {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "level": "ERROR",
+                    "logger": "rush.logging",
+                    "msg": "[LOGGING_FALLBACK: formatting failed]",
+                }
+                sys.stderr.write(json.dumps(fallback) + "\n")
+                sys.stderr.flush()
+            except Exception:  # noqa: BLE001, S110
+                pass
 
     @staticmethod
     def _redact(msg: str) -> str:
-        low = msg.lower()
-        for key in REDACT_KEYS:
-            if key in low:
-                return "[REDACTED — secret-like value]"
-        return msg
+        from rush.safety.redactor import SecretRedactor
+
+        return SecretRedactor.redact_text(msg)
 
 
 def redact_secrets(msg: str) -> str:

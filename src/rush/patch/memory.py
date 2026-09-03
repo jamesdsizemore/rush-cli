@@ -45,6 +45,9 @@ class PatchMemoryStore:
     def record_success(
         self, error_signature: str, target_file: str, diff_patch: str
     ) -> None:
+        from rush.safety.redactor import SecretRedactor
+
+        clean_patch = SecretRedactor.redact_text(diff_patch)
         sig_hash = hashlib.sha256(error_signature.encode("utf-8")).hexdigest()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -55,7 +58,7 @@ class PatchMemoryStore:
                     diff_patch = excluded.diff_patch,
                     success_count = success_count + 1
                 """,
-                (sig_hash, target_file, diff_patch, time.time()),
+                (sig_hash, target_file, clean_patch, time.time()),
             )
             conn.commit()
 

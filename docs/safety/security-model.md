@@ -47,7 +47,9 @@ Rush enforces seven architectural defensive controls across all operations:
 - Stable result normalization, finding bounds, and redaction;
 - Owned config/environment for promoted high-risk adapters;
 - Safe artifact path/overwrite checks;
-- Explicit permission gates and dry-run defaults.
+- Explicit permission gates and dry-run defaults;
+- Recursive deep sanitization of all emitted JSON and persistent disk writes (Phase 53);
+- Strict stdout purity and fail-safe stderr NDJSON logging with credential redaction (Phase 53).
 
 ## Non-goals
 

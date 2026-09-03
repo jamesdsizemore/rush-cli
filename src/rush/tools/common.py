@@ -26,8 +26,10 @@ MAX_SUBPROCESS_OUTPUT_CHARS = 256 * 1024
 
 
 def _bounded_redacted_output(output: str) -> str:
-    """Redact secret assignments and cap child output before adapters consume it."""
-    redacted = _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", output)
+    """Redact secrets and cap child output before adapters consume it."""
+    from ..safety.redactor import SecretRedactor
+
+    redacted = SecretRedactor.redact_text(output)
     if len(redacted) <= MAX_SUBPROCESS_OUTPUT_CHARS:
         return redacted
     return redacted[:MAX_SUBPROCESS_OUTPUT_CHARS] + "[TRUNCATED]"
@@ -330,7 +332,9 @@ _SECRET_ASSIGNMENT = re.compile(
 
 def _redact_finding_message(message: str) -> str:
     """Keep a finding useful without returning an assigned secret-like value."""
-    return _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", message)
+    from ..safety.redactor import SecretRedactor
+
+    return SecretRedactor.redact_text(message)
 
 
 def finding_fingerprint(

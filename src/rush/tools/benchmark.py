@@ -145,8 +145,11 @@ class BenchmarkTool(ToolFn):
 
             stats = _calc_stats(sample_list)
             baselines_data[baseline_name] = stats
+            from rush.safety.redactor import sanitize_value
+
+            clean_baselines = sanitize_value(baselines_data).value
             baseline_file.write_text(
-                json.dumps(baselines_data, indent=2), encoding="utf-8"
+                json.dumps(clean_baselines, indent=2), encoding="utf-8"
             )
 
             return ToolResult(

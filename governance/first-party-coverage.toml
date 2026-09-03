@@ -2,9 +2,9 @@
 # Generated deterministically by rush.governance.coverage_manifest
 
 [manifest]
-revision = "4419d0b76f0982c4925cddda5d793b64ce6e1bdc"
+revision = "d2307a8a353d00aafef536731df1fb66498c13fe"
 generator_version = "1.0.0"
-total_records = 1092
+total_records = 1100
 
 [[records]]
 path = ".github/workflows/ci.yml"
@@ -927,6 +927,11 @@ classification = "doc"
 inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
 
 [[records]]
+path = "docs/developer/phase-53-implementation-evidence.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
 path = "docs/developer/pm-review.md"
 classification = "doc"
 inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
@@ -1213,6 +1218,11 @@ inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
 
 [[records]]
 path = "docs/phase-plans/phase-52-packaging-artifact-version-contract-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-53-sanitization-diagnostics-write-boundaries-plan.md"
 classification = "doc"
 inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
 
@@ -1778,6 +1788,11 @@ inclusion_rule = "directory-tree:governance/"
 
 [[records]]
 path = "governance/remediation-phase-52.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "governance/remediation-phase-53.toml"
 classification = "governance"
 inclusion_rule = "directory-tree:governance/"
 
@@ -5023,6 +5038,31 @@ inclusion_rule = "directory-tree:tests/"
 
 [[records]]
 path = "tests/test_phase52_version_contract.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase53_governance_writers.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase53_logging_diagnostics.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase53_output_boundaries.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase53_sanitizer_contract.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase53_state_writers.py"
 classification = "test"
 inclusion_rule = "directory-tree:tests/"
 

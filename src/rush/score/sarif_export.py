@@ -47,4 +47,7 @@ class SarifExporter:
                 }
             ],
         }
-        return json.dumps(sarif_doc, indent=2)
+        from rush.safety.redactor import sanitize_value
+
+        clean_doc = sanitize_value(sarif_doc).value
+        return json.dumps(clean_doc, indent=2)

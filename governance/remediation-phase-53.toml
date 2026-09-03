@@ -1,0 +1,56 @@
+[phase]
+id = 53
+name = "sanitization-diagnostics-write-boundaries"
+remediation_phase = 2
+status = "completed"
+revision = "feat/phase-53-implementation"
+branch = "feat/phase-53-implementation"
+worktree = "C:/Users/james/developer/rush-cli/.worktrees/phase53-implementation"
+created_at = "2026-09-03T13:26:00-07:00"
+completed_at = "2026-09-03T13:46:00-07:00"
+
+[environment]
+python_version = "3.12.13"
+uv_version = "0.6.14"
+test_baseline = 986
+test_completed = 1003
+catalog_tools_count = 52
+click_commands_count = 129
+fastmcp_tools_count = 73
+coverage_records_count = 1095
+
+[authorities]
+roadmap = "docs/developer/repository-remediation-plan.md"
+agents_guide = "AGENTS.md"
+phase_plan = "docs/phase-plans/phase-53-sanitization-diagnostics-write-boundaries-plan.md"
+contracts = "governance/remediation-contracts.toml"
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = ["R-002", "R-008"]
+findings_completed = ["R-002", "R-008"]
+
+[remediation_results]
+recursive_sanitization_kernel = "src/rush/safety/redactor.py:sanitize_value"
+key_collision_handling = "deterministic loss-visible suffixing with collision metadata"
+unsupported_type_handling = "fail-closed [UNSUPPORTED_TYPE:<name>] placeholder"
+input_mutation_prevented = true
+subprocess_sanitization_order = "sanitization strictly precedes truncation"
+logging_exception_formatting = "fixed tuple formatting in NdjsonHandler.emit"
+logging_fallback_handler = "structured stderr JSON fallback record"
+stdout_leak_prevention = "sys.stdout strictly preserved for JSON-RPC and final output"
+
+[contract_tests]
+test_files = [
+    "tests/test_phase53_sanitizer_contract.py",
+    "tests/test_phase53_output_boundaries.py",
+    "tests/test_phase53_governance_writers.py",
+    "tests/test_phase53_state_writers.py",
+    "tests/test_phase53_logging_diagnostics.py",
+]
+total_contract_tests = 17
+all_contract_tests_passed = true
+
+[successors]
+phases = [54, 55, 56, 57, 58, 59, 60]
+ready_for = [54, 55]
