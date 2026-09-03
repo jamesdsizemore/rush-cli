@@ -15,8 +15,8 @@ release_blocker = true
 red_task = "P52.1.1"
 green_task = "P52.1.2"
 target_seam = "pyproject.toml, src/rush/ imports"
-test_file = "tests/test_phase52_packaging.py"
-test_function = "test_wheel_and_sdist_start_without_src_rush"
+test_file = "tests/test_phase52_package_identity.py, tests/test_phase52_installed_artifacts.py"
+test_function = "test_first_party_python_contains_no_src_rush_import, test_wheel_and_sdist_pass_every_safe_probe"
 predecessor = "Phase 51 accepted artifact harness"
 docs_owner = "docs/DISTRIBUTION.md, docs/developer/ci-and-packaging.md"
 
@@ -169,10 +169,10 @@ release_blocker = true
 red_task = "P52.3.1"
 green_task = "P52.3.2"
 target_seam = "src/rush/__init__.py:__version__"
-test_file = "tests/test_phase52_version.py"
-test_function = "test_single_version_authority_from_importlib_metadata"
+test_file = "tests/test_phase52_version_contract.py"
+test_function = "test_public_version_comes_from_distribution_metadata"
 predecessor = "Phase 51 baseline"
-docs_owner = "docs/developer/release-process.md"
+docs_owner = "docs/developer/release-process.md, docs/VERSIONING.md"
 
 [[findings]]
 id = "R-013"
