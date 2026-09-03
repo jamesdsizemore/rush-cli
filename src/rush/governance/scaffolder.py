@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rush import __version__
+
 DEFAULT_AGENTS_MD = """# Agent Governance & Repository Instructions
 
 ## Operational Invariants
@@ -27,7 +29,9 @@ class RepoScaffolder:
 
         rush_toml = repo_root / "rush.toml"
         if not rush_toml.exists():
-            rush_toml.write_text('[rush]\nversion = "0.2.0"\n', encoding="utf-8")
+            rush_toml.write_text(
+                f'[rush]\nversion = "{__version__}"\n', encoding="utf-8"
+            )
             created.append(rush_toml)
 
         return created

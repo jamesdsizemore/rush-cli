@@ -1,6 +1,6 @@
 """Ruff linter output distiller."""
 
-from src.rush.token_economy.distillers.base import BaseDistiller, DistilledResult
+from .base import BaseDistiller, DistilledResult
 
 
 class RuffDistiller(BaseDistiller):

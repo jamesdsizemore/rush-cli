@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from src.rush.memory.failure_ledger import FailureLedger
-from src.rush.memory.invariant_graph import InvariantGraph
-from src.rush.memory.mistake_miner import MistakeMiner
+from rush.memory.failure_ledger import FailureLedger
+from rush.memory.invariant_graph import InvariantGraph
+from rush.memory.mistake_miner import MistakeMiner
 
 
 def test_invariant_graph(tmp_path: Path):

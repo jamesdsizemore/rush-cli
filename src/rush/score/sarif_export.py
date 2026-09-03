@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from rush import __version__
 from rush.score.consensus import ConsensusFinding
 
 
@@ -39,7 +40,7 @@ class SarifExporter:
                     "tool": {
                         "driver": {
                             "name": "Rush Consensus Engine",
-                            "semanticVersion": "0.2.0",
+                            "semanticVersion": __version__,
                         }
                     },
                     "results": results,

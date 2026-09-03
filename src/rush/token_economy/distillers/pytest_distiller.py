@@ -1,6 +1,6 @@
 """Pytest output distiller extracting exact failure blocks and assertion frames."""
 
-from src.rush.token_economy.distillers.base import BaseDistiller, DistilledResult
+from .base import BaseDistiller, DistilledResult
 
 
 class PytestDistiller(BaseDistiller):

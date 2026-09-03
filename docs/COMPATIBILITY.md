@@ -41,3 +41,12 @@ Rush auto-detects project languages by analyzing root project markers (`pyprojec
 ## 3. Engine Version Compatibility Matrix
 
 For the complete list of all 77 external engines, minimum tested versions, install hints, and reference test suites, see the [Engine Compatibility Matrix](ENGINE_COMPATIBILITY.md) and [Engine Directory](reference/engine-directory.md).
+
+---
+
+## 4. Package Import & Distribution Compatibility (Phase 52)
+
+- **Root Import Namespace**: Rush is packaged strictly under the `rush` namespace. All internal and external modules use canonical imports (`from rush... import ...`). Legacy `src.rush` imports are completely prohibited and flagged by AST contract tests.
+- **Pure Python Distribution**: Built wheels (`rush_cli-0.3.0-py3-none-any.whl`) and source archives (`rush_cli-0.3.0.tar.gz`) are standard PEP 517/518 packages compatible with `pip`, `uv`, `pipx`, and isolated virtualenvs.
+- **Environment Isolation**: The package requires zero `PYTHONPATH` manipulation and operates safely from arbitrary working directories without local source tree shadowing.
+

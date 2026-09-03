@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .. import __version__
 from .base import LLMProvider, LLMResponse
 
 
@@ -50,7 +51,7 @@ class AnthropicProvider(LLMProvider):
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
-            "user-agent": "rush-cli/0.2.0",
+            "user-agent": f"rush-cli/{__version__}",
         }
 
         payload = {

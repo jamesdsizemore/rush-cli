@@ -1,6 +1,6 @@
 """Vitest test runner distiller."""
 
-from src.rush.token_economy.distillers.base import BaseDistiller, DistilledResult
+from .base import BaseDistiller, DistilledResult
 
 
 class VitestDistiller(BaseDistiller):

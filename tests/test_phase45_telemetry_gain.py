@@ -4,9 +4,9 @@ from pathlib import Path
 
 from rich.console import Console
 
-from src.rush.token_economy.output_shaper import OutputShaper
-from src.rush.token_economy.telemetry import TelemetryStore
-from src.rush.token_economy.tui_gain import render_gain_dashboard
+from rush.token_economy.output_shaper import OutputShaper
+from rush.token_economy.telemetry import TelemetryStore
+from rush.token_economy.tui_gain import render_gain_dashboard
 
 
 def test_telemetry_store(tmp_path: Path):

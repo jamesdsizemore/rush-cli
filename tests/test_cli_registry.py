@@ -11,9 +11,9 @@ from rush.catalog import TOOL_SPECS, ToolSpec
 from rush.cli import build_catalog_path_command, cli
 from rush.mcp import build_server_instructions
 from rush.permissions import ExecutionPermissions
+from rush.token_economy.ccr_store import CCRStore
 from rush.tools import LintTool
 from rush.tools.continuity import SessionContinuityTool
-from src.rush.token_economy.ccr_store import CCRStore
 
 
 def test_catalog_path_command_uses_the_tool_name_and_standard_options() -> None:

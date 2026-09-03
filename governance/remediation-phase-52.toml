@@ -1,0 +1,57 @@
+[phase]
+id = 52
+name = "package-identity-installed-artifacts-and-version-authority"
+remediation_phase = 1
+status = "completed"
+revision = "54b71350cf8338dd6c3d26ef545aeaa5d5b9aa4c"
+branch = "feat/phase-52-implementation"
+worktree = "C:/Users/james/developer/rush-cli/.worktrees/phase52-implementation"
+created_at = "2026-09-03T12:53:15-07:00"
+completed_at = "2026-09-03T13:05:00-07:00"
+
+[environment]
+python_version = "3.12.13"
+uv_version = "0.6.14"
+test_baseline = 975
+test_completed = 986
+catalog_tools_count = 52
+click_commands_count = 129
+fastmcp_tools_count = 73
+coverage_records_count = 1090
+
+[authorities]
+roadmap = "docs/developer/repository-remediation-plan.md"
+agents_guide = "AGENTS.md"
+phase_plan = "docs/phase-plans/phase-52-packaging-artifact-version-contract-plan.md"
+contracts = "governance/remediation-contracts.toml"
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = ["R-001", "R-012"]
+findings_completed = ["R-001", "R-012"]
+
+[remediation_results]
+src_rush_imports_remaining = 0
+production_files_cleaned = 15
+test_files_cleaned = 14
+scripts_cleaned = 1
+version_consumers_consolidated = 10
+pytest_pythonpath_isolated = true
+wheel_probe_verdict = "passed"
+sdist_probe_verdict = "passed"
+wheel_origin_verified = true
+sdist_origin_verified = true
+wheel_import_clean = true
+sdist_import_clean = true
+
+[contract_tests]
+test_files = [
+    "tests/test_phase52_package_identity.py",
+    "tests/test_phase52_version_contract.py",
+    "tests/test_phase52_installed_artifacts.py",
+]
+total_contract_tests = 11
+
+[successors]
+phases = [53, 54, 55, 56, 57, 58, 59, 60]
+ready_for = [53]

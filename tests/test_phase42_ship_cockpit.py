@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from src.rush.tools.ship.cockpit import ShipCockpit
-from src.rush.tools.ship.migration_linter import MigrationLinter
-from src.rush.tools.ship.package_linter import PackageLinter
-from src.rush.tools.ship.semver_linter import SemverLinter
+from rush.tools.ship.cockpit import ShipCockpit
+from rush.tools.ship.migration_linter import MigrationLinter
+from rush.tools.ship.package_linter import PackageLinter
+from rush.tools.ship.semver_linter import SemverLinter
 
 
 def test_migration_linter_table_locks():

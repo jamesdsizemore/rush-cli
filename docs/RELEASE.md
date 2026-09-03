@@ -25,7 +25,7 @@ This document defines the release workflow, semantic versioning rules, and pre-p
    ```
 
 2. **Update Version & Changelog**:
-   - Update version in `pyproject.toml` and `src/rush/__init__.py`.
+   - Update version in `pyproject.toml` (single source of truth; `src/rush/__init__.py` resolves it from distribution metadata).
    - Update `CHANGELOG.md` with new features, fixes, and engine additions.
 
 3. **Build Wheel & Source Distribution**:
@@ -33,9 +33,12 @@ This document defines the release workflow, semantic versioning rules, and pre-p
    uv build
    ```
 
-4. **Smoke-Test Clean Distribution**:
-   - Install the built `.whl` into a temporary clean virtual environment.
-   - Run `rush --version`, `rush --help`, `rush review src/`, and `rush mcp serve`.
+4. **Verify Artifact Probes in Isolated Environments (Phase 51 & 52 Gate)**:
+   - Run the automated probe harness against built distributions:
+     ```bash
+     python scripts/probe_installed_artifacts.py --dist-dir dist
+     ```
+   - Confirms wheel and sdist installation, origin isolation, and clean CLI execution from an external CWD with scrubbed `PYTHONPATH`.
 
 5. **Publish to Package Registry**:
    - Publishing is executed through trusted CI pipelines using PyPI Trusted Publishing.

@@ -13,6 +13,6 @@
 9. `mem-profile` and `cold-start` run static AST analyses by default (0s overhead); dynamic profiling requires explicit `--allow-slow`.
 10. `offline-review` requires a local ONNX model file and `onnxruntime` or external local runner on PATH; returns `status='skipped'` if uninstalled.
 11. `benchmark check` compares against recorded baselines; updating or recording baselines requires `--allow-cache-write`.
-12. Installed wheel/sdist packages outside the source checkout fail on startup due to internal `src.rush` imports (Finding R-001). This packaging defect is actively detected and verified by `scripts/probe_installed_artifacts.py` as established in Phase 51, and is owned for complete code remediation in Phase 52.
+12. [RESOLVED - Phase 52] Installed wheel/sdist packages outside the source checkout previously failed on startup due to internal `src.rush` imports (Finding R-001). This was completely resolved in Phase 52 by eliminating all `src.rush` imports across production and tests, isolating pytest collection, and verifying wheel/sdist installation probes in scrubbed external virtualenvs.
 
 These reflect current design constraints and boundaries.

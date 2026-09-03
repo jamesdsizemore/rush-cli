@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
+from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.tools.continuity import SessionContinuityTool
-from src.rush.mcp_mesh.lock_manager import MeshLockManager
-from src.rush.tools.flight_recorder import FlightRecorder
-from src.rush.tools.swarm_merge import SwarmMergeSolver
-from src.rush.tools.trace import TraceScanner
+from rush.tools.flight_recorder import FlightRecorder
+from rush.tools.swarm_merge import SwarmMergeSolver
+from rush.tools.trace import TraceScanner
 
 
 def test_trace_scanner(tmp_path: Path):

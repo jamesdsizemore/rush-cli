@@ -20,4 +20,13 @@ If a breaking change is unavoidable:
 2. Maintain backward-compatible fallback for at least one minor release cycle.
 3. Remove deprecated behavior only in the subsequent major version release.
 
+---
+
+## 3. Version Resolution & Package Identity Architecture (Phase 52)
+
+- **Single Version Source**: All runtime modules must consume `rush.__version__`. Never hardcode static version literals (e.g. `"0.2.0"`, `"0.3.0"`) in headers, templates, or exporters.
+- **Distribution Metadata Resolution**: `rush.__version__` resolves dynamically via `importlib.metadata.version("rush-cli")`. When running uninstalled, it falls back to `"0.3.0"`.
+- **Strict Root Namespace**: All internal imports across `src/` and `tests/` must use canonical `rush` or relative imports. `src.rush` imports are strictly prohibited.
+
 See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/release-process.md).
+

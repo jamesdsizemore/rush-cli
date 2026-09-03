@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from src.rush.codegraph.grounding_verifier import GroundingVerifier
+from rush.codegraph.grounding_verifier import GroundingVerifier
 
 
 class HalluGuard:

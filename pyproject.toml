@@ -53,7 +53,7 @@ packages = ["src/rush", "scripts"]
 "tests/fixtures/benchmarks" = "scripts/benchmarks/fixtures"
 
 [tool.pytest.ini_options]
-pythonpath = [".", "src"]
+pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [

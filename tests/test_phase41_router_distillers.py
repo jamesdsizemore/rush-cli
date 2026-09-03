@@ -1,11 +1,11 @@
 """Unit tests for Phase 41 ContentRouter and Command Distillers."""
 
-from src.rush.token_economy.distillers import get_distiller_for_command
-from src.rush.token_economy.distillers.cargo_distiller import CargoDistiller
-from src.rush.token_economy.distillers.pytest_distiller import PytestDistiller
-from src.rush.token_economy.distillers.ruff_distiller import RuffDistiller
-from src.rush.token_economy.distillers.vitest_distiller import VitestDistiller
-from src.rush.token_economy.router import ContentRouter, ContentType
+from rush.token_economy.distillers import get_distiller_for_command
+from rush.token_economy.distillers.cargo_distiller import CargoDistiller
+from rush.token_economy.distillers.pytest_distiller import PytestDistiller
+from rush.token_economy.distillers.ruff_distiller import RuffDistiller
+from rush.token_economy.distillers.vitest_distiller import VitestDistiller
+from rush.token_economy.router import ContentRouter, ContentType
 
 
 def test_content_router_classification():

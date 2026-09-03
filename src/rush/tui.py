@@ -12,6 +12,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
+from rush import __version__
 from rush.tools.base import ToolResult
 
 
@@ -76,7 +77,9 @@ def build_tui_layout(results: list[ToolResult]) -> Layout:
     layout["details"].update(Panel(table, title="Finding Stream", style="green"))
 
     # Footer
-    footer_text = Text("Press Ctrl+C or 'q' to exit | Rush v0.2.0", style="dim")
+    footer_text = Text(
+        f"Press Ctrl+C or 'q' to exit | Rush v{__version__}", style="dim"
+    )
     layout["footer"].update(Panel(footer_text, style="grey50"))
 
     return layout

@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from src.rush.tools.api_diff import ApiDiffer
-from src.rush.tools.test_heal import TestHealer
+from rush.tools.api_diff import ApiDiffer
+from rush.tools.test_heal import TestHealer
 
 
 def test_test_healer_diagnose(tmp_path: Path):

@@ -1,10 +1,10 @@
 """Distillers package registry."""
 
-from src.rush.token_economy.distillers.base import BaseDistiller, DistilledResult
-from src.rush.token_economy.distillers.cargo_distiller import CargoDistiller
-from src.rush.token_economy.distillers.pytest_distiller import PytestDistiller
-from src.rush.token_economy.distillers.ruff_distiller import RuffDistiller
-from src.rush.token_economy.distillers.vitest_distiller import VitestDistiller
+from .base import BaseDistiller, DistilledResult
+from .cargo_distiller import CargoDistiller
+from .pytest_distiller import PytestDistiller
+from .ruff_distiller import RuffDistiller
+from .vitest_distiller import VitestDistiller
 
 __all__ = [
     "BaseDistiller",

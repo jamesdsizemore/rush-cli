@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from src.rush.tools.common import run_subprocess
+from .common import run_subprocess
 
 
 class SimulateCi:

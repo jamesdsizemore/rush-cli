@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from src.rush.token_economy.telemetry import TelemetryStore
+from .telemetry import TelemetryStore
 
 
 def render_gain_dashboard(

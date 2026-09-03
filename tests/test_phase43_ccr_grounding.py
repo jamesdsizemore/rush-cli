@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from src.rush.codegraph.grounding_verifier import GroundingVerifier
-from src.rush.token_economy.ccr_store import CCRStore
-from src.rush.tools.hallu_guard import HalluGuard
+from rush.codegraph.grounding_verifier import GroundingVerifier
+from rush.token_economy.ccr_store import CCRStore
+from rush.tools.hallu_guard import HalluGuard
 
 
 def test_ccr_store_roundtrip(tmp_path: Path):

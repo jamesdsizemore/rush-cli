@@ -2,9 +2,9 @@
 # Generated deterministically by rush.governance.coverage_manifest
 
 [manifest]
-revision = "b05fe81ff3d2d02f3ce544b26e3298f118fd8171"
+revision = "4419d0b76f0982c4925cddda5d793b64ce6e1bdc"
 generator_version = "1.0.0"
-total_records = 1086
+total_records = 1092
 
 [[records]]
 path = ".github/workflows/ci.yml"
@@ -922,6 +922,11 @@ classification = "doc"
 inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
 
 [[records]]
+path = "docs/developer/phase-52-implementation-evidence.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
 path = "docs/developer/pm-review.md"
 classification = "doc"
 inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
@@ -1203,6 +1208,11 @@ inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
 
 [[records]]
 path = "docs/phase-plans/phase-50-slsa-attestation-security-suite-flagship-plan.md"
+classification = "doc"
+inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
+
+[[records]]
+path = "docs/phase-plans/phase-52-packaging-artifact-version-contract-plan.md"
 classification = "doc"
 inclusion_rule = "doc-pattern:docs/|*.md|LICENSE"
 
@@ -1763,6 +1773,11 @@ inclusion_rule = "directory-tree:governance/"
 
 [[records]]
 path = "governance/remediation-phase-51.toml"
+classification = "governance"
+inclusion_rule = "directory-tree:governance/"
+
+[[records]]
+path = "governance/remediation-phase-52.toml"
 classification = "governance"
 inclusion_rule = "directory-tree:governance/"
 
@@ -4993,6 +5008,21 @@ inclusion_rule = "directory-tree:tests/"
 
 [[records]]
 path = "tests/test_phase51_public_operations.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase52_installed_artifacts.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase52_package_identity.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase52_version_contract.py"
 classification = "test"
 inclusion_rule = "directory-tree:tests/"
 

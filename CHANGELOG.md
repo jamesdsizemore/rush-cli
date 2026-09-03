@@ -2,6 +2,25 @@
 
 All notable changes to Rush are documented here.
 
+## [0.3.0] - 2026-09-03
+
+### Fixed
+- **Package Identity & Installed Artifacts (Finding R-001)**: Eliminated all 74 occurrences of invalid `src.rush` imports across 15 production files and 14 test files in favor of canonical `rush` imports. Wheel and sdist packages now install and start cleanly in scrubbed virtual environments outside the repository checkout with zero origin leakage.
+- **Pytest Collection Isolation**: Removed root `.` from `pyproject.toml` `pythonpath`, isolating test discovery strictly to `src/` to prevent repository root leakage into import paths.
+- **Version Authority Consolidation (Finding R-012)**: Replaced disparate hardcoded version literals across providers (Anthropic, OpenAI), SARIF exporters, TypeScript generators, scaffolder templates, PR synthesizers, and TUI footers with a single version authority derived from `importlib.metadata.version("rush-cli")` in `src/rush/__init__.py`.
+
+### Added
+- **Remediation Scope & Release Gates (Phase 51)**:
+  - First-party coverage boundary classifying 1,090 repository files (`governance/first-party-coverage.toml`).
+  - Public operations inventory reconciling 129 Click subcommands and 73 FastMCP tools (`governance/public-operations.toml`).
+  - Engine support taxonomy covering 19 families with strict skip prohibitions (`governance/engine-support.toml`).
+  - Cross-phase remediation contracts mapping findings R-001 through R-016 (`governance/remediation-contracts.toml`).
+  - Independent installed artifact probe harness (`scripts/probe_installed_artifacts.py`) integrated into CI matrix and release workflows.
+- **Phase 52 Contract Test Suites**:
+  - `tests/test_phase52_package_identity.py`: Verifies zero `src.rush` imports and pytest collection isolation.
+  - `tests/test_phase52_version_contract.py`: Verifies metadata version resolution and consumer alignment.
+  - `tests/test_phase52_installed_artifacts.py`: Verifies wheel and sdist installation and execution parity from external working directories.
+
 ## [0.2.0] - 2026-08-21
 
 ### Added

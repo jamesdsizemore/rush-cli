@@ -5,7 +5,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from src.rush.tools.common import run_subprocess
+from rush.tools.common import run_subprocess
 
 
 class GitSandbox:

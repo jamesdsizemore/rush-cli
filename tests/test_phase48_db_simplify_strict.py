@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from src.rush.tools.db_drift import DbDriftAuditor
-from src.rush.tools.simplify import ComplexityDecomposer
-from src.rush.tools.strictify import TypeSynthesizer
+from rush.tools.db_drift import DbDriftAuditor
+from rush.tools.simplify import ComplexityDecomposer
+from rush.tools.strictify import TypeSynthesizer
 
 
 def test_db_drift_detection(tmp_path: Path):

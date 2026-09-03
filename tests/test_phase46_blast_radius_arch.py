@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from src.rush.tools.arch_guard import ArchGuard
-from src.rush.tools.blast_radius import BlastRadiusAnalyzer
+from rush.tools.arch_guard import ArchGuard
+from rush.tools.blast_radius import BlastRadiusAnalyzer
 
 
 def test_blast_radius_analyzer(tmp_path: Path):

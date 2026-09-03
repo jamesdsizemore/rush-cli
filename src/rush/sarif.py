@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import __version__
 from .tools.base import Finding, ToolResult
 
 
@@ -71,7 +72,7 @@ def export_to_sarif(
     results: ToolResult | list[ToolResult],
     *,
     tool_name: str = "rush",
-    version: str = "0.2.0",
+    version: str = __version__,
 ) -> dict[str, Any]:
     """Export one or more ToolResults to a complete SARIF 2.1.0 document."""
     if isinstance(results, dict):

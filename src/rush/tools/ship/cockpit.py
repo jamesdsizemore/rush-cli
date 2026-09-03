@@ -5,11 +5,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from src.rush.tools.ship.cleaner import ScratchCleaner
-from src.rush.tools.ship.docs_linter import DocsLinter
-from src.rush.tools.ship.env_linter import EnvParityLinter
-from src.rush.tools.ship.migration_linter import MigrationLinter
-from src.rush.tools.ship.package_linter import PackageLinter
+from .cleaner import ScratchCleaner
+from .docs_linter import DocsLinter
+from .env_linter import EnvParityLinter
+from .migration_linter import MigrationLinter
+from .package_linter import PackageLinter
 
 
 class VectorVerdict(BaseModel):

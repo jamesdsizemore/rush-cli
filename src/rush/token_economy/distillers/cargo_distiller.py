@@ -1,6 +1,6 @@
 """Cargo test output distiller isolating panic locations and compilation errors."""
 
-from src.rush.token_economy.distillers.base import BaseDistiller, DistilledResult
+from .base import BaseDistiller, DistilledResult
 
 
 class CargoDistiller(BaseDistiller):

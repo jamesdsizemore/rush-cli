@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .. import __version__
 from .base import LLMProvider, LLMResponse
 
 
@@ -49,7 +50,7 @@ class OpenAIProvider(LLMProvider):
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "rush-cli/0.2.0",
+            "User-Agent": f"rush-cli/{__version__}",
         }
 
         payload = {

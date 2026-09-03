@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from src.rush.memory.merkle_invalidator import MerkleInvalidator
-from src.rush.token_economy.ast_skeletonizer import AstSkeletonizer
-from src.rush.token_economy.toon import decode_toon, encode_toon
+from rush.memory.merkle_invalidator import MerkleInvalidator
+from rush.token_economy.ast_skeletonizer import AstSkeletonizer
+from rush.token_economy.toon import decode_toon, encode_toon
 
 
 def test_toon_roundtrip():

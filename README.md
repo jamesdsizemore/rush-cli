@@ -629,6 +629,8 @@ Rush is engineered with strict safety invariants:
 * **No Uncontrolled Git Mutations**: Workflow tools never rewrite history, tag, or publish releases without explicit user flags.
 * **Offline-First & Air-Gapped Safe**: All AST parsing, CodeGraph analysis, memory storage, and provenance generation run 100% locally.
 * **Zero stdout Pollution**: Stdio MCP server reserves `stdout` exclusively for JSON-RPC; all logs route to `stderr`.
+* **Canonical Package Identity**: The public Python package exposes the root `rush` namespace exclusively; internal modules never use `src.rush` imports, and `__version__` is anchored to distribution metadata.
+* **Isolated Installed Artifacts**: Wheels and sdists are verified under scrubbed virtualenvs from empty working directories to guarantee standalone runtime integrity outside the development checkout.
 
 ---
 

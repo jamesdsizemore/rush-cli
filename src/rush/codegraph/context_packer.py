@@ -5,7 +5,7 @@ from typing import Any
 
 import tiktoken
 
-from src.rush.token_economy.ast_skeletonizer import AstSkeletonizer
+from rush.token_economy.ast_skeletonizer import AstSkeletonizer
 
 
 class ContextPacker:

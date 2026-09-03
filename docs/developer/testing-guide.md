@@ -95,3 +95,9 @@ Key invariants:
 - `tests/test_phase51_artifact_probes.py`: Independent wheel and sdist installation into isolated virtualenvs, environment scrubbing, origin verification, R-001 negative import control.
 - `tests/test_phase51_engine_policy.py`: Engine support taxonomy across 19 families, support class validation (`mandatory`, `supported-optional`, `best-effort`), skip prohibitions for supported engines.
 
+## 9. Phase 52 Contract Test Suites (Package Identity, Artifacts & Version Authority)
+- `tests/test_phase52_package_identity.py`: AST scan ensuring zero `src.rush` imports across all first-party production and test files, isolated import negative control, and pytest collection isolation (`pythonpath = ["src"]` without `.`).
+- `tests/test_phase52_version_contract.py`: Single version authority verification (`importlib.metadata.version("rush-cli")`), CLI `--version` parity, zero stale `"0.2.0"` hardcoded literals across providers, templates, and generators, and `PackageNotFoundError` development fallback.
+- `tests/test_phase52_installed_artifacts.py`: Verification of environment scrubbing (`PYTHONPATH`, `VIRTUAL_ENV`), package origin isolation from repository checkout, and clean installation/execution of wheel and sdist in external working directories (resolving Finding R-001).
+
+

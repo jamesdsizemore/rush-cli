@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from src.rush.tools.attest import AttestationTool, SLSAAttestationGenerator
-from src.rush.tools.dead_asset import DeadAssetScanner
-from src.rush.tools.iam_audit import IamAuditTool, IamPolicySynthesizer
-from src.rush.tools.license_matrix import LicenseMatrixScanner, LicenseMatrixTool
-from src.rush.tools.pr_synthesize import PrSynthesizer
+from rush.tools.attest import AttestationTool, SLSAAttestationGenerator
+from rush.tools.dead_asset import DeadAssetScanner
+from rush.tools.iam_audit import IamAuditTool, IamPolicySynthesizer
+from rush.tools.license_matrix import LicenseMatrixScanner, LicenseMatrixTool
+from rush.tools.pr_synthesize import PrSynthesizer
 
 
 def test_slsa_attestation_generator(tmp_path: Path):
@@ -79,7 +79,7 @@ def test_pr_synthesizer(tmp_path: Path):
 def test_phase50_manual_mcp_names_contain_no_business_implementations() -> None:
     import inspect
 
-    import src.rush.mcp as mcp_mod
+    import rush.mcp as mcp_mod
 
     source = inspect.getsource(mcp_mod._register_tools)
     # Ensure no manual instantiation of ad-hoc classes inside _register_tools
