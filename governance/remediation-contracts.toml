@@ -157,9 +157,9 @@ severity = "critical"
 release_blocker = true
 red_task = "P54.1.1"
 green_task = "P54.1.2"
-target_seam = "src/rush/models/result.py"
-test_file = "tests/test_phase54_schema_kernel.py"
-test_function = "test_tool_result_kernel_strict_validation"
+target_seam = "src/rush/contracts/results.py, src/rush/contracts/operations.py, src/rush/tools/base.py"
+test_file = "tests/test_phase54_result_schema.py, tests/test_phase54_operation_adapters.py"
+test_function = "test_tool_result_v1_requires_exact_fields_and_vocabularies, test_every_manifest_operation_has_one_adapter"
 predecessor = "Phase 51 accepted operation inventory"
 docs_owner = "docs/reference/result-reference.md"
 
