@@ -862,7 +862,9 @@ def init_cmd(path: Path, force: bool) -> None:
         sys.exit(1)
 
     cfg_content = generate_initial_config(root)
-    target_cfg.write_text(cfg_content, encoding="utf-8")
+    from .safety.redactor import sanitize_value
+
+    target_cfg.write_text(sanitize_value(cfg_content).value, encoding="utf-8")
     click.echo(f"Created rush.toml at {target_cfg}")
 
 
@@ -1574,7 +1576,9 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
     json_text = openapi_file.read_text(encoding="utf-8")
     ts_code = TypeScriptContractGenerator.generate_interfaces(json_text)
     if output_ts:
-        output_ts.write_text(ts_code, encoding="utf-8")
+        from .safety.redactor import sanitize_value
+
+        output_ts.write_text(sanitize_value(ts_code).value, encoding="utf-8")
         click.echo(f"Wrote generated TypeScript interfaces to {output_ts}")
     else:
         click.echo(ts_code)
@@ -1904,7 +1908,9 @@ def score_compute_cmd(
         svg = SvgBadgeGenerator.generate_badge_svg(
             report.composite_score, report.letter_grade
         )
-        export_svg.write_text(svg, encoding="utf-8")
+        from .safety.redactor import sanitize_value
+
+        export_svg.write_text(sanitize_value(svg).value, encoding="utf-8")
         click.echo(f"Wrote SVG badge to {export_svg}")
 
     if export_html:

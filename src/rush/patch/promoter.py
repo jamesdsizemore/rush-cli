@@ -20,7 +20,10 @@ class PatchPromoter:
 
         patch_file = self.repo_root / ".promote.patch"
         try:
-            patch_file.write_text(proc.stdout, encoding="utf-8")
+            from rush.safety.redactor import sanitize_value
+
+            clean_diff = sanitize_value(proc.stdout).value
+            patch_file.write_text(clean_diff, encoding="utf-8")
             apply_proc = run_subprocess(
                 ["git", "apply", "--whitespace=nowarn", str(patch_file)],
                 cwd=self.repo_root,

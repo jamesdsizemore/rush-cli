@@ -25,7 +25,9 @@ class ArtifactProvenanceVerifier:
                         sha.update(chunk)
                 lines.append(f"{sha.hexdigest()}  {p.name}")
 
-        manifest_file.write_text(
-            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
-        )
+        from rush.safety.redactor import sanitize_value
+
+        manifest_text = "\n".join(lines) + ("\n" if lines else "")
+        clean_manifest = sanitize_value(manifest_text).value
+        manifest_file.write_text(clean_manifest, encoding="utf-8")
         return manifest_file

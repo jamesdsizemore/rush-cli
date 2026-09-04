@@ -38,5 +38,8 @@ class DockerfileGenerator:
     @staticmethod
     def generate_dockerfile(repo_root: Path) -> Path:
         dockerfile_path = repo_root / "Dockerfile"
-        dockerfile_path.write_text(HARDENED_DOCKERFILE, encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        clean_dockerfile = sanitize_value(HARDENED_DOCKERFILE).value
+        dockerfile_path.write_text(clean_dockerfile, encoding="utf-8")
         return dockerfile_path

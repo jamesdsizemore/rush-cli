@@ -70,3 +70,39 @@ def test_mcp_stdout_remains_json_rpc_only(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert stdout_buf.getvalue() == "", "stdout was contaminated by logging output!"
     assert len(stderr_buf.getvalue()) > 0, "stderr should have received log records"
+
+
+def test_formatter_failure_emits_one_safe_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify that any exception during log formatting produces one safe fallback NDJSON to stderr and zero stdout."""
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout_buf)
+    monkeypatch.setattr(sys, "stderr", stderr_buf)
+
+    test_logger = logging.getLogger("rush.test_fallback")
+    test_logger.handlers.clear()
+    test_logger.setLevel(logging.DEBUG)
+    test_logger.propagate = False
+    test_logger.addHandler(NdjsonHandler())
+
+    class BrokenMessage:
+        def __str__(self) -> str:
+            raise RuntimeError("Forced formatting crash")
+
+    test_logger.info("Message with %s", BrokenMessage())
+
+    assert stdout_buf.getvalue() == "", (
+        "stdout was contaminated during formatter fallback!"
+    )
+    output = stderr_buf.getvalue().strip()
+    assert len(output) > 0, "Fallback record was not emitted to stderr!"
+
+    lines = output.splitlines()
+    assert len(lines) == 1, f"Expected exactly 1 fallback line, got {len(lines)}"
+
+    record = json.loads(lines[0])
+    assert record["level"] == "ERROR"
+    assert record["logger"] == "rush.logging"
+    assert record["msg"] == "[LOGGING_FALLBACK: formatting failed]"

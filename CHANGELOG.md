@@ -22,6 +22,12 @@ All notable changes to Rush are documented here.
   - `tests/test_phase52_package_identity.py`: Verifies zero `src.rush` imports and pytest collection isolation.
   - `tests/test_phase52_version_contract.py`: Verifies metadata version resolution and consumer alignment.
   - `tests/test_phase52_installed_artifacts.py`: Verifies wheel and sdist installation and execution parity from external working directories.
+- **Phase 53 Contract Test Suites**:
+  - `tests/test_phase53_sanitizer_contract.py`: Verifies deep recursive sanitization across values, keys, collisions, URL credentials, and input immutability.
+  - `tests/test_phase53_output_boundaries.py`: Verifies pre-truncation subprocess sanitization and SARIF/HTML/Cache output boundaries.
+  - `tests/test_phase53_governance_writers.py`: Verifies sanitization of governance configs, agent sync rules, tamper hooks, and MCP mesh lock managers on success and abort.
+  - `tests/test_phase53_state_writers.py`: Verifies sanitization of 25 state, security, and release writers on success and abort.
+  - `tests/test_phase53_logging_diagnostics.py`: Verifies redacted NDJSON exception diagnostics, stdout purity, and structured formatting fallbacks.
 
 ## [0.2.0] - 2026-08-21
 

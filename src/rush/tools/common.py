@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -323,11 +322,6 @@ def error_result(
     if meta:
         result["metadata"] = meta
     return result
-
-
-_SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(api[_-]?key|token|secret|password|authorization)\s*([=:])\s*([^\s,;]+)"
-)
 
 
 def _redact_finding_message(message: str) -> str:

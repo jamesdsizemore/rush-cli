@@ -68,5 +68,8 @@ class CIWorkflowGenerator:
         workflow_dir = repo_root / ".github" / "workflows"
         workflow_dir.mkdir(parents=True, exist_ok=True)
         ci_file = workflow_dir / "ci.yml"
-        ci_file.write_text(HARDENED_CI_TEMPLATE, encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        clean_template = sanitize_value(HARDENED_CI_TEMPLATE).value
+        ci_file.write_text(clean_template, encoding="utf-8")
         return ci_file

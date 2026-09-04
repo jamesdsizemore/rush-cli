@@ -60,10 +60,10 @@ class SessionMemoryManager:
         """Sanitize and record an evaluation turn."""
         records = self.load_records()
 
-        # Sanitize summary (strip null bytes, truncate)
-        sanitized_summary = SecretRedactor.redact_text(
-            summary.replace("\x00", "").strip()[:1024]
-        )
+        # Sanitize summary before truncation
+        cleaned_text = summary.replace("\x00", "").strip()
+        redacted_summary = SecretRedactor.redact_text(cleaned_text)
+        sanitized_summary = redacted_summary[:1024]
         new_record = SessionRecord(
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             tool_name=tool_name,
@@ -77,8 +77,11 @@ class SessionMemoryManager:
             records = records[-self.max_records :]
 
         self.memory_file.parent.mkdir(parents=True, exist_ok=True)
+        from rush.safety.redactor import sanitize_value
+
+        clean_payload = sanitize_value({"records": [asdict(r) for r in records]}).value
         self.memory_file.write_text(
-            json.dumps({"records": [asdict(r) for r in records]}, indent=2),
+            json.dumps(clean_payload, indent=2),
             encoding="utf-8",
         )
         log_subsystem("memory", "DEBUG", f"Recorded session turn for {tool_name}")
