@@ -42,11 +42,15 @@ class MeshLockManager:
     def acquire(self, file_path: Path, agent_id: str, timeout_s: float = 5.0) -> bool:
         lock_p = self._lock_file_for(file_path)
         start = time.time()
+        from rush.safety.redactor import SecretRedactor, sanitize_value
+
+        clean_agent_id = SecretRedactor.redact_text(agent_id)
         while time.time() - start < timeout_s:
             if not lock_p.exists():
                 try:
+                    payload = {"agent_id": clean_agent_id, "acquired_at": time.time()}
                     lock_p.write_text(
-                        json.dumps({"agent_id": agent_id, "acquired_at": time.time()}),
+                        json.dumps(sanitize_value(payload).value),
                         encoding="utf-8",
                     )
                     return True
@@ -60,7 +64,12 @@ class MeshLockManager:
         if lock_p.exists():
             try:
                 data = json.loads(lock_p.read_text(encoding="utf-8"))
-                if data.get("agent_id") == agent_id:
+                from rush.safety.redactor import SecretRedactor
+
+                # Lock files are always written with the sanitized agent_id.
+                # Compare only against the sanitized form so ownership is strict.
+                clean_agent_id = SecretRedactor.redact_text(agent_id)
+                if data.get("agent_id") == clean_agent_id:
                     lock_p.unlink(missing_ok=True)
                     return True
             except Exception:  # noqa: BLE001, S110

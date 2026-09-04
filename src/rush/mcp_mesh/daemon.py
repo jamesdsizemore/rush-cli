@@ -46,8 +46,11 @@ class MeshLockManager:
                 data = json.loads(lock_p.read_text(encoding="utf-8"))
                 from rush.safety.redactor import SecretRedactor
 
+                # Lock files are always written with the sanitized agent_id (acquire
+                # runs redact_text before persisting). Compare only against the
+                # sanitized form so the ownership check stays strict.
                 clean_agent_id = SecretRedactor.redact_text(agent_id)
-                if data.get("agent_id") in (agent_id, clean_agent_id):
+                if data.get("agent_id") == clean_agent_id:
                     lock_p.unlink(missing_ok=True)
                     return True
             except Exception:  # noqa: BLE001, S110

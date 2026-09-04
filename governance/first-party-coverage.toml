@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.coverage_manifest
 
 [manifest]
-revision = "d2307a8a353d00aafef536731df1fb66498c13fe"
+revision = "44e8da21a52a42fad30fbe2fe924d615d28a0d82"
 generator_version = "1.0.0"
 total_records = 1100
 

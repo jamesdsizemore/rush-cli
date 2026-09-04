@@ -25,7 +25,11 @@ class HookTamperDetector:
             if p.exists():
                 signatures[name] = hashlib.sha256(p.read_bytes()).hexdigest()
 
-        self.sig_file.write_text(json.dumps(signatures, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        self.sig_file.write_text(
+            json.dumps(sanitize_value(signatures).value, indent=2), encoding="utf-8"
+        )
         return signatures
 
     def verify_signatures(self) -> tuple[bool, list[str]]:

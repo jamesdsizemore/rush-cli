@@ -93,7 +93,11 @@ class PluginTrustStore:
             "granted_at": record.granted_at,
             "granted_by": record.granted_by,
         }
-        self.trust_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        self.trust_file.write_text(
+            json.dumps(sanitize_value(data).value, indent=2), encoding="utf-8"
+        )
         return record
 
     def revoke_trust(self, plugin_name: str) -> bool:
@@ -111,6 +115,10 @@ class PluginTrustStore:
                 for k, v in store.items()
                 if k != plugin_name
             }
-            self.trust_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            from rush.safety.redactor import sanitize_value
+
+            self.trust_file.write_text(
+                json.dumps(sanitize_value(data).value, indent=2), encoding="utf-8"
+            )
             return True
         return False

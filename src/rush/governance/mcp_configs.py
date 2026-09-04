@@ -24,7 +24,11 @@ class McpConfigGenerator:
                 }
             }
         }
-        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        config_file.write_text(
+            json.dumps(sanitize_value(config).value, indent=2), encoding="utf-8"
+        )
         return config_file
 
     @staticmethod
@@ -41,5 +45,9 @@ class McpConfigGenerator:
                 }
             }
         }
-        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        config_file.write_text(
+            json.dumps(sanitize_value(config).value, indent=2), encoding="utf-8"
+        )
         return config_file

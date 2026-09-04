@@ -51,8 +51,11 @@ def trust_repo(repo_root: Path, ledger_file: Path | None = None) -> None:
     if resolved not in trusted:
         trusted.append(resolved)
 
+    from rush.safety.redactor import sanitize_value
+
     ledger_path.write_text(
-        json.dumps({"trusted_paths": trusted}, indent=2), encoding="utf-8"
+        json.dumps(sanitize_value({"trusted_paths": trusted}).value, indent=2),
+        encoding="utf-8",
     )
     log_subsystem("trust", "INFO", f"Repository marked as trusted: {resolved}")
 
@@ -69,8 +72,11 @@ def revoke_trust(repo_root: Path, ledger_file: Path | None = None) -> None:
         resolved = str(repo_root.resolve())
         if resolved in trusted:
             trusted.remove(resolved)
+            from rush.safety.redactor import sanitize_value
+
             ledger_path.write_text(
-                json.dumps({"trusted_paths": trusted}, indent=2), encoding="utf-8"
+                json.dumps(sanitize_value({"trusted_paths": trusted}).value, indent=2),
+                encoding="utf-8",
             )
             log_subsystem("trust", "INFO", f"Trust revoked for repository: {resolved}")
     except Exception as exc:  # noqa: BLE001

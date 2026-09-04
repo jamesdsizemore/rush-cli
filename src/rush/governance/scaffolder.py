@@ -24,13 +24,20 @@ class RepoScaffolder:
         created = []
         agents_file = repo_root / "AGENTS.md"
         if not agents_file.exists():
-            agents_file.write_text(DEFAULT_AGENTS_MD, encoding="utf-8")
+            from rush.safety.redactor import sanitize_value
+
+            agents_file.write_text(
+                sanitize_value(DEFAULT_AGENTS_MD).value, encoding="utf-8"
+            )
             created.append(agents_file)
 
         rush_toml = repo_root / "rush.toml"
         if not rush_toml.exists():
+            from rush.safety.redactor import sanitize_value
+
             rush_toml.write_text(
-                f'[rush]\nversion = "{__version__}"\n', encoding="utf-8"
+                sanitize_value(f'[rush]\nversion = "{__version__}"\n').value,
+                encoding="utf-8",
             )
             created.append(rush_toml)
 

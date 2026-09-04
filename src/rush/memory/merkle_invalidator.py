@@ -25,7 +25,10 @@ class MerkleInvalidator:
             return {}
 
     def _write(self, data: dict[str, str]) -> None:
-        self.cache_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        from rush.safety.redactor import sanitize_value
+
+        clean_data = sanitize_value(data).value
+        self.cache_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
 
     def hash_content(self, content: str) -> str:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
