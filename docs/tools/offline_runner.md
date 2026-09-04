@@ -1,43 +1,53 @@
-# Offline ONNX Review Tool (`rush offline-review`)
+# Offline Local LLM Review Tool (`rush offline-review`)
 
 ## Overview
-`rush offline-review` runs local machine learning quality and security review using user-supplied ONNX models. In accordance with D50-04, this tool guarantees zero network access, bundles no model weights, has no auto-download capability, and returns `status='skipped'` when `onnxruntime` or the model file is absent.
+`rush offline-review` runs local air-gapped code quality and security reviews using externally installed local LLM runners (`ollama` or `llama-cli`). In accordance with repository invariants, this tool bundles zero model weights, has zero network egress, requires no heavy external machine learning packages, and returns a structured `status='skipped'` when no local runner daemon is running or installed.
 
 ## Usage
 
 ### CLI
 ```bash
-rush offline-review [PATH] [--model-path <path>] [--expected-sha256 <digest>] [--json]
+rush offline-review [PATH] [--runner-path <path>] [--model <name>] [--model-path <gguf_path>] [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_offline_review`
 - **Parameters:**
   - `path` (str): Target codebase path to evaluate.
-  - `model_path` (str, optional): Path to user-supplied ONNX model file (default: `.rush/models/review.onnx`).
-  - `expected_sha256` (str, optional): SHA-256 digest to verify model file integrity.
-  - `defect_threshold` (float, optional): Anomaly/defect confidence threshold (default: 0.5).
+  - `runner_path` (str, optional): Explicit path or command name of local runner executable.
+  - `model` (str, optional): Name of local Ollama model (default: `llama3:latest`).
+  - `model_path` (str, optional): Path to local GGUF model file for `llama-cli`.
 
 ## Behavior & Guarantees
-- **Zero Network Calls**: Never dials external services or endpoints.
-- **Graceful Skipping**: If `onnxruntime` is not installed or model file is absent, returns canonical structured `status='skipped'` without failing the gate suite.
-- **Digest Verification**: If `expected_sha256` is configured, verifies model checksum before loading into `onnxruntime.InferenceSession`.
+- **Zero Network Egress**: Strictly offline, local-only execution without external network calls.
+- **Fail-Closed Engine Discovery**: Discovers `ollama` or `llama-cli` on `PATH`. Verifies that Ollama daemon is actively listening on `127.0.0.1:11434`. If absent or not running, returns canonical structured `status='skipped'` with installation instructions.
+- **Model Path Verification**: When using `llama-cli`, checks `--model-path` or `.rush/models/*.gguf`. If missing, returns structured `status='skipped'`.
+- **Finding Extraction**: Parses line-oriented or structured JSON review findings emitted by the local runner.
 
 ## Output Schema
 Emits canonical `ToolResult`:
 ```json
 {
   "tool": "offline-review",
-  "engine": "offline-review",
+  "engine": "offline-runner",
   "engine_version": "1.0.0",
   "status": "ok",
   "duration_ms": 35,
-  "summary": "offline-review: Evaluated 20 file(s) with local ONNX model, 0 finding(s)",
-  "findings": [],
+  "summary": "offline-review: Evaluated 2 file(s) with local runner 'ollama', 1 finding(s)",
+  "findings": [
+    {
+      "path": "app/main.py",
+      "line": 10,
+      "column": 1,
+      "rule": "offline-review/detected-issue",
+      "severity": "warn",
+      "message": "Potential SQL injection vulnerability in query construction."
+    }
+  ],
   "metrics": {
-    "files_evaluated": 20,
-    "model_findings_count": 0,
-    "model_path": ".rush/models/review.onnx"
+    "files_evaluated": 2,
+    "model_findings_count": 1,
+    "runner_type": "ollama"
   }
 }
 ```

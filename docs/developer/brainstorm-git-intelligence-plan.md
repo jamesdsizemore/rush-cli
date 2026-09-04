@@ -1,10 +1,10 @@
 # Rush Git Intelligence Architecture Plan
 
-> **Document Version:** 2.0.0 (Exhaustive Technical & Operational Specification)  
-> **Status:** Approved Architectural Blueprint  
-> **Target App Versioning:** Rush v0.2.0 → v1.0.0  
-> **Target Audience:** Autonomous Coding Agents, Git Infrastructure Engineers, DevOps Specialists & Lead Maintainers  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety, zero unneeded runtime bloat.  
+> **Document Version:** 2.0.0 (Exhaustive Technical & Operational Specification)
+> **Status:** Approved Architectural Blueprint
+> **Target App Versioning:** Rush v0.2.0 → v1.0.0
+> **Target Audience:** Autonomous Coding Agents, Git Infrastructure Engineers, DevOps Specialists & Lead Maintainers
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety, zero unneeded runtime bloat.
 > **Subprocess Isolation:** `stdin=DEVNULL`, `shell=False`, anti-shadowing verification, automated secret redaction (`[REDACTED]`).
 
 ---

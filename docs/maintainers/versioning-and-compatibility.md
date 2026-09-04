@@ -29,4 +29,3 @@ If a breaking change is unavoidable:
 - **Strict Root Namespace**: All internal imports across `src/` and `tests/` must use canonical `rush` or relative imports. `src.rush` imports are strictly prohibited.
 
 See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/release-process.md).
-

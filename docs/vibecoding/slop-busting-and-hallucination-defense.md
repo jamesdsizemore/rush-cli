@@ -31,7 +31,7 @@ rush slop .
 rush tdd .
 ```
 
-When you are vibecoding fast, it is easy to forget to ask the model for tests. 
+When you are vibecoding fast, it is easy to forget to ask the model for tests.
 
 `rush tdd` automatically compares your modified source files against your test directories:
 - If you touched `src/auth/jwt.py`, Rush verifies that `tests/test_jwt.py` (or `src/auth/jwt.spec.ts`) exists and tests the updated logic.

@@ -215,4 +215,3 @@ The earlier file asserted approvals, complete TDD, route parity, wheel isolation
 ## Completion boundary
 
 This document may state completion only after all selected decision packets, literal focused tests, full suite, Ruff check/format, lock check, documentation searches, isolated wheel install/probes, path ownership, and `git diff --check` pass at one recorded worktree state. No such completion claim exists here.
-

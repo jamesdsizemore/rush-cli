@@ -234,7 +234,7 @@ class MemProfileTool(ToolFn):
                     data = json.loads(res.stdout.strip().splitlines()[-1])
                     peak_memory_bytes = int(data.get("peak_bytes") or 0)
                 except (json.JSONDecodeError, ValueError, IndexError):
-                    peak_memory_bytes = 1024 * 1024  # Fallback 1MB
+                    peak_memory_bytes = 0
 
         status = "warn" if findings else "ok"
         summary = f"mem-profile: Audited {len(py_files)} file(s), {len(findings)} unclosed resource finding(s)"

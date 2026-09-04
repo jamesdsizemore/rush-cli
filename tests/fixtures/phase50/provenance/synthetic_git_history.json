@@ -1,0 +1,22 @@
+{
+  "repository": "synthetic-provenance-repo",
+  "commits": [
+    {
+      "hash": "a100000000000000000000000000000000000001",
+      "author": "author1@example.com",
+      "timestamp": 1700000000,
+      "message": "feat: initial commit",
+      "lines_added": 100
+    },
+    {
+      "hash": "b200000000000000000000000000000000000002",
+      "author": "author2@example.com",
+      "timestamp": 1702592000,
+      "message": "fix: bugfix patch",
+      "lines_survived_30d": 85,
+      "lines_survived_60d": 70,
+      "lines_survived_90d": 55,
+      "defects_associated": 1
+    }
+  ]
+}

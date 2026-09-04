@@ -1,10 +1,10 @@
 # Phase 30 Implementation Plan: Standalone Packaging, Versioning & CI (`rush release` / `rush ci`)
 
-> **Phase:** 30 of 40  
-> **Milestone:** Hermetic PyInstaller Packaging, SemVer 2.0.0 Validator, SHA-Pinned GitHub Actions, SLSA Provenance & Docker  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build release engineering, packaging, and CI automation tooling (`rush release`, `rush ci`) supporting SemVer 2.0.0 synchronization across polyglot manifests, 40-character SHA-pinned GitHub Actions workflow generation, SLSA Level 3 provenance generation, and hermetic PyInstaller builds.  
+> **Phase:** 30 of 40
+> **Milestone:** Hermetic PyInstaller Packaging, SemVer 2.0.0 Validator, SHA-Pinned GitHub Actions, SLSA Provenance & Docker
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build release engineering, packaging, and CI automation tooling (`rush release`, `rush ci`) supporting SemVer 2.0.0 synchronization across polyglot manifests, 40-character SHA-pinned GitHub Actions workflow generation, SLSA Level 3 provenance generation, and hermetic PyInstaller builds.
 > **End State Outcome & Verification Checks:**
 > - [x] `SemverSyncValidator` verifies version synchronization across `pyproject.toml`, `package.json`, and `Cargo.toml`.
 > - [x] `CiWorkflowGenerator` generates GitHub Actions CI pipelines strictly pinned to immutable 40-char commit SHAs.
@@ -12,13 +12,13 @@
 > - [x] CLI commands `rush release prepare`, `verify`, `changelog` and `rush ci init`, `verify` operational.
 > - [x] 100% test pass rate across `tests/test_release_packaging_ci.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-30-standalone-packaging-versioning-and-ci

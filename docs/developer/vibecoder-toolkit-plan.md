@@ -1,10 +1,10 @@
 # Rush Vibe-Coder Toolkit Architecture Plan
 
-> **Document Version:** 2.0.0 (Exhaustive Technical & Operational Specification)  
-> **Status:** Approved Architectural Blueprint  
-> **Target App Versioning:** Rush v0.2.0 → v1.0.0  
-> **Target Audience:** Full-Stack Developers, Vibe-Coders, AI-Assisted Engineers, Maintainers  
-> **Starting Goal:** Build a unified 22-tool execution pipeline and sub-second developer feedback loop (`rush vibecoder run`) designed specifically for AI-assisted vibe-coding, catching hallucinated boilerplate, type drift, blocking async loop starvation, and unapplied schema migrations in <200ms iteration loops.  
+> **Document Version:** 2.0.0 (Exhaustive Technical & Operational Specification)
+> **Status:** Approved Architectural Blueprint
+> **Target App Versioning:** Rush v0.2.0 → v1.0.0
+> **Target Audience:** Full-Stack Developers, Vibe-Coders, AI-Assisted Engineers, Maintainers
+> **Starting Goal:** Build a unified 22-tool execution pipeline and sub-second developer feedback loop (`rush vibecoder run`) designed specifically for AI-assisted vibe-coding, catching hallucinated boilerplate, type drift, blocking async loop starvation, and unapplied schema migrations in <200ms iteration loops.
 > **End State Outcome & Verification Checks:**
 > - [x] `VibeCoderOrchestrator` runs all 37 tools in parallel/topological stages with zero stdio pollution.
 > - [x] `FeedbackLoopSupervisor` provides live file-save diagnostic streaming on stderr in <200ms.
@@ -13,16 +13,16 @@
 > - [x] CLI command `rush vibecoder run` and FastMCP endpoints operational.
 > - [x] 100% test pass rate across `tests/test_vibecoder_toolkit.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **Core Mission:** Elevate rapid AI-assisted vibe-coding into production-grade, resilient software engineering through native, deterministic, zero-dependency Rush tools.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)  
-> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **Core Mission:** Elevate rapid AI-assisted vibe-coding into production-grade, resilient software engineering through native, deterministic, zero-dependency Rush tools.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)
+> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b feat-vibecoder-toolkit

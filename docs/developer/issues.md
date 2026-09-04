@@ -1,7 +1,7 @@
 # Rush Platform Issue & Bug Tracker
 
-> **Repository:** `jamesdsizemore/rush-cli`  
-> **Status:** All Known Issues Resolved & Closed (v0.3.0 Flagship)  
+> **Repository:** `jamesdsizemore/rush-cli`
+> **Status:** All Known Issues Resolved & Closed (v0.3.0 Flagship)
 
 ---
 

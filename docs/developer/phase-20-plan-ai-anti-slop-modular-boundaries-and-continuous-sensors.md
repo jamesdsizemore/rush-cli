@@ -1,10 +1,10 @@
 # Phase 20 Implementation Plan: AI Anti-Slop, Modular Boundaries & Continuous Intelligence
 
-> **Phase:** 20 of 40  
-> **Milestone:** AI Anti-Slop Detection, Modular Architecture Boundaries & Continuous TDD Sensors  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Establish automated AST-level AI anti-slop heuristics (`aislop`), modular domain boundary enforcement (`tach`/`cejel`), and continuous diff-coverage TDD sensors (`undercover`) to prevent AI-generated code bloat and architectural decay.  
+> **Phase:** 20 of 40
+> **Milestone:** AI Anti-Slop Detection, Modular Architecture Boundaries & Continuous TDD Sensors
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Establish automated AST-level AI anti-slop heuristics (`aislop`), modular domain boundary enforcement (`tach`/`cejel`), and continuous diff-coverage TDD sensors (`undercover`) to prevent AI-generated code bloat and architectural decay.
 > **End State Outcome & Verification Checks:**
 > - [x] All 9 engine adapters (`aislop`, `tach`, `undercover`, `medusa`, `pyrefly`, `globstar`, `clines`, `cejel`, `sentrux`) return canonical `ToolResult` shapes.
 > - [x] Missing binaries return structured `status="skipped"` with install guidance (zero bundling).
@@ -12,15 +12,15 @@
 > - [x] FastMCP endpoints `rush_slop` and `rush_tdd` emit clean JSON-RPC on stdout and NDJSON on stderr.
 > - [x] 100% test pass rate across `tests/test_aislop.py`, `tests/test_tach.py`, and `tests/test_tdd_guard.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0011: HTML and SARIF Artifact Export](../adr/0011-html-and-sarif-artifact-export.md)  
-> - [ADR-0012: Pluggable LLM Provider Abstraction](../adr/0012-pluggable-llm-provider-abstraction.md)  
-> - [ADR-0013: TDD Guard and Continuous Architectural Sensors](../adr/0013-tdd-guard-and-continuous-architectural-sensors.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Discovered External Engines (Zero-Bundled):** `aislop`, `tach`, `undercover`, `medusa`, `pyrefly`, `globstar`, `clines`, `cejel`, `sentrux`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0011: HTML and SARIF Artifact Export](../adr/0011-html-and-sarif-artifact-export.md)
+> - [ADR-0012: Pluggable LLM Provider Abstraction](../adr/0012-pluggable-llm-provider-abstraction.md)
+> - [ADR-0013: TDD Guard and Continuous Architectural Sensors](../adr/0013-tdd-guard-and-continuous-architectural-sensors.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Discovered External Engines (Zero-Bundled):** `aislop`, `tach`, `undercover`, `medusa`, `pyrefly`, `globstar`, `clines`, `cejel`, `sentrux`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-20-ai-anti-slop-modular-boundaries

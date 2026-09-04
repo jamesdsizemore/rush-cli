@@ -1,0 +1,18 @@
+{
+  "blob": {
+    "download_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read",
+    "upload_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write",
+    "delete_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete",
+    "list_blobs": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"
+  },
+  "cosmos": {
+    "read_item": "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+    "create_item": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create",
+    "delete_item": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/delete"
+  },
+  "keyvault": {
+    "get_secret": "Microsoft.KeyVault/vaults/secrets/read",
+    "set_secret": "Microsoft.KeyVault/vaults/secrets/write",
+    "delete_secret": "Microsoft.KeyVault/vaults/secrets/delete"
+  }
+}

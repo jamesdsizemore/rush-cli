@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Objectives
 
-This document establishes the official benchmarking architecture, quantitative measurement methodology, evaluation datasets, and automated harness workflows for **Rush CLI**. 
+This document establishes the official benchmarking architecture, quantitative measurement methodology, evaluation datasets, and automated harness workflows for **Rush CLI**.
 
 The goal of this benchmarking framework is to continuously measure, validate, and guard the performance, latency, memory consumption, token efficiency, and quality fidelity of Rush's core subsystems:
 1. **Unified Dual-Layer Memory Engine** (Traditional FTS5 + Cognitive Merkle Invariants & Mistake Pre-Mortem).

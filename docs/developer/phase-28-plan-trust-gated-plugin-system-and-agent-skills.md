@@ -1,10 +1,10 @@
 # Phase 28 Implementation Plan: Trust-Gated Plugin System & Agent Skills (`rush trust` / `rush plugin`)
 
-> **Phase:** 28 of 40  
-> **Milestone:** Cryptographic Plugin Trust Store, AST Sandboxing, Zero-Trust Execution & Dynamic Agent Skills  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a zero-trust, cryptographically verified plugin system (`rush trust`, `rush plugin`) and dynamic Agent Skill generator (`SKILL.md`) that executes third-party and custom linters with SHA-256 trust validation, environment variable isolation, and AST static security sandboxing.  
+> **Phase:** 28 of 40
+> **Milestone:** Cryptographic Plugin Trust Store, AST Sandboxing, Zero-Trust Execution & Dynamic Agent Skills
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a zero-trust, cryptographically verified plugin system (`rush trust`, `rush plugin`) and dynamic Agent Skill generator (`SKILL.md`) that executes third-party and custom linters with SHA-256 trust validation, environment variable isolation, and AST static security sandboxing.
 > **End State Outcome & Verification Checks:**
 > - [x] `PluginTrustStore` maintains SHA-256 cryptographic hashes in `.rush/trust.json`.
 > - [x] Untrusted or modified plugin binaries are strictly blocked until explicitly approved.
@@ -12,15 +12,15 @@
 > - [x] CLI commands `rush trust grant`, `revoke`, `list` and `rush plugin list`, `run` operational.
 > - [x] 100% test pass rate across `tests/test_plugin_system.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0015: Extensible Plugin Architecture and Agent Skills](../adr/0015-extensible-plugin-architecture-and-agent-skills.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Discovered External Engines (Zero-Bundled):** Discovered local runtimes (`python`, `bash`, `node`, `cargo`, `go`)  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0015: Extensible Plugin Architecture and Agent Skills](../adr/0015-extensible-plugin-architecture-and-agent-skills.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Discovered External Engines (Zero-Bundled):** Discovered local runtimes (`python`, `bash`, `node`, `cargo`, `go`)
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-28-trust-gated-plugin-system-and-agent-skills

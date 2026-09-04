@@ -10,7 +10,7 @@
 
 > **Phase 4 coordination:** continuity reports held or stale ownership, merge-preview conflicts, and replay/failure receipts as non-executable evidence. It never releases a lock, merges source, or retries a failed patch.
 
-Welcome to **Agentic Rush**. 
+Welcome to **Agentic Rush**.
 
 Whether you are building with **Cursor, Claude Code, Cline, Windsurf, Roo Code, GitHub Copilot Workspace**, or custom autonomous agent frameworks, you've likely encountered the reality of AI coding assistants: they are incredibly fast, but without guardrails, they can introduce subtle bugs, hallucinatory code ("AI slop"), destructive commands, out-of-sync types, and bloated token context costs.
 
@@ -142,4 +142,3 @@ Give your AI agent superpowers in two minutes:
 2. **Compliance**: Call `rush_license_matrix()` to ensure no viral licenses are added.
 3. **IAM Safety**: Call `rush_iam_audit()` to synthesize minimal cloud permissions.
 4. **PR Cards**: Call `rush_pr_synthesize()` to generate release notes.
-

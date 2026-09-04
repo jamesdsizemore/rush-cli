@@ -1,19 +1,19 @@
 # Rush Integration Scope & Repository Evaluation Plan
 
-> **Document Version:** 2.0.0 (Exhaustive Architectural Research, Technical Scorecard & Integration Blueprint)  
-> **Status:** Approved Architectural Research & Implementation Blueprint  
-> **Target App Versioning:** Rush v0.3.0 → v1.0.0  
-> **Repository:** `jamesdsizemore/rush-cli`  
-> **Evaluated Repositories:** 21 External Open-Source Projects  
-> **Evaluation Date:** August 2026  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety, zero unneeded runtime bloat.  
+> **Document Version:** 2.0.0 (Exhaustive Architectural Research, Technical Scorecard & Integration Blueprint)
+> **Status:** Approved Architectural Research & Implementation Blueprint
+> **Target App Versioning:** Rush v0.3.0 → v1.0.0
+> **Repository:** `jamesdsizemore/rush-cli`
+> **Evaluated Repositories:** 21 External Open-Source Projects
+> **Evaluation Date:** August 2026
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety, zero unneeded runtime bloat.
 > **Repository Alignment:** Python 3.12, stdio FastMCP transport, Click CLI, bounded subprocess isolation (`stdin=DEVNULL`, `shell=False`).
 
 ---
 
 ## 1. Executive Summary & Evaluation Methodology
 
-This document provides a comprehensive, rigorous review of **21 candidate open-source repositories** to determine their potential integration into Rush. 
+This document provides a comprehensive, rigorous review of **21 candidate open-source repositories** to determine their potential integration into Rush.
 
 Rush's mission is to be the **Agent-Native Quality Operating System** for autonomous coding agents (Claude Code, OpenAI Codex, Antigravity CLI, DeepSeek-R1) and full-stack developers/vibe-coders. Every proposed integration is evaluated against strict technical, operational, and architectural standards.
 

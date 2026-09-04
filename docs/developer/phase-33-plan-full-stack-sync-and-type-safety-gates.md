@@ -1,10 +1,10 @@
 # Phase 33 Implementation Plan: Full-Stack Sync & Type Safety Gates (`rush sync`)
 
-> **Phase:** 33 of 40  
-> **Milestone:** OpenAPI / TypeScript Contract Synchronization, Zod Schema Parity, FastApi AST Router Extraction & ORM Migration Gates  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a full-stack type safety and contract synchronization subsystem (`rush sync`) that statically extracts FastAPI/Pydantic routes via AST analysis, validates TypeScript interface parity, detects uncommitted database migrations (Alembic, Prisma, Django), and enforces RPC contract synchronization.  
+> **Phase:** 33 of 40
+> **Milestone:** OpenAPI / TypeScript Contract Synchronization, Zod Schema Parity, FastApi AST Router Extraction & ORM Migration Gates
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a full-stack type safety and contract synchronization subsystem (`rush sync`) that statically extracts FastAPI/Pydantic routes via AST analysis, validates TypeScript interface parity, detects uncommitted database migrations (Alembic, Prisma, Django), and enforces RPC contract synchronization.
 > **End State Outcome & Verification Checks:**
 > - [x] `FastApiRouterAstExtractor` extracts API routes and request/response models offline without importing server code.
 > - [x] `OpenApiContractValidator` flags breaking contract changes and type mismatches.
@@ -12,13 +12,13 @@
 > - [x] CLI commands `rush sync openapi`, `rush sync orm`, `rush sync zod` operational.
 > - [x] 100% test pass rate across `tests/test_full_stack_sync.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-33-full-stack-sync-and-type-safety-gates

@@ -1,10 +1,10 @@
 # Phase 40 Implementation Plan: Multi-Model Consensus & Quality Scorecard (`rush score` / `rush consensus`)
 
-> **Phase:** 40 of 40  
-> **Milestone:** Composite 0–100% Quality Scorecard, Multi-Model Consensus, SARIF Export, HTML Reports & GitHub PR Comment Cards  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a composite 0–100% repository quality scorecard and multi-model review consensus engine (`rush score`, `rush consensus`) evaluating 6 weighted quality pillars, reconciling conflicting LLM agent findings via majority consensus, rendering interactive HTML reports, and generating SARIF 2.1.0 and GitHub PR comment cards.  
+> **Phase:** 40 of 40
+> **Milestone:** Composite 0–100% Quality Scorecard, Multi-Model Consensus, SARIF Export, HTML Reports & GitHub PR Comment Cards
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a composite 0–100% repository quality scorecard and multi-model review consensus engine (`rush score`, `rush consensus`) evaluating 6 weighted quality pillars, reconciling conflicting LLM agent findings via majority consensus, rendering interactive HTML reports, and generating SARIF 2.1.0 and GitHub PR comment cards.
 > **End State Outcome & Verification Checks:**
 > - [x] `ScorecardCalculator` evaluates Type Safety (20%), Coverage (25%), Code Health (20%), Security (15%), Token Economy (10%), and Velocity (10%).
 > - [x] `ConsensusReconciler` deduplicates multi-model review outputs and accepts findings with >= 2 model agreement.
@@ -13,15 +13,15 @@
 > - [x] CLI commands `rush score compute`, `rush score html`, `rush consensus reconcile` operational.
 > - [x] 100% test pass rate across `tests/test_quality_scorecard.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)  
-> - [ADR-0023: Async Local Model Bridge](../adr/0023-async-local-model-bridge.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)
+> - [ADR-0023: Async Local Model Bridge](../adr/0023-async-local-model-bridge.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-40-multi-model-consensus-and-quality-scorecard

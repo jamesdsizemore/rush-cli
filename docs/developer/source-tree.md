@@ -150,4 +150,3 @@ tests/
 └── fixtures/
     └── benchmarks/      # 40 declared scenario & candidate JSON fixtures
 ```
-

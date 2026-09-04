@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -72,14 +73,24 @@ def probe_installed_artifact(
     external_cwd = work_dir / f"cwd_{artifact_type}"
     external_cwd.mkdir(parents=True, exist_ok=True)
 
+    uv_bin = shutil.which("uv")
+
     # 1. Create fresh virtual environment using uv or python -m venv
     try:
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        if uv_bin:
+            subprocess.run(
+                [uv_bin, "venv", str(venv_dir), "--python", sys.executable],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
     except subprocess.CalledProcessError as e:
         return ArtifactProbeResult(
             artifact_type=artifact_type,
@@ -101,24 +112,42 @@ def probe_installed_artifact(
 
     env = scrub_environment()
 
-    # 2. Install the artifact using pip in the fresh venv
+    # 2. Install the artifact using uv pip or pip in the fresh venv
     try:
-        subprocess.run(
-            [
-                str(venv_python),
-                "-m",
-                "pip",
-                "install",
-                str(artifact_path.resolve()),
-                "--no-cache-dir",
-            ],
-            cwd=external_cwd,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        if uv_bin:
+            subprocess.run(
+                [
+                    uv_bin,
+                    "pip",
+                    "install",
+                    "--python",
+                    str(venv_python),
+                    str(artifact_path.resolve()),
+                ],
+                cwd=external_cwd,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        else:
+            subprocess.run(
+                [
+                    str(venv_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    str(artifact_path.resolve()),
+                    "--no-cache-dir",
+                ],
+                cwd=external_cwd,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         stderr_msg = getattr(e, "stderr", str(e))
         return ArtifactProbeResult(

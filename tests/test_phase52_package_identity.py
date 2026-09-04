@@ -64,12 +64,22 @@ def test_pytest_configuration_does_not_expose_repository_root_as_src_package() -
 
 
 def test_installed_collection_uses_one_rush_origin() -> None:
-    """Verify that imported rush symbols resolve exclusively to rush/, never src/rush/."""
+    """Verify that imported rush symbols resolve exclusively to rush/, never src.rush."""
+    import sys
+
     import rush
     import rush.catalog
     import rush.cli
 
+    # Verify single canonical module identity
+    assert rush.__name__ == "rush"
+    assert rush.catalog.__name__ == "rush.catalog"
+    assert rush.cli.__name__ == "rush.cli"
+
+    # Verify no dual-namespace contamination in sys.modules
+    assert "src.rush" not in sys.modules
+    assert "src.rush.cli" not in sys.modules
+    assert "src.rush.catalog" not in sys.modules
+
     rush_file = Path(rush.__file__).resolve().as_posix()
-    assert "/rush/__init__.py" in rush_file or "\\rush\\__init__.py" in rush_file
-    # In canonical imports, module path must end in rush/__init__.py, not src/rush/__init__.py
-    assert not rush_file.endswith("/src/rush/__init__.py") or "src" in rush_file
+    assert rush_file.endswith("/rush/__init__.py")

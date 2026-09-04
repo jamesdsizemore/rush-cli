@@ -110,4 +110,3 @@ You can invoke Rush's fast pre-flight vectors directly in git workflows:
 
 ### License Compliance Pre-Commit Gate
 * `rush license-matrix`: Prevent viral copyleft dependencies from being added to pyproject.toml.
-

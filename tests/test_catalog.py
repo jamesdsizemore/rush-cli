@@ -33,7 +33,7 @@ PHASE50_OPTION_TYPES: dict[str, dict[str, type]] = {
     },
     "error-catalog": {"export_path": str},
     "provenance-ai": {"max_commits": int},
-    "dead-asset": {"prune": bool, "export_manifest": str},
+    "dead-asset": {"export_manifest": str},
     "pr-synthesize": {"base_ref": str, "export_path": str},
 }
 

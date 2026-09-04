@@ -1,4 +1,4 @@
-"""Least-privilege Cloud IAM policy synthesizer based on static SDK call analysis."""
+"""Least-privilege Cloud IAM policy synthesizer and Terraform/HCL2 audit engine."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import hcl2
+
 from .base import Finding, ToolFn, ToolResult
 from .common import (
     atomic_write_bytes,
@@ -16,99 +18,38 @@ from .common import (
     now_ms,
     skipped_result,
 )
+from .schemas import IamAuditMetrics
 
-# Canonical mapping for common AWS SDK operations
-KNOWN_SERVICE_ACTIONS: dict[str, dict[str, str]] = {
-    "s3": {
-        "get_object": "s3:GetObject",
-        "put_object": "s3:PutObject",
-        "delete_object": "s3:DeleteObject",
-        "list_objects": "s3:ListBucket",
-        "list_objects_v2": "s3:ListBucket",
-        "head_object": "s3:GetObject",
-        "copy_object": "s3:PutObject",
-        "download_file": "s3:GetObject",
-        "upload_file": "s3:PutObject",
-        "create_bucket": "s3:CreateBucket",
-        "delete_bucket": "s3:DeleteBucket",
-        "list_buckets": "s3:ListAllMyBuckets",
-    },
-    "dynamodb": {
-        "get_item": "dynamodb:GetItem",
-        "put_item": "dynamodb:PutItem",
-        "update_item": "dynamodb:UpdateItem",
-        "delete_item": "dynamodb:DeleteItem",
-        "query": "dynamodb:Query",
-        "scan": "dynamodb:Scan",
-        "batch_get_item": "dynamodb:BatchGetItem",
-        "batch_write_item": "dynamodb:BatchWriteItem",
-        "create_table": "dynamodb:CreateTable",
-        "describe_table": "dynamodb:DescribeTable",
-    },
-    "sqs": {
-        "send_message": "sqs:SendMessage",
-        "receive_message": "sqs:ReceiveMessage",
-        "delete_message": "sqs:DeleteMessage",
-        "get_queue_url": "sqs:GetQueueUrl",
-        "create_queue": "sqs:CreateQueue",
-    },
-    "sns": {
-        "publish": "sns:Publish",
-        "create_topic": "sns:CreateTopic",
-        "subscribe": "sns:Subscribe",
-    },
-    "lambda": {
-        "invoke": "lambda:InvokeFunction",
-        "create_function": "lambda:CreateFunction",
-        "get_function": "lambda:GetFunction",
-    },
-    "secretsmanager": {
-        "get_secret_value": "secretsmanager:GetSecretValue",
-        "put_secret_value": "secretsmanager:PutSecretValue",
-        "create_secret": "secretsmanager:CreateSecret",
-        "describe_secret": "secretsmanager:DescribeSecret",
-    },
-    "ssm": {
-        "get_parameter": "ssm:GetParameter",
-        "get_parameters": "ssm:GetParameters",
-        "put_parameter": "ssm:PutParameter",
-        "get_parameter_history": "ssm:GetParameterHistory",
-    },
-    "sts": {
-        "get_caller_identity": "sts:GetCallerIdentity",
-        "assume_role": "sts:AssumeRole",
-    },
-    "kms": {
-        "encrypt": "kms:Encrypt",
-        "decrypt": "kms:Decrypt",
-        "generate_data_key": "kms:GenerateDataKey",
-        "describe_key": "kms:DescribeKey",
-    },
-}
+_RESOURCES_DIR = Path(__file__).resolve().parent.parent / "resources" / "iam"
 
-KNOWN_GCP_ACTIONS: dict[str, dict[str, str]] = {
-    "storage": {
-        "download_as_bytes": "storage.objects.get",
-        "download_to_filename": "storage.objects.get",
-        "get_blob": "storage.objects.get",
-        "upload_from_string": "storage.objects.create",
-        "upload_from_filename": "storage.objects.create",
-        "delete_blob": "storage.objects.delete",
-        "list_blobs": "storage.objects.list",
-    },
-    "bigquery": {
-        "query": "bigquery.jobs.create",
-        "get_table": "bigquery.tables.get",
-        "insert_rows": "bigquery.tables.updateData",
-    },
-}
 
-KNOWN_AZURE_ACTIONS: dict[str, dict[str, str]] = {
-    "blob": {
-        "download_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read",
-        "upload_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write",
-        "delete_blob": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete",
-    },
+def _load_action_registry(filename: str) -> dict[str, dict[str, str]]:
+    registry_file = _RESOURCES_DIR / filename
+    if registry_file.is_file():
+        try:
+            return json.loads(registry_file.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001, S110
+            pass
+    return {}
+
+
+AWS_ACTION_REGISTRY = _load_action_registry("aws_actions.json")
+GCP_ACTION_REGISTRY = _load_action_registry("gcp_actions.json")
+AZURE_ACTION_REGISTRY = _load_action_registry("azure_actions.json")
+
+PRIVILEGE_ESCALATION_ACTIONS: set[str] = {
+    "iam:PassRole",
+    "iam:CreatePolicyVersion",
+    "iam:SetDefaultPolicyVersion",
+    "iam:AttachUserPolicy",
+    "iam:AttachGroupPolicy",
+    "iam:AttachRolePolicy",
+    "iam:PutUserPolicy",
+    "iam:PutGroupPolicy",
+    "iam:PutRolePolicy",
+    "iam:CreateAccessKey",
+    "iam:CreateLoginProfile",
+    "iam:UpdateLoginProfile",
 }
 
 
@@ -116,15 +57,15 @@ def _snake_to_pascal(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
 
 
-class _AwsAstVisitor(ast.NodeVisitor):
+class _CloudAstVisitor(ast.NodeVisitor):
     def __init__(self, rel_path: str) -> None:
         self.rel_path = rel_path
-        self.client_vars: dict[str, str] = {}  # var_name -> service_name
+        self.client_vars: dict[str, str] = {}  # var_name -> service_identifier
         self.actions: set[str] = set()
         self.unmapped_calls: list[tuple[int, int, str]] = []  # (line, col, call_name)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # Detect: s3 = boto3.client("s3") or boto3.resource("dynamodb")
+        # Detect AWS: s3 = boto3.client("s3") or boto3.resource("dynamodb")
         if (
             isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Attribute)
@@ -135,8 +76,8 @@ class _AwsAstVisitor(ast.NodeVisitor):
             svc = str(node.value.args[0].value).lower()
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    self.client_vars[target.id] = svc
-        # Detect: storage_client = storage.Client()
+                    self.client_vars[target.id] = f"aws:{svc}"
+        # Detect GCP: storage_client = storage.Client()
         elif (
             isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Attribute)
@@ -144,11 +85,10 @@ class _AwsAstVisitor(ast.NodeVisitor):
             and isinstance(node.value.func.value, ast.Name)
         ):
             cloud_module = node.value.func.value.id.lower()
-            if cloud_module in ("storage", "bigquery"):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        self.client_vars[target.id] = f"gcp:{cloud_module}"
-        # Detect: blob_service = BlobServiceClient(...)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.client_vars[target.id] = f"gcp:{cloud_module}"
+        # Detect Azure: blob_service = BlobServiceClient(...)
         elif (
             isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
@@ -167,43 +107,31 @@ class _AwsAstVisitor(ast.NodeVisitor):
             caller_name = caller.id if isinstance(caller, ast.Name) else None
 
             if caller_name and caller_name in self.client_vars:
-                svc = self.client_vars[caller_name]
-                if svc.startswith("gcp:"):
-                    gcp_svc = svc.split(":", 1)[1]
-                    if (
-                        gcp_svc in KNOWN_GCP_ACTIONS
-                        and attr_name in KNOWN_GCP_ACTIONS[gcp_svc]
-                    ):
-                        self.actions.add(KNOWN_GCP_ACTIONS[gcp_svc][attr_name])
+                svc_id = self.client_vars[caller_name]
+                prefix, svc = svc_id.split(":", 1)
+                if prefix == "aws":
+                    actions_for_svc = AWS_ACTION_REGISTRY.get(svc, {})
+                    if attr_name in actions_for_svc:
+                        self.actions.add(actions_for_svc[attr_name])
+                    else:
+                        pascal = _snake_to_pascal(attr_name)
+                        self.actions.add(f"{svc}:{pascal}")
+                elif prefix == "gcp":
+                    actions_for_svc = GCP_ACTION_REGISTRY.get(svc, {})
+                    if attr_name in actions_for_svc:
+                        self.actions.add(actions_for_svc[attr_name])
                     else:
                         self.unmapped_calls.append(
-                            (node.lineno, node.col_offset, f"{svc}.{attr_name}")
+                            (node.lineno, node.col_offset, f"{svc_id}.{attr_name}")
                         )
-                elif svc.startswith("azure:"):
-                    az_svc = svc.split(":", 1)[1]
-                    if (
-                        az_svc in KNOWN_AZURE_ACTIONS
-                        and attr_name in KNOWN_AZURE_ACTIONS[az_svc]
-                    ):
-                        self.actions.add(KNOWN_AZURE_ACTIONS[az_svc][attr_name])
+                elif prefix == "azure":
+                    actions_for_svc = AZURE_ACTION_REGISTRY.get(svc, {})
+                    if attr_name in actions_for_svc:
+                        self.actions.add(actions_for_svc[attr_name])
                     else:
                         self.unmapped_calls.append(
-                            (node.lineno, node.col_offset, f"{svc}.{attr_name}")
+                            (node.lineno, node.col_offset, f"{svc_id}.{attr_name}")
                         )
-                elif (
-                    svc in KNOWN_SERVICE_ACTIONS
-                    and attr_name in KNOWN_SERVICE_ACTIONS[svc]
-                ):
-                    self.actions.add(KNOWN_SERVICE_ACTIONS[svc][attr_name])
-                elif svc in KNOWN_SERVICE_ACTIONS:
-                    # Known service with unmapped or custom method
-                    pascal = _snake_to_pascal(attr_name)
-                    self.actions.add(f"{svc}:{pascal}")
-                else:
-                    # Unrecognized service or method
-                    self.unmapped_calls.append(
-                        (node.lineno, node.col_offset, f"{svc}.{attr_name}")
-                    )
             elif attr_name.startswith(
                 ("get_", "put_", "list_", "delete_", "create_", "describe_")
             ) and caller_name in (
@@ -217,11 +145,9 @@ class _AwsAstVisitor(ast.NodeVisitor):
                 "ssm",
             ):
                 svc = caller_name.split("_")[0]
-                if (
-                    svc in KNOWN_SERVICE_ACTIONS
-                    and attr_name in KNOWN_SERVICE_ACTIONS[svc]
-                ):
-                    self.actions.add(KNOWN_SERVICE_ACTIONS[svc][attr_name])
+                actions_for_svc = AWS_ACTION_REGISTRY.get(svc, {})
+                if attr_name in actions_for_svc:
+                    self.actions.add(actions_for_svc[attr_name])
                 else:
                     pascal = _snake_to_pascal(attr_name)
                     self.actions.add(f"{svc}:{pascal}")
@@ -229,16 +155,110 @@ class _AwsAstVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def _scan_terraform_ast(
+    tf_file: Path,
+    rel_path: str,
+    findings: list[Finding],
+) -> tuple[int, int, int]:
+    """Parses Terraform HCL2 file and identifies wildcards, escalations, and statement counts.
+
+    Returns:
+        (total_statements, wildcard_count, escalation_count)
+    """
+    total_statements = 0
+    wildcard_count = 0
+    escalation_count = 0
+
+    try:
+        content = tf_file.read_text(encoding="utf-8", errors="ignore")
+        parsed = hcl2.loads(content)
+    except Exception:  # noqa: BLE001
+        return 0, 0, 0
+
+    # Walk resources
+    resources = parsed.get("resource", [])
+    for res_block in resources:
+        if not isinstance(res_block, dict):
+            continue
+        for res_type, res_instances in res_block.items():
+            clean_type = res_type.strip('"')
+            if "iam" not in clean_type.lower() and "policy" not in clean_type.lower():
+                continue
+            if not isinstance(res_instances, dict):
+                continue
+            for inst_name, inst_body in res_instances.items():
+                if not isinstance(inst_body, dict):
+                    continue
+                policy_raw = inst_body.get("policy")
+                if isinstance(policy_raw, str):
+                    # Check if jsonencode or string
+                    match_actions = re.findall(
+                        r'["\']?Action["\']?\s*[:=]\s*(?:\[(.*?)\]|["\'](.*?)["\'])',
+                        policy_raw,
+                        re.IGNORECASE,
+                    )
+                    for multi_act, single_act in match_actions:
+                        total_statements += 1
+                        act_str = single_act or multi_act
+                        if "*" in act_str:
+                            wildcard_count += 1
+                            msg = f"Wildcard IAM action '{act_str.strip()}' in resource '{clean_type}.{inst_name.strip('"')}'"
+                            findings.append(
+                                Finding(
+                                    path=rel_path,
+                                    line=1,
+                                    column=1,
+                                    rule="iam-wildcard-action",
+                                    rule_id="iam-wildcard-action",
+                                    severity="warn",
+                                    message=msg,
+                                    fingerprint=finding_fingerprint(
+                                        rel_path,
+                                        1,
+                                        1,
+                                        "iam-wildcard-action",
+                                        "warn",
+                                        msg,
+                                    ),
+                                )
+                            )
+                        for esc in PRIVILEGE_ESCALATION_ACTIONS:
+                            if esc in act_str:
+                                escalation_count += 1
+                                msg = f"Privilege escalation action '{esc}' granted in resource '{clean_type}.{inst_name.strip('"')}'"
+                                findings.append(
+                                    Finding(
+                                        path=rel_path,
+                                        line=1,
+                                        column=1,
+                                        rule="iam-privilege-escalation",
+                                        rule_id="iam-privilege-escalation",
+                                        severity="error",
+                                        message=msg,
+                                        fingerprint=finding_fingerprint(
+                                            rel_path,
+                                            1,
+                                            1,
+                                            "iam-privilege-escalation",
+                                            "error",
+                                            msg,
+                                        ),
+                                    )
+                                )
+
+    return total_statements, wildcard_count, escalation_count
+
+
 class IamAuditTool(ToolFn):
-    """Audits AWS SDK usage and synthesizes least-privilege IAM policy."""
+    """Audits cloud SDK API calls and Terraform policies; synthesizes least-privilege IAM policies."""
 
     name = "iam-audit"
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Audit AWS SDK calls in source code and synthesize least-privilege IAM policy. "
-            "Returns {status, findings[], summary}."
+            "Audit cloud SDK calls in code, inspect Terraform HCL2 policies for wildcards, and synthesize "
+            "minimal least-privilege IAM policies. Returns {status, findings[], summary}."
         )
 
     def __call__(
@@ -271,47 +291,6 @@ class IamAuditTool(ToolFn):
             permissions=permissions,
         )
 
-    def _scan_terraform_files(self, target_dir: Path, findings: list[Finding]) -> None:
-        tf_files = list(target_dir.glob("**/*.tf")) if target_dir.is_dir() else []
-        for tf_file in tf_files:
-            if any(
-                part.startswith(".") or part in ("venv", "node_modules", ".terraform")
-                for part in tf_file.parts
-            ):
-                continue
-            try:
-                content = tf_file.read_text(encoding="utf-8", errors="ignore")
-                rel_path = str(tf_file.relative_to(target_dir))
-                lines = content.splitlines()
-                for line_idx, line in enumerate(lines, start=1):
-                    if re.search(
-                        r"""actions?\s*=\s*(?:\[\s*["']\*["']\s*\]|["']\*["'])""",
-                        line,
-                        re.IGNORECASE,
-                    ):
-                        msg = "Wildcard IAM Action '*' detected in Terraform configuration"
-                        findings.append(
-                            Finding(
-                                path=rel_path,
-                                line=line_idx,
-                                column=1,
-                                rule="iam-wildcard-action",
-                                rule_id="iam-wildcard-action",
-                                severity="warn",
-                                message=msg,
-                                fingerprint=finding_fingerprint(
-                                    rel_path,
-                                    line_idx,
-                                    1,
-                                    "iam-wildcard-action",
-                                    "warn",
-                                    msg,
-                                ),
-                            )
-                        )
-            except Exception:  # noqa: BLE001, S110
-                pass
-
     def run(
         self,
         path: Path,
@@ -339,7 +318,6 @@ class IamAuditTool(ToolFn):
             list(target_dir.glob("**/*.py")) if target_dir.is_dir() else [target_dir]
         )
         for py_file in py_files:
-            # Skip hidden or virtual environment folders
             if any(
                 part.startswith(".") or part in ("venv", "node_modules")
                 for part in py_file.parts
@@ -349,19 +327,16 @@ class IamAuditTool(ToolFn):
                 code = py_file.read_text(encoding="utf-8", errors="ignore")
                 tree = ast.parse(code)
                 rel_path = str(py_file.relative_to(target_dir))
-                visitor = _AwsAstVisitor(rel_path)
+                visitor = _CloudAstVisitor(rel_path)
                 visitor.visit(tree)
-
                 all_actions.update(visitor.actions)
-                files_scanned += 1
-
                 for line, col, call_name in visitor.unmapped_calls:
-                    msg = f"Unmapped AWS SDK call: {call_name}"
+                    msg = f"Unmapped cloud SDK method call: {call_name}"
                     findings.append(
                         Finding(
                             path=rel_path,
                             line=line,
-                            column=col,
+                            column=col + 1,
                             rule="iam-unmapped-call",
                             rule_id="iam-unmapped-call",
                             severity="warn",
@@ -369,36 +344,67 @@ class IamAuditTool(ToolFn):
                             fingerprint=finding_fingerprint(
                                 rel_path,
                                 line,
-                                col,
+                                col + 1,
                                 "iam-unmapped-call",
                                 "warn",
                                 msg,
                             ),
                         )
                     )
+                files_scanned += 1
             except Exception:  # noqa: BLE001, S110
                 pass
 
-        # Scan Terraform files for wildcard policies
-        self._scan_terraform_files(target_dir, findings)
+        # Scan Terraform files using python-hcl2
+        total_statements = 0
+        wildcard_count = 0
+        escalation_count = 0
 
-        if not all_actions:
-            all_actions = {"s3:GetObject", "s3:PutObject"}
+        if path.is_file() and path.suffix == ".tf":
+            tf_files = [path]
+        elif target_dir.is_dir():
+            tf_files = list(target_dir.glob("**/*.tf"))
+        else:
+            tf_files = []
+        for tf_file in tf_files:
+            if any(
+                part.startswith(".") or part in ("venv", "node_modules", ".terraform")
+                for part in tf_file.parts
+            ):
+                continue
+            rel_tf = str(tf_file.relative_to(target_dir))
+            stmts, wild, esc = _scan_terraform_ast(tf_file, rel_tf, findings)
+            total_statements += stmts
+            wildcard_count += wild
+            escalation_count += esc
+            files_scanned += 1
 
-        policy = {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Sid": "RushSynthesizedLeastPrivilege",
-                    "Effect": "Allow",
-                    "Action": sorted(all_actions),
-                    "Resource": "*",
-                }
-            ],
-        }
+        # Synthesize real least-privilege policy (Zero fake fallbacks!)
+        policy: dict[str, Any] | None = None
+        if all_actions:
+            # Partition actions by service to build clean least-privilege statements
+            statements: list[dict[str, Any]] = []
+            aws_actions = [
+                a
+                for a in sorted(all_actions)
+                if ":" in a and not a.startswith(("gcp:", "azure:"))
+            ]
+            if aws_actions:
+                statements.append(
+                    {
+                        "Sid": "RushSynthesizedLeastPrivilegeAWS",
+                        "Effect": "Allow",
+                        "Action": aws_actions,
+                        "Resource": "*",
+                    }
+                )
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": statements,
+            }
 
         artifacts: list[str] = []
-        if output_policy_file:
+        if output_policy_file and policy:
             required_perms = ExecutionPermissions(artifact_write=True)
             ok, missing = check_permissions(required_perms, permissions)
             if not ok:
@@ -434,10 +440,30 @@ class IamAuditTool(ToolFn):
                     duration_ms=elapsed_ms(start),
                 )
 
-        status = "warn" if findings else "ok"
+        # Risk score computation: 0.0 (safe) to 1.0 (critical risk)
+        base_risk = 0.0
+        if wildcard_count > 0:
+            base_risk += min(0.5, wildcard_count * 0.25)
+        if escalation_count > 0:
+            base_risk += min(0.5, escalation_count * 0.25)
+        risk_score = round(min(1.0, max(0.0, base_risk)), 2)
+
+        has_errors = any(f.get("severity") == "error" for f in findings)
+        status = "fail" if has_errors else ("warn" if findings else "ok")
+
+        metrics_obj = IamAuditMetrics(
+            risk_score=risk_score,
+            total_statements=total_statements,
+            wildcard_actions_count=wildcard_count,
+            privilege_escalation_paths=escalation_count,
+        )
+
         metrics = {
+            "risk_score": metrics_obj.risk_score,
+            "total_statements": metrics_obj.total_statements,
+            "wildcard_actions_count": metrics_obj.wildcard_actions_count,
+            "privilege_escalation_paths": metrics_obj.privilege_escalation_paths,
             "actions_count": len(all_actions),
-            "unmapped_calls_count": len(findings),
             "files_scanned": files_scanned,
         }
 
@@ -450,15 +476,18 @@ class IamAuditTool(ToolFn):
 
         return ToolResult(
             tool=self.name,
-            engine=None,
-            engine_version=None,
+            engine="python-hcl2",
+            engine_version="8.1.0",
             status=status,
             duration_ms=elapsed_ms(start),
-            summary=f"Synthesized IAM policy with {len(all_actions)} actions across {files_scanned} files",
+            summary=(
+                f"IAM audit scanned {files_scanned} files, discovered {len(all_actions)} actions "
+                f"({wildcard_count} wildcards, {escalation_count} escalation paths, risk_score: {risk_score})"
+            ),
             findings=findings,
             metrics=metrics,
-            artifacts=artifacts,
-            raw={"policy": policy, "actions": sorted(all_actions)},
+            artifacts=artifacts if artifacts else None,
+            raw={"actions": sorted(all_actions), "policy": policy},
             metadata={"policy": policy, "execution": exec_meta},
         )
 
@@ -470,10 +499,13 @@ class IamPolicySynthesizer:
         self.project_root = project_root or Path.cwd()
         self._tool = IamAuditTool()
 
-    def synthesize_policy(self) -> dict[str, Any]:
+    def synthesize(self) -> dict[str, Any]:
         res = self._tool.run(self.project_root)
         meta = res.get("metadata") or {}
         return meta.get("policy") or {}
 
+    def synthesize_policy(self) -> dict[str, Any]:
+        return self.synthesize()
 
-__all__ = ["IamAuditTool", "IamPolicySynthesizer"]
+
+__all__ = ["AWS_ACTION_REGISTRY", "IamAuditTool", "IamPolicySynthesizer"]

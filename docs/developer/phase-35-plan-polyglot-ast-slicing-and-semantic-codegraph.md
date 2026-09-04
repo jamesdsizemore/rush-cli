@@ -1,10 +1,10 @@
 # Phase 35 Implementation Plan: Polyglot AST Slicing & Semantic CodeGraph (`rush codegraph`)
 
-> **Phase:** 35 of 40  
-> **Milestone:** Tree-Sitter Polyglot AST Parsing (10+ Languages), Reverse Call-Graph & Minimal AST Slicing  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a high-performance polyglot Code Property Graph (CPG) indexer and AST slicer (`rush codegraph`) powered by Tree-Sitter supporting 10+ languages (Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP) that extracts verbatim symbol definitions, traces bidirectional call graphs, and resolves polymorphic dynamic dispatch in sub-10ms queries.  
+> **Phase:** 35 of 40
+> **Milestone:** Tree-Sitter Polyglot AST Parsing (10+ Languages), Reverse Call-Graph & Minimal AST Slicing
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a high-performance polyglot Code Property Graph (CPG) indexer and AST slicer (`rush codegraph`) powered by Tree-Sitter supporting 10+ languages (Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP) that extracts verbatim symbol definitions, traces bidirectional call graphs, and resolves polymorphic dynamic dispatch in sub-10ms queries.
 > **End State Outcome & Verification Checks:**
 > - [x] `CodeGraphStore` indexes symbols, AST nodes, and call edges in an offline SQLite database (`.rush/cpg.db`).
 > - [x] `SymbolSlicer` extracts exact line-numbered function and class declarations without reading entire files.
@@ -12,14 +12,14 @@
 > - [x] CLI commands `rush codegraph explore`, `rush codegraph slice` and FastMCP endpoints operational.
 > - [x] 100% test pass rate across `tests/test_polyglot_codegraph.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0019: Native Graft Semantic Slicing and Tree-Sitter](../adr/0019-native-graft-semantic-slicing-and-tree-sitter.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `tree-sitter-language-pack==0.4.0`, `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0019: Native Graft Semantic Slicing and Tree-Sitter](../adr/0019-native-graft-semantic-slicing-and-tree-sitter.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `tree-sitter-language-pack==0.4.0`, `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-35-polyglot-ast-slicing-and-semantic-codegraph

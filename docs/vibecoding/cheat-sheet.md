@@ -26,7 +26,7 @@ Copy and paste these prompt templates directly into **Cursor, Claude Code, Cline
 
 ### 1. The "Clean Feature" Prompt (Best for new modules)
 ```text
-Implement [FEATURE NAME]. 
+Implement [FEATURE NAME].
 Requirements:
 1. Write clean, idiomatic code with complete implementations (no placeholder stubs or empty pass statements).
 2. Add comprehensive unit tests in the appropriate tests directory.

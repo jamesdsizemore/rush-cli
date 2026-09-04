@@ -1,10 +1,10 @@
 # Phase 27 Implementation Plan: Authenticated In-Memory Dashboard & TUI (`rush dashboard` / `rush ui`)
 
-> **Phase:** 27 of 40  
-> **Milestone:** Ephemeral Local Web Dashboard, Cryptographic Auth & Interactive Terminal UI  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build an ephemeral, in-memory local web dashboard (`rush dashboard`) and interactive terminal user interface (`rush ui`) powered by Starlette ASGI and Textual TUI with loopback-only binding, cryptographic session authentication, and WebSocket live telemetry.  
+> **Phase:** 27 of 40
+> **Milestone:** Ephemeral Local Web Dashboard, Cryptographic Auth & Interactive Terminal UI
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build an ephemeral, in-memory local web dashboard (`rush dashboard`) and interactive terminal user interface (`rush ui`) powered by Starlette ASGI and Textual TUI with loopback-only binding, cryptographic session authentication, and WebSocket live telemetry.
 > **End State Outcome & Verification Checks:**
 > - [x] Starlette ASGI server strictly binds to `127.0.0.1` and verifies bearer session tokens.
 > - [x] In-memory repository snapshot store retains findings with zero disk persistence leaks.
@@ -12,12 +12,12 @@
 > - [x] CLI commands `rush dashboard` and `rush ui` operational.
 > - [x] 100% test pass rate across `tests/test_dashboard_and_tui.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0016: Local Web Dashboard and Rich Interactive TUI](../adr/0016-local-web-dashboard-and-rich-interactive-tui.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `starlette==0.45.3`, `uvicorn==0.34.0`, `textual==1.0.0`, `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0016: Local Web Dashboard and Rich Interactive TUI](../adr/0016-local-web-dashboard-and-rich-interactive-tui.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `starlette==0.45.3`, `uvicorn==0.34.0`, `textual==1.0.0`, `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-27-authenticated-in-memory-dashboard-and-tui

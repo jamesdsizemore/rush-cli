@@ -1,8 +1,8 @@
 # Master Innovation & Remediation Plan: 77 Advanced Scanners, Evaluators, Mutation Tools, UI/UX Checkers, Linters, and Vibecoder Tools for Rush CLI
 
-> **Document Type:** Master Architectural Strategy & Engine Roadmap  
-> **Target Versions:** Rush v0.3.0 – v0.9.0  
-> **Repository Alignment:** Python 3.12, stdio MCP transport + Click CLI, canonical `ToolResult`, explicit execution permissions (`--allow-*`), offline-first default posture, isolated bounded subprocess execution (`stdin=DEVNULL`, `shell=False`).  
+> **Document Type:** Master Architectural Strategy & Engine Roadmap
+> **Target Versions:** Rush v0.3.0 – v0.9.0
+> **Repository Alignment:** Python 3.12, stdio MCP transport + Click CLI, canonical `ToolResult`, explicit execution permissions (`--allow-*`), offline-first default posture, isolated bounded subprocess execution (`stdin=DEVNULL`, `shell=False`).
 > **Strict Deduplication Guarantee:** 77 completely unique, distinct tools with zero overlap with the 34 existing core engines or with each other.
 
 ---

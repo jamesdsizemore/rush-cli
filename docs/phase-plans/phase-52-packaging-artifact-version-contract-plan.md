@@ -78,13 +78,13 @@ Every RED test is ordinary, deterministic, and immediately consumed by its GREEN
 ## 8. File, dependency, and documentation governance
 
 ### 8.1 Import-write inventory
- 
+
 Production (15 files, 24 imports): `src/rush/codegraph/context_packer.py`, `src/rush/core/git_sandbox.py`, `src/rush/memory/mistake_miner.py`, `src/rush/token_economy/distillers/__init__.py`, `src/rush/token_economy/distillers/cargo_distiller.py`, `src/rush/token_economy/distillers/pytest_distiller.py`, `src/rush/token_economy/distillers/ruff_distiller.py`, `src/rush/token_economy/distillers/vitest_distiller.py`, `src/rush/token_economy/toon/__init__.py`, `src/rush/token_economy/tui_gain.py`, `src/rush/tools/api_diff.py`, `src/rush/tools/hallu_guard.py`, `src/rush/tools/ship/cockpit.py`, `src/rush/tools/simulate_ci.py`, `src/rush/tools/test_heal.py`.
- 
+
 Tests (14 files, 50 imports): `tests/test_cli_registry.py`, `tests/test_phase41_memory_ship.py`, `tests/test_phase41_router_distillers.py`, `tests/test_phase42_ship_cockpit.py`, `tests/test_phase42_toon_skeleton.py`, `tests/test_phase43_ccr_grounding.py`, `tests/test_phase43_mistake_memory.py`, `tests/test_phase44_context_pack_cache.py`, `tests/test_phase45_telemetry_gain.py`, `tests/test_phase46_blast_radius_arch.py`, `tests/test_phase47_heal_apidiff.py`, `tests/test_phase48_db_simplify_strict.py`, `tests/test_phase49_trace_swarm_recorder.py`, `tests/test_phase50_slsa_attestation.py`.
- 
+
 ### 8.2 Version/artifact inventory
- 
+
 `src/rush/__init__.py`, `src/rush/cli.py`, `src/rush/governance/scaffolder.py`, `src/rush/providers/anthropic.py`, `src/rush/providers/openai.py`, `src/rush/sarif.py`, `src/rush/score/sarif_export.py`, `src/rush/sync/ts_generator.py`, `src/rush/tools/pr_synthesize.py`, `src/rush/tui.py`, `pyproject.toml`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/probe_installed_artifacts.py`, `tests/test_phase52_package_identity.py`, `tests/test_phase52_version_contract.py`, `tests/test_phase52_installed_artifacts.py`.
 
 ### 8.3 Documentation

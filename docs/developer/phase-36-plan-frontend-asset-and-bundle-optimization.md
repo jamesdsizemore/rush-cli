@@ -1,10 +1,10 @@
 # Phase 36 Implementation Plan: Frontend Asset & Bundle Optimization (`rush bundle`)
 
-> **Phase:** 36 of 40  
-> **Milestone:** JS/CSS/Wasm Chunk Size Calculation, Gzip/Brotli Estimators, Barrel Audits & Orphaned Asset Scanners  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build frontend asset and bundle optimization tooling (`rush bundle`) that calculates Raw, Gzip, and Brotli sizes of JS/CSS/Wasm chunks, enforces performance budgets, discovers orphaned images/fonts in asset directories, and audits anti-tree-shaking barrel file imports.  
+> **Phase:** 36 of 40
+> **Milestone:** JS/CSS/Wasm Chunk Size Calculation, Gzip/Brotli Estimators, Barrel Audits & Orphaned Asset Scanners
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build frontend asset and bundle optimization tooling (`rush bundle`) that calculates Raw, Gzip, and Brotli sizes of JS/CSS/Wasm chunks, enforces performance budgets, discovers orphaned images/fonts in asset directories, and audits anti-tree-shaking barrel file imports.
 > **End State Outcome & Verification Checks:**
 > - [x] `ChunkCalculator` computes exact Raw, Gzip, and Brotli bytes for JS/CSS chunks.
 > - [x] `BudgetGate` evaluates build artifacts against configured KB performance budgets.
@@ -13,13 +13,13 @@
 > - [x] CLI commands `rush bundle analyze`, `rush bundle budget`, `rush bundle dead-assets` operational.
 > - [x] 100% test pass rate across `tests/test_frontend_bundle.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-36-frontend-asset-and-bundle-optimization

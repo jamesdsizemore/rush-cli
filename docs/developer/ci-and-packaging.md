@@ -82,4 +82,3 @@ print('MCP smoke test exit code:', p.returncode)
 - **Version Contract**: `src/rush/__init__.py` derives `__version__` dynamically from `importlib.metadata.version("rush-cli")`, verified by `tests/test_phase52_version_contract.py`.
 
 See [Distribution Guide](../DISTRIBUTION.md) and [Release Process](release-process.md).
-

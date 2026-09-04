@@ -108,4 +108,3 @@ Instead of feeding full merge conflicts into LLMs, `rush swarm-merge` reconciles
 
 ## Dead Asset Diet
 Pruning unused images and dead fonts with `rush dead-asset` reduces repository size and keeps AI indexing clean and fast.
-

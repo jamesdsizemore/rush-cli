@@ -1,10 +1,10 @@
 # Phase 25 Implementation Plan: Real-Time File System Watcher (`rush watch`)
 
-> **Phase:** 25 of 40  
-> **Milestone:** Real-Time Quality Sentinel, Rust-Backed FS Watcher & Event Debouncing  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a high-performance, real-time filesystem watcher (`rush watch`) utilizing Rust-backed `watchfiles` with event coalescing, debouncing, ignore filters, self-mutation loop suppression, and sub-second feedback loops.  
+> **Phase:** 25 of 40
+> **Milestone:** Real-Time Quality Sentinel, Rust-Backed FS Watcher & Event Debouncing
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a high-performance, real-time filesystem watcher (`rush watch`) utilizing Rust-backed `watchfiles` with event coalescing, debouncing, ignore filters, self-mutation loop suppression, and sub-second feedback loops.
 > **End State Outcome & Verification Checks:**
 > - [x] `QualitySentinel` captures file change events with 300ms debouncing window.
 > - [x] `PathFilter` strictly ignores `.git/`, `.rush/`, `node_modules/`, and `.venv/` to prevent infinite feedback loops.
@@ -12,15 +12,15 @@
 > - [x] CLI command `rush watch` and FastMCP endpoints `rush_watch_start`, `rush_watch_status` operational.
 > - [x] 100% test pass rate across `tests/test_watcher.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0001: External Engine Boundary](../adr/0001-external-engine-boundary.md)  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `watchfiles==1.0.4`, `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Discovered External Engines (Zero-Bundled):** `ruff`, `mypy`, `pytest`, `biome`, `eslint`, `prettier`, `tsc`, `clippy`, `rustfmt`, `golangci-lint`, `govulncheck`, `aislop`, `tach`, `markdownlint`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0001: External Engine Boundary](../adr/0001-external-engine-boundary.md)
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `watchfiles==1.0.4`, `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Discovered External Engines (Zero-Bundled):** `ruff`, `mypy`, `pytest`, `biome`, `eslint`, `prettier`, `tsc`, `clippy`, `rustfmt`, `golangci-lint`, `govulncheck`, `aislop`, `tach`, `markdownlint`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-25-real-time-file-system-watcher

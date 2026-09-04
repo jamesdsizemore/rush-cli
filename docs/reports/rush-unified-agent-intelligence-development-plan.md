@@ -1,6 +1,6 @@
 # Rush five-phase live execution plan
 
-Resolved target path: docs/reports/rush-unified-agent-intelligence-development-plan.md  
+Resolved target path: docs/reports/rush-unified-agent-intelligence-development-plan.md
 Status: execution manual only; this document does not implement a feature.
 
 ## 1. Plan-level goal and completion contract
@@ -121,22 +121,22 @@ Checklist:
 - [x] P1-V verification complete.
 - [x] P1-C commit recorded.
 
-P1-WP1 — shared continuity command contract  
+P1-WP1 — shared continuity command contract
 Goal: move only the selected existing session/context wrappers to one ToolResult-backed implementation seam. Why now: every later phase needs CLI/MCP parity. Dependencies: P1-T00. Deliverable: approved shared implementation registration and parity tests. Stop: an existing registry/config pattern cannot represent the capability without breaking compatibility.
 
-P1-T00 — discovery and context record  
+P1-T00 — discovery and context record
 Objective: use verified rtk discovery to map session/context wrapper symbols, tests, catalog and docs before edits. Preconditions: clean worktree. Before: context is dispersed. After: compact findings record is linked from backlog entry BL-P1-00. Allowed: docs/developer/backlog.md, docs/developer/issues.md. Do-not-touch: src/, tests/, configuration. New files: none. Symbols: cli.py session/context wrappers, mcp.py _register_tools, tools/base.py. TDD: none; discovery only. Negative case: a stale graph or unavailable local index is recorded as unavailable evidence; use repository paths/tests rather than inventing syntax. Docs: record audit start. Backlog: mark BL-P1-00 complete. Issue: no issue unless unavailable command. Verify: rtk git status --short; rtk grep session_memory src tests; rtk read --line-numbers src/rush/tools/base.py. Accept: reusable path/symbol evidence exists. Non-goal: implementation. Checklist: P1-T00.
 
-P1-T01 — ToolResult continuity seam  
+P1-T01 — ToolResult continuity seam
 Objective: add the smallest shared tool seam for existing session/context operations. Preconditions: T00. Before: direct CLI/MCP wrappers have transport-specific results. After: selected operation reaches one src/rush/tools implementation and returns ToolResult. Allowed: src/rush/tools/__init__.py, src/rush/tools/continuity.py, src/rush/catalog.py, src/rush/cli.py, src/rush/mcp.py, tests/test_cli_registry.py, tests/test_mcp.py. Do-not-touch: providers/, token_economy/, pyproject.toml. New: src/rush/tools/continuity.py only after T00 confirms no equivalent. Symbols: ToolFn, ToolResult, ALL_TOOLS, TOOL_SPECS, _run_tool, _register_tools. TDD first: focused CLI/MCP parity test; initial failure is no registered ToolFn/shared canonical result. Implement: minimal operation, catalog registration, thin transports. Refactor: only transport duplication in touched wrappers. Negative: missing capability returns skipped; MCP stdout stays clean. Docs: CLI/MCP reference update in phase audit. Backlog: BL-P1-01. Issue: ISS-P1-01 only for incompatibility. Verify: focused pytest selectors confirmed by pytest collection, then full suite/Ruff. Accept: parity and skipped tests green. Non-goal: new provider or persistence. Checklist: P1-WP1 and P1-T01.
 
-P1-T02 — permission/config/catalog contract  
+P1-T02 — permission/config/catalog contract
 Objective: attach ExecutionPermissions metadata and strict opt-in configuration only if required by the confirmed seam. Preconditions: P1-T01 green. Before: continuity has no governed capability declaration. After: permissions/config/catalog agree. Allowed: src/rush/config.py, src/rush/permissions.py, src/rush/catalog.py, src/rush/tools/continuity.py, tests/test_config.py, tests/test_permissions.py. Do-not-touch: rush.toml, dependencies, provider files. New: none. TDD: config rejects unsafe/unknown field and permission denial returns structured result; initial failure absent contract. Implement minimal parser/catalog changes. Refactor only contract-local helpers. Negative: absent config stays disabled/skipped. Docs: configuration/reference update. Backlog BL-P1-02; issue only if config compatibility conflicts. Verify focused tests, full suite/Ruff. Accept: tests prove disabled default and denied permission. Non-goal: credential storage. Checklist: P1-WP1/P1-T02.
 
-P1-WP2 — canonical tracker and phase controls  
+P1-WP2 — canonical tracker and phase controls
 Goal: extend, do not replace, canonical backlog/issues with program fields and current five-phase rows. Why now: live execution cannot start without honest state. Dependencies: P1-WP1. Deliverable: documented schemas and active Phase 1 records. Stop: historical tracker content would be overwritten rather than preserved.
 
-P1-T03 — tracker schema and lifecycle records  
+P1-T03 — tracker schema and lifecycle records
 Objective: add the required program tables/fields and P1 records to existing trackers. Preconditions: P1-T02. Before: historical milestone tables lack live fields. After: required backlog/issue fields and five-phase program records coexist with history. Allowed: docs/developer/backlog.md, docs/developer/issues.md, docs/reports/rush-unified-agent-intelligence-development-plan.md. Do-not-touch: all source/config/test files. New: none. TDD: documentation structural assertion only if an existing docs-parity test can be extended; otherwise no behavior test. Negative: no hosted issue creation; historical entries unchanged. Docs: document workflow in this plan. Backlog BL-P1-03; issue ISS-P1-TRACK only if migration ambiguity. Verify Markdown link/format audit and git diff --check. Accept: every mandated field exists and P1 records link task IDs. Non-goal: duplicate tracker creation. Checklist: P1-WP2/P1-T03.
 
 Phase definition of done: P1 tasks/checklists green, tracker schema live, permitted docs updated/audited, full test/Ruff passes, allowed-file diff reviewed, commit recorded. Rollback: revert only the phase commit; disabled continuity config remains skipped.
@@ -147,11 +147,11 @@ Beginning goal: turn existing session/checkpoint/failure state into explicit red
 
 Checklist: [x] P2-T00 discovery [x] P2-WP1 evidence contract [x] P2-WP2 save/restore integration [x] P2-DOC audit [x] P2-BI reconciliation [x] P2-V checks [x] P2-C commit.
 
-P2-WP1 — redacted authority and freshness records  
-P2-T00: create compact rtk findings for session/checkpoint/failure symbols and refresh if touched files change; allowed tracker files only; verify rtk grep SessionMemoryManager src tests and rtk read --line-numbers source; run `graft check .` and `context-mode search SessionMemoryManager --project .`; record any stale/unavailable derived index as non-authoritative; checklist P2-T00.  
+P2-WP1 — redacted authority and freshness records
+P2-T00: create compact rtk findings for session/checkpoint/failure symbols and refresh if touched files change; allowed tracker files only; verify rtk grep SessionMemoryManager src tests and rtk read --line-numbers source; run `graft check .` and `context-mode search SessionMemoryManager --project .`; record any stale/unavailable derived index as non-authoritative; checklist P2-T00.
 P2-T01: test first that saved handoff excludes a synthetic secret, labels historic instruction as evidence, and detects changed dependency. Preconditions BG-PRIV and T00. Allowed src/rush/session_memory.py, src/rush/memory/checkpoint_journal.py, failure_ledger.py, merkle_invalidator.py, safety/redactor.py, tools/continuity.py, tests/test_session_memory.py, tests/test_phase41_memory_ship.py. Do-not-touch providers/token runtime. New files none unless T00 creates a fixture under existing tests/fixtures/ path. Initial failure: no redaction/authority/stale receipt in output. Implement smallest provenance fields/adapters; refactor only touched persistence code. Negative: raw transcript remains absent; missing evidence is explicit; secret is never stored/logged. After green, write passed BG-AUTH from the focused replay/tombstone/instruction-quarantine evidence. Docs: privacy, user agent workflow, result reference as audit directs. Backlog BL-P2-01; issue ISS-P2-01 if schema migration is unsafe. Verify focused tests/full suite/Ruff. Accept: redaction, quarantine and stale cases green. Checklist P2-WP1/P2-T01.
 
-P2-WP2 — inspectable save/restore receipts  
+P2-WP2 — inspectable save/restore receipts
 P2-T02: test first that save/restore reports current goal, receipts, failed attempt pointer and open work without claiming completion. Preconditions P2-T01 and passed BG-AUTH. Allowed same P2 source plus cli.py/mcp.py only through P1 seam, tests/test_session_memory.py and tests/test_phase41_memory_ship.py. Do-not-touch catalog/config unless P1 contract cannot expose a required result field. Initial failure: restore lacks bounded receipt/frontier behavior. Implement minimal adapter and ToolResult findings. Negative: unavailable record returns skipped/not-found; no auto migration of historic summaries. Docs: CLI/MCP/session/privacy reference. Backlog BL-P2-02; issue only new defect/blocker. Verify focused/full/Ruff. Accept: user and MCP retrieve equivalent redacted handoff. Checklist P2-WP2/P2-T02.
 
 P2 definition of done: users can save/restore an inspectable redacted handoff, agents receive authority/freshness evidence, and no raw secret or historic instruction becomes current authority. Commit after docs/ audit, tracker reconciliation and verification. Recovery: disable the new operation; existing checkpoint format remains readable.
@@ -162,11 +162,11 @@ Beginning goal: create one deterministic, evidence-carrying context result from 
 
 Checklist: [x] P3-T00 discovery [x] P3-WP1 envelope [x] P3-WP2 recovery/telemetry [x] P3-DOC audit [x] P3-BI reconciliation [x] P3-V checks [x] P3-C commit.
 
-P3-WP1 — deterministic selected-context result  
-P3-T00: rtk-map packer/token/grounding symbols and source sections; record reused evidence/refresher rule; run `graft check .` and `context-mode search ContextPacker --project .`; record any stale/unavailable derived index as non-authoritative; checklist P3-T00.  
+P3-WP1 — deterministic selected-context result
+P3-T00: rtk-map packer/token/grounding symbols and source sections; record reused evidence/refresher rule; run `graft check .` and `context-mode search ContextPacker --project .`; record any stale/unavailable derived index as non-authoritative; checklist P3-T00.
 P3-T01: test first that a requested budget returns selected evidence IDs, actual/estimated token fields, mandatory omission reason, and recovery handle or insufficient-budget. Preconditions BG-CTX. Allowed src/rush/codegraph/context_packer.py, src/rush/token_economy/router.py, ccr_store.py, cache_aligner.py, stale_sweeper.py, telemetry.py, src/rush/tools/continuity.py, tests/test_phase43_ccr_grounding.py, tests/test_phase44_context_pack_cache.py. Do-not-touch model/provider/dependency files. Initial failure: existing pack result lacks provenance/omission contract. Implement adapter only; do not duplicate store. Negative: mandatory overflow fails closed; secret-bearing input follows redaction policy. Docs: context/token/result reference. Backlog BL-P3-01; issue on estimator ambiguity. Verify focused/full/Ruff. Accept: deterministic envelope tests green. Checklist P3-WP1/P3-T01.
 
-P3-WP2 — recovery and token telemetry  
+P3-WP2 — recovery and token telemetry
 P3-T02: test first that omitted context is retrievable by stable CCR handle and savings telemetry does not claim unmeasured provider cost. Preconditions P3-T01. Allowed CCRStore, TelemetryStore, tools/continuity.py, tests/test_phase43_ccr_grounding.py, tests/test_phase45_telemetry_gain.py. Do-not-touch external index/model paths. Initial failure: omission cannot be recovered or telemetry lacks provenance. Implement smallest result metadata; refactor only telemetry adapter. Negative: missing handle returns structured not-found/skipped. Docs: token workflow/troubleshooting. Backlog BL-P3-02; issue only new failure. Verify focused/full/Ruff. Accept: recovery and accounting assertions pass. Checklist P3-WP2/P3-T02.
 
 P3 definition of done: deterministic context is inspectable/recoverable/redacted; token claims are evidence-backed; optional semantic/model work remains blocked until gate decision. Recovery: keep existing pack command, disable envelope registration.
@@ -177,11 +177,11 @@ Beginning goal: make local ownership, stale work, replay and known failures visi
 
 Checklist: [x] P4-T00 discovery (RTK proxy limitation and unavailable context-mode query recorded; source/test evidence used) [x] P4-WP1 ownership/staleness [x] P4-WP2 replay/recovery [x] P4-DOC audit [x] P4-BI reconciliation [x] P4-V checks [x] P4-C completion commit.
 
-P4-WP1 — ownership and conflict evidence  
-P4-T00: create rtk finding of lock/merge/recorder/failure paths and tests; refresh after any source change; run `graft check .` and `context-mode search MeshLockManager --project .`; checklist P4-T00.  
+P4-WP1 — ownership and conflict evidence
+P4-T00: create rtk finding of lock/merge/recorder/failure paths and tests; refresh after any source change; run `graft check .` and `context-mode search MeshLockManager --project .`; checklist P4-T00.
 P4-T01: test first that acquisition conflict, expired/stale evidence, and merge conflict produce structured handoff findings rather than overwrite. Preconditions BG-COORD only for new protocol form. Allowed src/rush/mcp_mesh/lock_manager.py, src/rush/tools/swarm_merge.py, src/rush/memory/merkle_invalidator.py, src/rush/tools/continuity.py, tests/test_phase49_trace_swarm_recorder.py. Do-not-touch provider/model/config/dependencies. Initial failure: handoff cannot surface ownership/conflict. Implement adapter; no daemon. Negative: lock failure returns unavailable/conflict; no automatic merge. Docs: coordination/workflow/security. Backlog BL-P4-01; issue ISS-P4-01 on conflict semantics. Verify focused/full/Ruff. Accept: conflict/staleness assertions green. Checklist P4-WP1/P4-T01.
 
-P4-WP2 — replay and failure receipt  
+P4-WP2 — replay and failure receipt
 P4-T02: test first that known failure and replay pointer are presented as evidence and never as a command to execute. Preconditions P4-T01. Allowed src/rush/tools/flight_recorder.py, src/rush/memory/failure_ledger.py, mistake_miner.py, tools/continuity.py, tests/test_phase49_trace_swarm_recorder.py, tests/test_mistake_miner.py. Do-not-touch CLI/MCP except P1 seam. Initial failure: attempt/failure state is unlinked. Implement bounded receipt adapter. Negative: missing recorder returns skipped; historic failed patch is not retried automatically. Docs: recovery/troubleshooting. Backlog BL-P4-02; issue on corrupt record. Verify focused/full/Ruff. Accept: replay/failure tests green. Checklist P4-WP2/P4-T02.
 
 P4 definition of done: handoff exposes owner/conflict/stale/replay/failure evidence; agents cannot silently overwrite or auto-retry. Recovery: disable coordination view and retain existing lock/merge behavior.
@@ -194,11 +194,11 @@ Checklist: [x] P5-T00 discovery [x] P5-WP1 capability boundary [x] P5-WP2 named 
 
 Current execution record: `claude_code`, `codex_cli`, and `antigravity_cli` have bounded shared CLI/MCP adapters. `omniroute_api` has a fixed-loopback, no-Rush-credential adapter at `127.0.0.1:20128/v1/chat/completions`, with `model: auto`, one bounded projection, and semantic response validation. `9router_cli` is enabled: its installed 0.5.55 CLI is a gateway launcher rather than a prompt transport, so Rush runs the installed Codex CLI through fixed local `http://127.0.0.1:20128`, maps `RUSH_9ROUTER_API_KEY` only into that child process, and passes no model argument. 9Router owns route/model selection. Z.AI is deferred without invocation. `BL-P5-02`/`ISS-P5-9ROUTER` record the permission-first, bounded-redacted, no-raw-retention TDD contract. The P5 checklist remains open only for final documentation audit, repository verification, and commit.
 
-P5-WP1 — approved capability boundary  
-P5-T00: rtk-map providers/base.py, existing provider modules, permissions, config and provider tests; verify current CLI help; record exact approved decision IDs; checklist P5-T00.  
+P5-WP1 — approved capability boundary
+P5-T00: rtk-map providers/base.py, existing provider modules, permissions, config and provider tests; verify current CLI help; record exact approved decision IDs; checklist P5-T00.
 P5-T01: test first that an unapproved/missing provider returns skipped with redacted provenance and no credential path. Preconditions BG-PROV for any enabled route. Allowed src/rush/providers/base.py, src/rush/providers/openai.py, src/rush/providers/anthropic.py, src/rush/permissions.py, src/rush/tools/continuity.py, tests/test_providers.py, tests/test_permissions.py. Do-not-touch credentials/config/dependencies until explicit approved task. Initial failure: route leaks/assumes credential or lacks fallback. Implement smallest capability policy seam. Negative: no automatic cross-provider retry or token/keychain read. Docs: provider/privacy/permissions. Backlog BL-P5-01; issue per unapproved route. Verify focused/full/Ruff. Accept: skipped/redaction/provenance tests green. Checklist P5-WP1/P5-T01.
 
-P5-WP2 — named route integration  
+P5-WP2 — named route integration
 P5-T02: for one route at a time, test the enabled user-owned CLI or API contract for Codex, Claude Code, Antigravity, 9Router, and OmniRoute. Z.AI is deferred and must not be invoked. Preconditions are the route’s exact command/profile/endpoint evidence, not an inferred absence. 9Router’s installed CLI is only a launcher: `9router_cli` must run Codex through the fixed local gateway, copy a caller-supplied process environment key only to that child, and pass no model argument; 9Router owns route/model selection. Allowed files are exactly the benchmark-approved existing provider module or a new adapter path named in the route record, src/rush/tools/continuity.py, permissions.py, config.py, tests/test_providers.py and a focused test path. Do-not-touch credentials/keychain/home files, dependencies, or router substitution. Initial failure: no declared capability or unsafe request boundary. Implement bounded redacted adapter; refactor only route-local code. Negative: unavailable profile/timeouts/output limit returns skipped/error; Rush never signs in, opens browser or moves OAuth material. Docs: exact route, retention/privacy, fallback and configuration. Backlog one entry per route; issue one per blocked/failed route, otherwise no issue. Verify route contract tests/full/Ruff. Accept: production behavior tests are linked to exact local route evidence. Checklist P5-WP2/P5-T02.
 
 P5 definition of done: approved routes are explicit, redacted, permission-gated and non-authoritative; unapproved routes remain visible skipped; provider docs, tracker and commits are complete. Recovery: disable individual adapter without damaging local continuity data.

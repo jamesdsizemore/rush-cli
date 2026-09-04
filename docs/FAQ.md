@@ -106,4 +106,3 @@ It is a cryptographically verifiable JSON document that proves exactly which git
 
 ### How does `rush iam-audit` protect cloud deployments?
 It parses all AWS SDK calls (e.g. `s3.get_object`) and generates an IAM policy containing only the exact permissions used by the code.
-

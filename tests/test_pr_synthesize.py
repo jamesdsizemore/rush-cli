@@ -86,7 +86,7 @@ def test_pr_synthesize_export_requires_artifact_write_permission(
         export_path=export_file,
         permissions=ExecutionPermissions(artifact_write=False),
     )
-    assert denied["status"] in ("skipped", "warn")
+    assert denied["status"] == "skipped"
     assert not export_file.exists()
     assert "--allow-artifact-write" in denied["summary"]
 
@@ -124,7 +124,7 @@ def test_pr_synthesizer_backward_compatibility(tmp_path: Path) -> None:
     synth = PrSynthesizer(project_root=tmp_path)
     card = synth.synthesize_pr_card(base_branch="HEAD~1")
 
-    assert "SLSA Provenance" in card
+    assert "Build Provenance" in card
     assert "Architecture Guard" in card
 
 
@@ -132,10 +132,10 @@ def test_pr_synthesize_canonical_schema_and_call(tmp_path: Path) -> None:
     _init_git_repo_with_diff(tmp_path)
 
     tool = PrSynthesizeTool()
-    res = tool(tmp_path)
+    res = tool(tmp_path, base_ref="HEAD~1")
 
     assert res["tool"] == "pr-synthesize"
-    assert res["status"] in ("ok", "warn")
+    assert res["status"] == "ok"
     assert isinstance(res["duration_ms"], int)
     assert isinstance(res["summary"], str)
 

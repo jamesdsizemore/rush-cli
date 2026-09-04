@@ -1,9 +1,9 @@
 # Rush Integrations & Deep Repository Research Report
 
-**Document Title**: Comprehensive Architectural Review, Scoring & Integration Blueprint for Rush  
-**Source Manifest**: `C:\Users\james\developer\headcleaner-cli\headrushtoolsurls.txt` (73 Repositories Evaluated)  
-**Date**: August 2026  
-**Status**: Completed Deep Research & Phased Integration Blueprint  
+**Document Title**: Comprehensive Architectural Review, Scoring & Integration Blueprint for Rush
+**Source Manifest**: `C:\Users\james\developer\headcleaner-cli\headrushtoolsurls.txt` (73 Repositories Evaluated)
+**Date**: August 2026
+**Status**: Completed Deep Research & Phased Integration Blueprint
 
 ---
 
@@ -164,7 +164,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 
 ### 1. buildingjoshbetter/TrueMemory
 * **Repository**: `buildingjoshbetter/TrueMemory`
-* **Architecture & Mechanics**: 
+* **Architecture & Mechanics**:
   * Implemented in Python with a local-first SQLite persistence layer (`truememory/storage.py`) exposed as an MCP server.
   * Based on the research paper *"Storage Is Not Memory: A Retrieval-Centered Architecture for Agent Recall"*.
   * Features an **Encoding Gate** at ingestion that evaluates incoming information on three axes: **novelty**, **salience**, and **prediction error** (preventing database bloat from repetitive turns).
@@ -416,7 +416,7 @@ To elevate Rush into an industry-leading AI memory, context, and code intelligen
 
 # Research Report: Domain 2 — Anti-Slop, Code Quality & Heuristics
 
-**Author:** Research Subagent  
+**Author:** Research Subagent
 **Scope:** In-depth architectural analysis of 14 repositories in Domain 2 (Anti-Slop, Code Quality, AST Heuristics & Benchmarks) for Rush / Rush integration.
 
 ---
@@ -669,9 +669,9 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
 
 # Domain 3 Research Report: Ship Readiness, Pre-Flight, Release & Changelog Gates
 
-**To:** Parent Agent (`0fc849c8-6ace-4da9-b378-3847f2b0b2d3`)  
-**From:** Research Subagent (`073530f7-b2af-4b14-ba9c-9186933af868`)  
-**Domain:** Domain 3 — Ship Readiness, Pre-Flight, Release & Changelog Gates  
+**To:** Parent Agent (`0fc849c8-6ace-4da9-b378-3847f2b0b2d3`)
+**From:** Research Subagent (`073530f7-b2af-4b14-ba9c-9186933af868`)
+**Domain:** Domain 3 — Ship Readiness, Pre-Flight, Release & Changelog Gates
 **Subject:** In-depth code-level analysis, scoring, categorization, and integration roadmap for Rush / Rush.
 
 ---
@@ -1254,7 +1254,7 @@ Tier Definitions:
 
 # Domain 5 Research Report: Monorepo, MCP Adapters, Testing & Specialized Toolkits
 
-**Target Project:** Rush / Rush (`rush-cli`)  
+**Target Project:** Rush / Rush (`rush-cli`)
 **Domain Scope:** Monorepo graph orchestration, MCP protocol adapters & testing harnesses, code intelligence & hybrid search, agent skill packaging, and specialized developer toolkits.
 
 ---

@@ -1,8 +1,8 @@
 # Rush: The Unclaimed Opportunities & Frontier Innovations Report
-**Document ID:** `rush-frontier-unclaimed-opportunities-report`  
-**Target Platform:** Rush CLI & FastMCP Substrate (`rush-cli`)  
-**Mission:** An Ambitious, First-Principles Exploration of Unclaimed Opportunities for Coding Agents and the Humans Who Steer Them  
-**Author:** Principal AI Systems & Runtime Architect  
+**Document ID:** `rush-frontier-unclaimed-opportunities-report`
+**Target Platform:** Rush CLI & FastMCP Substrate (`rush-cli`)
+**Mission:** An Ambitious, First-Principles Exploration of Unclaimed Opportunities for Coding Agents and the Humans Who Steer Them
+**Author:** Principal AI Systems & Runtime Architect
 
 ---
 
@@ -106,9 +106,9 @@ Rush must not merely be a static analysis wrapper or a set of basic tool binding
 * **What Rush Makes Possible:** Rush analyzes architectural trade-offs and generates a structured, plain-English "Uncertainty Matrix" with 2–3 concrete options, detailing pros, cons, complexity, and backward-compatibility impact for 1-click user selection.
 * **Why Current Tools Fall Short:** Agents write unstructured essays or make ungrounded assumptions without laying out architectural trade-offs.
 * **Core Mechanism:** AST impact evaluator synthesizing trade-off vectors (breaking changes vs maintenance cost vs performance).
-* **User Experience & Agent Behavior:** Vibecoder sees:  
-  * *Option A (Recommended)*: Store user avatars locally. (Fast, free, zero setup).  
-  * *Option B*: Connect AWS S3. (Scalable, requires API keys and monthly billing).  
+* **User Experience & Agent Behavior:** Vibecoder sees:
+  * *Option A (Recommended)*: Store user avatars locally. (Fast, free, zero setup).
+  * *Option B*: Connect AWS S3. (Scalable, requires API keys and monthly billing).
   User clicks Option A -> Agent proceeds with zero confusion.
 * **Smallest Useful Version (MVP):** Generate structured choice JSON with risk/reward scoring for schema modification decisions.
 * **Verification Proof:** Trigger ambiguous refactor prompt; assert uncertainty matrix returns structured options with distinct trade-offs.

@@ -1,10 +1,10 @@
 # Phase 26 Implementation Plan: Monorepo & Workspace Boundaries (`rush workspace`)
 
-> **Phase:** 26 of 40  
-> **Milestone:** Polyglot Workspace Discovery, Topological Execution & Monorepo Boundaries  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a monorepo management subsystem (`rush workspace`) that discovers multi-language packages (pnpm, Cargo, uv, Go), constructs dependency DAGs, executes tasks in topological order, computes `--affected` packages from Git diffs, and enforces strict boundary isolation rules.  
+> **Phase:** 26 of 40
+> **Milestone:** Polyglot Workspace Discovery, Topological Execution & Monorepo Boundaries
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a monorepo management subsystem (`rush workspace`) that discovers multi-language packages (pnpm, Cargo, uv, Go), constructs dependency DAGs, executes tasks in topological order, computes `--affected` packages from Git diffs, and enforces strict boundary isolation rules.
 > **End State Outcome & Verification Checks:**
 > - [x] `MonorepoDetector` recognizes Cargo, pnpm, uv, and Go workspace roots and package manifests.
 > - [x] `DependencyGraph` builds cycle-free DAGs and performs Kahn topological sort.
@@ -13,13 +13,13 @@
 > - [x] CLI commands `rush workspace list`, `graph`, `run`, `affected` and FastMCP tools operational.
 > - [x] 100% test pass rate across `tests/test_monorepo_workspaces.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0018: Closed-Loop AI Agent Patch Remediation and Session Memory](../adr/0018-closed-loop-ai-agent-patch-remediation-and-session-memory.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0018: Closed-Loop AI Agent Patch Remediation and Session Memory](../adr/0018-closed-loop-ai-agent-patch-remediation-and-session-memory.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-26-monorepo-and-workspace-boundaries

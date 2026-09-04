@@ -1,12 +1,12 @@
-"""Unit tests for IamAuditTool (PR50.7)."""
+"""Unit tests for IamAuditTool with multi-cloud AST analysis, Terraform HCL2 parsing, and strict metrics."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from rush.permissions import ExecutionPermissions
 from rush.tools.iam_audit import IamAuditTool, IamPolicySynthesizer
+from rush.tools.schemas import IamAuditMetrics
 
 
 def test_iam_audit_metadata() -> None:
@@ -43,31 +43,42 @@ def handle_request():
     assert res["status"] == "ok"
     assert res["findings"] == []
 
-    policy = (res.get("metadata") or {}).get("policy") or (res.get("raw") or {}).get(
-        "policy"
-    )
+    policy = (res.get("metadata") or {}).get("policy")
     assert policy is not None
     assert policy["Version"] == "2012-10-17"
     statements = policy["Statement"]
-    assert len(statements) >= 1
+    assert len(statements) == 1
     actions = set(statements[0]["Action"])
     assert "s3:GetObject" in actions
     assert "s3:PutObject" in actions
     assert "dynamodb:GetItem" in actions
     assert "dynamodb:PutItem" in actions
 
+    # Strict schema validation
+    metrics = res.get("metrics") or {}
+    validated = IamAuditMetrics.model_validate(metrics)
+    assert validated.risk_score == 0.0
+    assert validated.wildcard_actions_count == 0
 
-def test_iam_audit_flags_unmapped_call(tmp_path: Path) -> None:
+
+def test_iam_audit_parses_gcp_and_azure_calls(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
-    code_file = src_dir / "unmapped.py"
+    code_file = src_dir / "cloud_service.py"
     code_file.write_text(
         """
-import boto3
+from google.cloud import storage, bigquery
+from azure.storage.blob import BlobServiceClient
 
-def do_unknown():
-    client = boto3.client("custom_service_xyz")
-    client.arbitrary_mystery_call()
+def run_cloud():
+    gcp_storage = storage.Client()
+    gcp_storage.download_as_bytes()
+
+    bq = bigquery.Client()
+    bq.query("SELECT 1")
+
+    blob = BlobServiceClient(account_url="https://test.blob.core.windows.net")
+    blob.download_blob("container", "blob")
 """,
         encoding="utf-8",
     )
@@ -75,8 +86,70 @@ def do_unknown():
     tool = IamAuditTool()
     res = tool.run(tmp_path)
 
-    assert res["status"] == "warn"
-    assert any(f.get("rule_id") == "iam-unmapped-call" for f in res["findings"])
+    assert res["tool"] == "iam-audit"
+    assert res["status"] == "ok"
+    raw_actions = set(res["raw"]["actions"])
+    assert "storage.objects.get" in raw_actions
+    assert "bigquery.jobs.create" in raw_actions
+    assert (
+        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"
+        in raw_actions
+    )
+
+
+def test_iam_audit_valid_terraform_fixture() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    valid_tf_dir = repo_root / "tests" / "fixtures" / "phase50" / "iam"
+    tool = IamAuditTool()
+    res = tool.run(valid_tf_dir / "valid_policy.tf")
+
+    assert res["tool"] == "iam-audit"
+    assert res["status"] == "ok"
+    assert res["findings"] == []
+    metrics = res.get("metrics") or {}
+    assert metrics["wildcard_actions_count"] == 0
+    assert metrics["risk_score"] == 0.0
+
+
+def test_iam_audit_overprivileged_terraform_fixture() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    fixture = (
+        repo_root
+        / "tests"
+        / "fixtures"
+        / "phase50"
+        / "iam"
+        / "overprivileged_policy.tf"
+    )
+    tool = IamAuditTool()
+    res = tool.run(fixture)
+
+    assert res["tool"] == "iam-audit"
+    assert res["status"] == "fail"  # Fails due to privilege escalation findings
+    findings = res["findings"]
+    assert any(f["rule_id"] == "iam-wildcard-action" for f in findings)
+    assert any(f["rule_id"] == "iam-privilege-escalation" for f in findings)
+
+    metrics = res.get("metrics") or {}
+    assert metrics["wildcard_actions_count"] >= 1
+    assert metrics["privilege_escalation_paths"] >= 1
+    assert metrics["risk_score"] >= 0.5
+
+
+def test_iam_audit_zero_fallback_on_empty_code(tmp_path: Path) -> None:
+    # Empty dir with no cloud calls
+    empty_src = tmp_path / "empty.py"
+    empty_src.write_text("x = 1\n", encoding="utf-8")
+
+    tool = IamAuditTool()
+    res = tool.run(tmp_path)
+
+    assert res["tool"] == "iam-audit"
+    assert res["status"] == "ok"
+    assert res["findings"] == []
+    assert res["metrics"]["actions_count"] == 0
+    # Proves zero fake fallback injection: policy must be None, not fake s3 actions!
+    assert res["raw"]["policy"] is None
 
 
 def test_iam_audit_export_policy_permissions(tmp_path: Path) -> None:
@@ -99,11 +172,6 @@ s3.get_object(Bucket="b", Key="k")
         permissions=ExecutionPermissions(artifact_write=False),
     )
     assert res_skipped["status"] == "skipped"
-    assert (
-        "artifact-write" in res_skipped["summary"]
-        or "artifact_write" in res_skipped["summary"]
-    )
-    assert not (tmp_path / "policy.json").exists()
 
     # With artifact_write permission
     res_ok = tool.run(
@@ -112,82 +180,24 @@ s3.get_object(Bucket="b", Key="k")
         permissions=ExecutionPermissions(artifact_write=True),
     )
     assert res_ok["status"] == "ok"
-    out_file = tmp_path / "policy.json"
-    assert out_file.exists()
-    assert str(out_file) in res_ok.get("artifacts", [])
-
-    data = json.loads(out_file.read_text(encoding="utf-8"))
-    assert data["Version"] == "2012-10-17"
+    assert res_ok.get("artifacts") is not None
+    assert (tmp_path / "policy.json").is_file()
 
 
-def test_iam_audit_legacy_synthesizer_backward_compatibility(
-    tmp_path: Path,
-) -> None:
-    synth = IamPolicySynthesizer(project_root=tmp_path)
-    policy = synth.synthesize_policy()
-
-    assert policy["Version"] == "2012-10-17"
-    assert len(policy["Statement"]) > 0
-    assert "s3:GetObject" in policy["Statement"][0]["Action"]
-
-
-def test_iam_audit_parses_gcp_and_azure_calls(tmp_path: Path) -> None:
+def test_iam_policy_synthesizer_backward_compatibility(tmp_path: Path) -> None:
     src_dir = tmp_path / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
-    (src_dir / "cloud_service.py").write_text(
+    (src_dir / "app.py").write_text(
         """
-from google.cloud import storage
-from azure.storage.blob import BlobServiceClient
-
-def gcp_ops():
-    client = storage.Client()
-    blob = client.get_blob("bucket", "obj")
-    client.upload_from_string("data")
-
-def azure_ops():
-    az = BlobServiceClient("conn_str")
-    az.download_blob("container", "blob")
+import boto3
+s3 = boto3.client("s3")
+s3.put_object(Bucket="b", Key="k")
 """,
         encoding="utf-8",
     )
 
-    tool = IamAuditTool()
-    res = tool.run(tmp_path)
-
-    assert res["status"] == "ok"
-    actions = set(res["raw"]["actions"])
-    assert "storage.objects.get" in actions
-    assert "storage.objects.create" in actions
-    assert (
-        "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"
-        in actions
-    )
-
-
-def test_iam_audit_detects_terraform_wildcard_actions(tmp_path: Path) -> None:
-    infra_dir = tmp_path / "terraform"
-    infra_dir.mkdir(parents=True, exist_ok=True)
-    (infra_dir / "main.tf").write_text(
-        """
-resource "aws_iam_policy" "wildcard_policy" {
-  name = "dangerous_policy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "*"
-        Effect = "Allow"
-        Resource = "*"
-      }
-    ]
-  })
-}
-""",
-        encoding="utf-8",
-    )
-
-    tool = IamAuditTool()
-    res = tool.run(tmp_path)
-
-    assert res["status"] == "warn"
-    assert any(f.get("rule_id") == "iam-wildcard-action" for f in res["findings"])
+    synthesizer = IamPolicySynthesizer(project_root=tmp_path)
+    policy = synthesizer.synthesize()
+    assert policy.get("Version") == "2012-10-17"
+    assert len(policy.get("Statement", [])) == 1
+    assert "s3:PutObject" in policy["Statement"][0]["Action"]

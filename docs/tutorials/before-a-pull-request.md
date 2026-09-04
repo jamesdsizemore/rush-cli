@@ -73,4 +73,3 @@ rush attest . --export-path artifacts/provenance.json --allow-artifact-write
 ```
 
 Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.
-

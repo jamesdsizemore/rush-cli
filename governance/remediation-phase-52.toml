@@ -50,7 +50,7 @@ test_files = [
     "tests/test_phase52_version_contract.py",
     "tests/test_phase52_installed_artifacts.py",
 ]
-total_contract_tests = 11
+total_contract_tests = 16
 
 [successors]
 phases = [53, 54, 55, 56, 57, 58, 59, 60]

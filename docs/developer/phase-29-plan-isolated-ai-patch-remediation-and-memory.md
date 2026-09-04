@@ -1,10 +1,10 @@
 # Phase 29 Implementation Plan: Isolated AI Patch Remediation & Memory (`rush patch`)
 
-> **Phase:** 29 of 40  
-> **Milestone:** Ephemeral Worktree Patch Sandboxing, Deterministic Session Memory & Closed-Loop Verification  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Implement an isolated AI patch remediation subsystem (`rush patch`) executing multi-step LLM repairs within ephemeral Git worktree sandboxes, running closed-loop test verifications, and recording successful fix recipes in a local SQLite patch memory store (`.rush/patch_memory.db`).  
+> **Phase:** 29 of 40
+> **Milestone:** Ephemeral Worktree Patch Sandboxing, Deterministic Session Memory & Closed-Loop Verification
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Implement an isolated AI patch remediation subsystem (`rush patch`) executing multi-step LLM repairs within ephemeral Git worktree sandboxes, running closed-loop test verifications, and recording successful fix recipes in a local SQLite patch memory store (`.rush/patch_memory.db`).
 > **End State Outcome & Verification Checks:**
 > - [x] `PatchSandboxManager` creates ephemeral isolated worktrees with automatic cleanup.
 > - [x] `PatchVerifier` executes pre-patch and post-patch test suites to prevent behavioral regressions.
@@ -12,15 +12,15 @@
 > - [x] CLI commands `rush patch apply`, `verify`, `promote` and FastMCP endpoints operational.
 > - [x] 100% test pass rate across `tests/test_patch_sandbox_and_memory.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0018: Closed-Loop AI Agent Patch Remediation and Session Memory](../adr/0018-closed-loop-ai-agent-patch-remediation-and-session-memory.md)  
-> - [ADR-0021: Ephemeral Git Worktree Sandboxing](../adr/0021-ephemeral-git-worktree-sandboxing.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Discovered External Engines (Zero-Bundled):** Discovered local test runners (`pytest`, `vitest`, `cargo test`, `go test`, `npm test`)  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0018: Closed-Loop AI Agent Patch Remediation and Session Memory](../adr/0018-closed-loop-ai-agent-patch-remediation-and-session-memory.md)
+> - [ADR-0021: Ephemeral Git Worktree Sandboxing](../adr/0021-ephemeral-git-worktree-sandboxing.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Discovered External Engines (Zero-Bundled):** Discovered local test runners (`pytest`, `vitest`, `cargo test`, `go test`, `npm test`)
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-29-isolated-ai-patch-remediation-and-memory

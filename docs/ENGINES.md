@@ -224,7 +224,7 @@ Install only if that check is part of your project policy. Then launch Rush from
 | `attest` | Built-in | in-toto Statement v1 provenance generator with SHA-256 hashing. |
 | `mem-profile` | Built-in | AST resource lifecycle analyzer and tracemalloc probe. |
 | `cold-start` | Built-in | AST import visitor and -X importtime waterfall analyzer. |
-| `offline-review` | Built-in / Optional | Air-gapped local ONNX model review adapter. |
+| `offline-review` | Built-in / Optional | Air-gapped local LLM review adapter (Ollama / llama-cli). |
 | `benchmark` | Built-in | Stdlib statistics performance comparator. |
 
 ---
@@ -242,4 +242,3 @@ Rush governs engine discovery and conformance through `governance/engine-support
 3. **Best-Effort (`support_class = "best-effort"`)**:
    - `onnxruntime`, `ollama`, `vulture`, `radon`.
    - Experimental or advisory tools with permissive skip semantics (`can_pass_all_skipped = true`).
-

@@ -1,6 +1,6 @@
 # Vibecoding with Rush: Guides & Tutorials
 
-Welcome to the official **Vibecoding with Rush** guides! 
+Welcome to the official **Vibecoding with Rush** guides!
 
 Vibecoding is the art and science of building real-world software by directing AI models through natural language prompts. When done right, it makes software development feel like pure magic.
 

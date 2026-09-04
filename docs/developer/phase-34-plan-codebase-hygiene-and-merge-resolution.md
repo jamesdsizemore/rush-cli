@@ -1,10 +1,10 @@
 # Phase 34 Implementation Plan: Codebase Hygiene & AST Merge Resolution (`rush hygiene` / `rush conflict`)
 
-> **Phase:** 34 of 40  
-> **Milestone:** Dead Code Detection, Repository Hygiene, Class Body & 3-Way AST Merge Conflict Resolution  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build codebase hygiene and AST-aware merge conflict resolution tooling (`rush hygiene`, `rush conflict`) that scans for unreferenced dead symbols, prunes orphaned build caches, analyzes stale Git branches, and automatically resolves 3-way AST merge conflicts across classes, imports, lists, and dictionaries.  
+> **Phase:** 34 of 40
+> **Milestone:** Dead Code Detection, Repository Hygiene, Class Body & 3-Way AST Merge Conflict Resolution
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build codebase hygiene and AST-aware merge conflict resolution tooling (`rush hygiene`, `rush conflict`) that scans for unreferenced dead symbols, prunes orphaned build caches, analyzes stale Git branches, and automatically resolves 3-way AST merge conflicts across classes, imports, lists, and dictionaries.
 > **End State Outcome & Verification Checks:**
 > - [x] `DeadCodeScanner` discovers unreferenced functions, classes, and variables with zero false positives on public APIs.
 > - [x] `AstMergeEngine` resolves 3-way Git merge collisions in Python and TypeScript files cleanly.
@@ -12,14 +12,14 @@
 > - [x] CLI commands `rush hygiene dead-code`, `clean`, `rush conflict solve` operational.
 > - [x] 100% test pass rate across `tests/test_codebase_hygiene.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0019: Native Graft Semantic Slicing and Tree-Sitter](../adr/0019-native-graft-semantic-slicing-and-tree-sitter.md)  
-> - [ADR-0021: Ephemeral Git Worktree Sandboxing](../adr/0021-ephemeral-git-worktree-sandboxing.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0019: Native Graft Semantic Slicing and Tree-Sitter](../adr/0019-native-graft-semantic-slicing-and-tree-sitter.md)
+> - [ADR-0021: Ephemeral Git Worktree Sandboxing](../adr/0021-ephemeral-git-worktree-sandboxing.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-34-codebase-hygiene-and-merge-resolution

@@ -1,10 +1,10 @@
 # Phase 21 Implementation Plan: Flag-Salted Cryptographic Cache & Git Scoping
 
-> **Phase:** 21 of 40  
-> **Milestone:** Performance Acceleration, Zero-Redundancy Execution & Git Scoping  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Implement a zero-trust SQLite-backed Merkle cache (`.rush/cache.db`) with SHA-256 flag salting and hardened Git diff scoping (`--staged`, `--changed`, `--since`) to reduce multi-tool scan times on unchanged files from 60s+ to <5ms.  
+> **Phase:** 21 of 40
+> **Milestone:** Performance Acceleration, Zero-Redundancy Execution & Git Scoping
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Implement a zero-trust SQLite-backed Merkle cache (`.rush/cache.db`) with SHA-256 flag salting and hardened Git diff scoping (`--staged`, `--changed`, `--since`) to reduce multi-tool scan times on unchanged files from 60s+ to <5ms.
 > **End State Outcome & Verification Checks:**
 > - [x] `ResultCache` initialized in SQLite WAL mode with parameterized queries.
 > - [x] Composite cache keys strictly derived from `SHA-256(content_bytes + tool + version + config + flags)`.
@@ -12,12 +12,12 @@
 > - [x] CLI commands `rush cache stats`, `rush cache clean` operational.
 > - [x] 100% test pass rate across `tests/test_cache.py` and `tests/test_git_scoping.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0014: Incremental Content-Hash Result Caching and Git Scoping](../adr/0014-incremental-content-hash-result-cache.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0014: Incremental Content-Hash Result Caching and Git Scoping](../adr/0014-incremental-content-hash-result-cache.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-21-incremental-cache-and-git-scoping

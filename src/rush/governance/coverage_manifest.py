@@ -45,6 +45,7 @@ EXCLUDED_DIRS = {
     ".repowise",
     ".repowise-workspace",
     ".vscode",
+    "%SystemDrive%",
 }
 
 
@@ -147,6 +148,14 @@ def classify_path(rel_path: str) -> CoverageRecord:
             inclusion_rule="directory-tree:examples/",
         )
 
+    # Agent skills
+    if normalized.startswith("skills/"):
+        return CoverageRecord(
+            path=normalized,
+            classification="governance",
+            inclusion_rule="directory-tree:skills/",
+        )
+
     # Project metadata and configuration files
     if (
         normalized
@@ -161,9 +170,13 @@ def classify_path(rel_path: str) -> CoverageRecord:
             ".tool-versions",
             "opencode.json",
             "phase50-adversarial-review.md",
+            ".repowise-workspace.yaml",
+            ".mcp.json",
         }
         or (normalized.endswith(".txt") and "/" not in normalized)
         or (normalized.endswith(".json") and "/" not in normalized)
+        or (normalized.endswith(".yaml") and "/" not in normalized)
+        or (normalized.endswith(".yml") and "/" not in normalized)
     ):
         return CoverageRecord(
             path=normalized,

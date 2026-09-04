@@ -1,7 +1,7 @@
-# Unreferenced Asset & Dead Media Pruner (`rush dead-asset`)
+# Unreferenced Asset & Dead Media Scanner (`rush dead-asset`)
 
 ## Overview
-`rush dead-asset` scans the repository for static images, media, and font files that are not referenced in application source code, stylesheets, templates, or documentation. It generates cryptographic SHA-256 audit manifests and executes guarded pruning with explicit `--allow-artifact-write` permission gating.
+`rush dead-asset` scans the repository for static images, media, and font files that are not referenced in application source code, stylesheets, templates, or documentation. It calculates potential disk space savings, generates deterministic SHA-256 audit manifests, and enforces a strictly read-only guarantee (zero file deletions or mutations).
 
 ## Classification
 - **Category**: `quality`
@@ -10,14 +10,12 @@
 - **FastMCP Tool**: `rush_dead_asset`
 
 ## Capabilities
-0. **Potential Disk Space Savings**: Calculates the aggregate size in bytes of all unreferenced assets, reporting potential savings in summary, raw, and metadata.
-1. **Multi-Format Asset Discovery**: Scans for static assets including `.png`, `.jpg`, `.jpeg`, `.svg`, `.gif`, `.webp`, `.ttf`, `.woff`, `.woff2`, `.ico`, `.bmp`, `.mp4`, `.webm`, excluding `.git`, `.venv`, `.rush`, `node_modules`, `dist`, and `build`.
-2. **Comprehensive Source Cross-Referencing**: Searches across Python, TypeScript, JavaScript, HTML, CSS, SCSS, Markdown, JSON, YAML, and XML files to detect asset references by filename or relative path.
-3. **Deterministic Audit Manifest**: Computes SHA-256 digests and file sizes for every asset, tagging each as `referenced` or `unreferenced`.
-4. **Guarded Pruning**:
-   - Requires explicit `--allow-artifact-write` permission.
-   - Re-validates the SHA-256 digest of each candidate immediately prior to deletion to protect against concurrent modifications or replacement attacks.
-   - Enforces workspace containment to prevent deletion outside the repository root.
+1. **Potential Disk Space Savings**: Calculates the aggregate size in bytes of all unreferenced assets, reporting potential savings in summary, raw metrics, and metadata.
+2. **Multi-Format Asset Discovery**: Scans for static assets including `.png`, `.jpg`, `.jpeg`, `.svg`, `.gif`, `.webp`, `.ttf`, `.woff`, `.woff2`, `.ico`, `.bmp`, `.tiff`, `.mp4`, `.webm`, excluding `.git`, `.venv`, `.rush`, `node_modules`, `dist`, and `build`.
+3. **Comprehensive Source Cross-Referencing**: Searches across Python, TypeScript, JavaScript, HTML, CSS, SCSS, Markdown, JSON, YAML, and XML files to detect asset references by filename or relative path.
+4. **Deterministic Audit Manifest**: Computes SHA-256 digests and file sizes for every asset, tagging each as `referenced` or `unreferenced`.
+5. **Contained Manifest Export**: Exporting audit manifests via `--export-manifest` requires explicit `--allow-artifact-write` permission and enforces workspace containment (rejecting path traversals).
+6. **Strictly Read-Only Invariant**: Does not modify, unlink, or delete any files in the repository.
 
 ## CLI Usage
 
@@ -36,19 +34,14 @@ rush dead-asset . --json
 rush dead-asset . --export-manifest .rush/asset-manifest.json --allow-artifact-write
 ```
 
-### Guarded Prune
-```bash
-rush dead-asset . --prune --allow-artifact-write
-```
-
 ## FastMCP Usage
 ```json
 {
   "name": "rush_dead_asset",
   "arguments": {
     "path": ".",
-    "prune": false,
-    "allow_artifact_write": false
+    "export_manifest": ".rush/asset-manifest.json",
+    "allow_artifact_write": true
   }
 }
 ```
@@ -61,7 +54,7 @@ rush dead-asset . --prune --allow-artifact-write
   "engine_version": "1.0.0",
   "status": "warn",
   "duration_ms": 25,
-  "summary": "dead-asset: found 2 unreferenced assets out of 10 total assets.",
+  "summary": "dead-asset: scanned 10 assets, found 2 unreferenced (45.2 KB potential savings). Strictly read-only analysis.",
   "findings": [
     {
       "path": "static/img/old_banner.png",
@@ -74,23 +67,24 @@ rush dead-asset . --prune --allow-artifact-write
       "fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
+  "metrics": {
+    "total_assets": 10,
+    "dead_assets_count": 2,
+    "potential_savings_bytes": 46234
+  },
   "raw": {
     "total_assets": 10,
     "dead_assets_count": 2,
     "dead_assets": [
       "static/img/old_banner.png",
       "static/fonts/legacy.woff"
-    ]
+    ],
+    "potential_savings_bytes": 46234
   },
   "metadata": {
-    "total_assets": 10,
-    "dead_assets_count": 2,
-    "dead_assets": [
-      "static/img/old_banner.png",
-      "static/fonts/legacy.woff"
-    ],
-    "bytes_freed": 0,
-    "pruned": false
+    "manifest": [],
+    "potential_savings_bytes": 46234,
+    "execution": {}
   }
 }
 ```

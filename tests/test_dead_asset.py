@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rush.permissions import ExecutionPermissions
@@ -28,7 +29,7 @@ def test_dead_asset_scans_and_identifies_unreferenced_assets(tmp_path: Path) -> 
     res = tool.run(tmp_path)
 
     assert res["tool"] == "dead-asset"
-    assert res["status"] in ("ok", "warn")
+    assert res["status"] == "warn"
     assert res["raw"] is not None
 
     raw = res["raw"]
@@ -38,57 +39,63 @@ def test_dead_asset_scans_and_identifies_unreferenced_assets(tmp_path: Path) -> 
     assert any("old_banner.jpg" in p for p in dead_paths)
     assert any("custom_font.woff2" in p for p in dead_paths)
     assert not any("logo_active.png" in p for p in dead_paths)
+    # Verify read-only guarantee: dead assets are never deleted
+    assert dead_img.exists()
+    assert dead_font.exists()
 
 
-def test_dead_asset_pruning_requires_artifact_write_permission(tmp_path: Path) -> None:
+def test_dead_asset_export_manifest_requires_artifact_write_permission(
+    tmp_path: Path,
+) -> None:
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir(parents=True)
     dead_img = assets_dir / "unused.png"
     dead_img.write_bytes(b"unused data")
 
     tool = DeadAssetTool()
+    manifest_path = tmp_path / "manifest.json"
 
-    # Prune without permission
+    # Export without permission
     denied = tool.run(
         tmp_path,
-        prune=True,
+        export_manifest=manifest_path,
         permissions=ExecutionPermissions(artifact_write=False),
     )
-    assert denied["status"] in ("skipped", "warn")
-    assert dead_img.exists()
+    assert denied["status"] == "skipped"
+    assert not manifest_path.exists()
     assert "--allow-artifact-write" in denied["summary"]
 
-    # Prune with permission
+    # Export with permission
     granted = tool.run(
         tmp_path,
-        prune=True,
+        export_manifest=manifest_path,
         permissions=ExecutionPermissions(artifact_write=True),
     )
-    assert granted["status"] == "ok"
-    assert not dead_img.exists()
-    assert granted["metadata"]["bytes_freed"] == len(b"unused data")
+    assert granted["status"] == "warn"
+    assert manifest_path.exists()
+    written_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert len(written_data) == 1
+    assert written_data[0]["path"] == "assets/unused.png"
+    assert written_data[0]["status"] == "unreferenced"
+    # Verify strictly read-only: target asset is NOT deleted
+    assert dead_img.exists()
 
 
-def test_dead_asset_prune_validates_sha256_before_deletion(tmp_path: Path) -> None:
+def test_dead_asset_strictly_read_only_and_path_traversal_check(tmp_path: Path) -> None:
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir(parents=True)
-    dead_img = assets_dir / "changed_concurrently.png"
+    dead_img = assets_dir / "changed.png"
     dead_img.write_bytes(b"initial")
 
     tool = DeadAssetTool()
-    manifest = tool.generate_manifest(tmp_path)
-    item = next(i for i in manifest if "changed_concurrently.png" in i["path"])
-
-    # Tamper with file before prune
-    dead_img.write_bytes(b"tampered content")
-
-    # Pruning with stale manifest candidate should fail validation or protect the file
-    pruned_count, _freed_bytes = tool.prune_candidates(
+    # Path traversal rejection
+    res = tool.run(
         tmp_path,
-        candidates=[item],
+        export_manifest="../outside.json",
         permissions=ExecutionPermissions(artifact_write=True),
     )
-    assert pruned_count == 0
+    assert res["status"] == "error"
+    assert "escapes target root" in res["summary"]
     assert dead_img.exists()
 
 
@@ -110,25 +117,32 @@ def test_dead_asset_scanner_backward_compatibility(tmp_path: Path) -> None:
 
 
 def test_dead_asset_canonical_schema_and_call(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "logo.png").write_bytes(b"data")
+    src = tmp_path / "index.html"
+    src.write_text('<img src="assets/logo.png">', encoding="utf-8")
+
     tool = DeadAssetTool()
     res = tool(tmp_path)
 
     assert res["tool"] == "dead-asset"
-    assert res["status"] in ("ok", "warn", "skipped")
+    assert res["status"] == "ok"
     assert isinstance(res["duration_ms"], int)
     assert isinstance(res["findings"], list)
+    assert res["raw"]["dead_assets_count"] == 0
 
 
 def test_dead_asset_reports_potential_savings_bytes(tmp_path: Path) -> None:
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir(parents=True)
     dead_file = assets_dir / "unused_bg.png"
-    dead_file.write_bytes(b"A" * 1234)
+    dead_file.write_bytes(b"A" * 1024)
 
     tool = DeadAssetTool()
     res = tool.run(tmp_path)
 
     assert res["status"] == "warn"
-    assert res["raw"]["potential_savings_bytes"] == 1234
-    assert res["metadata"]["potential_savings_bytes"] == 1234
-    assert "1234 bytes potential savings" in res["summary"]
+    assert res["raw"]["potential_savings_bytes"] == 1024
+    assert res["metadata"]["potential_savings_bytes"] == 1024
+    assert "1.0 KB potential savings" in res["summary"]

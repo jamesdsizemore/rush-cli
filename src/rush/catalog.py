@@ -701,17 +701,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     "dead-asset": ToolSpec(
         name="dead-asset",
         category="quality",
-        description="Scan repository for unreferenced media, font, and static assets with guarded pruning.",
-        mcp_description="Scan unreferenced assets at <path>; generate manifest; prune requires --allow-artifact-write and SHA-256 validation.",
+        description="Scan repository for unreferenced media, font, and static assets (strictly read-only).",
+        mcp_description="Scan unreferenced assets at <path> and generate audit manifest; export requires --allow-artifact-write.",
         engine_names=(),
         maturity="real_adapter",
         option_specs=(
-            ToolOptionSpec(
-                name="prune",
-                value_type=bool,
-                default=False,
-                description="Prune unreferenced assets after SHA-256 validation.",
-            ),
             ToolOptionSpec(
                 name="export_manifest",
                 value_type=str,

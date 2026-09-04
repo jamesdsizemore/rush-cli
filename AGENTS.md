@@ -63,6 +63,13 @@ adding a tool.
   system (enhancing how the AI reasons, navigates, remembers, and verifies), not
   as consumer UI widgets or product gimmicks for the end-user.
 
+### Zero Simulated Completion & Zero Downscoping
+- **Never downscope or degrade specifications**: The specification is the immutable contract. When an implementation falls short of a plan, the only acceptable action is completing the implementation. Never offer, propose, or execute downscoping to match degraded code.
+- **Zero placeholder/deferred stubs in production paths**: Stubs returning `"unknown"`, `"deferred"`, or simulated metric dictionaries are prohibited. If an analytical engine cannot be implemented, do not fake its return shape.
+- **Zero tautological or permissive test assertions**: Never write tests that assert placeholder values (e.g. `assert val == "unknown"`) or permissive membership (e.g. `assert status in ("ok", "warn", "skipped")`). Tests must assert exact domain computations against realistic fixtures.
+- **Two-pass verification (Plan-vs-Code first)**: When reviewing or validating code, verify the plan's Requirement Ledger (§5) and File Writes (§8.1) against actual files and AST calls first. Green tests that validate stubs are a failure of review integrity.
+- **Zero recycling of pre-remediation prototypes**: Never wrap legacy or pre-remediation stubs with new interfaces to simulate compliance. Build the required engine directly.
+
 ### Scope boundaries
 - **No UI/Frontend design**: Rush is strictly a local CLI, FastMCP server, and
   backend/systems quality substrate. Never propose or build UI design tools,
@@ -70,3 +77,44 @@ adding a tool.
 - **No unprompted Git hooks**: Never install, propose, or configure Git hooks.
 
 
+<!-- graft:start -->
+## Graft — repo context graph
+
+This repo is indexed in `graft/`: small linked markdown nodes that explain each
+system and carry exact file:line spans, kept in sync with the code through git.
+
+For ANY task here — understanding how something works, finding where code lives,
+or scoping a change — get context from the graph before grepping or opening
+source files. Re-ask freely (it's cheap) and reuse literal identifiers you
+already have (symbol, error string, file name) as the query. New to this repo?
+Run `graft map` first — a token-budgeted orientation (dir clusters, hubs,
+hotspots), no LLM, no key.
+
+- Run `graft ask "<your question>" --source` → ranked nodes with the relevant
+  code spans inlined (each hit's ≤8-line crux by default; `--full` for whole
+  definitions when the crux isn't enough). Match the tool to the task shape:
+  for understanding or editing, the top node IS the answer — cite its
+  `covers:` file:line spans and edit straight from `--source`. For
+  exhaustive tasks ("every occurrence / every caller of this pattern"), ranked
+  results are top-N, not complete — run `graft grep "<literal>"` instead
+  (exhaustive over indexed files, grouped by enclosing symbol), falling back
+  to raw `grep -rn` only for unindexed files.
+- `graft skeleton <file>` → every definition's signature + span, ~10× cheaper
+  than reading the file; use it to skim an API surface.
+- `graft callers <symbol>` gives precomputed, exact edges — who calls this.
+  Add `--direction out` for what it calls, or `--depth N` to walk
+  transitively for the full blast radius. For structural questions, skip
+  ranking and use this directly.
+- Or browse: `graft/INDEX.md` lists every node; follow the links.
+- Monorepos and folders of multiple repos rank fairly across sub-projects —
+  hits carry `[scope/]` labels naming which one they're from. Narrow with
+  `graft ask "<task>" --in <scope>/` once you know where you're working.
+
+If a returned span is truncated ("+N more lines"), open the file at that exact
+range before finalizing. Only open source files when a node genuinely lacks a
+needed detail, and then at the exact file:line the node points to — never
+re-read whole files.
+
+After big code changes, refresh the graph with `graft build` (deterministic,
+no API key, $0).
+<!-- graft:end -->

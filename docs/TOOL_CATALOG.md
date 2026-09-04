@@ -57,17 +57,17 @@ The catalog contains 52 user-visible tools. **Maturity matters:** a listed tool 
 | `score` | workflow | real adapter | 6-pillar composite quality scorecard, SARIF 2.1.0 exporter, SVG badge generator, multi-model consensus reconciler |
 | `prompt-eval` | test | real adapter | golden task evaluation matrix, tool sequence and patch matching, token/cost budgets, pass rate thresholds |
 | `error-catalog` | security | real adapter | Python, TypeScript, and Rust AST/regex exception extractor; deterministic RFC 7807 problem details and Markdown docs generator |
-| `provenance-ai` | workflow | real adapter | Git commit trailer attribution (Co-authored-by, Generated-by), shallow history detection, unknown survival states |
+| `provenance-ai` | workflow | real adapter | Git commit trailer attribution (Co-authored-by, Generated-by), line survival rates (30/60/90d), defect correlation |
 | `attest` | security | real adapter | in-toto Statement v1 unsigned provenance draft for a local artifact with SHA-256 digest |
 | `license-matrix` | security | real adapter | multi-manifest dependency license auditor across pyproject.toml, package.json, and Cargo.toml with SPDX normalization and copyleft tiering |
 | `iam-audit` | security | real adapter | static multi-cloud SDK (AWS, GCP, Azure) and Terraform wildcard usage auditor and least-privilege IAM policy synthesizer |
 | `mem-profile` | quality | real adapter | static AST unclosed resource detection and optional dynamic memory probe under `--allow-slow` |
 | `cold-start` | quality | real adapter | static Python AST import inventory and dynamic `-X importtime` module timing under `--allow-slow` |
 | `media-opt` | quality | real adapter | SVG script security audit/sanitization and Pillow PNG/WebP raster optimization under `--allow-artifact-write` |
-| `offline-review` | security | real adapter | air-gapped local ONNX model review runner with zero network access |
+| `offline-review` | security | real adapter | air-gapped local LLM review runner (discovers Ollama or llama-cli on PATH; skips if absent) |
 | `tui-diff` | workflow | real adapter | Git commit and finding delta computer with Rich terminal rendering and raw MCP payloads |
 | `benchmark` | test | real adapter | performance sample comparison against baseline thresholds in `.rush/baselines.json` |
-| `dead-asset` | quality | real adapter | static asset vs source reference scanner, manifest generator, and guarded prune with hash verification |
+| `dead-asset` | quality | real adapter | static asset vs source reference scanner, potential savings calculator, and read-only manifest generator |
 | `pr-synthesize` | workflow | real adapter | Git diff and ToolResult evidence parser synthesizing structured GitHub pull request markdown cards |
 
 

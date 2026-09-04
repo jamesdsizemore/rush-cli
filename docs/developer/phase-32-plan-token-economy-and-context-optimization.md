@@ -1,10 +1,10 @@
 # Phase 32 Implementation Plan: Token Economy & Context Optimization (`rush token`)
 
-> **Phase:** 32 of 40  
-> **Milestone:** Fast BPE Token Counter, AST Outline Compression, Context Diet & Response Budget Guards  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a token economy and context compression subsystem (`rush token`) that calculates multi-model BPE token counts (Claude 3.7, GPT-4o, Gemini 2.5, DeepSeek R1), compresses giant source files into high-density AST outlines (achieving 90%+ token reduction), and enforces strict response token budgets.  
+> **Phase:** 32 of 40
+> **Milestone:** Fast BPE Token Counter, AST Outline Compression, Context Diet & Response Budget Guards
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a token economy and context compression subsystem (`rush token`) that calculates multi-model BPE token counts (Claude 3.7, GPT-4o, Gemini 2.5, DeepSeek R1), compresses giant source files into high-density AST outlines (achieving 90%+ token reduction), and enforces strict response token budgets.
 > **End State Outcome & Verification Checks:**
 > - [x] `TokenCounter` accurately counts tokens across Claude, OpenAI, and DeepSeek tokenizers.
 > - [x] `ASTOutlineCompressor` strips function bodies while preserving verbatim type signatures and docstrings.
@@ -12,14 +12,14 @@
 > - [x] CLI commands `rush token count`, `rush token outline`, `rush token diet`, `rush token cost` operational.
 > - [x] 100% test pass rate across `tests/test_token_economy.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0019: Native Graft Semantic Slicing and Tree-Sitter](../adr/0019-native-graft-semantic-slicing-and-tree-sitter.md)  
-> - [ADR-0022: Offline BPE Token Accounting](../adr/0022-offline-bpe-token-accounting.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0019: Native Graft Semantic Slicing and Tree-Sitter](../adr/0019-native-graft-semantic-slicing-and-tree-sitter.md)
+> - [ADR-0022: Offline BPE Token Accounting](../adr/0022-offline-bpe-token-accounting.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-32-token-economy-and-context-optimization

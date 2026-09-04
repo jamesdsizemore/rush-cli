@@ -333,18 +333,16 @@ Audit multi-cloud SDK (AWS boto3, GCP, Azure) and Terraform wildcard usage and s
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush dead-asset`
-Scan for unreferenced media, font, and image files in the repository.
+Scan for unreferenced media, font, and static files in the repository (strictly read-only).
 * `PATH`: Project root directory.
-* `--operation`: Operation mode (`audit` | `prune`, default: `audit`). `prune` requires `--allow-artifact-write`.
-* `--export-manifest, -o`: Output path for JSON manifest (requires `--allow-artifact-write`).
+* `--export-manifest`: Output path for JSON manifest (requires `--allow-artifact-write`).
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush pr-synthesize`
 Synthesize structured semantic pull request markdown card from Git diff and tool results.
 * `PATH`: Project root directory.
-* `--base-ref, -b`: Base branch or ref to diff against (default: `main`).
-* `--evidence-file, -e`: Optional path to JSON ToolResult evidence file.
-* `--export-card, -o`: Output path for PR markdown file (requires `--allow-artifact-write`).
+* `--base-ref`: Base branch or ref to diff against (default: `main`).
+* `--export-path`: Output path for PR markdown file (requires `--allow-artifact-write`).
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush prompt-eval`
@@ -364,8 +362,9 @@ Extract Python, TypeScript, and Rust exceptions and generate RFC 7807 problem de
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush provenance-ai`
-Analyze Git commit trailers for AI co-authorship and model provenance metadata.
+Analyze Git commit trailers for AI co-authorship, calculate 30/60/90-day line survival rates, and correlate defects.
 * `PATH`: Project root directory.
+* `--max-commits`: Maximum number of commits to audit (default: 500).
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush mem-profile`
@@ -390,10 +389,11 @@ Audit, sanitize SVG files, and optimize raster media assets.
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush offline-review`
-Execute air-gapped local ONNX code review model inference with zero network connectivity.
+Execute air-gapped local LLM review using Ollama or llama-cli discovered on PATH (skips if absent).
 * `PATH`: Project root directory.
-* `--model-path`: Contained path to local ONNX model file.
-* `--model-sha256`: Expected SHA-256 digest of the model file.
+* `--runner-path`: Explicit path to local runner executable.
+* `--model`: Local model name (default: `llama3:latest`).
+* `--model-path`: Local GGUF model file for `llama-cli`.
 * `--json`: Emit raw canonical `ToolResult` JSON payload.
 
 ### `rush tui-diff`

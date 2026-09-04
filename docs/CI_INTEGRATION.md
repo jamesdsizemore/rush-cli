@@ -151,4 +151,3 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
 - name: SLSA Provenance Attestation
   run: rush attest --out provenance.intoto.jsonl
 ```
-

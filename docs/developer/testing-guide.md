@@ -106,6 +106,3 @@ Key invariants:
 - `tests/test_phase53_governance_writers.py`: Sanitization across IDE governance synchronizers (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`), MCP mesh lock manager payloads, and SVG score badges.
 - `tests/test_phase53_state_writers.py`: Disk sanitization across security audit logger, SQLite patch memory store, session flight recorder, preference store, invariant graph, benchmarks, and artifact exports.
 - `tests/test_phase53_logging_diagnostics.py`: Non-swallowed NDJSON exception serialization to stderr, secret redaction across log messages and stack traces, stderr fallback logging on format failure, and strict stdout purity (resolving Findings R-002 and R-008).
-
-
-

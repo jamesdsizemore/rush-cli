@@ -23,17 +23,20 @@ from rush.tools import (
 
 
 def test_cli_attest_json_output(tmp_path: Path) -> None:
-    (tmp_path / "app.py").write_text("print('hello world')", encoding="utf-8")
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "app-0.1.0-py3-none-any.whl").write_bytes(b"wheel binary artifact")
+
     runner = CliRunner()
     result = runner.invoke(cli, ["attest", str(tmp_path), "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["tool"] == "attest"
-    assert data["status"] in ("ok", "warn")
+    assert data["status"] == "ok"
     assert (
         "in-toto" in data["summary"]
         or "SLSA" in data["summary"]
-        or "attest" in data["summary"]
+        or "draft" in data["summary"]
     )
     assert isinstance(data["findings"], list)
 
@@ -47,7 +50,7 @@ def test_cli_mem_profile_json_output(tmp_path: Path) -> None:
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["tool"] == "mem-profile"
-    assert data["status"] in ("ok", "warn")
+    assert data["status"] == "ok"
     assert isinstance(data["findings"], list)
 
 
@@ -58,7 +61,7 @@ def test_cli_cold_start_json_output(tmp_path: Path) -> None:
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["tool"] == "cold-start"
-    assert data["status"] in ("ok", "warn")
+    assert data["status"] == "ok"
     assert isinstance(data["findings"], list)
 
 
@@ -70,7 +73,10 @@ def test_cli_offline_review_json_output(tmp_path: Path) -> None:
     data = json.loads(result.output)
     assert data["tool"] == "offline-review"
     assert data["status"] == "skipped"
-    assert "absent" in data["summary"] or "onnx" in data["summary"].lower()
+    assert (
+        "No external local LLM runner" in data["summary"]
+        or "llama-cli discovered" in data["summary"]
+    )
 
 
 def test_cli_benchmark_json_output(tmp_path: Path) -> None:
@@ -103,14 +109,21 @@ async def test_mcp_phase50c_tools_registered_and_callable(tmp_path: Path) -> Non
             f"Description for {expected} exceeds 200 chars: {len(desc)}"
         )
 
-    (tmp_path / "sample.py").write_text("x = 42\n", encoding="utf-8")
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "sample.whl").write_bytes(b"sample package")
+
     attest_tool = AttestationTool()
     res = attest_tool(tmp_path)
     assert res["tool"] == "attest"
-    assert res["status"] in ("ok", "warn")
+    assert res["status"] == "ok"
 
 
 def test_phase50c_permission_gates(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "app.whl").write_bytes(b"content")
+
     attest_tool = AttestationTool()
     res_attest = attest_tool.run(
         tmp_path,

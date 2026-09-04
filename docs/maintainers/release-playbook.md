@@ -64,7 +64,3 @@ Before finalizing any release candidate:
    pytest tests/test_phase53_logging_diagnostics.py -v
    ```
 3. Confirm `governance/remediation-phase-53.toml` status is `completed` and R-002 and R-008 in `governance/remediation-contracts.toml` are marked `completed`.
-
-
-
-

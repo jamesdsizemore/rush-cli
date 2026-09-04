@@ -213,4 +213,3 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - `probe_installed_artifacts.py` (`scripts/probe_installed_artifacts.py`): Clean wheel/sdist virtualenv harness executing outside checkout with scrubbed `PYTHONPATH` and reproducing R-001 packaging failures.
 - `EngineSupportPolicy` (`governance/engine-support.toml`): 19 engine families classified into `mandatory`, `supported-optional`, and `best-effort` with strict skip prohibitions.
 - `RemediationContracts` (`governance/remediation-contracts.toml`): Single-owner ledger assigning findings R-001 through R-016 to distinct RED/GREEN pairs across successor Phases 52–60.
-

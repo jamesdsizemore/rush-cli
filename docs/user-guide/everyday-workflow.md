@@ -35,7 +35,7 @@ rush watch .
 ```
 
 ### What this feels like:
-Whenever you press `Ctrl+S` (or `Cmd+S`) in your editor, Rush instantly detects the saved file, waits 300 milliseconds so your editor finishes writing, and re-evaluates only the files you touched. 
+Whenever you press `Ctrl+S` (or `Cmd+S`) in your editor, Rush instantly detects the saved file, waits 300 milliseconds so your editor finishes writing, and re-evaluates only the files you touched.
 
 If you make a typo or break a type signature, you’ll see the warning in your terminal before you even switch windows.
 
@@ -160,4 +160,3 @@ Now you can submit your pull request knowing that every test passes, every file 
 2. Clean dead assets: `rush dead-asset`
 3. Generate PR card: `rush pr-synthesize`
 4. Attest build: `rush attest`
-

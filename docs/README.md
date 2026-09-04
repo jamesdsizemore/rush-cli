@@ -163,5 +163,3 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * Deterministic engine support taxonomy across 19 families (`governance/engine-support.toml`).
 * Cross-phase ownership ledger mapping R-001–R-016 to Phases 52–60 (`governance/remediation-contracts.toml`).
 * Full evidence and verification in [`docs/developer/phase-51-implementation-evidence.md`](developer/phase-51-implementation-evidence.md).
-
-

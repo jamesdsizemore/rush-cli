@@ -1,10 +1,10 @@
 # Phase 23 Implementation Plan: Sanitized Stack Onboarding & Configuration Initialization (`rush setup` / `rush init`)
 
-> **Phase:** 23 of 40  
-> **Milestone:** Multi-Language Stack Detection, Safe Tool Discovery & Defensive Configuration Generation  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a sanitized, non-interactive project onboarding and configuration initialization subsystem (`rush setup`, `rush init`, `rush config check`) detecting 10+ language ecosystems (Python, Node/TS, Rust, Go, PHP, Elixir, Ruby, Java) and generating hardened, schema-validated `rush.toml` configs.  
+> **Phase:** 23 of 40
+> **Milestone:** Multi-Language Stack Detection, Safe Tool Discovery & Defensive Configuration Generation
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a sanitized, non-interactive project onboarding and configuration initialization subsystem (`rush setup`, `rush init`, `rush config check`) detecting 10+ language ecosystems (Python, Node/TS, Rust, Go, PHP, Elixir, Ruby, Java) and generating hardened, schema-validated `rush.toml` configs.
 > **End State Outcome & Verification Checks:**
 > - [x] `StackDetector` heuristics accurately identify monorepo and polyglot project manifests without running untrusted scripts.
 > - [x] `ConfigGenerator` produces clean, valid `rush.toml` matching `CONFIG_SCHEMA.md`.
@@ -12,14 +12,14 @@
 > - [x] CLI commands `rush init`, `rush setup`, `rush config check` operational.
 > - [x] 100% test pass rate across `tests/test_onboarding.py` and `tests/test_config_validator.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0001: External Engine Boundary](../adr/0001-external-engine-boundary.md)  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Discovered Package Managers & Ecosystems (Zero-Bundled):** `uv`, `poetry`, `pipenv`, `pip`, `pnpm`, `npm`, `yarn`, `bun`, `deno`, `cargo`, `go`, `composer`, `mix`, `gradle`, `maven`, `cmake`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0001: External Engine Boundary](../adr/0001-external-engine-boundary.md)
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Discovered Package Managers & Ecosystems (Zero-Bundled):** `uv`, `poetry`, `pipenv`, `pip`, `pnpm`, `npm`, `yarn`, `bun`, `deno`, `cargo`, `go`, `composer`, `mix`, `gradle`, `maven`, `cmake`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-23-sanitized-stack-onboarding-and-config-init

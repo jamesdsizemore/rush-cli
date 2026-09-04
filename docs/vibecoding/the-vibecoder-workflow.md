@@ -27,7 +27,7 @@ Before you prompt your AI model to modify a complex feature, don't dump the whol
 rush codegraph slice "PaymentService.process_checkout"
 ```
 
-Rush returns a clean, 25-line verbatim snippet with line numbers. 
+Rush returns a clean, 25-line verbatim snippet with line numbers.
 
 ### Your Prompt:
 > *"Here is `PaymentService.process_checkout`. Add support for Apple Pay and generate a unit test in `tests/test_payments.py`."*
@@ -133,4 +133,3 @@ Run `rush simulate-ci` before pushing to verify all GitHub Actions steps pass on
 
 ## Semantic PR Generation
 Use `rush pr-synthesize` to generate perfect, professional PR descriptions in 1 second.
-

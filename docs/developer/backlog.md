@@ -1,8 +1,8 @@
 # Rush Platform Master Backlog & Feature Tracker
 
-> **Repository:** `jamesdsizemore/rush-cli`  
-> **Python Baseline:** Python 3.12 (uv)  
-> **Status:** All Milestones Complete (v0.3.0 Flagship)  
+> **Repository:** `jamesdsizemore/rush-cli`
+> **Python Baseline:** Python 3.12 (uv)
+> **Status:** All Milestones Complete (v0.3.0 Flagship)
 > **Core Contract:** FastMCP stdio transport, stderr NDJSON diagnostics, deterministic offline execution, zero docs drift.
 
 ---

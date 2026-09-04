@@ -1,7 +1,7 @@
 # Phase 07–08 coding-agent handoff
 
-> **Status:** implementation handoff; production work has not started.  
-> **Target:** a coding agent completing Rush after Phase 06.  
+> **Status:** implementation handoff; production work has not started.
+> **Target:** a coding agent completing Rush after Phase 06.
 > **Read this first:** this page, `AGENTS.md`, then the two active phase plans.
 
 Rush is at version **0.1.0**. It is a Python 3.12 developer tool: a local CLI and

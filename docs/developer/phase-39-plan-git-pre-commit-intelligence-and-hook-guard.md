@@ -1,10 +1,10 @@
 # Phase 39 Implementation Plan: Git Pre-Commit Intelligence & Hook Guard (`rush hook`)
 
-> **Phase:** 39 of 40  
-> **Milestone:** Sub-Second Staged Scanners, Cryptographic Hook Tamper Detection, Dirty State Stashing & Conventional Commits  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a sub-second Git pre-commit intelligence and hook protection subsystem (`rush hook`) that validates staged diffs in <300ms, detects hook script tampering via SHA-256 trust manifests, isolates unstaged modifications via dirty state stashing, and checks Conventional Commits formatting.  
+> **Phase:** 39 of 40
+> **Milestone:** Sub-Second Staged Scanners, Cryptographic Hook Tamper Detection, Dirty State Stashing & Conventional Commits
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a sub-second Git pre-commit intelligence and hook protection subsystem (`rush hook`) that validates staged diffs in <300ms, detects hook script tampering via SHA-256 trust manifests, isolates unstaged modifications via dirty state stashing, and checks Conventional Commits formatting.
 > **End State Outcome & Verification Checks:**
 > - [x] `StagedScanner` inspects only staged Git index bytes in under 300ms.
 > - [x] `TamperDetector` validates SHA-256 integrity of `.git/hooks/pre-commit`.
@@ -13,14 +13,14 @@
 > - [x] CLI commands `rush hook run`, `rush hook install`, `rush hook verify` operational.
 > - [x] 100% test pass rate across `tests/test_git_hook_guard.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-39-git-pre-commit-intelligence-and-hook-guard

@@ -1,10 +1,10 @@
 # Master Product Management Build Plan: Rush Platform Evolution (Phases 21–30)
 
-> **Document Version:** 3.0.0 (Hardened with Red Team Security Controls & Brooks-Sweep Architectural Refinements)  
-> **Status:** Approved for Implementation  
-> **Target App Versioning:** Rush v0.2.0 → v0.3.0 → v1.0.0  
-> **Repository:** `jamesdsizemore/rush-cli`  
-> **Python Baseline:** Python 3.12 (managed via `uv`)  
+> **Document Version:** 3.0.0 (Hardened with Red Team Security Controls & Brooks-Sweep Architectural Refinements)
+> **Status:** Approved for Implementation
+> **Target App Versioning:** Rush v0.2.0 → v0.3.0 → v1.0.0
+> **Repository:** `jamesdsizemore/rush-cli`
+> **Python Baseline:** Python 3.12 (managed via `uv`)
 > **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr diagnostics, deterministic offline execution, zero docs drift, zero-trust repository safety.
 
 ---

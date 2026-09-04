@@ -74,3 +74,15 @@ def test_manifest_rejects_unclassified_tracked_path(tmp_path: Path) -> None:
     # A path that does not match any known rule should raise or be flagged
     with pytest.raises(ValueError, match="Unclassified first-party path"):
         classify_path("unknown_foreign_blob.bin")
+
+
+def test_repository_coverage_manifest_is_valid_and_non_empty() -> None:
+    manifest_file = Path("governance/first-party-coverage.toml")
+    assert manifest_file.is_file(), "governance/first-party-coverage.toml must exist"
+    data = tomllib.loads(manifest_file.read_text(encoding="utf-8"))
+    assert "manifest" in data
+    assert "records" in data
+    assert len(data["records"]) > 0
+    records = data["records"]
+    assert any(r["path"] == "pyproject.toml" for r in records)
+    assert any(r["classification"] == "source" for r in records)

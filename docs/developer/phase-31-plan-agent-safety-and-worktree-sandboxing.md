@@ -1,10 +1,10 @@
 # Phase 31 Implementation Plan: Agent Safety & Worktree Sandboxing (`rush sandbox` / `rush guard`)
 
-> **Phase:** 31 of 40  
-> **Milestone:** Agent Mutation Safety Guard, Dangerous Command Interception & Worktree Sandboxing  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build a zero-trust agent safety firewall (`rush guard`, `rush sandbox`) that intercepts dangerous destructive commands (`git reset --hard`, `rm -rf`, `git push --force`), enforces workspace path confinement, redacts Shannon entropy secrets, and sandboxes all file writes in isolated Git worktrees.  
+> **Phase:** 31 of 40
+> **Milestone:** Agent Mutation Safety Guard, Dangerous Command Interception & Worktree Sandboxing
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build a zero-trust agent safety firewall (`rush guard`, `rush sandbox`) that intercepts dangerous destructive commands (`git reset --hard`, `rm -rf`, `git push --force`), enforces workspace path confinement, redacts Shannon entropy secrets, and sandboxes all file writes in isolated Git worktrees.
 > **End State Outcome & Verification Checks:**
 > - [x] `CommandInterceptor` blocks 100% of destructive Git, shell, and filesystem mutation commands.
 > - [x] `GovernanceFirewall` denies write access to `AGENTS.md`, `.git/`, and `rush.toml`.
@@ -12,14 +12,14 @@
 > - [x] CLI commands `rush guard check`, `rush sandbox create`, `prune` operational.
 > - [x] 100% test pass rate across `tests/test_agent_safety_guard.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0020: Cryptographic HMAC Context Boundary Framing](../adr/0020-cryptographic-hmac-context-boundary-framing.md)  
-> - [ADR-0021: Ephemeral Git Worktree Sandboxing](../adr/0021-ephemeral-git-worktree-sandboxing.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0020: Cryptographic HMAC Context Boundary Framing](../adr/0020-cryptographic-hmac-context-boundary-framing.md)
+> - [ADR-0021: Ephemeral Git Worktree Sandboxing](../adr/0021-ephemeral-git-worktree-sandboxing.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-31-agent-safety-and-worktree-sandboxing

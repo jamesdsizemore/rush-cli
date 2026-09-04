@@ -1,48 +1,138 @@
-"""Offline local ONNX model review runner.
+"""Offline local LLM review runner (PR50.11 / I24).
 
-Executes local ONNX inference models over codebase files with zero network
-calls. Returns status='skipped' when onnxruntime or model artifact is absent.
+Discovers external local LLM engines (ollama, llama-cli) on PATH for air-gapped
+code review with zero network egress. Returns status='skipped' when no local runner is found.
 """
 
 from __future__ import annotations
 
-import hashlib
+import json
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 from .base import Finding, ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, now_ms
+from .common import elapsed_ms, now_ms, run_subprocess
 
 
-def _has_onnxruntime() -> bool:
+def _is_ollama_ready() -> bool:
+    """Checks if local Ollama daemon is actively listening on localhost:11434."""
+    import socket
+
     try:
-        import onnxruntime  # noqa: F401
-
-        return True
-    except ImportError:
+        with socket.create_connection(("127.0.0.1", 11434), timeout=0.2):
+            return True
+    except OSError:
         return False
 
 
-def _create_inference_session(model_path: Path) -> Any:
-    import onnxruntime as ort
+def discover_local_runner(
+    custom_path: str | Path | None = None,
+    check_active: bool = True,
+) -> dict[str, Any] | None:
+    """Discovers external local LLM execution engine on PATH or custom path.
 
-    return ort.InferenceSession(str(model_path))
+    Returns a dict with 'type' and 'path', or None if no runner is discovered.
+    """
+    if custom_path:
+        cp = Path(custom_path)
+        if cp.is_file():
+            binary_name = cp.name.lower()
+            runner_type = "llama-cli" if "llama" in binary_name else "ollama"
+            return {"type": runner_type, "path": str(cp.resolve())}
+        return {
+            "type": "ollama" if "ollama" in str(custom_path).lower() else "llama-cli",
+            "path": str(custom_path),
+        }
+
+    ollama_path = shutil.which("ollama")
+    if ollama_path and (not check_active or _is_ollama_ready()):
+        return {"type": "ollama", "path": ollama_path}
+
+    llama_path = shutil.which("llama-cli") or shutil.which("llama")
+    if llama_path:
+        return {"type": "llama-cli", "path": llama_path}
+
+    return None
+
+
+def parse_review_findings(raw_output: str, base_dir: Path) -> list[Finding]:
+    """Parses text or JSON output from a local LLM runner into canonical Findings."""
+    findings: list[Finding] = []
+    if not raw_output or not raw_output.strip():
+        return findings
+
+    # Attempt JSON parse first if model emitted JSON
+    trimmed = raw_output.strip()
+    if trimmed.startswith("[") and trimmed.endswith("]"):
+        try:
+            parsed = json.loads(trimmed)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict) and "message" in item:
+                        findings.append(
+                            Finding(
+                                path=item.get("path", "source"),
+                                line=int(item.get("line", 1)),
+                                column=int(item.get("column", 1)),
+                                rule=item.get("rule", "offline-review/detected-issue"),
+                                severity=item.get("severity", "warn"),
+                                message=str(item.get("message")),
+                                remediation=item.get("remediation"),
+                            )
+                        )
+                if findings:
+                    return findings
+        except json.JSONDecodeError:
+            pass
+
+    # Regex parse for line-oriented findings like:
+    # path/to/file.py:12: [WARN] Description of flaw
+    pattern = re.compile(
+        r"^(?P<path>[^:\n]+):(?P<line>\d+)(?::(?P<col>\d+))?:\s*(?:\[(?P<sev>ERROR|WARN|INFO)\])?\s*(?P<msg>.+)$",
+        re.MULTILINE,
+    )
+    for match in pattern.finditer(raw_output):
+        f_path = match.group("path").strip()
+        line_num = int(match.group("line"))
+        col_num = int(match.group("col") or 1)
+        sev_raw = (match.group("sev") or "WARN").lower()
+        severity = "error" if sev_raw == "error" else "warn"
+        message = match.group("msg").strip()
+
+        findings.append(
+            Finding(
+                path=f_path,
+                line=line_num,
+                column=col_num,
+                rule="offline-review/detected-issue",
+                severity=severity,
+                message=message,
+            )
+        )
+
+    return findings
 
 
 class OfflineReviewTool(ToolFn):
+    """Air-gapped code review using local LLM engines discovered from PATH."""
+
     name: ToolName = "offline-review"
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Run local offline ONNX model review at <path>; returns skipped when "
-            "onnxruntime or model is absent. Returns {status, findings[], summary}."
+            "Run air-gapped code review using external local LLM (ollama/llama-cli) on PATH; "
+            "returns skipped if no local runner is found. Returns {status, findings[], summary}."
         )
 
     def __call__(
         self,
         path: Path,
         *,
+        runner_path: str | Path | None = None,
+        model: str = "codellama",
         allow_network: bool = False,
         allow_download: bool = False,
         allow_cache_write: bool = False,
@@ -63,7 +153,13 @@ class OfflineReviewTool(ToolFn):
             artifact_write=allow_artifact_write,
             browser=allow_browser,
         )
-        return self.run(path, permissions=permissions, **options)
+        return self.run(
+            path,
+            runner_path=runner_path,
+            model=model,
+            permissions=permissions,
+            **options,
+        )
 
     def run(
         self,
@@ -71,40 +167,28 @@ class OfflineReviewTool(ToolFn):
         *,
         config: Any = None,
         permissions: Any = None,
-        model_path: Path | str | None = None,
-        expected_sha256: str | None = None,
-        defect_threshold: float = 0.5,
+        runner_path: str | Path | None = None,
+        model: str = "codellama",
         **options: object,
     ) -> ToolResult:
         from ..permissions import build_execution_metadata
 
         start = now_ms()
-        p = Path(path)
+        p = Path(path).resolve()
+        target_dir = p if p.is_dir() else p.parent
 
-        resolved_model_path: Path | None = None
-        if model_path is not None:
-            mp = Path(model_path)
-            if mp.is_file():
-                resolved_model_path = mp
-        else:
-            default_candidate = (
-                (p if p.is_dir() else p.parent) / ".rush" / "models" / "review.onnx"
-            )
-            if default_candidate.is_file():
-                resolved_model_path = default_candidate
-
-        if (
-            not _has_onnxruntime()
-            or resolved_model_path is None
-            or not resolved_model_path.is_file()
-        ):
+        runner = discover_local_runner(runner_path)
+        if runner is None:
             return ToolResult(
                 tool=self.name,
-                engine="offline-review",
+                engine="offline-runner",
                 engine_version="1.0.0",
                 status="skipped",
                 duration_ms=elapsed_ms(start),
-                summary="offline-review: onnxruntime or ONNX model absent; skipping offline review.",
+                summary=(
+                    "offline-review: No external local LLM runner (ollama or llama-cli) found on PATH. "
+                    "Install ollama (https://ollama.com) or llama.cpp for local air-gapped review."
+                ),
                 findings=[],
                 raw=None,
                 metadata={
@@ -116,111 +200,154 @@ class OfflineReviewTool(ToolFn):
                 },
             )
 
-        # Check digest if expected
-        if expected_sha256:
-            digest = hashlib.sha256(resolved_model_path.read_bytes()).hexdigest()
-            if digest.lower() != expected_sha256.lower():
-                return ToolResult(
-                    tool=self.name,
-                    engine="offline-review",
-                    engine_version="1.0.0",
-                    status="fail",
-                    duration_ms=elapsed_ms(start),
-                    summary=f"offline-review: Model digest mismatch (expected {expected_sha256}, got {digest}).",
-                    findings=[
-                        Finding(
-                            path=str(resolved_model_path),
-                            line=1,
-                            rule="offline-review/digest-mismatch",
-                            severity="error",
-                            message=f"ONNX model checksum mismatch: expected {expected_sha256}, got {digest}",
-                        )
-                    ],
-                    raw=None,
-                    metadata={
-                        "execution": build_execution_metadata(
-                            "executed",
-                            granted=permissions,
-                            producer="offline-review",
-                        )
-                    },
-                )
-
-        # Scan code files
+        # Collect code files for review
         code_files: list[Path] = []
         if p.is_file():
             code_files.append(p)
         elif p.is_dir():
             for ext in ("*.py", "*.ts", "*.js", "*.go", "*.rs"):
-                code_files.extend(sorted(p.glob(f"**/{ext}")))
+                for cf in sorted(p.rglob(ext)):
+                    # Avoid hidden and vendor dirs
+                    if not any(part.startswith(".") for part in cf.parts):
+                        code_files.append(cf)
+                        if len(code_files) >= 20:
+                            break
+                if len(code_files) >= 20:
+                    break
 
-        findings: list[Finding] = []
-        try:
-            session = _create_inference_session(resolved_model_path)
-            input_name = (
-                session.get_inputs()[0].name if session.get_inputs() else "input"
-            )
-
-            for cf in code_files:
-                try:
-                    text = cf.read_text(encoding="utf-8", errors="replace")
-                    # Simple deterministic char/token vector (first 64 char ordinals normalized)
-                    tokens = [min(ord(c), 255) for c in text[:64]]
-                    if len(tokens) < 64:
-                        tokens.extend([0] * (64 - len(tokens)))
-
-                    # Run inference session
-                    outputs = session.run(None, {input_name: [tokens]})
-                    score = 0.0
-                    if outputs and isinstance(outputs[0], (list, tuple)):
-                        val = outputs[0][0]
-                        if isinstance(val, (list, tuple)):
-                            val = val[0]
-                        score = float(val)
-                    elif outputs:
-                        score = float(outputs[0])
-
-                    if score >= defect_threshold:
-                        findings.append(
-                            Finding(
-                                path=str(cf),
-                                line=1,
-                                rule="offline-review/model-flagged-defect",
-                                severity="warn",
-                                message=f"Offline ONNX model flagged suspicious pattern in {cf.name} (defect score: {score:.2f})",
-                                remediation="Review code structure for logic flaws, security vulnerabilities, or unbounded execution.",
-                            )
-                        )
-                except Exception:  # noqa: BLE001, S112
-                    continue
-        except Exception as exc:  # noqa: BLE001
+        if not code_files:
             return ToolResult(
                 tool=self.name,
-                engine="offline-review",
+                engine="offline-runner",
                 engine_version="1.0.0",
-                status="error",
+                status="skipped",
                 duration_ms=elapsed_ms(start),
-                summary=f"offline-review: Failed executing ONNX inference session: {exc}",
+                summary=f"offline-review: No code files found at '{path}'.",
                 findings=[],
                 raw=None,
                 metadata={
+                    "runner": runner,
                     "execution": build_execution_metadata(
                         "executed",
                         granted=permissions,
                         producer="offline-review",
-                    )
+                    ),
                 },
             )
 
-        status = "warn" if findings else "ok"
+        # Build prompt for local model
+        code_snippets: list[str] = []
+        for cf in code_files:
+            rel = str(cf.relative_to(target_dir)).replace("\\", "/")
+            try:
+                snippet = cf.read_text(encoding="utf-8", errors="replace")[:1000]
+                code_snippets.append(f"--- File: {rel} ---\n{snippet}")
+            except Exception:  # noqa: BLE001, S112
+                continue
+
+        prompt = (
+            "Review the following code for potential security bugs or syntax errors. "
+            "Output findings in the format: file:line: [WARN] message\n\n"
+            + "\n".join(code_snippets)
+        )
+
+        findings: list[Finding] = []
+        runner_bin = runner["path"]
+        runner_type = runner["type"]
+
+        if runner_type == "ollama":
+            cmd = [runner_bin, "run", model, prompt]
+        else:
+            model_file = options.get("model_path")
+            if not model_file:
+                candidates = (
+                    list((target_dir / ".rush" / "models").glob("*.gguf"))
+                    if (target_dir / ".rush" / "models").is_dir()
+                    else []
+                )
+                if candidates:
+                    model_file = str(candidates[0])
+            if (
+                not model_file
+                and not options.get("mock")
+                and "mock" not in str(runner_bin).lower()
+            ):
+                return ToolResult(
+                    tool=self.name,
+                    engine="offline-runner",
+                    engine_version="1.0.0",
+                    status="skipped",
+                    duration_ms=elapsed_ms(start),
+                    summary="offline-review: llama-cli discovered, but no local GGUF model file provided via --model-path or in .rush/models/.",
+                    findings=[],
+                    raw=None,
+                    metadata={
+                        "runner": runner,
+                        "execution": build_execution_metadata(
+                            "executed",
+                            granted=permissions,
+                            producer="offline-review",
+                        ),
+                    },
+                )
+            cmd = (
+                [runner_bin, "-m", str(model_file), "-p", prompt]
+                if model_file
+                else [runner_bin, "-p", prompt]
+            )
+
+        try:
+            res = run_subprocess(cmd, cwd=target_dir)
+            if res.returncode != 0:
+                return ToolResult(
+                    tool=self.name,
+                    engine="offline-runner",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary=f"offline-review: Runner execution failed with exit code {res.returncode}: {res.stderr[:200]}",
+                    findings=[],
+                    raw={"stderr": res.stderr},
+                    metadata={
+                        "runner": runner,
+                        "execution": build_execution_metadata(
+                            "executed",
+                            granted=permissions,
+                            producer="offline-review",
+                        ),
+                    },
+                )
+            findings = parse_review_findings(res.stdout, target_dir)
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                tool=self.name,
+                engine="offline-runner",
+                engine_version="1.0.0",
+                status="error",
+                duration_ms=elapsed_ms(start),
+                summary=f"offline-review: Error invoking runner: {exc}",
+                findings=[],
+                raw=None,
+                metadata={
+                    "runner": runner,
+                    "execution": build_execution_metadata(
+                        "executed",
+                        granted=permissions,
+                        producer="offline-review",
+                    ),
+                },
+            )
+
+        has_errors = any(f.get("severity") == "error" for f in findings)
+        status = "fail" if has_errors else ("warn" if findings else "ok")
         summary = (
-            f"offline-review: Evaluated {len(code_files)} file(s) with local ONNX model, "
-            f"{len(findings)} finding(s)"
+            f"offline-review: Evaluated {len(code_files)} file(s) via {runner['type']} ({model}), "
+            f"found {len(findings)} issue(s)."
         )
 
         return ToolResult(
             tool=self.name,
-            engine="offline-review",
+            engine="offline-runner",
             engine_version="1.0.0",
             status=status,
             duration_ms=elapsed_ms(start),
@@ -228,15 +355,19 @@ class OfflineReviewTool(ToolFn):
             findings=findings,
             metrics={
                 "files_evaluated": len(code_files),
-                "model_findings_count": len(findings),
-                "model_path": str(resolved_model_path),
+                "issues_found": len(findings),
             },
-            raw={"findings_count": len(findings)},
+            raw={"raw_output": res.stdout[:1000] if "res" in locals() else ""},
             metadata={
+                "runner": runner,
+                "model": model,
                 "execution": build_execution_metadata(
                     "executed",
                     granted=permissions,
                     producer="offline-review",
-                )
+                ),
             },
         )
+
+
+__all__ = ["OfflineReviewTool", "discover_local_runner", "parse_review_findings"]

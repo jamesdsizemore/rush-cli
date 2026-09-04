@@ -1,10 +1,10 @@
 # Phase 24 Implementation Plan: Hardened Workflow Suites & Environment Doctor (`rush check` / `rush doctor`)
 
-> **Phase:** 24 of 40  
-> **Milestone:** Hardened Multi-Engine Workflows, Anti-Shadowing Diagnostics & Quality Gates  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build hardened workflow execution suites (`rush check`, `rush audit`, `rush gate`) and an environment health doctor (`rush doctor`) that actively diagnoses virtual environment interpreter shadowing, tool version mismatches, and execution bottlenecks.  
+> **Phase:** 24 of 40
+> **Milestone:** Hardened Multi-Engine Workflows, Anti-Shadowing Diagnostics & Quality Gates
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build hardened workflow execution suites (`rush check`, `rush audit`, `rush gate`) and an environment health doctor (`rush doctor`) that actively diagnoses virtual environment interpreter shadowing, tool version mismatches, and execution bottlenecks.
 > **End State Outcome & Verification Checks:**
 > - [x] `DoctorEngine` detects environment pathologies (foreign Python on PATH, missing `.venv`, corrupted lockfiles).
 > - [x] `WorkflowRunner` executes multi-tool suites (`check`, `audit`, `gate`) in topological dependency order.
@@ -12,15 +12,15 @@
 > - [x] CLI commands `rush check`, `rush audit`, `rush gate`, `rush doctor` operational.
 > - [x] 100% test pass rate across `tests/test_workflows_and_doctor.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0001: External Engine Boundary](../adr/0001-external-engine-boundary.md)  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Discovered External Engines (Zero-Bundled):** `ruff`, `mypy`, `pytest`, `biome`, `eslint`, `prettier`, `tsc`, `clippy`, `rustfmt`, `tach`, `aislop`, `undercover`, `bandit`, `govulncheck`, `golangci-lint`  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0001: External Engine Boundary](../adr/0001-external-engine-boundary.md)
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0017: Composite Workflow Suites and File Watcher](../adr/0017-composite-workflow-suites-and-file-watcher.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Discovered External Engines (Zero-Bundled):** `ruff`, `mypy`, `pytest`, `biome`, `eslint`, `prettier`, `tsc`, `clippy`, `rustfmt`, `tach`, `aislop`, `undercover`, `bandit`, `govulncheck`, `golangci-lint`
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-24-hardened-workflow-suites-and-environment-doctor

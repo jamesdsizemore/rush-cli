@@ -1,7 +1,7 @@
 # Rush: Memory, Agent Context, and Systemic Intelligence Report
-**Document ID:** `memory-innovation-enhancement-report`  
-**Target Architecture:** Rush (`rush-cli`), Python 3.12, FastMCP / CLI local runtime  
-**Scope:** First-Principles Exploration of Grounded Repository Intelligence, Epistemic Memory, and Coding Agent Substrates  
+**Document ID:** `memory-innovation-enhancement-report`
+**Target Architecture:** Rush (`rush-cli`), Python 3.12, FastMCP / CLI local runtime
+**Scope:** First-Principles Exploration of Grounded Repository Intelligence, Epistemic Memory, and Coding Agent Substrates
 
 ---
 
@@ -9,7 +9,7 @@
 
 ## 1.1 The Operational Reality of Coding Agents
 
-Modern coding agents (Cursor, Claude Code, Cline, Windsurf, Copilot, Antigravity, OpenCode) fail in production software repositories not because LLMs lack raw reasoning ability, but because **they operate without an epistemic substrate**. 
+Modern coding agents (Cursor, Claude Code, Cline, Windsurf, Copilot, Antigravity, OpenCode) fail in production software repositories not because LLMs lack raw reasoning ability, but because **they operate without an epistemic substrate**.
 
 An LLM is a stateless prediction engine. When dropped into a complex codebase, it faces five structural failure modes:
 

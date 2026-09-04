@@ -39,4 +39,3 @@ Rush enforces a strict single-source-of-truth version architecture:
    - PR Synthesizer cards
    - Rich Terminal UI footers
 3. **Zero Hardcoded Drifts**: Hardcoded static version literals across providers, templates, and generators have been completely eliminated, preventing version divergence across release cycles.
-

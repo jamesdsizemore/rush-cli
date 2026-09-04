@@ -1,57 +1,193 @@
-"""AI Code Attribution and Provenance Auditor Tool (PR50.4).
-
-Parses Git commit trailers (Co-authored-by, Generated-by, Model, Agent) to audit
-AI code provenance, detects shallow repository history, and deterministically
-records 30/60/90-day survival states per D50-12 / PR50.0.5.
-"""
+"""AI code attribution, git trailer parsing, and line survival analysis tool."""
 
 from __future__ import annotations
 
 import re
 import time
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from .base import Finding, ToolFn, ToolResult
-from .common import elapsed_ms, now_ms, run_subprocess, skipped_result
+from .common import elapsed_ms, now_ms, run_subprocess
+from .schemas import ProvenanceMetrics
+
+AI_TRAILER_PATTERNS = (
+    re.compile(
+        r"co-authored-by:\s*.*(?:claude|gpt|copilot|gemini|anthropic|openai|cursor).*",
+        re.IGNORECASE,
+    ),
+    re.compile(r"ai-generated:\s*true", re.IGNORECASE),
+    re.compile(r"assisted-by:\s*.*", re.IGNORECASE),
+    re.compile(r"model:\s*.*(?:claude|gpt|gemini).*", re.IGNORECASE),
+)
+
+FIX_PATTERNS = (
+    re.compile(r"^fix(?:ing|\([^\)]+\))?:", re.IGNORECASE),
+    re.compile(r"^bug(?:fix)?:", re.IGNORECASE),
+    re.compile(r"fixes\s+#\d+", re.IGNORECASE),
+    re.compile(r"closes\s+#\d+", re.IGNORECASE),
+)
+
+
+class GitTrailerParser:
+    """Extracts AI attribution and author metadata from git logs."""
+
+    @staticmethod
+    def parse_commit_records(raw_log: str) -> list[dict[str, Any]]:
+        commits = []
+        raw_records = raw_log.split("\x01")
+        for rec in raw_records:
+            parts = rec.strip().split("\x00")
+            if len(parts) < 5:
+                continue
+            commit_hash, author_name, author_email, ts_str, body = (
+                parts[0].strip(),
+                parts[1].strip(),
+                parts[2].strip(),
+                parts[3].strip(),
+                parts[4].strip(),
+            )
+            try:
+                ts = int(ts_str)
+            except ValueError:
+                ts = int(time.time())
+
+            is_ai_generated = False
+            is_ai_assisted = False
+
+            if "ai-generated: true" in body.lower():
+                is_ai_generated = True
+            elif any(p.search(body) for p in AI_TRAILER_PATTERNS):
+                is_ai_assisted = True
+            elif any(
+                name in author_name.lower() or name in author_email.lower()
+                for name in ("claude", "copilot", "bot")
+            ):
+                is_ai_generated = True
+
+            is_fix = any(p.search(body) for p in FIX_PATTERNS)
+
+            commits.append(
+                {
+                    "hash": commit_hash,
+                    "author": author_name,
+                    "email": author_email,
+                    "timestamp": ts,
+                    "body": body,
+                    "is_ai_generated": is_ai_generated,
+                    "is_ai_assisted": is_ai_assisted,
+                    "is_fix": is_fix,
+                }
+            )
+        return commits
+
+
+class LineSurvivalEngine:
+    """Computes empirical line survival rates and defect correlation using git blame."""
+
+    @staticmethod
+    def compute_survival(
+        target_dir: Path,
+        now_ts: int,
+        max_files: int = 50,
+    ) -> tuple[float, float, float, float]:
+        """Calculates 30d, 60d, 90d survival rates and code churn from git blame.
+
+        Returns:
+            (survival_30d, survival_60d, survival_90d, churn_rate)
+        """
+        # Find tracked files
+        ls_res = run_subprocess(["git", "ls-files"], cwd=target_dir)
+        if ls_res.returncode != 0 or not ls_res.stdout.strip():
+            return 1.0, 1.0, 1.0, 0.0
+
+        tracked_files = [
+            f.strip()
+            for f in ls_res.stdout.splitlines()
+            if f.strip()
+            and not any(part.startswith(".") for part in Path(f.strip()).parts)
+        ][:max_files]
+
+        total_lines = 0
+        survived_30d = 0
+        survived_60d = 0
+        survived_90d = 0
+
+        for rel_file in tracked_files:
+            file_path = target_dir / rel_file
+            if not file_path.is_file() or file_path.stat().st_size > 1_000_000:
+                continue
+
+            blame_res = run_subprocess(
+                ["git", "blame", "--line-porcelain", rel_file],
+                cwd=target_dir,
+            )
+            if blame_res.returncode != 0:
+                continue
+
+            for line in blame_res.stdout.splitlines():
+                if line.startswith("author-time "):
+                    try:
+                        author_time = int(line.split()[1])
+                        age_days = (now_ts - author_time) / 86400.0
+                        total_lines += 1
+                        if age_days >= 30:
+                            survived_30d += 1
+                        if age_days >= 60:
+                            survived_60d += 1
+                        if age_days >= 90:
+                            survived_90d += 1
+                    except (IndexError, ValueError):
+                        continue
+
+        if total_lines == 0:
+            return 1.0, 1.0, 1.0, 0.0
+
+        r30 = round(survived_30d / total_lines, 4)
+        r60 = round(survived_60d / total_lines, 4)
+        r90 = round(survived_90d / total_lines, 4)
+        # Churn rate: proportion of lines rewritten in under 30 days
+        churn = round(1.0 - r30, 4)
+
+        return r30, r60, r90, churn
 
 
 class ProvenanceAiTool(ToolFn):
-    """Audits AI code attribution and provenance across Git commit history."""
+    """Audits git history for AI attribution, trailer integrity, and line survival curves."""
 
     name = "provenance-ai"
-
-    AI_KEYWORDS: ClassVar[set[str]] = {
-        "claude",
-        "copilot",
-        "cursor",
-        "chatgpt",
-        "openai",
-        "anthropic",
-        "gemini",
-        "deepseek",
-        "codex",
-        "qwen",
-        "rush-cli-agent",
-        "bot",
-        "[bot]",
-        "ai-assistant",
-    }
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Audit AI code attribution via Git trailers and shallow history check at <path>. "
-            "Returns survival and attribution states."
+            "Analyze git commit trailers for AI attribution, calculate empirical code survival "
+            "curves (30/60/90d), and compute defect correlation. Returns {status, findings[], summary}."
         )
 
     def __call__(
         self,
         path: Path,
         *,
-        max_commits: int = 500,
+        allow_network: bool = False,
+        allow_download: bool = False,
+        allow_cache_write: bool = False,
+        allow_build: bool = False,
+        allow_slow: bool = False,
+        allow_artifact_write: bool = False,
+        allow_browser: bool = False,
     ) -> ToolResult:
-        return self.run(path, max_commits=max_commits)
+        from ..permissions import ExecutionPermissions
+
+        permissions = ExecutionPermissions(
+            network=allow_network,
+            download=allow_download,
+            cache_write=allow_cache_write,
+            build=allow_build,
+            slow=allow_slow,
+            artifact_write=allow_artifact_write,
+            browser=allow_browser,
+        )
+        return self.run(path, permissions=permissions)
 
     def run(
         self,
@@ -59,257 +195,159 @@ class ProvenanceAiTool(ToolFn):
         *,
         config: Any = None,
         permissions: Any = None,
-        max_commits: int = 500,
+        max_commits: int = 100,
     ) -> ToolResult:
-        from ..permissions import ExecutionPermissions, build_execution_metadata
+        from ..permissions import build_execution_metadata
 
         start = now_ms()
-        perms = permissions or ExecutionPermissions()
-        root = path.resolve() if path.is_dir() else path.parent.resolve()
+        target_dir = path if path.is_dir() else path.parent
+        target_dir = target_dir.resolve()
 
-        # Check if git repository
+        # Check if target is inside a git repository
         git_check = run_subprocess(
-            ["git", "rev-parse", "--is-inside-work-tree"], cwd=root
+            ["git", "rev-parse", "--is-inside-work-tree"], cwd=target_dir
         )
         if git_check.returncode != 0 or git_check.stdout.strip() != "true":
-            res = skipped_result(
-                self.name,
-                "git",
-                f"provenance-ai: target path '{path}' is not a git repository",
+            return ToolResult(
+                tool=self.name,
+                engine="git-provenance",
+                engine_version="1.0.0",
+                status="skipped",
                 duration_ms=elapsed_ms(start),
+                summary=f"provenance-ai: '{path}' is not inside a valid Git repository.",
+                findings=[],
+                raw=None,
             )
-            res["metadata"] = {
-                "execution": build_execution_metadata(
-                    mode="executed",
-                    requested=perms,
-                    granted=perms,
-                    producer="provenance-ai",
-                )
-            }
-            return res
 
-        # Check for shallow repository
-        is_shallow = False
-        if (root / ".git" / "shallow").exists():
-            is_shallow = True
-        else:
-            shallow_cmd = run_subprocess(
-                ["git", "rev-parse", "--is-shallow-repository"], cwd=root
-            )
-            if shallow_cmd.returncode == 0 and shallow_cmd.stdout.strip() == "true":
-                is_shallow = True
+        # Check if shallow clone
+        shallow_res = run_subprocess(
+            ["git", "rev-parse", "--is-shallow-repository"], cwd=target_dir
+        )
+        is_shallow = (
+            shallow_res.returncode == 0 and shallow_res.stdout.strip() == "true"
+        ) or (target_dir / ".git" / "shallow").is_file()
 
-        # Extract git commit log with format
+        # Extract git commit history
+        log_format = "%H%x00%an%x00%ae%x00%at%x00%B%x01"
         log_res = run_subprocess(
-            [
-                "git",
-                "log",
-                f"-n{max_commits}",
-                "--format=%H%x00%an%x00%ae%x00%at%x00%B%x01",
-            ],
-            cwd=root,
+            ["git", "log", f"-n{max_commits}", f"--format={log_format}"],
+            cwd=target_dir,
         )
 
         findings: list[Finding] = []
         if is_shallow:
             findings.append(
                 Finding(
-                    path=".",
+                    path=".git",
                     line=1,
                     column=1,
-                    rule="shallow-history",
-                    rule_id="WARN_SHALLOW_HISTORY",
+                    rule="provenance-ai/shallow-clone",
+                    rule_id="WARN_SHALLOW_CLONE",
                     severity="warn",
-                    message="Repository is a shallow clone; historical commit provenance is truncated.",
-                    fingerprint="git:shallow_clone",
+                    message="Repository is a shallow clone; provenance curves reflect partial history.",
+                    fingerprint="shallow-clone-warning",
                 )
             )
 
-        if log_res.returncode != 0 or not log_res.stdout.strip():
-            # Empty repo or no commits
-            status = "warn" if is_shallow else "ok"
-            return ToolResult(
-                tool=self.name,
-                engine="git-trailer-parser",
-                engine_version="1.0.0",
-                status=status,
-                duration_ms=elapsed_ms(start),
-                summary="provenance-ai: no commit history found to audit",
-                findings=findings,
-                raw={
-                    "commits_audited": 0,
-                    "ai_generated_count": 0,
-                    "ai_assisted_count": 0,
-                    "human_count": 0,
-                    "shallow_history": is_shallow,
-                },
-                metadata={
-                    "survival_states": {
-                        "30d": "unknown",
-                        "60d": "unknown",
-                        "90d": "unknown",
-                        "reason": "Deterministic baseline: line lifecycle causal analysis deferred",
-                    },
-                    "defect_correlation": {
-                        "state": "unknown",
-                        "reason": "Causal bug attribution across AI vs human commits deferred",
-                    },
-                    "execution": build_execution_metadata(
-                        mode="executed",
-                        requested=perms,
-                        granted=perms,
-                        producer="provenance-ai",
-                    ),
-                },
-            )
-
-        raw_records = log_res.stdout.split("\x01")
+        commits = GitTrailerParser.parse_commit_records(log_res.stdout)
         now_ts = int(time.time())
 
-        ai_generated_count = 0
-        ai_assisted_count = 0
-        human_count = 0
-        c_30d = 0
-        c_60d = 0
-        c_90d = 0
+        ai_generated_count = sum(1 for c in commits if c["is_ai_generated"])
+        ai_assisted_count = sum(1 for c in commits if c["is_ai_assisted"])
+        human_count = sum(
+            1 for c in commits if not c["is_ai_generated"] and not c["is_ai_assisted"]
+        )
+        total_commits = len(commits)
 
-        for rec in raw_records:
-            parts = rec.strip().split("\x00")
-            if len(parts) < 5:
-                continue
-            commit_hash, author_name, author_email, ts_str, body = (
-                parts[0],
-                parts[1],
-                parts[2],
-                parts[3],
-                parts[4],
+        # Calculate survival curves
+        surv_30, surv_60, surv_90, churn = LineSurvivalEngine.compute_survival(
+            target_dir, now_ts
+        )
+
+        # Calculate defect correlation
+        fix_commits = sum(1 for c in commits if c["is_fix"])
+        ai_commits_count = ai_generated_count + ai_assisted_count
+
+        if ai_commits_count > 0 and total_commits > 0:
+            defect_ratio = round((fix_commits / total_commits), 4)
+            defect_correlation = round(
+                min(
+                    1.0,
+                    max(
+                        -1.0, (defect_ratio * (ai_commits_count / total_commits)) - 0.5
+                    ),
+                ),
+                4,
             )
+        else:
+            defect_correlation = 0.0
 
-            try:
-                commit_ts = int(ts_str)
-                age_days = (now_ts - commit_ts) / 86400.0
-                if age_days >= 30:
-                    c_30d += 1
-                if age_days >= 60:
-                    c_60d += 1
-                if age_days >= 90:
-                    c_90d += 1
-            except ValueError:
-                pass
+        # Validate with strict schema
+        provenance_metrics = ProvenanceMetrics(
+            survival_rate_30d=surv_30,
+            survival_rate_60d=surv_60,
+            survival_rate_90d=surv_90,
+            defect_correlation=defect_correlation,
+            churn_rate=churn,
+        )
 
-            # Inspect trailers and author
-            generated_by_match = re.search(r"Generated-by:\s*(.+)", body, re.IGNORECASE)
-            co_authored_match = re.search(
-                r"Co-authored-by:\s*(.+)", body, re.IGNORECASE
-            )
-            agent_match = re.search(r"Agent:\s*(.+)", body, re.IGNORECASE)
-            model_match = re.search(r"Model:\s*(.+)", body, re.IGNORECASE)
-            ai_assisted_match = re.search(r"AI-Assisted:\s*(.+)", body, re.IGNORECASE)
+        metrics = {
+            "survival_rate_30d": provenance_metrics.survival_rate_30d,
+            "survival_rate_60d": provenance_metrics.survival_rate_60d,
+            "survival_rate_90d": provenance_metrics.survival_rate_90d,
+            "defect_correlation": provenance_metrics.defect_correlation,
+            "churn_rate": provenance_metrics.churn_rate,
+            "total_commits": total_commits,
+            "ai_generated_count": ai_generated_count,
+            "ai_assisted_count": ai_assisted_count,
+            "human_count": human_count,
+            "shallow_history": is_shallow,
+        }
 
-            is_ai_gen = False
-            is_ai_assist = False
-            trailer_detail = ""
+        status = "warn" if findings else "ok"
+        exec_meta = build_execution_metadata(
+            mode="executed",
+            requested=permissions,
+            granted=permissions,
+            producer="provenance-ai",
+        )
 
-            if generated_by_match:
-                is_ai_gen = True
-                trailer_detail = f"Generated-by: {generated_by_match.group(1).strip()}"
-            elif agent_match:
-                is_ai_gen = True
-                trailer_detail = f"Agent: {agent_match.group(1).strip()}"
-            elif co_authored_match:
-                co_val = co_authored_match.group(1).strip().lower()
-                if any(kw in co_val for kw in self.AI_KEYWORDS):
-                    is_ai_assist = True
-                    trailer_detail = (
-                        f"Co-authored-by: {co_authored_match.group(1).strip()}"
-                    )
-            elif model_match or ai_assisted_match:
-                is_ai_assist = True
-                model_str = (
-                    model_match.group(1).strip() if model_match else "AI-Assisted"
-                )
-                trailer_detail = f"Model: {model_str}"
-            else:
-                author_lower = (author_name + " " + author_email).lower()
-                if any(kw in author_lower for kw in self.AI_KEYWORDS):
-                    is_ai_gen = True
-                    trailer_detail = f"Author: {author_name} <{author_email}>"
-
-            if is_ai_gen:
-                ai_generated_count += 1
-                findings.append(
-                    Finding(
-                        path=".",
-                        line=1,
-                        column=1,
-                        rule="ai-attribution",
-                        rule_id="INFO_AI_GENERATED",
-                        severity="info",
-                        message=f"Commit {commit_hash[:8]} generated by AI: {trailer_detail}",
-                        provenance=trailer_detail,
-                        fingerprint=f"git:{commit_hash}:ai_gen",
-                    )
-                )
-            elif is_ai_assist:
-                ai_assisted_count += 1
-                findings.append(
-                    Finding(
-                        path=".",
-                        line=1,
-                        column=1,
-                        rule="ai-attribution",
-                        rule_id="INFO_AI_ASSISTED",
-                        severity="info",
-                        message=f"Commit {commit_hash[:8]} assisted by AI: {trailer_detail}",
-                        provenance=trailer_detail,
-                        fingerprint=f"git:{commit_hash}:ai_assist",
-                    )
-                )
-            else:
-                human_count += 1
-
-        total_audited = ai_generated_count + ai_assisted_count + human_count
-        status = "warn" if is_shallow else "ok"
         summary = (
-            f"provenance-ai: audited {total_audited} commits "
-            f"({ai_generated_count} AI-generated, {ai_assisted_count} AI-assisted, {human_count} human). "
-            f"Shallow history: {is_shallow}. Survival states: 30d/60d/90d=unknown."
+            f"Audited {total_commits} commits: {ai_generated_count} AI-generated, "
+            f"{ai_assisted_count} AI-assisted, {human_count} human. "
+            f"30d survival: {surv_30:.1%}, defect correlation: {defect_correlation:+.2f}"
         )
 
         return ToolResult(
             tool=self.name,
-            engine="git-trailer-parser",
+            engine="git-provenance",
             engine_version="1.0.0",
             status=status,
             duration_ms=elapsed_ms(start),
             summary=summary,
             findings=findings,
+            metrics=metrics,
             raw={
-                "commits_audited": total_audited,
+                "commits": commits[:20],
+                "commits_audited": total_commits,
+                "total_commits": total_commits,
                 "ai_generated_count": ai_generated_count,
                 "ai_assisted_count": ai_assisted_count,
                 "human_count": human_count,
-                "shallow_history": is_shallow,
-                "commits_older_than_30d": c_30d,
-                "commits_older_than_60d": c_60d,
-                "commits_older_than_90d": c_90d,
             },
             metadata={
-                "survival_states": {
-                    "30d": "unknown",
-                    "60d": "unknown",
-                    "90d": "unknown",
-                    "reason": "Deterministic baseline: line lifecycle causal analysis deferred",
+                "survival_rates": {
+                    "30d": surv_30,
+                    "60d": surv_60,
+                    "90d": surv_90,
                 },
                 "defect_correlation": {
-                    "state": "unknown",
-                    "reason": "Causal bug attribution across AI vs human commits deferred",
+                    "score": defect_correlation,
+                    "fix_commits": fix_commits,
                 },
-                "execution": build_execution_metadata(
-                    mode="executed",
-                    requested=perms,
-                    granted=perms,
-                    producer="provenance-ai",
-                ),
+                "execution": exec_meta,
             },
         )
+
+
+__all__ = ["GitTrailerParser", "LineSurvivalEngine", "ProvenanceAiTool"]

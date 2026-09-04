@@ -1,0 +1,103 @@
+{
+  "s3": {
+    "get_object": "s3:GetObject",
+    "put_object": "s3:PutObject",
+    "delete_object": "s3:DeleteObject",
+    "list_objects": "s3:ListBucket",
+    "list_objects_v2": "s3:ListBucket",
+    "head_object": "s3:GetObject",
+    "copy_object": "s3:PutObject",
+    "download_file": "s3:GetObject",
+    "upload_file": "s3:PutObject",
+    "create_bucket": "s3:CreateBucket",
+    "delete_bucket": "s3:DeleteBucket",
+    "list_buckets": "s3:ListAllMyBuckets",
+    "get_bucket_policy": "s3:GetBucketPolicy",
+    "put_bucket_policy": "s3:PutBucketPolicy",
+    "get_bucket_cors": "s3:GetBucketCORS",
+    "put_bucket_cors": "s3:PutBucketCORS"
+  },
+  "dynamodb": {
+    "get_item": "dynamodb:GetItem",
+    "put_item": "dynamodb:PutItem",
+    "update_item": "dynamodb:UpdateItem",
+    "delete_item": "dynamodb:DeleteItem",
+    "query": "dynamodb:Query",
+    "scan": "dynamodb:Scan",
+    "batch_get_item": "dynamodb:BatchGetItem",
+    "batch_write_item": "dynamodb:BatchWriteItem",
+    "create_table": "dynamodb:CreateTable",
+    "delete_table": "dynamodb:DeleteTable",
+    "describe_table": "dynamodb:DescribeTable",
+    "update_table": "dynamodb:UpdateTable"
+  },
+  "sqs": {
+    "send_message": "sqs:SendMessage",
+    "receive_message": "sqs:ReceiveMessage",
+    "delete_message": "sqs:DeleteMessage",
+    "get_queue_url": "sqs:GetQueueUrl",
+    "create_queue": "sqs:CreateQueue",
+    "delete_queue": "sqs:DeleteQueue",
+    "send_message_batch": "sqs:SendMessageBatch",
+    "delete_message_batch": "sqs:DeleteMessageBatch",
+    "change_message_visibility": "sqs:ChangeMessageVisibility"
+  },
+  "sns": {
+    "publish": "sns:Publish",
+    "create_topic": "sns:CreateTopic",
+    "delete_topic": "sns:DeleteTopic",
+    "subscribe": "sns:Subscribe",
+    "unsubscribe": "sns:Unsubscribe",
+    "list_topics": "sns:ListTopics",
+    "list_subscriptions": "sns:ListSubscriptions"
+  },
+  "lambda": {
+    "invoke": "lambda:InvokeFunction",
+    "create_function": "lambda:CreateFunction",
+    "delete_function": "lambda:DeleteFunction",
+    "get_function": "lambda:GetFunction",
+    "update_function_code": "lambda:UpdateFunctionCode",
+    "update_function_configuration": "lambda:UpdateFunctionConfiguration",
+    "list_functions": "lambda:ListFunctions"
+  },
+  "secretsmanager": {
+    "get_secret_value": "secretsmanager:GetSecretValue",
+    "put_secret_value": "secretsmanager:PutSecretValue",
+    "create_secret": "secretsmanager:CreateSecret",
+    "delete_secret": "secretsmanager:DeleteSecret",
+    "describe_secret": "secretsmanager:DescribeSecret",
+    "rotate_secret": "secretsmanager:RotateSecret",
+    "list_secrets": "secretsmanager:ListSecrets"
+  },
+  "ssm": {
+    "get_parameter": "ssm:GetParameter",
+    "get_parameters": "ssm:GetParameters",
+    "put_parameter": "ssm:PutParameter",
+    "delete_parameter": "ssm:DeleteParameter",
+    "get_parameter_history": "ssm:GetParameterHistory"
+  },
+  "sts": {
+    "get_caller_identity": "sts:GetCallerIdentity",
+    "assume_role": "sts:AssumeRole",
+    "assume_role_with_saml": "sts:AssumeRoleWithSAML",
+    "assume_role_with_web_identity": "sts:AssumeRoleWithWebIdentity"
+  },
+  "kms": {
+    "encrypt": "kms:Encrypt",
+    "decrypt": "kms:Decrypt",
+    "generate_data_key": "kms:GenerateDataKey",
+    "describe_key": "kms:DescribeKey",
+    "create_key": "kms:CreateKey",
+    "schedule_key_deletion": "kms:ScheduleKeyDeletion"
+  },
+  "iam": {
+    "get_user": "iam:GetUser",
+    "get_role": "iam:GetRole",
+    "pass_role": "iam:PassRole",
+    "create_role": "iam:CreateRole",
+    "attach_role_policy": "iam:AttachRolePolicy",
+    "create_policy": "iam:CreatePolicy",
+    "create_policy_version": "iam:CreatePolicyVersion",
+    "set_default_policy_version": "iam:SetDefaultPolicyVersion"
+  }
+}

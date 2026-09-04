@@ -1,10 +1,10 @@
 # Phase 38 Implementation Plan: Agent Governance & Repo Scaffolding (`rush governance` / `rush scaffold`)
 
-> **Phase:** 38 of 40  
-> **Milestone:** AGENTS.md Governance Synchronization, Multi-IDE Rule Parity, Subagent Hierarchies & Zero-Trust Scaffolding  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build agent governance and repository scaffolding tooling (`rush governance`, `rush scaffold`) that compiles canonical rules from `AGENTS.md` into multi-IDE rule files (.cursorrules, .windsurfrules, .copilot-instructions.md, .clauderules), verifies rule parity, enforces acyclic subagent invocation DAGs, and scaffolds zero-trust repositories.  
+> **Phase:** 38 of 40
+> **Milestone:** AGENTS.md Governance Synchronization, Multi-IDE Rule Parity, Subagent Hierarchies & Zero-Trust Scaffolding
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build agent governance and repository scaffolding tooling (`rush governance`, `rush scaffold`) that compiles canonical rules from `AGENTS.md` into multi-IDE rule files (.cursorrules, .windsurfrules, .copilot-instructions.md, .clauderules), verifies rule parity, enforces acyclic subagent invocation DAGs, and scaffolds zero-trust repositories.
 > **End State Outcome & Verification Checks:**
 > - [x] `RuleSynchronizer` compiles `AGENTS.md` into all IDE rule formats with SHA verification.
 > - [x] `ParityChecker` detects unsynchronized rule files in CI before PR merges.
@@ -13,15 +13,15 @@
 > - [x] CLI commands `rush governance sync`, `verify`, `rush scaffold init` operational.
 > - [x] 100% test pass rate across `tests/test_agent_governance.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)  
-> - [ADR-0020: Cryptographic HMAC Context Boundary Framing](../adr/0020-cryptographic-hmac-context-boundary-framing.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0010: Review and Remediation Gates](../adr/0010-review-and-remediation-gates.md)
+> - [ADR-0020: Cryptographic HMAC Context Boundary Framing](../adr/0020-cryptographic-hmac-context-boundary-framing.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-38-agent-governance-and-repo-scaffolding

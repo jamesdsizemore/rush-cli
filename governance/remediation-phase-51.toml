@@ -39,12 +39,11 @@ contracts = "governance/remediation-contracts.toml"
 phases = [52, 53, 54, 55, 56, 57, 58, 59, 60]
 
 [evidence]
-total_tests_passing = 975
-first_party_coverage_records = 1085
+total_tests_passing = 1033
+first_party_coverage_records = 48075
 public_operations_count = 146
 engine_families_count = 19
 remediation_findings_mapped = 16
-artifact_probes_wheel = "tested-isolated-failed-r001"
-artifact_probes_sdist = "tested-isolated-failed-r001"
-r001_reproduced = true
-
+artifact_probes_wheel = "tested-isolated-passed"
+artifact_probes_sdist = "tested-isolated-passed"
+r001_reproduced = false

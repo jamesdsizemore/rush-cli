@@ -54,7 +54,7 @@ Every piece of knowledge stored by Rush in `.rush/memory/` is a structured recor
 ## 3. The Coding Agent & MCP Lifecycle
 
 ### Step 1: Just-in-Time Context Hydration (Zero Bloat)
-Rush does not inject the entire memory ledger into the agent's prompt. 
+Rush does not inject the entire memory ledger into the agent's prompt.
 
 When an agent invokes a tool or opens a file (e.g., `src/auth/session.py`):
 1. Rush identifies the target symbols in that file.

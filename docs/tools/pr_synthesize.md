@@ -14,7 +14,7 @@
 0.1. **CODEOWNERS Reviewer Routing**: Discovers `.github/CODEOWNERS`, `CODEOWNERS`, or `docs/CODEOWNERS`, parses file patterns, and automatically populates recommended reviewers.
 1. **Diff Statistics & Change Breakdown**: Analyzes `git diff --stat` and `git diff --numstat` against a target base branch (default: `main`), extracting file counts, insertions, and deletions, and categorizing modified paths into source, tests, documentation, and configuration.
 2. **Quality & Security Gate Summary**: Formats verified platform gates into the PR description:
-   - SLSA Level 3 build provenance status.
+   - Build provenance draft status (in-toto Statement v1).
    - Clean architecture layer boundary compliance.
    - Blast radius impact summary.
    - Test suite and FastMCP schema parity.

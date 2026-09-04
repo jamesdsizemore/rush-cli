@@ -2,7 +2,7 @@
 
 ## 1. The Core Problem: Why Chat Memory & Static AST Memory Fail
 
-Traditional coding agent "memory" systems fail because they only store **static text transcripts** or **static code summaries**. 
+Traditional coding agent "memory" systems fail because they only store **static text transcripts** or **static code summaries**.
 
 When a coding agent works on a software repository, the real point of failure is that the agent lacks memory of the **living application state**:
 1. **The Agent has No Runtime Memory**: It does not remember what happened when the code actually ran (runtime errors, database states, API responses, console logs).

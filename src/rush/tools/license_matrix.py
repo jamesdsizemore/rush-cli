@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
+from license_expression import ExpressionError, LicenseSymbol, Licensing
+
 from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, finding_fingerprint, now_ms
+from .schemas import LicenseMatrixMetrics
 
+# Canonical allowed permissive licenses
 DEFAULT_ALLOWED_LICENSES: tuple[str, ...] = (
     "MIT",
     "Apache-2.0",
@@ -22,53 +26,132 @@ DEFAULT_ALLOWED_LICENSES: tuple[str, ...] = (
     "0BSD",
     "PSF-2.0",
     "Python-2.0",
+    "Zlib",
 )
 
-COPYLEFT_MARKERS: tuple[str, ...] = (
-    "GPL",
-    "AGPL",
-    "LGPL",
-    "SSPL",
-    "EUPL",
-    "MPL",
-    "CDDL",
-    "EPL",
-)
+PERMISSIVE_LICENSES: set[str] = {lic.upper() for lic in DEFAULT_ALLOWED_LICENSES}
+
+WEAK_COPYLEFT_LICENSES: set[str] = {
+    "LGPL-2.0-ONLY",
+    "LGPL-2.0-OR-LATER",
+    "LGPL-2.1-ONLY",
+    "LGPL-2.1-OR-LATER",
+    "LGPL-3.0-ONLY",
+    "LGPL-3.0-OR-LATER",
+    "MPL-1.1",
+    "MPL-2.0",
+    "CDDL-1.0",
+    "CDDL-1.1",
+    "EPL-1.0",
+    "EPL-2.0",
+}
+
+STRONG_COPYLEFT_LICENSES: set[str] = {
+    "GPL-2.0-ONLY",
+    "GPL-2.0-OR-LATER",
+    "GPL-3.0-ONLY",
+    "GPL-3.0-OR-LATER",
+    "AGPL-3.0-ONLY",
+    "AGPL-3.0-OR-LATER",
+    "SSPL-1.0",
+    "EUPL-1.1",
+    "EUPL-1.2",
+    "OSL-3.0",
+}
 
 
-def _normalize_spdx(raw_license: str) -> str:
-    """Normalize common license strings to canonical SPDX identifiers."""
-    cleaned = raw_license.strip()
-    norm = cleaned.lower()
-    if norm in ("mit", "mit license"):
-        return "MIT"
-    if norm in ("apache 2.0", "apache-2.0", "apache license 2.0", "apache"):
-        return "Apache-2.0"
-    if norm in ("bsd", "bsd-3-clause", "bsd 3-clause", "3-clause bsd"):
-        return "BSD-3-Clause"
-    if norm in ("bsd-2-clause", "bsd 2-clause", "2-clause bsd"):
-        return "BSD-2-Clause"
-    if norm in ("isc", "isc license"):
-        return "ISC"
-    if norm in ("unlicense", "the unlicense"):
-        return "Unlicense"
-    if norm in ("cc0", "cc0-1.0", "public domain"):
-        return "CC0-1.0"
-    if norm in ("0bsd", "zero-clause bsd"):
-        return "0BSD"
-    if norm in ("psf", "psf-2.0", "python software foundation license"):
-        return "PSF-2.0"
-    return cleaned
+def _classify_symbol(symbol_name: str) -> str:
+    """Classify a single normalized SPDX license symbol into a risk tier."""
+    sym_upper = symbol_name.upper()
+    if sym_upper in PERMISSIVE_LICENSES:
+        return "permissive"
+    if sym_upper in WEAK_COPYLEFT_LICENSES:
+        return "weak-copyleft"
+    if sym_upper in STRONG_COPYLEFT_LICENSES or sym_upper.startswith(("GPL-", "AGPL-")):
+        return "strong-copyleft"
+    if "PROPRIETARY" in sym_upper or "COMMERCIAL" in sym_upper:
+        return "proprietary"
+    return "unclassified"
+
+
+def evaluate_spdx_expression(
+    expr_str: str,
+    licensing: Licensing,
+    allowed_set: set[str],
+) -> tuple[str, str, list[str]]:
+    """Evaluates an SPDX license expression using boolean AST resolution.
+
+    Returns:
+        (category, risk_level, list_of_symbols)
+    """
+    clean_expr = expr_str.strip()
+    if not clean_expr:
+        return "unspecified", "MEDIUM", []
+
+    try:
+        parsed = licensing.parse(clean_expr)
+    except ExpressionError:
+        # Fallback for simple non-SPDX strings
+        clean_upper = clean_expr.upper()
+        if clean_upper in allowed_set:
+            return "permissive", "LOW", [clean_expr]
+        if any(marker in clean_upper for marker in ("GPL", "AGPL")):
+            return "strong-copyleft", "HIGH", [clean_expr]
+        return "manual-review", "MEDIUM", [clean_expr]
+
+    if parsed is None:
+        return "unspecified", "MEDIUM", []
+
+    symbols: list[LicenseSymbol] = licensing.license_symbols(parsed)
+    symbol_names = [s.key for s in symbols]
+
+    # Check for permissive exceptions (e.g., Classpath-exception-2.0 or linking exceptions)
+    has_linking_exception = any(
+        "classpath" in name.lower()
+        or "linking" in name.lower()
+        or "exception" in name.lower()
+        for name in symbol_names
+    )
+    if has_linking_exception:
+        return "permissive", "LOW", symbol_names
+
+    tiers = [_classify_symbol(name) for name in symbol_names]
+    expr_repr = repr(parsed)
+
+    # Boolean OR resolution: developer can choose the permissive alternative
+    if (" OR " in clean_expr.upper() or expr_repr.startswith("OR(")) and any(
+        t == "permissive" and name.upper() in allowed_set
+        for t, name in zip(tiers, symbol_names, strict=False)
+    ):
+        return "permissive", "LOW", symbol_names
+
+    if any(t == "strong-copyleft" for t in tiers):
+        return "strong-copyleft", "HIGH", symbol_names
+    if any(t == "weak-copyleft" for t in tiers):
+        return "weak-copyleft", "MEDIUM", symbol_names
+    if any(t == "proprietary" for t in tiers):
+        return "proprietary", "HIGH", symbol_names
+    if all(
+        t == "permissive" and name.upper() in allowed_set
+        for t, name in zip(tiers, symbol_names, strict=False)
+    ):
+        return "permissive", "LOW", symbol_names
+
+    return "manual-review", "MEDIUM", symbol_names
 
 
 def _lookup_python_pkg_license(pkg_name: str) -> str:
-    """Attempt to lookup license of an installed Python package via importlib.metadata."""
+    """Lookup license of an installed Python package via importlib.metadata."""
     try:
         meta = importlib.metadata.metadata(pkg_name)
         lic = meta.get("License")
-        if lic and lic.strip() and lic.strip().lower() != "unknown":
+        if (
+            lic
+            and lic.strip()
+            and lic.strip().lower() not in ("unspecified", "none", "")
+        ):
             return lic.strip()
-        # Look in classifiers
+        # Inspect trove classifiers
         classifiers = meta.get_all("Classifier") or []
         for c in classifiers:
             if "License :: OSI Approved ::" in c:
@@ -80,73 +163,94 @@ def _lookup_python_pkg_license(pkg_name: str) -> str:
                 if "BSD" in part:
                     return "BSD-3-Clause"
                 if "GPL" in part:
-                    return "GPL-3.0"
+                    return "GPL-3.0-only"
                 return part
     except Exception:  # noqa: BLE001, S110
         pass
-    return "UNKNOWN"
+    return "unspecified"
 
 
 def _extract_pyproject_deps(pyproject_path: Path) -> set[str]:
-    """Parse dependencies from pyproject.toml."""
+    """Parse dependencies from pyproject.toml using stdlib tomllib."""
     deps: set[str] = set()
     try:
-        text = pyproject_path.read_text(encoding="utf-8", errors="ignore")
-        # standard [project.dependencies] or [tool.poetry.dependencies]
-        found = re.findall(
-            r'["\']([a-zA-Z0-9_-]+)(?:>=|==|<=|~=|<|>|\^|\[|;)?.*["\']', text
+        data = tomllib.loads(
+            pyproject_path.read_text(encoding="utf-8", errors="ignore")
         )
-        for dep in found:
-            dep_clean = dep.lower().split("[")[0].strip()
-            if dep_clean and dep_clean not in (
-                "rush",
-                "python",
-                "project",
-                "dependencies",
-                "optional-dependencies",
-                "tool",
-            ):
-                deps.add(dep_clean)
+        project_table = data.get("project", {})
+
+        # Standard dependencies
+        for dep in project_table.get("dependencies", []):
+            pkg = (
+                dep.split(";")[0]
+                .split(">")[0]
+                .split("<")[0]
+                .split("=")[0]
+                .split("~")[0]
+                .split("[")[0]
+                .strip()
+            )
+            if pkg:
+                deps.add(pkg.lower())
+
+        # Optional dependencies
+        opt_deps = project_table.get("optional-dependencies", {})
+        if isinstance(opt_deps, dict):
+            for opt_list in opt_deps.values():
+                if isinstance(opt_list, list):
+                    for dep in opt_list:
+                        pkg = (
+                            dep.split(";")[0]
+                            .split(">")[0]
+                            .split("<")[0]
+                            .split("=")[0]
+                            .split("~")[0]
+                            .split("[")[0]
+                            .strip()
+                        )
+                        if pkg:
+                            deps.add(pkg.lower())
+
+        # Poetry dependencies
+        tool_poetry = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+        if isinstance(tool_poetry, dict):
+            for k in tool_poetry:
+                if k.lower() != "python":
+                    deps.add(k.lower())
     except Exception:  # noqa: BLE001, S110
         pass
     return deps
 
 
 def _extract_package_json_deps(pkg_json_path: Path) -> set[str]:
-    """Parse dependencies from package.json."""
+    """Parse dependencies from package.json using stdlib json."""
     deps: set[str] = set()
     try:
         data = json.loads(pkg_json_path.read_text(encoding="utf-8", errors="ignore"))
         for section in ("dependencies", "devDependencies", "peerDependencies"):
             if isinstance(data.get(section), dict):
-                deps.update(data[section].keys())
+                deps.update(k.lower() for k in data[section])
     except Exception:  # noqa: BLE001, S110
         pass
     return deps
 
 
 def _extract_cargo_toml_deps(cargo_path: Path) -> set[str]:
-    """Parse dependencies from Cargo.toml."""
+    """Parse dependencies from Cargo.toml using stdlib tomllib."""
     deps: set[str] = set()
     try:
-        text = cargo_path.read_text(encoding="utf-8", errors="ignore")
-        in_deps = False
-        for line in text.splitlines():
-            line_str = line.strip()
-            if line_str.startswith("[") and line_str.endswith("]"):
-                in_deps = "dependencies" in line_str.lower()
-                continue
-            if in_deps and "=" in line_str:
-                pkg = line_str.split("=")[0].strip()
-                if pkg and not pkg.startswith("#"):
-                    deps.add(pkg)
+        data = tomllib.loads(cargo_path.read_text(encoding="utf-8", errors="ignore"))
+        for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+            table = data.get(section, {})
+            if isinstance(table, dict):
+                deps.update(k.lower() for k in table)
     except Exception:  # noqa: BLE001, S110
         pass
     return deps
 
 
 class LicenseMatrixTool(ToolFn):
-    """Audits dependencies for license compliance and copyleft risks."""
+    """Audits dependencies for license compliance and copyleft risks using SPDX parsing."""
 
     name = "license-matrix"
 
@@ -204,8 +308,10 @@ class LicenseMatrixTool(ToolFn):
         target_dir = path if path.is_dir() else path.parent
         target_dir = target_dir.resolve()
 
-        # Gather discovered dependencies across manifests
-        discovered_pkgs: dict[str, str] = {}  # pkg -> manifest path
+        licensing = Licensing()
+        allowed_set = {lic.upper() for lic in allowed_licenses}
+
+        discovered_pkgs: dict[str, str] = {}  # pkg -> manifest relative path
 
         pyproject = target_dir / "pyproject.toml"
         if pyproject.exists():
@@ -222,46 +328,28 @@ class LicenseMatrixTool(ToolFn):
             for p in _extract_cargo_toml_deps(cargo):
                 discovered_pkgs[p] = "Cargo.toml"
 
-        # Explicit overrides / mock injection
         explicit_overrides = dict(package_licenses or {})
         for p in explicit_overrides:
             if p not in discovered_pkgs:
                 discovered_pkgs[p] = "explicit"
 
-        # Allowed licenses set (case-insensitive for lookup)
-        allowed_set = {lic.upper() for lic in allowed_licenses}
-
         packages_report: list[dict[str, Any]] = []
         findings: list[Finding] = []
 
         for pkg, manifest_rel in sorted(discovered_pkgs.items()):
-            raw_lic = explicit_overrides.get(pkg)
-            if not raw_lic:
+            if pkg in explicit_overrides:
+                raw_lic = explicit_overrides[pkg]
+            else:
                 raw_lic = _lookup_python_pkg_license(pkg)
-                if raw_lic == "UNKNOWN" and manifest_rel in (
-                    "package.json",
-                    "Cargo.toml",
-                ):
-                    # Default assumed permissive or unknown for mock if manifest present
-                    raw_lic = "MIT"
 
-            norm_lic = _normalize_spdx(raw_lic)
-            is_copyleft = any(
-                m in norm_lic.upper() for m in COPYLEFT_MARKERS
-            ) or norm_lic.upper().startswith("GPL")
-
-            # Check if compound, unknown, or needs manual review
-            is_compound = (
-                any(sep in norm_lic for sep in ("/", " OR ", " AND ", "Dual"))
-                or "REVIEW" in norm_lic.upper()
-                or "PROPRIETARY" in norm_lic.upper()
+            category, risk_level, symbols = evaluate_spdx_expression(
+                raw_lic, licensing, allowed_set
             )
-            is_unknown = norm_lic.upper() in ("UNKNOWN", "", "NONE")
 
-            if is_copyleft:
-                category = "Copyleft"
-                risk = "HIGH"
-                finding_msg = f"Dependency '{pkg}' uses copyleft license '{norm_lic}'."
+            is_copyleft = category in ("strong-copyleft", "weak-copyleft")
+
+            if category == "strong-copyleft":
+                msg = f"Dependency '{pkg}' uses strong copyleft license '{raw_lic}'."
                 findings.append(
                     Finding(
                         path=manifest_rel if manifest_rel != "explicit" else str(path),
@@ -270,21 +358,14 @@ class LicenseMatrixTool(ToolFn):
                         rule="license-copyleft-risk",
                         rule_id="license-copyleft-risk",
                         severity="error",
-                        message=finding_msg,
+                        message=msg,
                         fingerprint=finding_fingerprint(
-                            manifest_rel,
-                            1,
-                            1,
-                            "license-copyleft-risk",
-                            "error",
-                            finding_msg,
+                            manifest_rel, 1, 1, "license-copyleft-risk", "error", msg
                         ),
                     )
                 )
-            elif is_compound or is_unknown or norm_lic.upper() not in allowed_set:
-                category = "ManualReview"
-                risk = "MEDIUM"
-                finding_msg = f"Dependency '{pkg}' requires manual review for license '{norm_lic}'."
+            elif category in ("weak-copyleft", "manual-review", "unspecified"):
+                msg = f"Dependency '{pkg}' requires manual review for license '{raw_lic}' (tier: {category})."
                 findings.append(
                     Finding(
                         path=manifest_rel if manifest_rel != "explicit" else str(path),
@@ -293,51 +374,60 @@ class LicenseMatrixTool(ToolFn):
                         rule="license-manual-review",
                         rule_id="license-manual-review",
                         severity="warn",
-                        message=finding_msg,
+                        message=msg,
                         fingerprint=finding_fingerprint(
-                            manifest_rel,
-                            1,
-                            1,
-                            "license-manual-review",
-                            "warn",
-                            finding_msg,
+                            manifest_rel, 1, 1, "license-manual-review", "warn", msg
                         ),
                     )
                 )
-            else:
-                category = "Permissive"
-                risk = "LOW"
 
             packages_report.append(
                 {
                     "package": pkg,
-                    "license": norm_lic,
-                    "raw_license": raw_lic,
+                    "license": raw_lic,
                     "category": category,
+                    "risk": risk_level,
                     "is_copyleft": is_copyleft,
-                    "risk": risk,
+                    "symbols": symbols,
                     "manifest": manifest_rel,
                 }
             )
 
-        copyleft_count = sum(1 for p in packages_report if p["is_copyleft"])
-        manual_review_count = sum(
-            1 for p in packages_report if p["category"] == "ManualReview"
-        )
         total_pkgs = len(packages_report)
-        allowed_count = total_pkgs - copyleft_count - manual_review_count
+        copyleft_count = sum(1 for p in packages_report if p["is_copyleft"])
+        unresolved_count = sum(
+            1
+            for p in packages_report
+            if p["category"] in ("unspecified", "manual-review")
+        )
+        compliant_count = sum(
+            1 for p in packages_report if p["category"] == "permissive"
+        )
+
+        compliance_score = (
+            round(compliant_count / total_pkgs, 4) if total_pkgs > 0 else 1.0
+        )
 
         status = "ok"
         if copyleft_count > 0:
             status = "fail"
-        elif manual_review_count > 0:
+        elif unresolved_count > 0:
             status = "warn"
 
+        metrics_obj = LicenseMatrixMetrics(
+            compliance_score=compliance_score,
+            packages_audited=total_pkgs,
+            incompatible_count=copyleft_count,
+            unresolved_count=unresolved_count,
+        )
+
         metrics = {
+            "compliance_score": metrics_obj.compliance_score,
+            "packages_audited": metrics_obj.packages_audited,
+            "incompatible_count": metrics_obj.incompatible_count,
+            "unresolved_count": metrics_obj.unresolved_count,
             "total_packages": total_pkgs,
-            "allowed_count": allowed_count,
             "copyleft_violations_count": copyleft_count,
-            "manual_review_count": manual_review_count,
         }
 
         exec_meta = build_execution_metadata(
@@ -349,13 +439,14 @@ class LicenseMatrixTool(ToolFn):
 
         return ToolResult(
             tool=self.name,
-            engine=None,
-            engine_version=None,
+            engine="license-expression",
+            engine_version="30.4.0",
             status=status,
             duration_ms=elapsed_ms(start),
             summary=(
                 f"License Matrix audited {total_pkgs} packages "
-                f"({copyleft_count} copyleft violations, {manual_review_count} manual review)"
+                f"({copyleft_count} copyleft violations, {unresolved_count} unresolved, "
+                f"compliance_score: {compliance_score})"
             ),
             findings=findings,
             metrics=metrics,
@@ -376,8 +467,8 @@ class LicenseMatrixScanner:
         metrics = res.get("metrics") or {}
         raw = res.get("raw") or {}
         return {
-            "total_packages": metrics.get("total_packages", 0),
-            "copyleft_violations_count": metrics.get("copyleft_violations_count", 0),
+            "total_packages": metrics.get("packages_audited", 0),
+            "copyleft_violations_count": metrics.get("incompatible_count", 0),
             "packages": raw.get("packages", []),
         }
 

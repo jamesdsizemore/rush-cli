@@ -1,9 +1,9 @@
 # Rush Memory, Context & Tool Implementation Plan
-**Document ID:** `rush-unified-agent-intelligence-development-plan-agy`  
-**Target:** Rush CLI & FastMCP Server (`rush-cli`)  
-**Python Version:** Python 3.12 managed with `uv`  
-**Contract:** Local-first, stdio-only MCP server and CLI tool  
-**Status:** Implementation Plan (Phases 51–56)  
+**Document ID:** `rush-unified-agent-intelligence-development-plan-agy`
+**Target:** Rush CLI & FastMCP Server (`rush-cli`)
+**Python Version:** Python 3.12 managed with `uv`
+**Contract:** Local-first, stdio-only MCP server and CLI tool
+**Status:** Implementation Plan (Phases 51–56)
 
 ---
 

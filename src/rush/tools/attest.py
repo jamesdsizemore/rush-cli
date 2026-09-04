@@ -85,21 +85,19 @@ class AttestationTool(ToolFn):
         target_dir = path if path.is_dir() else path.parent
         target_dir = target_dir.resolve()
 
-        # Subject calculation
-        subject_name = "source-tree"
-        subject_digest = "unknown"
-
+        # Subject resolution and real artifact digest calculation
         if artifact_path:
             raw_art = Path(artifact_path)
             candidate = raw_art if raw_art.is_absolute() else (target_dir / raw_art)
-            if candidate.is_file():
-                subject_name = candidate.name
-                subject_digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-            else:
-                subject_name = raw_art.name
-                subject_digest = hashlib.sha256(
-                    str(artifact_path).encode("utf-8")
-                ).hexdigest()
+            if not candidate.is_file():
+                return error_result(
+                    self.name,
+                    None,
+                    f"attest: specified artifact path '{artifact_path}' does not exist",
+                    duration_ms=elapsed_ms(start),
+                )
+            subject_name = candidate.name
+            subject_digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
         elif path.is_file():
             subject_name = path.name
             subject_digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -124,23 +122,19 @@ class AttestationTool(ToolFn):
                 subject_name = target_art.name
                 subject_digest = hashlib.sha256(target_art.read_bytes()).hexdigest()
             else:
-                commit_res = run_subprocess(
-                    ["git", "rev-parse", "HEAD"], cwd=target_dir
+                return skipped_result(
+                    self.name,
+                    None,
+                    f"attest: no built package (.whl, .tar.gz) found under '{dist_dir}'; build distribution artifacts before attesting.",
+                    duration_ms=elapsed_ms(start),
                 )
-                commit_out = (
-                    commit_res.stdout.strip()
-                    if commit_res.returncode == 0 and commit_res.stdout.strip()
-                    else "unknown"
-                )
-                subject_name = path.name or "source-tree"
-                subject_digest = hashlib.sha256(commit_out.encode("utf-8")).hexdigest()
 
         # Git commit and origin metadata
         commit_res = run_subprocess(["git", "rev-parse", "HEAD"], cwd=target_dir)
         commit_hash = (
             commit_res.stdout.strip()
             if commit_res.returncode == 0 and commit_res.stdout.strip()
-            else "unknown"
+            else "0" * 40
         )
 
         origin_res = run_subprocess(

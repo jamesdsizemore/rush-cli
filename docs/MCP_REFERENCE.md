@@ -109,15 +109,15 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_attest_generate(artifact_path="")`**: *(Deprecated compatibility alias)* Delegates directly to `rush_attest`.
 * **`rush_license_matrix(path, project_license="", allowed_licenses=None, export_path=None)`**: Audit dependency licenses across manifests.
 * **`rush_iam_audit(path, export_path=None)`**: Synthesize least-privilege AWS IAM JSON policy from static SDK usage.
-* **`rush_dead_asset(path, operation="audit", export_manifest=None)`**: Scan unreferenced assets or prune with hash verification.
-* **`rush_pr_synthesize(path, base_ref="main", evidence_file=None, export_card=None)`**: Synthesize structured pull request card.
+* **`rush_dead_asset(path, export_manifest=None)`**: Scan repository for unreferenced media, font, and static assets (strictly read-only).
+* **`rush_pr_synthesize(path, base_ref="main", export_path=None)`**: Synthesize structured pull request card from Git diff and tool results.
 * **`rush_prompt_eval(path, pass_rate_threshold=1.0, max_tokens=None, max_cost=None)`**: Evaluate recorded golden prompt runs.
-* **`rush_error_catalog(path, operation="audit", export_docs=None, output_module=None)`**: Extract errors and generate RFC 7807 problem details.
-* **`rush_provenance_ai(path)`**: Analyze Git commit trailers for AI co-authorship attribution.
+* **`rush_error_catalog(path, export_path=None)`**: Extract errors and generate RFC 7807 problem details.
+* **`rush_provenance_ai(path, max_commits=500)`**: Audit Git commit trailers, calculate 30/60/90-day line survival rates, and correlate defects.
 * **`rush_mem_profile(path, mode="static", probe_cmd=None)`**: Scan unclosed resources and run dynamic memory probes.
 * **`rush_cold_start(path, mode="static", entry_point=None, threshold_ms=50.0)`**: Analyze module import cold-start latency.
 * **`rush_media_opt(path, operation="audit")`**: Audit, sanitize SVGs, and optimize raster media assets.
-* **`rush_offline_review(path, model_path=None, model_sha256=None)`**: Offline local ONNX model review inference with zero network.
+* **`rush_offline_review(path, runner_path=None, model=None, model_path=None)`**: Air-gapped local LLM review using Ollama or llama-cli discovered on PATH.
 * **`rush_tui_diff(path, base_ref=None, target_ref="HEAD")`**: Compute Git finding deltas across commits.
 * **`rush_benchmark(path, metric=None, value=None, threshold_pct=10.0, record=False)`**: Compare performance samples against baseline thresholds.
 * **`rush_context_skeletonize(path)`**: Extract compressed AST outline skeletons for a target source file.
@@ -131,4 +131,3 @@ All 73 FastMCP registered tools are cataloged in `governance/public-operations.t
 - Each catalog tool is registered dynamically with snake_case normalization pointing to canonical implementations in `src/rush/tools/`.
 - Safe probes are provided via MCP protocol list/schema requests (`mcp:inspect:<name>`).
 - Transport invariant: stdio stdout is strictly JSON-RPC; all logs and diagnostics belong on stderr.
-

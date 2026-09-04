@@ -99,6 +99,10 @@ def test_attest_export_requires_artifact_write_permission(tmp_path: Path) -> Non
 
 
 def test_attest_export_rejects_escaping_path(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "app.whl").write_bytes(b"package content")
+
     tool = AttestationTool()
     res = tool.run(
         tmp_path,
@@ -140,3 +144,17 @@ def test_attest_auto_discovers_dist_artifacts(tmp_path: Path) -> None:
     raw = result.get("raw") or {}
     assert raw["subject"][0]["name"] == "rush_cli-0.3.0-py3-none-any.whl"
     assert raw["subject"][0]["digest"]["sha256"] == expected_digest
+
+
+def test_attest_rejects_missing_artifact(tmp_path: Path) -> None:
+    tool = AttestationTool()
+    result = tool.run(tmp_path, artifact_path="nonexistent.whl")
+    assert result["status"] == "error"
+    assert "does not exist" in result["summary"]
+
+
+def test_attest_skipped_when_no_dist_artifacts(tmp_path: Path) -> None:
+    tool = AttestationTool()
+    result = tool.run(tmp_path)
+    assert result["status"] == "skipped"
+    assert "no built package" in result["summary"]

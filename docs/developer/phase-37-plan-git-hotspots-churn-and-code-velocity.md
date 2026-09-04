@@ -1,10 +1,10 @@
 # Phase 37 Implementation Plan: Git Hotspots, Churn & Code Velocity (`rush hotspots`)
 
-> **Phase:** 37 of 40  
-> **Milestone:** Git Churn Extraction, AST Cyclomatic Complexity & Composite Defect Risk Matrix  
-> **Status:** Ready for Implementation  
-> **Target Version:** Rush v0.2.0  
-> **Starting Goal:** Build Git hotspot, code churn, and velocity analysis tooling (`rush hotspots`) that combines Git log history with AST cyclomatic complexity to compute composite defect risk scores, detect hidden temporal file coupling, and evaluate author entropy/bus factor risks.  
+> **Phase:** 37 of 40
+> **Milestone:** Git Churn Extraction, AST Cyclomatic Complexity & Composite Defect Risk Matrix
+> **Status:** Ready for Implementation
+> **Target Version:** Rush v0.2.0
+> **Starting Goal:** Build Git hotspot, code churn, and velocity analysis tooling (`rush hotspots`) that combines Git log history with AST cyclomatic complexity to compute composite defect risk scores, detect hidden temporal file coupling, and evaluate author entropy/bus factor risks.
 > **End State Outcome & Verification Checks:**
 > - [x] `GitChurnExtractor` parses Git commit history with exponential time-decay weighting and commit secret scrubbing.
 > - [x] `ASTComplexityCalculator` computes cyclomatic complexity across Python, TypeScript, and Rust ASTs.
@@ -13,13 +13,13 @@
 > - [x] CLI commands `rush hotspots analyze`, `rush hotspots churn`, `rush hotspots coupling` operational.
 > - [x] 100% test pass rate across `tests/test_git_hotspots.py`.
 > - [x] Master backlog in `docs/developer/backlog.md` updated to Complete.
-> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.  
-> **ADR References:**  
-> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)  
-> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)  
-> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`  
-> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.  
-> **Starting Git Lifecycle Commands:**  
+> - [x] All 136+ documentation files across `/docs` synchronized via `python scripts/sync_docs.py --update`.
+> **ADR References:**
+> - [ADR-0003: Tool Catalog CLI MCP Parity](../adr/0003-tool-catalog-cli-mcp-parity.md)
+> - [ADR-0024: Hardened Subprocess Git Invocations](../adr/0024-hardened-subprocess-git-invocations.md)
+> **Pinned Dependencies:** `mcp==1.28.1`, `click==8.4.2`, `rich==13.9.4`, `pytest==9.0.3`
+> **Core Contract:** Stdio JSON-RPC FastMCP transport, stderr NDJSON diagnostics, deterministic offline execution, zero-trust repository safety.
+> **Starting Git Lifecycle Commands:**
 > ```bash
 > git status
 > git checkout -b phase-37-git-hotspots-churn-and-code-velocity

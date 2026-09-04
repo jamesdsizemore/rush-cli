@@ -60,4 +60,3 @@ Execute locally:
 uv build
 python scripts/probe_installed_artifacts.py --json
 ```
-

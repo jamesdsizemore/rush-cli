@@ -61,7 +61,7 @@ def test_cli_provenance_ai_json_output(tmp_path: Path) -> None:
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["tool"] == "provenance-ai"
-    assert data["status"] in ("ok", "warn")
+    assert data["status"] == "ok"
     assert "findings" in data
     assert data["raw"]["commits_audited"] >= 1
     assert data["raw"]["ai_assisted_count"] >= 1
@@ -100,7 +100,7 @@ def test_cli_pr_synthesize_json_output(tmp_path: Path) -> None:
     data = json.loads(result.output)
     assert data["tool"] == "pr-synthesize"
     assert data["status"] == "ok"
-    assert data["metadata"]["risk_tier"] in ("low", "medium", "high")
+    assert data["metadata"]["risk_tier"] == "low"
     assert "pr_card" in data["raw"]
 
 
@@ -116,15 +116,15 @@ def test_mcp_phase50b_tools_registered_and_callable(tmp_path: Path) -> None:
     # Test direct ToolFn invocation via call interface
     prov_res = ProvenanceAiTool()(tmp_path)
     assert prov_res["tool"] == "provenance-ai"
-    assert prov_res["status"] in ("ok", "warn")
+    assert prov_res["status"] == "ok"
 
     dead_res = DeadAssetTool()(tmp_path)
     assert dead_res["tool"] == "dead-asset"
-    assert dead_res["status"] in ("ok", "warn", "skipped")
+    assert dead_res["status"] == "skipped"
 
     pr_res = PrSynthesizeTool()(tmp_path, base_ref="HEAD")
     assert pr_res["tool"] == "pr-synthesize"
-    assert pr_res["status"] in ("ok", "warn")
+    assert pr_res["status"] == "ok"
 
 
 def test_phase50b_tools_fail_closed_on_unauthorized_artifact_write(
@@ -132,17 +132,21 @@ def test_phase50b_tools_fail_closed_on_unauthorized_artifact_write(
 ) -> None:
     _init_git_repo(tmp_path)
 
-    # Dead asset prune without permission
+    # Dead asset export manifest without permission
     assets = tmp_path / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     dead_pic = assets / "pic.png"
     dead_pic.write_bytes(b"pic")
+    manifest_file = tmp_path / "manifest.json"
 
     dead_tool = DeadAssetTool()
-    res_prune = dead_tool.run(
-        tmp_path, prune=True, permissions=ExecutionPermissions(artifact_write=False)
+    res_manifest = dead_tool.run(
+        tmp_path,
+        export_manifest=manifest_file,
+        permissions=ExecutionPermissions(artifact_write=False),
     )
-    assert res_prune["status"] in ("skipped", "warn")
+    assert res_manifest["status"] == "skipped"
+    assert not manifest_file.exists()
     assert dead_pic.exists()
 
     # PR synthesize export without permission
@@ -153,5 +157,5 @@ def test_phase50b_tools_fail_closed_on_unauthorized_artifact_write(
         export_path=export_out,
         permissions=ExecutionPermissions(artifact_write=False),
     )
-    assert res_export["status"] in ("skipped", "warn")
+    assert res_export["status"] == "skipped"
     assert not export_out.exists()

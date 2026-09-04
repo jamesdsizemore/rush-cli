@@ -43,6 +43,11 @@ dependencies = [
 
 
 def test_iam_policy_synthesizer(tmp_path: Path):
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        "import boto3\ns3 = boto3.client('s3')\ns3.get_object(Bucket='my-bucket', Key='item.txt')\n",
+        encoding="utf-8",
+    )
     synth = IamPolicySynthesizer(project_root=tmp_path)
     policy = synth.synthesize_policy()
 
@@ -72,7 +77,7 @@ def test_pr_synthesizer(tmp_path: Path):
     synth = PrSynthesizer(project_root=tmp_path)
     card = synth.synthesize_pr_card(base_branch="HEAD")
 
-    assert "SLSA Provenance" in card
+    assert "Build Provenance" in card
     assert "Architecture Guard" in card
 
 
@@ -91,21 +96,25 @@ def test_phase50_manual_mcp_names_contain_no_business_implementations() -> None:
 
 
 def test_canonical_phase50_tools_return_canonical_result(tmp_path: Path) -> None:
-    # AttestationTool
+    # AttestationTool with real dist artifact
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "rush-0.3.0.whl").write_bytes(b"package-data")
+
     attest_tool = AttestationTool()
     attest_res = attest_tool.run(tmp_path)
     assert attest_res["tool"] == "attest"
     assert attest_res["status"] == "ok"
     assert "statement" in attest_res["metadata"]
 
-    # LicenseMatrixTool
+    # LicenseMatrixTool on clean repo
     lic_tool = LicenseMatrixTool()
     lic_res = lic_tool.run(tmp_path)
     assert lic_res["tool"] == "license-matrix"
-    assert lic_res["status"] in ("ok", "warn")
+    assert lic_res["status"] == "ok"
 
-    # IamAuditTool
+    # IamAuditTool on clean repo
     iam_tool = IamAuditTool()
     iam_res = iam_tool.run(tmp_path)
     assert iam_res["tool"] == "iam-audit"
-    assert iam_res["status"] in ("ok", "warn")
+    assert iam_res["status"] == "ok"

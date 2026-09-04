@@ -4,7 +4,7 @@ Welcome to **Vibecoding with Rush**.
 
 If you are a modern builder who codes by talking to AI models—prompting **Cursor, Claude Code, Cline, Windsurf, ChatGPT, or GitHub Copilot** to manifest full-stack apps, APIs, and tools at the speed of thought—you are a **Vibecoder**.
 
-Vibecoding is the most exhilarating way to build software in human history. You can go from a napkin sketch to a deployed product in an afternoon. 
+Vibecoding is the most exhilarating way to build software in human history. You can go from a napkin sketch to a deployed product in an afternoon.
 
 **But vibecoding without guardrails has a dark side:**
 - The AI writes 500 lines of flashy code, but silently breaks your authentication flow.
@@ -96,4 +96,3 @@ Run multiple subagents without fear of corrupted files: Rush manages file locks 
 
 ## Supply Chain Safety for Vibecoders (Phase 50)
 Even when vibe-coding at high speed, `rush license-matrix` and `rush iam-audit` ensure you never accidentally introduce viral licenses or overly permissive cloud credentials.
-

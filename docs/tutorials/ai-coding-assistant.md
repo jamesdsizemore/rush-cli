@@ -81,4 +81,3 @@ In multi-agent mode, instruct each subagent to acquire locks via `rush_mesh_acqu
 
 ## Release & Attestation Agent Protocol
 Instruct agents to call `rush_pr_synthesize` when ready to create pull requests.
-

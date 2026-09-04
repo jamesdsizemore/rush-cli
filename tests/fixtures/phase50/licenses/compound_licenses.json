@@ -1,0 +1,17 @@
+[
+  {
+    "package": "pkg-a",
+    "license_expression": "MIT OR Apache-2.0",
+    "expected_status": "compliant"
+  },
+  {
+    "package": "pkg-b",
+    "license_expression": "GPL-3.0-only WITH Classpath-exception-2.0",
+    "expected_status": "compliant"
+  },
+  {
+    "package": "pkg-c",
+    "license_expression": "AGPL-3.0-or-later",
+    "expected_status": "non-compliant"
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "storage": {
+    "download_as_bytes": "storage.objects.get",
+    "download_to_filename": "storage.objects.get",
+    "get_blob": "storage.objects.get",
+    "upload_from_string": "storage.objects.create",
+    "upload_from_filename": "storage.objects.create",
+    "delete_blob": "storage.objects.delete",
+    "list_blobs": "storage.objects.list",
+    "create_bucket": "storage.buckets.create",
+    "delete_bucket": "storage.buckets.delete",
+    "get_bucket": "storage.buckets.get"
+  },
+  "bigquery": {
+    "query": "bigquery.jobs.create",
+    "get_table": "bigquery.tables.get",
+    "insert_rows": "bigquery.tables.updateData",
+    "insert_rows_json": "bigquery.tables.updateData",
+    "create_dataset": "bigquery.datasets.create",
+    "delete_dataset": "bigquery.datasets.delete"
+  },
+  "pubsub": {
+    "publish": "pubsub.topics.publish",
+    "subscribe": "pubsub.subscriptions.consume",
+    "create_topic": "pubsub.topics.create",
+    "delete_topic": "pubsub.topics.delete",
+    "create_subscription": "pubsub.subscriptions.create",
+    "delete_subscription": "pubsub.subscriptions.delete"
+  },
+  "firestore": {
+    "get": "datastore.entities.get",
+    "set": "datastore.entities.update",
+    "delete": "datastore.entities.delete",
+    "collection": "datastore.entities.list"
+  }
+}

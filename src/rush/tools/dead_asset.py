@@ -1,8 +1,8 @@
-"""Unreferenced asset and dead media pruner tool (PR50.14).
+"""Unreferenced asset and dead media detection tool (Strictly Read-Only).
 
 Identifies images, fonts, and media assets unreferenced in repository source code,
-generates deterministic audit manifests, and performs guarded pruning with SHA-256
-validation and artifact-write permission gating.
+generates deterministic audit manifests, and calculates potential disk savings without
+modifying or deleting any repository files.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ class DeadAssetScanner:
                     pass
 
         unreferenced: list[str] = []
-        for asset in all_assets:
+        for asset in sorted(all_assets):
             rel = str(asset.relative_to(self.project_root)).replace("\\", "/")
             if asset.name not in all_text and rel not in all_text:
                 unreferenced.append(rel)
@@ -102,30 +102,32 @@ class DeadAssetScanner:
         return {
             "total_assets": len(all_assets),
             "dead_assets_count": len(unreferenced),
-            "dead_assets": sorted(unreferenced),
+            "dead_assets": unreferenced,
         }
 
-    def _is_ignored(self, p: Path) -> bool:
-        return any(ignored in p.parts for ignored in self.IGNORED_DIRS)
+    def _is_ignored(self, path: Path) -> bool:
+        for part in path.parts:
+            if part in self.IGNORED_DIRS:
+                return True
+        return False
 
 
 class DeadAssetTool(ToolFn):
-    """Scan and prune unreferenced static media, fonts, and assets."""
+    """Audit unreferenced image, font, and media assets in the repository (Strictly Read-Only)."""
 
     name = "dead-asset"
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Scan unreferenced assets at <path>; generate manifest; "
-            "prune requires --allow-artifact-write and SHA-256 validation."
+            "Detect unreferenced images, fonts, and media assets under <path> (strictly read-only). "
+            "Returns {status, findings[], summary}; export manifest requires --allow-artifact-write."
         )
 
     def __call__(
         self,
         path: Path,
         *,
-        prune: bool = False,
         export_manifest: Path | str | None = None,
         allow_artifact_write: bool = False,
     ) -> ToolResult:
@@ -134,81 +136,31 @@ class DeadAssetTool(ToolFn):
         permissions = ExecutionPermissions(artifact_write=allow_artifact_write)
         return self.run(
             path,
-            prune=prune,
             export_manifest=export_manifest,
             permissions=permissions,
         )
 
-    def generate_manifest(self, project_root: Path) -> list[dict[str, Any]]:
-        """Generate deterministic audit manifest with SHA-256 digests for all assets."""
-        scanner = DeadAssetScanner(project_root=project_root)
+    def generate_manifest(self, root: Path) -> list[dict[str, Any]]:
+        manifest: list[dict[str, Any]] = []
+        scanner = DeadAssetScanner(project_root=root)
         scan_res = scanner.scan_dead_assets()
         dead_set = set(scan_res["dead_assets"])
 
-        manifest: list[dict[str, Any]] = []
         for ext in scanner.ASSET_EXTS:
-            for p in sorted(project_root.rglob(f"*{ext}")):
+            for p in root.rglob(f"*{ext}"):
                 if p.is_file() and not scanner._is_ignored(p):
-                    rel = str(p.relative_to(project_root)).replace("\\", "/")
-                    size = p.stat().st_size
-                    h = hashlib.sha256()
-                    h.update(p.read_bytes())
-                    sha256 = h.hexdigest()
+                    rel = str(p.relative_to(root)).replace("\\", "/")
+                    data = p.read_bytes()
                     manifest.append(
                         {
                             "path": rel,
-                            "size_bytes": size,
-                            "sha256": sha256,
-                            "status": "unreferenced"
-                            if rel in dead_set
-                            else "referenced",
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "size_bytes": len(data),
+                            "status": "unreferenced" if rel in dead_set else "active",
                         }
                     )
+        manifest.sort(key=lambda x: x["path"])
         return manifest
-
-    def prune_candidates(
-        self,
-        project_root: Path,
-        candidates: list[dict[str, Any]],
-        permissions: Any,
-    ) -> tuple[int, int]:
-        """Prune unreferenced asset candidates after validating SHA-256 and containment."""
-        if not getattr(permissions, "artifact_write", False):
-            return 0, 0
-
-        pruned_count = 0
-        bytes_freed = 0
-        root_resolved = project_root.resolve()
-
-        for item in candidates:
-            if item.get("status") != "unreferenced":
-                continue
-            rel_path = item["path"]
-            file_path = (project_root / rel_path).resolve()
-
-            # Containment check
-            if not file_path.is_relative_to(root_resolved):
-                continue
-            if not file_path.is_file():
-                continue
-
-            # SHA-256 validation before deletion (tamper protection)
-            h = hashlib.sha256()
-            h.update(file_path.read_bytes())
-            current_sha = h.hexdigest()
-            if current_sha != item.get("sha256"):
-                continue
-
-            # Safe to delete
-            size = file_path.stat().st_size
-            try:
-                file_path.unlink()
-                pruned_count += 1
-                bytes_freed += size
-            except OSError:
-                continue
-
-        return pruned_count, bytes_freed
 
     def run(
         self,
@@ -216,7 +168,6 @@ class DeadAssetTool(ToolFn):
         *,
         config: Any = None,
         permissions: Any = None,
-        prune: bool = False,
         export_manifest: Path | str | None = None,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions, build_execution_metadata
@@ -230,7 +181,6 @@ class DeadAssetTool(ToolFn):
         manifest = self.generate_manifest(root)
 
         total_assets = scan_res["total_assets"]
-        dead_assets = scan_res["dead_assets"]
         dead_count = scan_res["dead_assets_count"]
         potential_savings_bytes = sum(
             item["size_bytes"] for item in manifest if item["status"] == "unreferenced"
@@ -271,7 +221,6 @@ class DeadAssetTool(ToolFn):
                 )
 
         artifacts: list[str] = []
-        # Export manifest if requested
         if export_manifest is not None:
             exp = Path(export_manifest)
             if not exp.is_absolute():
@@ -329,50 +278,13 @@ class DeadAssetTool(ToolFn):
             exp.write_text(json.dumps(clean_manifest, indent=2), encoding="utf-8")
             artifacts.append(str(exp))
 
-        # Handle Prune
-        bytes_freed = 0
-        pruned_count = 0
-        if prune:
-            if not perms.artifact_write:
-                return ToolResult(
-                    tool=self.name,
-                    engine="dead-asset-scanner",
-                    engine_version="1.0.0",
-                    status="skipped",
-                    duration_ms=elapsed_ms(start),
-                    summary=(
-                        "dead-asset: pruning unreferenced assets requires "
-                        "explicit --allow-artifact-write permission."
-                    ),
-                    findings=findings,
-                    raw=scan_res,
-                    metadata={
-                        "execution": build_execution_metadata(
-                            mode="executed",
-                            requested=perms,
-                            granted=perms,
-                            producer="dead-asset",
-                        )
-                    },
-                )
-            pruned_count, bytes_freed = self.prune_candidates(root, manifest, perms)
+        status = "warn" if dead_count > 0 else "ok"
+        savings_kb = round(potential_savings_bytes / 1024, 1)
 
-        if prune and perms.artifact_write:
-            status = "ok"
-            summary = (
-                f"dead-asset: successfully pruned {pruned_count} unreferenced assets "
-                f"({bytes_freed} bytes freed) across {total_assets} total assets."
-            )
-        elif dead_count > 0:
-            status = "warn"
-            summary = (
-                f"dead-asset: found {dead_count} unreferenced assets "
-                f"({potential_savings_bytes} bytes potential savings) out of "
-                f"{total_assets} total assets."
-            )
-        else:
-            status = "ok"
-            summary = f"dead-asset: clean - all {total_assets} assets are referenced in source code."
+        summary = (
+            f"dead-asset: scanned {total_assets} assets, found {dead_count} unreferenced "
+            f"({savings_kb} KB potential savings). Strictly read-only analysis."
+        )
 
         return ToolResult(
             tool=self.name,
@@ -381,16 +293,17 @@ class DeadAssetTool(ToolFn):
             status=status,
             duration_ms=elapsed_ms(start),
             summary=summary,
-            findings=findings if not (prune and perms.artifact_write) else [],
+            findings=findings,
+            metrics={
+                "total_assets": total_assets,
+                "dead_assets_count": dead_count,
+                "potential_savings_bytes": potential_savings_bytes,
+            },
             raw=scan_res,
             artifacts=artifacts if artifacts else None,
             metadata={
-                "total_assets": total_assets,
-                "dead_assets_count": dead_count,
-                "dead_assets": dead_assets,
+                "manifest": manifest,
                 "potential_savings_bytes": potential_savings_bytes,
-                "bytes_freed": bytes_freed,
-                "pruned": bool(prune and perms.artifact_write),
                 "execution": build_execution_metadata(
                     mode="executed",
                     requested=perms,
@@ -399,3 +312,6 @@ class DeadAssetTool(ToolFn):
                 ),
             },
         )
+
+
+__all__ = ["DeadAssetScanner", "DeadAssetTool"]
