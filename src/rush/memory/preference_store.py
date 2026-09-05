@@ -1,50 +1,64 @@
 """User and agent preference store persisting to .rush/preferences.json."""
 
-import json
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
+
+from rush.memory.transactions import CASMapTransaction
 
 
 class PreferenceStore:
     """Manages persistent developer preferences."""
 
-    def __init__(self, project_root: Path | None = None):
-        self.project_root = project_root or Path.cwd()
+    def __init__(self, project_root: Path | None = None) -> None:
+        self.project_root = (
+            Path(project_root).resolve() if project_root else Path.cwd().resolve()
+        )
         self.store_file = self.project_root / ".rush" / "preferences.json"
+        self.tx = CASMapTransaction(
+            file_path=self.store_file, root_path=self.project_root
+        )
         self._ensure_file()
 
     def _ensure_file(self) -> None:
         self.store_file.parent.mkdir(parents=True, exist_ok=True)
-        if not self.store_file.exists():
-            self.store_file.write_text("{}", encoding="utf-8")
 
     def _read(self) -> dict[str, Any]:
-        try:
-            return json.loads(self.store_file.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            return {}
+        return self.tx.read(allow_missing=True).data
 
     def _write(self, data: dict[str, Any]) -> None:
-        from rush.safety.redactor import sanitize_value
+        def mutator(_old: dict[str, Any]) -> dict[str, Any]:
+            return data
 
-        clean_data = sanitize_value(data).value
-        self.store_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
+        self.tx.update(mutator, max_retries=20)
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._read().get(key, default)
 
     def set(self, key: str, value: Any) -> None:
-        data = self._read()
-        data[key] = value
-        self._write(data)
+        def mutator(data: dict[str, Any]) -> dict[str, Any]:
+            data[key] = value
+            return data
+
+        self.tx.update(mutator, max_retries=20)
 
     def delete(self, key: str) -> bool:
-        data = self._read()
-        if key in data:
-            del data[key]
-            self._write(data)
-            return True
-        return False
+        snapshot = self.tx.read(allow_missing=True)
+        if key not in snapshot.data:
+            return False
+
+        deleted = False
+
+        def mutator(data: dict[str, Any]) -> dict[str, Any]:
+            nonlocal deleted
+            if key in data:
+                del data[key]
+                deleted = True
+            return data
+
+        self.tx.update(mutator, max_retries=20)
+        return deleted
 
     def list_all(self) -> dict[str, Any]:
         return self._read()

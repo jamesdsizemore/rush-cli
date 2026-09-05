@@ -1,0 +1,88 @@
+# Phase 58 Remediation Manifest: Capability Locks, Contained Persistence, and Fail-Closed Patch Verification
+[phase]
+id = 58
+name = "lock-persistence-patch-fail-closed"
+title = "Capability Locks, Contained Persistence, and Fail-Closed Patch Verification"
+status = "completed"
+completed_at = "2026-09-05T14:30:00Z"
+test_count = 26
+full_suite_test_count = 1163
+
+[requirements]
+closed = ["R-009", "R-010", "R-016", "R-011"]
+runtime_migration = "R-011 runtime output boundary adapter migration completed across all 146 public operations"
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = ["R-009", "R-010", "R-016"]
+findings_completed = ["R-009", "R-010", "R-016", "R-011"]
+
+[contract_tests]
+total_contract_tests = 26
+all_contract_tests_passed = true
+test_files = [
+    "tests/test_phase58_lock_capabilities.py",
+    "tests/test_phase58_locks.py",
+    "tests/test_phase58_map_transactions.py",
+    "tests/test_phase58_checkpoint_journals.py",
+    "tests/test_phase58_persistence.py",
+    "tests/test_phase58_patch_verification.py",
+    "tests/test_phase58_patch.py",
+    "tests/test_phase58_output_migration.py",
+]
+tests = [
+    "T-58.01",
+    "T-58.02",
+    "T-58.03",
+    "T-58.04",
+    "T-58.05",
+    "T-58.06",
+    "T-58.07",
+    "T-58.08",
+    "T-58.09",
+    "T-58.10",
+    "T-58.11",
+    "T-58.12",
+    "T-58.13",
+    "T-58.14",
+    "T-58.15",
+    "T-58.16",
+    "T-58.17",
+    "T-58.18",
+    "T-58.19",
+    "T-58.20",
+    "T-58.21",
+    "T-58.22",
+    "T-58.23",
+    "T-58.24",
+    "T-58.25",
+    "T-58.26",
+]
+
+[contract_inventory]
+t_58_01 = "Caller retains raw capability; verifier records only persisted"
+t_58_02 = "CLI rejects capability in argv and env, accepts only protected channels"
+t_58_03 = "MCP tool marks capability parameter sensitive, redacts in logs"
+t_58_04 = "Simultaneous acquisition race awards exactly one owner with monotonic generation"
+t_58_05 = "Wrong, guessed, or stale capability cannot renew or release lock"
+t_58_06 = "Symlink/junction swaps and crash leftovers fail closed"
+t_58_07 = "Lock acquisition requires verified caller capability (R-009)"
+t_58_08 = "CAS map transactions preserve monotonic versions across concurrent updates"
+t_58_09 = "Absent, corrupt, invalid schema, and IO errors emit distinct typed exceptions"
+t_58_10 = "CAS conflict retries fail-closed upon retry exhaustion"
+t_58_11 = "Atomic checkpoint replacement via AtomicFile"
+t_58_12 = "Corrupt checkpoint bytes retained and listed with SHA-256 evidence"
+t_58_13 = "Persistence operations use AtomicFile with schema 1.0.0 (R-010)"
+t_58_14 = "Dirty working tree raises DirtyWorkspaceError before sandbox creation"
+t_58_15 = "Contract drift between base commit and command plan refuses execution fail-closed"
+t_58_16 = "Security-sensitive patches refuse ordinary verification"
+t_58_17 = "Zero executed commands yields outcome='unavailable' and False"
+t_58_18 = "Failed or unavailable verifier leaves working tree untouched"
+t_58_19 = "Promotion failure rolls back working copy atomically"
+t_58_20 = "Patch sandbox enforces physical containment and rollback (R-016)"
+t_58_21 = "Every eligible manifest boundary rejects malformed output (R-011)"
+t_58_22 = "Service protocol operations return raw protocol frames, never ToolResultV1"
+t_58_23 = "Admin commands emit unwrapped native integer exit codes conforming to ClickExitCode"
+t_58_24 = "Mesh daemon RPC responses and lock inspect conform to service and admin contracts"
+t_58_25 = "Remediation Phase 58 manifest integrity and requirement closure"
+t_58_26 = "Zero undocumented persistence or raw lock seams across codebase"

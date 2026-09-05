@@ -1,52 +1,111 @@
 """Session checkpoint journal storing developer context snapshots in .rush/sessions/."""
 
+from __future__ import annotations
+
+import hashlib
 import json
 import time
 from pathlib import Path
 from typing import Any
 
+from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
+from rush.io.physical_paths import PhysicalRoot
+from rush.safety.redactor import SecretRedactor
+
 
 class CheckpointJournal:
     """Manages session checkpoints and replay state."""
 
-    def __init__(self, project_root: Path | None = None):
-        self.project_root = project_root or Path.cwd()
+    def __init__(self, project_root: Path | None = None) -> None:
+        self.project_root = (project_root or Path.cwd()).resolve()
+        self.project_root.mkdir(parents=True, exist_ok=True)
         self.session_dir = self.project_root / ".rush" / "sessions"
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.physical_root = PhysicalRoot(self.project_root)
 
     def save_checkpoint(
         self, name: str, metadata: dict[str, Any], files: list[str]
     ) -> Path:
-        """Saves a point-in-time session checkpoint."""
+        """Saves a point-in-time session checkpoint using AtomicFile and schema 1.0.0."""
         timestamp = int(time.time())
-        from rush.safety.redactor import SecretRedactor
 
         checkpoint_data, _ = SecretRedactor.redact_value(
             {
+                "schema_version": "1.0.0",
+                "checkpoint_id": name,
                 "name": name,
+                "status": "ok",
                 "created_at": timestamp,
                 "metadata": metadata,
                 "files": files,
             }
         )
-        dest = self.session_dir / f"{name}.json"
-        dest.write_text(json.dumps(checkpoint_data, indent=2), encoding="utf-8")
-        return dest
+        rel_path = Path(".rush") / "sessions" / f"{name}.json"
+        atomic = AtomicFile(self.physical_root)
+        sanitized = SanitizedJsonValue.from_value(checkpoint_data)
+        return atomic.write_json(rel_path, sanitized)
 
     def restore_checkpoint(self, name: str) -> dict[str, Any] | None:
         """Retrieves a checkpoint by name."""
         target = self.session_dir / f"{name}.json"
         if not target.exists():
             return None
-        return json.loads(target.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return None
+            return data
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
 
     def list_checkpoints(self) -> list[dict[str, Any]]:
-        """Lists all saved session checkpoints."""
+        """Lists all saved session checkpoints, retaining and digesting corrupt records."""
         results = []
+        if not self.session_dir.exists():
+            return results
+
         for p in self.session_dir.glob("*.json"):
+            if not p.is_file():
+                continue
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise TypeError(
+                        f"Checkpoint data in '{p.name}' is not a JSON object"
+                    )
+                if "checkpoint_id" not in data:
+                    data["checkpoint_id"] = data.get("name", p.stem)
+                if "name" not in data:
+                    data["name"] = data.get("checkpoint_id", p.stem)
+                if "status" not in data:
+                    data["status"] = "ok"
                 results.append(data)
-            except Exception:  # noqa: BLE001, S112
-                continue
+            except (
+                OSError,
+                json.JSONDecodeError,
+                UnicodeDecodeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                try:
+                    raw_bytes = p.read_bytes()
+                    digest = hashlib.sha256(raw_bytes).hexdigest()
+                except OSError:
+                    raw_bytes = b""
+                    digest = hashlib.sha256(b"").hexdigest()
+                mtime = 0
+                try:
+                    mtime = int(p.stat().st_mtime)
+                except OSError:
+                    pass
+                results.append(
+                    {
+                        "checkpoint_id": p.stem,
+                        "name": p.stem,
+                        "status": "corrupt",
+                        "raw_bytes_digest": digest,
+                        "error_message": str(exc),
+                        "created_at": mtime,
+                    }
+                )
         return sorted(results, key=lambda x: x.get("created_at", 0), reverse=True)

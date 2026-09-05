@@ -236,18 +236,47 @@ def rush_trace() -> str:
     return json.dumps(res, indent=2)
 
 
-def rush_mesh_acquire_lock(path: str, agent_id: str) -> bool:
+def rush_mesh_acquire_lock(
+    path: str, agent_id: str, capability: str | None = None
+) -> bool:
+    """Acquire non-blocking multi-agent file lock using caller capability."""
+    from rush.mcp_mesh.capabilities import LockCapabilityInput
     from rush.mcp_mesh.lock_manager import MeshLockManager
 
+    cap_input = (
+        LockCapabilityInput(
+            token=capability, agent_id=agent_id, channel_type="mcp_sensitive"
+        )
+        if capability is not None
+        else None
+    )
     mgr = MeshLockManager()
-    return mgr.acquire(Path(path), agent_id=agent_id)
+    res = mgr.acquire(Path(path), agent_id=agent_id, capability=cap_input)
+    return bool(res[0] if isinstance(res, tuple) else res)
 
 
-def rush_mesh_release_lock(path: str, agent_id: str) -> bool:
+rush_mesh_acquire_lock._sensitive_params = ("capability",)
+
+
+def rush_mesh_release_lock(
+    path: str, agent_id: str, capability: str | None = None
+) -> bool:
+    """Release multi-agent file lock using caller capability."""
+    from rush.mcp_mesh.capabilities import LockCapabilityInput
     from rush.mcp_mesh.lock_manager import MeshLockManager
 
+    cap_input = (
+        LockCapabilityInput(
+            token=capability, agent_id=agent_id, channel_type="mcp_sensitive"
+        )
+        if capability is not None
+        else None
+    )
     mgr = MeshLockManager()
-    return mgr.release(Path(path), agent_id=agent_id)
+    return mgr.release(Path(path), capability=cap_input, agent_id=agent_id)
+
+
+rush_mesh_release_lock._sensitive_params = ("capability",)
 
 
 def rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:

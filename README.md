@@ -8,7 +8,7 @@
 [![SLSA Level 3](https://img.shields.io/badge/SLSA-Unsigned%20Draft%20Provenance-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square)](https://github.com/astral-sh/ruff)
-[![Tests Passing](https://img.shields.io/badge/tests-1134%20passed-22c55e.svg?style=flat-square)](tests/)
+[![Tests Passing](https://img.shields.io/badge/tests-1163%20passed-22c55e.svg?style=flat-square)](tests/)
 [![Engine Adapters](https://img.shields.io/badge/engines-124%20adapters-blueviolet.svg?style=flat-square)](src/rush/engines/)
 [![Docs Synchronized](https://img.shields.io/badge/docs-295%20files%20synchronized-blue.svg?style=flat-square)](docs/)
 

@@ -1,43 +1,48 @@
 """Causal architectural invariant decision graph stored in .rush/memory/invariants.json."""
 
-import json
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
+
+from rush.memory.transactions import CASMapTransaction
 
 
 class InvariantGraph:
     """Maintains project rules and invariant relationships."""
 
-    def __init__(self, project_root: Path | None = None):
-        self.project_root = project_root or Path.cwd()
+    def __init__(self, project_root: Path | None = None) -> None:
+        self.project_root = (
+            Path(project_root).resolve() if project_root else Path.cwd().resolve()
+        )
         self.graph_file = self.project_root / ".rush" / "memory" / "invariants.json"
+        self.tx = CASMapTransaction(
+            file_path=self.graph_file, root_path=self.project_root
+        )
         self._ensure_file()
 
     def _ensure_file(self) -> None:
         self.graph_file.parent.mkdir(parents=True, exist_ok=True)
-        if not self.graph_file.exists():
-            self.graph_file.write_text("{}", encoding="utf-8")
 
     def _read(self) -> dict[str, Any]:
-        try:
-            return json.loads(self.graph_file.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            return {}
+        return self.tx.read(allow_missing=True).data
 
     def _write(self, data: dict[str, Any]) -> None:
-        from rush.safety.redactor import sanitize_value
+        def mutator(_old: dict[str, Any]) -> dict[str, Any]:
+            return data
 
-        clean_data = sanitize_value(data).value
-        self.graph_file.write_text(json.dumps(clean_data, indent=2), encoding="utf-8")
+        self.tx.update(mutator, max_retries=20)
 
     def add_invariant(self, rule_id: str, description: str, rationale: str) -> None:
-        data = self._read()
-        data[rule_id] = {
-            "description": description,
-            "rationale": rationale,
-            "status": "active",
-        }
-        self._write(data)
+        def mutator(data: dict[str, Any]) -> dict[str, Any]:
+            data[rule_id] = {
+                "description": description,
+                "rationale": rationale,
+                "status": "active",
+            }
+            return data
+
+        self.tx.update(mutator, max_retries=20)
 
     def get_all(self) -> dict[str, Any]:
         return self._read()

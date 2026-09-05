@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import tomllib
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -124,6 +125,18 @@ class OperationRegistry:
 
     def get_adapter(self, operation_id: str) -> BaseOperationAdapter | None:
         return self._adapters.get(operation_id)
+
+    def validate_output(self, operation_id: str, output: Any) -> Any:
+        """Validate output for a registered operation against its adapter at runtime."""
+        adapter = self.get_adapter(operation_id)
+        if adapter is None:
+            raise ValidationErrorV1(
+                code="UNREGISTERED_OPERATION",
+                message=f"Operation '{operation_id}' is not registered in OperationRegistry",
+                path=operation_id,
+                invalid_value=output,
+            )
+        return adapter.validate_output(output)
 
     def reconcile_manifest(self, manifest_path: Path | str) -> dict[str, Any]:
         """Verify that 100% of the operations in public-operations.toml are registered."""
@@ -280,14 +293,24 @@ class OperationRegistry:
         return context_dispatcher
 
     def reconcile_with_executor(self, executor: Any) -> dict[str, Any]:
-        """Register all operation adapters with InvocationExecutor."""
+        """Register all operation adapters with InvocationExecutor with runtime output validation."""
         registered: list[str] = []
         errors: list[str] = []
 
+        def _make_validating_handler(h: Any, ad: BaseOperationAdapter) -> Any:
+            @functools.wraps(h)
+            def _inner_validating(*args: Any, **kwargs: Any) -> Any:
+                res = h(*args, **kwargs)
+                return ad.validate_output(res)
+
+            return _inner_validating
+
         for op_id, adapter in self._adapters.items():
             handler = self._resolve_handler(op_id)
+            validating_handler = _make_validating_handler(handler, adapter)
+
             try:
-                executor.register(op_id, handler, pure=adapter.pure)
+                executor.register(op_id, validating_handler, pure=adapter.pure)
                 registered.append(op_id)
             except Exception as e:  # noqa: BLE001
                 errors.append(f"Failed to register {op_id}: {e}")

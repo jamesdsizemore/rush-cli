@@ -25,7 +25,7 @@ SECRET_PATTERNS = [
     ),
     (
         re.compile(
-            r"(?i)\b(api[_-]?key|token|secret|password|authorization)\s*([=:])\s*([^\s,;]+)"
+            r"(?i)\b(api[_-]?key|token|secret|password|authorization|capability)\s*([=:])\s*([^\s,;]+)"
         ),
         r"\1\2[REDACTED]",
     ),

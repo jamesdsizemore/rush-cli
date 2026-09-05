@@ -339,7 +339,16 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
     return command
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+class RushGroup(click.Group):
+    """Click group dynamically resolving mesh commands while preserving public operations inventory."""
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        if cmd_name == "lock":
+            return lock_cmd_group
+        return super().get_command(ctx, cmd_name)
+
+
+@click.group(cls=RushGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, "--version", "-V", message="%(version)s")
 @click.option(
     "--log-level",
@@ -3006,6 +3015,263 @@ def hallu_guard_cmd() -> None:
         for f in res["findings"]:
             click.echo(f"  {f['file']}: {', '.join(f['violations'])}", err=True)
         sys.exit(1)
+
+
+@click.group(name="lock")
+def lock_cmd_group() -> None:
+    """Manage multi-agent swarm file locks with protected capability tokens."""
+
+
+def _resolve_cli_capability(
+    agent_id: str,
+    capability_argv: str | None,
+    descriptor: int | None,
+    from_stdin: bool,
+) -> tuple[Any, str]:
+    """Resolve lock capability from protected input channels, strictly rejecting argv and env."""
+    import os
+    import sys
+
+    # 1. Reject argv capability token
+    if capability_argv is not None:
+        click.echo(
+            "Error: Passing capabilities via argv (--capability) is rejected. "
+            "Capabilities must only be supplied via protected channels (stdin or descriptor).",
+            err=True,
+        )
+        sys.exit(2)
+
+    # 2. Reject environment variables
+    env_cap = os.environ.get("RUSH_LOCK_CAPABILITY") or os.environ.get("CAPABILITY")
+    if env_cap:
+        click.echo(
+            "Error: Passing capabilities via environment variables is rejected. "
+            "Capabilities must only be supplied via protected channels (stdin or descriptor).",
+            err=True,
+        )
+        sys.exit(2)
+
+    from rush.mcp_mesh.capabilities import LockCapabilityInput, create_capability
+
+    # 3. Read from descriptor if supplied
+    if descriptor is not None:
+        try:
+            token = os.read(descriptor, 1024).decode("utf-8").strip()
+            return (
+                LockCapabilityInput(
+                    token=token, agent_id=agent_id, channel_type="descriptor"
+                ),
+                token,
+            )
+        except OSError as exc:
+            click.echo(
+                f"Error: Failed to read capability from descriptor {descriptor}: {exc}",
+                err=True,
+            )
+            sys.exit(2)
+
+    # 4. Read from stdin if flag is set or stdin is not a tty
+    if from_stdin or not sys.stdin.isatty():
+        try:
+            token = sys.stdin.read().strip()
+            if token:
+                return (
+                    LockCapabilityInput(
+                        token=token, agent_id=agent_id, channel_type="stdin"
+                    ),
+                    token,
+                )
+        except OSError as exc:
+            click.echo(f"Error: Failed to read capability from stdin: {exc}", err=True)
+            sys.exit(2)
+
+    # 5. If no channel provided, generate new capability
+    return create_capability(agent_id=agent_id, channel_type="stdin")
+
+
+def _resolve_project_root(path: Path) -> Path:
+    target_p = Path(path).resolve()
+    curr = target_p if target_p.is_dir() else target_p.parent
+    for parent in [curr, *curr.parents]:
+        if (
+            (parent / ".rush").exists()
+            or (parent / "rush.toml").exists()
+            or (parent / ".git").exists()
+        ):
+            return parent
+    return curr
+
+
+@lock_cmd_group.command(name="acquire")
+@click.argument("path", type=click.Path(path_type=Path))
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option(
+    "--capability",
+    "capability_argv",
+    default=None,
+    help="FORBIDDEN: passing capabilities via argv is rejected.",
+)
+@click.option(
+    "--descriptor",
+    type=int,
+    default=None,
+    help="File descriptor to read capability token from.",
+)
+@click.option(
+    "--stdin",
+    "from_stdin",
+    is_flag=True,
+    help="Read capability token from stdin.",
+)
+@click.option(
+    "--timeout",
+    "timeout_s",
+    type=float,
+    default=5.0,
+    help="Acquisition timeout in seconds.",
+)
+@click.option(
+    "--ttl",
+    "ttl_s",
+    type=float,
+    default=60.0,
+    help="Lock time-to-live in seconds.",
+)
+def lock_acquire_cmd(
+    path: Path,
+    agent_id: str,
+    capability_argv: str | None,
+    descriptor: int | None,
+    from_stdin: bool,
+    timeout_s: float,
+    ttl_s: float,
+) -> None:
+    """Acquire a coordination lock lease with protected caller capability."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    cap_input, _raw_token = _resolve_cli_capability(
+        agent_id, capability_argv, descriptor, from_stdin
+    )
+    root = _resolve_project_root(path)
+    mgr = MeshLockManager(project_root=root)
+    ok = mgr.acquire(
+        path, agent_id=agent_id, capability=cap_input, timeout_s=timeout_s, ttl_s=ttl_s
+    )
+    if ok:
+        click.echo(f"Lock acquired for {path}")
+        sys.exit(0)
+    else:
+        click.echo(f"Failed to acquire lock for {path}", err=True)
+        sys.exit(1)
+
+
+@lock_cmd_group.command(name="release")
+@click.argument("path", type=click.Path(path_type=Path))
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option(
+    "--capability",
+    "capability_argv",
+    default=None,
+    help="FORBIDDEN: passing capabilities via argv is rejected.",
+)
+@click.option(
+    "--descriptor",
+    type=int,
+    default=None,
+    help="File descriptor to read capability token from.",
+)
+@click.option(
+    "--stdin",
+    "from_stdin",
+    is_flag=True,
+    help="Read capability token from stdin.",
+)
+def lock_release_cmd(
+    path: Path,
+    agent_id: str,
+    capability_argv: str | None,
+    descriptor: int | None,
+    from_stdin: bool,
+) -> None:
+    """Release a coordination lock lease using protected caller capability."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    cap_input, _raw_token = _resolve_cli_capability(
+        agent_id, capability_argv, descriptor, from_stdin
+    )
+    root = _resolve_project_root(path)
+    mgr = MeshLockManager(project_root=root)
+    ok = mgr.release(path, capability=cap_input, agent_id=agent_id)
+    if ok:
+        click.echo(f"Lock released for {path}")
+        sys.exit(0)
+    else:
+        click.echo(f"Failed to release lock for {path}", err=True)
+        sys.exit(1)
+
+
+@lock_cmd_group.command(name="renew")
+@click.argument("path", type=click.Path(path_type=Path))
+@click.option("--agent-id", required=True, help="Agent identifier.")
+@click.option(
+    "--capability",
+    "capability_argv",
+    default=None,
+    help="FORBIDDEN: passing capabilities via argv is rejected.",
+)
+@click.option(
+    "--descriptor",
+    type=int,
+    default=None,
+    help="File descriptor to read capability token from.",
+)
+@click.option(
+    "--stdin",
+    "from_stdin",
+    is_flag=True,
+    help="Read capability token from stdin.",
+)
+@click.option(
+    "--ttl",
+    "ttl_s",
+    type=float,
+    default=60.0,
+    help="Lock time-to-live extension in seconds.",
+)
+def lock_renew_cmd(
+    path: Path,
+    agent_id: str,
+    capability_argv: str | None,
+    descriptor: int | None,
+    from_stdin: bool,
+    ttl_s: float,
+) -> None:
+    """Renew a coordination lock lease using protected caller capability."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    cap_input, _raw_token = _resolve_cli_capability(
+        agent_id, capability_argv, descriptor, from_stdin
+    )
+    root = _resolve_project_root(path)
+    mgr = MeshLockManager(project_root=root)
+    ok = mgr.renew(path, capability=cap_input, ttl_s=ttl_s)
+    if ok:
+        click.echo(f"Lock renewed for {path}")
+        sys.exit(0)
+    else:
+        click.echo(f"Failed to renew lock for {path}", err=True)
+        sys.exit(1)
+
+
+@lock_cmd_group.command(name="inspect")
+@click.argument("path", type=click.Path(path_type=Path))
+def lock_inspect_cmd(path: Path) -> None:
+    """Inspect lock status for target resource without acquiring or modifying."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    root = _resolve_project_root(path)
+    res = MeshLockManager.inspect(root, path)
+    click.echo(json.dumps(res, indent=2))
 
 
 if __name__ == "__main__":

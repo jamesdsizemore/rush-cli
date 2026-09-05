@@ -12,8 +12,19 @@ All notable changes to Rush are documented here.
 - **Package Identity & Installed Artifacts (Finding R-001)**: Eliminated all 74 occurrences of invalid `src.rush` imports across 15 production files and 14 test files in favor of canonical `rush` imports. Wheel and sdist packages now install and start cleanly in scrubbed virtual environments outside the repository checkout with zero origin leakage.
 - **Pytest Collection Isolation**: Removed root `.` from `pyproject.toml` `pythonpath`, isolating test discovery strictly to `src/` to prevent repository root leakage into import paths.
 - **Version Authority Consolidation (Finding R-012)**: Replaced disparate hardcoded version literals across providers (Anthropic, OpenAI), SARIF exporters, TypeScript generators, scaffolder templates, PR synthesizers, and TUI footers with a single version authority derived from `importlib.metadata.version("rush-cli")` in `src/rush/__init__.py`.
+- **Test Suite Warning Remediation & Deprecation Assertions**: Explicitly wrapped legacy `execute_plugin` test invocations with `pytest.deprecated_call()` in `tests/test_plugins.py` to assert the Phase 56 deprecation notice directly. Filtered upstream `pydantic_settings` forward-reference metadata notice in `pyproject.toml`, achieving a 100% warning-clean full test suite (1,163 passed, 0 warnings).
 
 ### Added
+- **Capability Locks, Contained Persistence, and Fail-Closed Patch Verification (Phase 58 - Findings R-009, R-010, R-011, R-016)**:
+  - `src/rush/mcp_mesh/capabilities.py`: High-entropy caller capability custody (`LockCapabilityInput`, `LockLeaseRecord`) delivered strictly via protected channels (`stdin`, `descriptor`, `mcp_sensitive`), strictly rejecting argv and environment leakage.
+  - `src/rush/mcp_mesh/lock_manager.py`: Verifier-only lock manager storing `VerifierRecord` (PBKDF2-HMAC-SHA256, 100k rounds) with monotonic generation counters and `rush.io.PhysicalRoot` containment, eliminating unauthenticated lock theft and TOCTOU races.
+  - `src/rush/memory/transactions.py`: Transactional CAS storage (`CASMapTransaction`, `VersionedSnapshot`) with optimistic concurrency, monotonic versions, and distinct typed exceptions (`StoreNotFoundError`, `StoreCorruptionError`, `StoreValidationError`, `StoreIOError`, `CASConflictError`), completely eliminating silent `{}` fallbacks.
+  - `src/rush/memory/checkpoint_journal.py`: Durable session checkpoints written via `rush.io.AtomicFile` using schema `1.0.0`; unparseable files are preserved on disk and surfaced with SHA-256 byte digest evidence.
+  - `src/rush/patch/contracts.py`: Strict `PatchContract` cryptographically binding clean base commit, tree digest, patch hash, sandbox path, required command plans, and review class (`standard`, `policy-changing`, `privileged`).
+  - `src/rush/patch/verifier.py`: Fail-closed patch verification requiring at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
+  - `src/rush/patch/promoter.py` & `src/rush/tools/fix.py`: Pre-flight dirty working tree check (`DirtyWorkspaceError`) and automatic atomic rollback on failure, restoring pre-patch commit and state under `PhysicalRoot`.
+  - `src/rush/contracts/operations.py`: Runtime output boundary validation enforcing `ToolOperationAdapter`, `AdminOperationAdapter`, and `ServiceOperationAdapter` across all public operations.
+
 - **Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress (Phase 57 - Findings R-004, R-005, R-006, R-007)**:
   - `src/rush/invocation/models.py`: Immutable `InvocationContext`, `PhysicalTarget`, and `CacheDecision` contracts unifying execution context across CLI and MCP transports.
   - `src/rush/invocation/resolver.py`: Authority resolver `resolve_invocation()` computing canonical digests, parameter normalization, and guaranteed frozen isolation (zero mutable config leaks to MCP).
@@ -57,6 +68,16 @@ All notable changes to Rush are documented here.
 ## [0.2.0] - 2026-08-21
 
 ### Added
+- **Capability Locks, Contained Persistence, and Fail-Closed Patch Verification (Phase 58 - Findings R-009, R-010, R-011, R-016)**:
+  - `src/rush/mcp_mesh/capabilities.py`: High-entropy caller capability custody (`LockCapabilityInput`, `LockLeaseRecord`) delivered strictly via protected channels (`stdin`, `descriptor`, `mcp_sensitive`), strictly rejecting argv and environment leakage.
+  - `src/rush/mcp_mesh/lock_manager.py`: Verifier-only lock manager storing `VerifierRecord` (PBKDF2-HMAC-SHA256, 100k rounds) with monotonic generation counters and `rush.io.PhysicalRoot` containment, eliminating unauthenticated lock theft and TOCTOU races.
+  - `src/rush/memory/transactions.py`: Transactional CAS storage (`CASMapTransaction`, `VersionedSnapshot`) with optimistic concurrency, monotonic versions, and distinct typed exceptions (`StoreNotFoundError`, `StoreCorruptionError`, `StoreValidationError`, `StoreIOError`, `CASConflictError`), completely eliminating silent `{}` fallbacks.
+  - `src/rush/memory/checkpoint_journal.py`: Durable session checkpoints written via `rush.io.AtomicFile` using schema `1.0.0`; unparseable files are preserved on disk and surfaced with SHA-256 byte digest evidence.
+  - `src/rush/patch/contracts.py`: Strict `PatchContract` cryptographically binding clean base commit, tree digest, patch hash, sandbox path, required command plans, and review class (`standard`, `policy-changing`, `privileged`).
+  - `src/rush/patch/verifier.py`: Fail-closed patch verification requiring at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
+  - `src/rush/patch/promoter.py` & `src/rush/tools/fix.py`: Pre-flight dirty working tree check (`DirtyWorkspaceError`) and automatic atomic rollback on failure, restoring pre-patch commit and state under `PhysicalRoot`.
+  - `src/rush/contracts/operations.py`: Runtime output boundary validation enforcing `ToolOperationAdapter`, `AdminOperationAdapter`, and `ServiceOperationAdapter` across all public operations.
+
 - **Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress (Phase 57 - Findings R-004, R-005, R-006, R-007)**:
   - `src/rush/invocation/models.py`: Immutable `InvocationContext`, `PhysicalTarget`, and `CacheDecision` contracts unifying execution context across CLI and MCP transports.
   - `src/rush/invocation/resolver.py`: Authority resolver `resolve_invocation()` computing canonical digests, parameter normalization, and guaranteed frozen isolation (zero mutable config leaks to MCP).
@@ -177,6 +198,16 @@ All notable changes to Rush are documented here.
 ## 0.1.0-alpha — 2026-08-17
 
 ### Added
+- **Capability Locks, Contained Persistence, and Fail-Closed Patch Verification (Phase 58 - Findings R-009, R-010, R-011, R-016)**:
+  - `src/rush/mcp_mesh/capabilities.py`: High-entropy caller capability custody (`LockCapabilityInput`, `LockLeaseRecord`) delivered strictly via protected channels (`stdin`, `descriptor`, `mcp_sensitive`), strictly rejecting argv and environment leakage.
+  - `src/rush/mcp_mesh/lock_manager.py`: Verifier-only lock manager storing `VerifierRecord` (PBKDF2-HMAC-SHA256, 100k rounds) with monotonic generation counters and `rush.io.PhysicalRoot` containment, eliminating unauthenticated lock theft and TOCTOU races.
+  - `src/rush/memory/transactions.py`: Transactional CAS storage (`CASMapTransaction`, `VersionedSnapshot`) with optimistic concurrency, monotonic versions, and distinct typed exceptions (`StoreNotFoundError`, `StoreCorruptionError`, `StoreValidationError`, `StoreIOError`, `CASConflictError`), completely eliminating silent `{}` fallbacks.
+  - `src/rush/memory/checkpoint_journal.py`: Durable session checkpoints written via `rush.io.AtomicFile` using schema `1.0.0`; unparseable files are preserved on disk and surfaced with SHA-256 byte digest evidence.
+  - `src/rush/patch/contracts.py`: Strict `PatchContract` cryptographically binding clean base commit, tree digest, patch hash, sandbox path, required command plans, and review class (`standard`, `policy-changing`, `privileged`).
+  - `src/rush/patch/verifier.py`: Fail-closed patch verification requiring at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
+  - `src/rush/patch/promoter.py` & `src/rush/tools/fix.py`: Pre-flight dirty working tree check (`DirtyWorkspaceError`) and automatic atomic rollback on failure, restoring pre-patch commit and state under `PhysicalRoot`.
+  - `src/rush/contracts/operations.py`: Runtime output boundary validation enforcing `ToolOperationAdapter`, `AdminOperationAdapter`, and `ServiceOperationAdapter` across all public operations.
+
 - **Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress (Phase 57 - Findings R-004, R-005, R-006, R-007)**:
   - `src/rush/invocation/models.py`: Immutable `InvocationContext`, `PhysicalTarget`, and `CacheDecision` contracts unifying execution context across CLI and MCP transports.
   - `src/rush/invocation/resolver.py`: Authority resolver `resolve_invocation()` computing canonical digests, parameter normalization, and guaranteed frozen isolation (zero mutable config leaks to MCP).

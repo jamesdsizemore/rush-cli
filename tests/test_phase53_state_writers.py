@@ -163,9 +163,11 @@ def test_memory_patch_plugin_release_artifacts_are_sanitized_on_success_and_abor
     assert_no_sentinel_in_dir(cj_dir / ".rush")
     # Abort test: forced write failure cleans up
     abort_cj = CheckpointJournal(tmp_path / "cj_abort")
+    from rush.io.atomic_file import AtomicFile
+
     monkeypatch.setattr(
-        Path,
-        "write_text",
+        AtomicFile,
+        "write_json",
         lambda *a, **k: (_ for _ in ()).throw(OSError("Disk write abort")),
     )
     with pytest.raises(OSError):

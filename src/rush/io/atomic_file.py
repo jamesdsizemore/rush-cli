@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -109,7 +110,15 @@ class AtomicFile:
                     str(target),
                 )
 
-            os.replace(temp_path, target)
+            # Windows-safe atomic replace with retry on transient handle closure delay or scanner contention
+            for attempt in range(10):
+                try:
+                    os.replace(temp_path, target)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.005 * (attempt + 1))
             return target
         except Exception as exc:
             if owned_temp and temp_path is not None and temp_path.exists():

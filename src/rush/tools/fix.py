@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import shutil
 import subprocess
 import time
 import tomllib
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from rush.config import RushConfig
+from rush.io.physical_paths import PhysicalRoot
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolFn, ToolName, ToolResult
@@ -207,6 +209,7 @@ class FixTool(ToolFn):
             )
 
         # 2. Check Git status (abort on dirty tree unless force=True)
+        pre_patch_head: str | None = None
         if not force and not dry_run:
             try:
                 res = subprocess.run(
@@ -233,6 +236,20 @@ class FixTool(ToolFn):
             except Exception:  # noqa: BLE001, S110
                 pass
 
+        try:
+            head_proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+            if head_proc.returncode == 0:
+                pre_patch_head = head_proc.stdout.strip()
+        except Exception:  # noqa: BLE001, S110
+            pass
+
         # 3. Snapshot journal capture
         journal = SnapshotJournal()
         targets = (
@@ -253,6 +270,22 @@ class FixTool(ToolFn):
             valid, err = self.validate_ast(t)
             if not valid:
                 journal.rollback_all()
+                if pre_patch_head:
+                    subprocess.run(
+                        ["git", "reset", "--hard", pre_patch_head],
+                        cwd=str(repo_root),
+                        capture_output=True,
+                        check=False,
+                        stdin=subprocess.DEVNULL,
+                    )
+                    subprocess.run(
+                        ["git", "clean", "-fd"],
+                        cwd=str(repo_root),
+                        capture_output=True,
+                        check=False,
+                        stdin=subprocess.DEVNULL,
+                    )
+                self._cleanup_sandboxes(repo_root)
                 return ToolResult(
                     tool=self.name,
                     status="fail",
@@ -263,8 +296,35 @@ class FixTool(ToolFn):
 
         if dry_run:
             journal.rollback_all()
+            if pre_patch_head:
+                subprocess.run(
+                    ["git", "reset", "--hard", pre_patch_head],
+                    cwd=str(repo_root),
+                    capture_output=True,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                )
 
         return result
+
+    def _cleanup_sandboxes(self, repo_root: Path) -> None:
+        """Clean up worktrees under PhysicalRoot."""
+        try:
+            phys = PhysicalRoot(repo_root)
+            worktrees_dir = phys.root_path / ".rush" / "worktrees"
+            if worktrees_dir.exists():
+                for item in list(worktrees_dir.iterdir()):
+                    if item.is_dir():
+                        subprocess.run(
+                            ["git", "worktree", "remove", "--force", str(item)],
+                            cwd=str(repo_root),
+                            capture_output=True,
+                            check=False,
+                        )
+                        if item.exists():
+                            shutil.rmtree(item, ignore_errors=True)
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     def _run_engine_fixes(
         self,

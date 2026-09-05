@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ from time import monotonic
 from typing import Any, Literal
 
 from ..codegraph.context_packer import ContextPacker
+from ..contracts.results import ToolResultV1, adapt_legacy_tool_result
 from ..mcp_mesh.lock_manager import MeshLockManager
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..memory.failure_ledger import FailureLedger
@@ -28,7 +30,7 @@ from ..permissions import (
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
 from ..tools.flight_recorder import FlightRecorder
-from .base import ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult
 
 SessionOperation = Literal[
     "save",
@@ -42,6 +44,13 @@ SessionOperation = Literal[
     "provider_resume",
 ]
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
+
+
+class ContinuityResult(dict):
+    """ToolResult dictionary conforming to ToolResultV1 contract via to_tool_result_v1."""
+
+    def to_tool_result_v1(self) -> ToolResultV1:
+        return adapt_legacy_tool_result(self)
 
 
 class SessionContinuityTool(ToolFn):
@@ -81,7 +90,8 @@ class SessionContinuityTool(ToolFn):
         theirs_code: str | None = None,
         flight_session_id: str | None = None,
         provider_id: str | None = None,
-    ) -> ToolResult:
+        as_v1: bool = False,
+    ) -> ToolResult | ToolResultV1:
         return self.run(
             path,
             operation=operation,
@@ -109,6 +119,7 @@ class SessionContinuityTool(ToolFn):
             theirs_code=theirs_code,
             flight_session_id=flight_session_id,
             provider_id=provider_id,
+            as_v1=as_v1,
         )
 
     def run(
@@ -134,8 +145,10 @@ class SessionContinuityTool(ToolFn):
         provider_id: str | None = None,
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
-    ) -> ToolResult:
+        as_v1: bool = False,
+    ) -> ToolResult | ToolResultV1:
         del config
+        self._as_v1 = as_v1
         started = monotonic()
         root = path.resolve()
         granted = permissions or ExecutionPermissions()
@@ -236,13 +249,41 @@ class SessionContinuityTool(ToolFn):
                 if session_dir.exists()
                 else []
             )
+            corrupt_count = sum(1 for s in sessions if s.get("status") == "corrupt")
+            findings: list[Finding] = []
+            for s in sessions:
+                if s.get("status") == "corrupt":
+                    cid = s.get("checkpoint_id") or s.get("name") or "unknown"
+                    digest = str(s.get("raw_bytes_digest") or "")
+                    findings.append(
+                        {
+                            "path": f".rush/sessions/{cid}.json",
+                            "line": 0,
+                            "column": 0,
+                            "rule": "corrupt_checkpoint_journal",
+                            "rule_id": "CORRUPT_CHECKPOINT_JOURNAL",
+                            "severity": "warn",
+                            "message": f"Corrupt checkpoint journal entry '{cid}': {s.get('error_message', 'invalid JSON')}",
+                            "fingerprint": digest
+                            if len(digest) == 64
+                            else hashlib.sha256(cid.encode("utf-8")).hexdigest(),
+                            "evidence": digest,
+                        }
+                    )
+            summary = (
+                f"Listed {len(sessions)} session checkpoint(s)."
+                if corrupt_count == 0
+                else f"Listed {len(sessions)} session checkpoint(s) ({corrupt_count} corrupt)."
+            )
+            list_status: Literal["ok", "warn"] = "warn" if corrupt_count > 0 else "ok"
             return self._result(
                 started,
-                "ok",
-                f"Listed {len(sessions)} session checkpoint(s).",
+                list_status,
+                summary,
                 operation=operation,
                 granted=granted,
                 raw=sessions,
+                findings=findings,
             )
 
         if not session_dir.exists():
@@ -253,14 +294,43 @@ class SessionContinuityTool(ToolFn):
                 operation=operation,
                 granted=granted,
             )
-        data = CheckpointJournal(root).restore_checkpoint(name or "")
-        if data is None:
+        session_file = session_dir / f"{name}.json"
+        if not session_file.exists():
             return self._result(
                 started,
                 "skipped",
                 f"Session checkpoint '{name}' was not found.",
                 operation=operation,
                 granted=granted,
+            )
+        data = CheckpointJournal(root).restore_checkpoint(name or "")
+        if data is None:
+            try:
+                raw_bytes = session_file.read_bytes()
+                digest = hashlib.sha256(raw_bytes).hexdigest()
+            except OSError:
+                digest = ""
+            return self._result(
+                started,
+                "error",
+                f"Session checkpoint '{name}' is corrupt or unreadable.",
+                operation=operation,
+                granted=granted,
+                findings=[
+                    {
+                        "path": f".rush/sessions/{name}.json",
+                        "line": 0,
+                        "column": 0,
+                        "rule": "corrupt_checkpoint_journal",
+                        "rule_id": "CORRUPT_CHECKPOINT_JOURNAL",
+                        "severity": "error",
+                        "message": f"Corrupt checkpoint journal '{name}' cannot be restored",
+                        "fingerprint": digest
+                        if len(digest) == 64
+                        else hashlib.sha256((name or "").encode("utf-8")).hexdigest(),
+                        "evidence": digest,
+                    }
+                ],
             )
         handoff_receipt = self._restore_handoff_receipt(root, data)
         return self._result(
@@ -999,7 +1069,7 @@ class SessionContinuityTool(ToolFn):
     def _result(
         self,
         started: float,
-        status: Literal["ok", "error", "skipped"],
+        status: Literal["ok", "error", "skipped", "warn", "fail"],
         summary: str,
         *,
         operation: str,
@@ -1011,39 +1081,53 @@ class SessionContinuityTool(ToolFn):
         context_envelope: dict[str, Any] | None = None,
         coordination: dict[str, Any] | None = None,
         provider_route: dict[str, Any] | None = None,
-    ) -> ToolResult:
-        return {
+        findings: list[Finding] | None = None,
+        as_v1: bool | None = None,
+    ) -> ToolResult | ToolResultV1:
+        metadata = {
+            "operation": operation,
+            "execution": build_execution_metadata(
+                mode="executed",
+                requested=requested,
+                granted=granted,
+                producer="checkpoint-journal",
+            ),
+            **({"handoff": handoff} if handoff is not None else {}),
+            **(
+                {"context_envelope": context_envelope}
+                if context_envelope is not None
+                else {}
+            ),
+            **({"coordination": coordination} if coordination is not None else {}),
+            **(
+                {"provider_route": provider_route} if provider_route is not None else {}
+            ),
+        }
+        extensions: dict[str, Any] = {
+            "metadata": metadata,
+        }
+        if artifacts is not None:
+            extensions["artifacts"] = artifacts
+
+        res_dict = {
+            "schema_version": "1.0.0",
             "tool": self.name,
             "engine": "checkpoint-journal",
             "engine_version": None,
             "status": status,
             "duration_ms": int((monotonic() - started) * 1000),
             "summary": summary,
-            "findings": [],
+            "findings": list(findings or []),
             "raw": raw,
             "artifacts": artifacts,
-            "metadata": {
-                "operation": operation,
-                "execution": build_execution_metadata(
-                    mode="executed",
-                    requested=requested,
-                    granted=granted,
-                    producer="checkpoint-journal",
-                ),
-                **({"handoff": handoff} if handoff is not None else {}),
-                **(
-                    {"context_envelope": context_envelope}
-                    if context_envelope is not None
-                    else {}
-                ),
-                **({"coordination": coordination} if coordination is not None else {}),
-                **(
-                    {"provider_route": provider_route}
-                    if provider_route is not None
-                    else {}
-                ),
-            },
+            "metadata": metadata,
+            "extensions": extensions,
         }
+        res = ContinuityResult(res_dict)
+        effective_v1 = as_v1 if as_v1 is not None else getattr(self, "_as_v1", False)
+        if effective_v1:
+            return res.to_tool_result_v1()
+        return res
 
     @staticmethod
     def _save_handoff_receipt(

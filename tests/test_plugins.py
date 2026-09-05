@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from rush.plugins.loader import CustomPlugin, execute_plugin
 from rush.plugins.validator import validate_plugin_output
 
@@ -64,7 +66,8 @@ print(json.dumps({
         description="Demo test plugin",
     )
 
-    res = execute_plugin(plugin, target_path=tmp_path, is_trusted=True)
+    with pytest.deprecated_call():
+        res = execute_plugin(plugin, target_path=tmp_path, is_trusted=True)
     assert res["status"] == "ok"
     assert res["tool"] == "my_plugin"
 
@@ -76,7 +79,8 @@ def test_execute_plugin_blocked_when_untrusted(tmp_path: Path) -> None:
         description="Untrusted demo plugin",
     )
 
-    res = execute_plugin(plugin, target_path=tmp_path, is_trusted=False)
+    with pytest.deprecated_call():
+        res = execute_plugin(plugin, target_path=tmp_path, is_trusted=False)
     assert res["status"] == "skipped"
     assert (
         "untrusted" in res["summary"].lower() and "rush trust" in res["summary"].lower()
