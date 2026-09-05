@@ -78,4 +78,6 @@ def test_execute_plugin_blocked_when_untrusted(tmp_path: Path) -> None:
 
     res = execute_plugin(plugin, target_path=tmp_path, is_trusted=False)
     assert res["status"] == "skipped"
-    assert "trust required" in res["summary"].lower()
+    assert (
+        "untrusted" in res["summary"].lower() and "rush trust" in res["summary"].lower()
+    )

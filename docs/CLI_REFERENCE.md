@@ -434,3 +434,8 @@ Query and record past codebase anti-patterns in Mistake Memory.
 ## Output File Write Safety & Containment (Phase 55)
 
 All file writing operations triggered by CLI exporter flags (`--export-html`, `--export-sarif`, `--allow-artifact-write`) are constrained to physical repository boundaries via `rush.io.PhysicalRoot` and written with `rush.io.AtomicFile` fsync durability.
+
+### rush trust & rush plugin (Phase 56)
+- `rush trust plugin <name>`: Authorize a plugin closure in the user-owned trust ledger.
+- `rush trust plugin <name> --revoke`: Revoke authorization for a plugin closure.
+- `rush plugin run <name> <path>`: Execute an authorized plugin from its verified snapshot; outputs `ToolResultV1` JSON when `--json` flag is provided.

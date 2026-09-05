@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .base import Finding, ToolResult
 
@@ -429,9 +429,17 @@ def normalize_findings(
     )
 
 
-def exit_code_for(result: ToolResult) -> int:
+def exit_code_for(result: ToolResult | Any) -> int:
     """Map canonical statuses to CLI process exit codes."""
-    status = result.get("status")
+    if isinstance(result, str):
+        status = result
+    elif hasattr(result, "status"):
+        status = result.status
+    elif isinstance(result, dict):
+        status = result.get("status")
+    else:
+        status = None
+
     if status in ("ok", "skipped"):
         return 0
     if status in ("warn", "fail"):

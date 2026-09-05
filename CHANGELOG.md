@@ -14,6 +14,13 @@ All notable changes to Rush are documented here.
 - **Version Authority Consolidation (Finding R-012)**: Replaced disparate hardcoded version literals across providers (Anthropic, OpenAI), SARIF exporters, TypeScript generators, scaffolder templates, PR synthesizers, and TUI footers with a single version authority derived from `importlib.metadata.version("rush-cli")` in `src/rush/__init__.py`.
 
 ### Added
+- **User-Owned Content-Addressed Plugin Trust (Phase 56)**:
+  - `src/rush/plugins/trust_store.py` & `trust.py`: User-owned trust ledger authority (`~/.rush/plugin_trust_ledger.json`) persisted durably via `rush.io.AtomicFile` and `rush.io.PhysicalRoot`; repository receipts demoted to non-authorizing evidence; explicit reapproval required.
+  - `src/rush/plugins/closure.py`: `PluginClosureManifest` discovering and cryptographically digesting transitive closure (entrypoint, code files, configs, allowed env names, declared secrets, runtime, platform).
+  - `src/rush/plugins/snapshot_store.py`: `PluginSnapshotStore` materializing immutable byte-copied snapshots in `~/.rush/snapshots/<closure_digest>/` under `PhysicalRoot` (strictly rejecting symlinks, directory junctions, and hardlinks).
+  - `src/rush/plugins/secret_channels.py`: Protected secret channels (`descriptor`, `stdin`, `provider`) delivering secrets to child processes with zero visibility in command arguments or environment tables.
+  - `src/rush/plugins/executor.py`: `HardenedPluginExecutor` pre-spawn reverification guaranteeing approved snapshot bytes or zero child process spawned; removal of `allow_untrusted` bypass; canonical `ToolResultV1` output compliance.
+
 - **AtomicFile & Physical Containment I/O Kernel (Phase 55)**:
   - `src/rush/io/physical_paths.py`: `PhysicalRoot` and `ContainmentError` enforcing strict physical workspace boundary containment defeating symlinks, parent traversal (`..`), Windows directory junctions, and reparse points (`stat.FILE_ATTRIBUTE_REPARSE_POINT`).
   - `src/rush/io/atomic_file.py`: `AtomicFile` guaranteeing fail-closed atomic replacement via same-directory unique temporary files (`.rush_tmp_`), explicit `flush()`, `os.fsync()` durability, and manager-owned cleanup accepting exclusively sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`).

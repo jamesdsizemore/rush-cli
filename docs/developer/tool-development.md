@@ -112,3 +112,11 @@ writer = AtomicFile(root)
 writer.write_json("reports/summary.json", SanitizedJsonValue.from_value(report_dict))
 ```
 This guarantees fail-closed path containment, fsync durability, and atomic replacement without corrupted partial files.
+
+### Developing Custom Quality Plugins (Phase 56)
+Plugins must conform to the Phase 56 content-addressed model:
+1. Place plugin scripts and local assets within a dedicated directory.
+2. Ensure manifest specifies valid `command`, `timeout_seconds`, and `patterns`.
+3. Declare credentials using `secret_refs` and `channel_type = "stdin"` or `"descriptor"`.
+4. Emit valid JSON conforming to canonical `ToolResultV1` on stdout.
+5. Authorize using `rush trust plugin <name>`.

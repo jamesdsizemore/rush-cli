@@ -115,3 +115,9 @@ Key invariants:
 - `tests/test_phase55_atomic_file.py`: Validation of sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`), single implementation ownership, raw secret wrapper rejection, injected fault durability (old-or-new valid destination), and manager-owned tempfile cleanup.
 - `tests/test_phase55_physical_containment.py`: Validation of symlink rejection (file/directory), Windows reparse point / junction rejection (`stat.FILE_ATTRIBUTE_REPARSE_POINT`), parent target swap detection, and outside sentinel preservation.
 - `tests/test_phase55_verifier_record.py`: Validation of zero raw capability retention, constant-time verification (`hmac.compare_digest`), low-entropy capability rejection, and metadata non-invertibility.
+
+### Phase 56: Plugin Trust Contract Test Suites
+Run all 16 Phase 56 contract tests:
+```powershell
+.venv/Scripts/python.exe -m pytest tests/test_phase56_plugin_trust.py tests/test_phase56_plugin_closure.py tests/test_phase56_plugin_secret_channels.py tests/test_phase56_plugin_launch_identity.py tests/test_phase56_plugin_public_routes.py -v
+```

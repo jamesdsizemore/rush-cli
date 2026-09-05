@@ -108,3 +108,6 @@ Generate an in-toto Statement v1 binding real distribution artifact digests from
 ```bash
 rush attest . --export-path artifacts/provenance.json --allow-artifact-write
 ```
+
+### Running Custom Plugins Securely (Phase 56)
+When using community plugins or scripts from git repositories, Rush requires explicit trust authorization before execution. Run `rush trust plugin <name>` to approve the plugin closure.

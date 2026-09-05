@@ -50,6 +50,7 @@
 | **Phase 53** | Complete Sanitization, Write Boundaries & Diagnostics | Deep recursive `sanitize_value`, key redaction, collision loss-visibility, write boundaries, fail-safe stderr NDJSON, R-002 & R-008 closed | **Complete** |
 | **Phase 54** | ToolResultV1 Schema Kernel & Operation Adapters | Canonical `ToolResultV1`, `FindingV1` (`info|warning|error`), legacy mappings, 146 operation adapters, R-011 closed | **Complete** |
 | **Phase 55** | AtomicFile, Physical Containment & Verifier Records | Single `src/rush/io/` primitive, `PhysicalRoot` anti-symlink/reparse checks, `AtomicFile` durably fsync'd same-dir replacement, `VerifierRecord` salted one-way hash, unblocking R-003, R-009, R-010, R-016 | **Complete** |
+| **Phase 56** | User-Owned Content-Addressed Plugin Trust | User trust ledger, `PluginClosureManifest`, immutable snapshot store, protected secret channels, pre-spawn reverification, ToolResultV1 compliance, R-003 closed | **Complete** |
 | **Benchmark Harness** | Reproducible Verification & Provider Routing (Phases B1–B6) | `scripts.benchmarks.run`, 40 declared scenarios, 11 decision records, CI harness | **Complete** |
 
 ---

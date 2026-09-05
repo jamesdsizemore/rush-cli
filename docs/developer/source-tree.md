@@ -160,3 +160,8 @@ src/rush/io/
 ├── atomic_file.py        # AtomicFile, SanitizedBytes, SanitizedJsonValue, AtomicWriteError
 └── verifier_record.py    # VerifierRecord and VerifierError
 ```
+
+- `src/rush/plugins/closure.py`: Transitive closure manifest discovery and cryptographic digest calculation.
+- `src/rush/plugins/snapshot_store.py`: Content-addressed physical byte snapshot materialization under `rush.io.PhysicalRoot`.
+- `src/rush/plugins/secret_channels.py`: Protected secret delivery channels (descriptor pipe, stdin handshake, provider).
+- `src/rush/plugins/trust_store.py`: User-owned trust ledger authority and capability verification.

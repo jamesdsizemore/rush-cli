@@ -58,3 +58,6 @@ Rush enforces seven architectural defensive controls across all operations:
 ## Non-goals
 
 Rush is not a sandbox, antivirus, complete SAST platform, credential vault, or release authority. Running an untrusted third-party executable remains a local security decision. Report vulnerabilities through [Incident and security](../maintainers/incident-and-security.md).
+
+### Plugin Security Model (Phase 56)
+Plugins execute with ambient user permissions. Rush provides cryptographic content authorization, transitive closure verification, and protected secret channels, but does not provide kernel-level sandboxing.

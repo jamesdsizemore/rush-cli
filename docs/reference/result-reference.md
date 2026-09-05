@@ -132,3 +132,6 @@ Adapt shell syntax to your platform. Preserve the JSON in CI artifacts when it h
 ## Export Artifact Containment & Durability (Phase 55)
 
 When exporting results via `--export-html` or `--export-sarif`, files are verified via `rush.io.PhysicalRoot` and written atomically via `rush.io.AtomicFile`. Destination paths that escape root or contain symlinks are blocked fail-closed.
+
+### Plugin ToolResultV1 Output (Phase 56)
+Plugin executions emit `ToolResultV1` with `tool="plugin"`, `engine="<name>"`, and findings adhering to `FindingV1` (`info`, `warning`, `error`).

@@ -1,0 +1,31 @@
+# Phase 56 Remediation Manifest: User-Owned Content-Addressed Plugin Trust
+[phase]
+id = 56
+name = "content-addressed-plugin-trust"
+title = "User-Owned Content-Addressed Plugin Trust"
+status = "completed"
+completed_at = "2026-09-05T06:20:00Z"
+test_count = 16
+full_suite_test_count = 1079
+
+[requirements]
+closed = ["R-003"]
+unblocked = ["R-004", "R-005", "R-006", "R-007", "R-012", "R-013"]
+
+[contracts]
+r_003_1 = "User ledger authority outside repository (~/.rush/plugin_trust_ledger.json)"
+r_003_2 = "Transitive closure manifest (PluginClosureManifest) hashing all code, config, env, runtime"
+r_003_3 = "Content-addressed byte snapshot store (PluginSnapshotStore) under PhysicalRoot"
+r_003_4 = "Protected secret channels (descriptor pipe, stdin handshake, OS provider)"
+r_003_5 = "Pre-spawn reverification guaranteeing approved bytes or zero child process"
+r_003_6 = "Elimination of execute_plugin and allow_untrusted bypasses, ToolResultV1 compliance"
+r_003_7 = "Comprehensive 42-file documentation and governance alignment"
+
+[tests]
+files = [
+    "tests/test_phase56_plugin_trust.py",
+    "tests/test_phase56_plugin_closure.py",
+    "tests/test_phase56_plugin_secret_channels.py",
+    "tests/test_phase56_plugin_launch_identity.py",
+    "tests/test_phase56_plugin_public_routes.py",
+]

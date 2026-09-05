@@ -126,3 +126,6 @@ Detect slow top-level imports and enforce performance regression gates:
 rush cold-start .
 rush benchmark check .
 ```
+
+### Custom Plugin Execution (Phase 56)
+Run configured plugins using `rush plugin run <name>`. Results are checked against quality thresholds and formatted alongside built-in engines.

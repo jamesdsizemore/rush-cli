@@ -103,3 +103,9 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 - **Control 2 Enhancement (Physical Containment)**: `PhysicalRoot.open_contained()` validates that paths cannot escape workspace roots via directory or file symlinks, Windows reparse points / junctions, or parent traversal components.
 - **Fail-Closed Atomic Replacement**: `AtomicFile` ensures files are written with fsync durability and atomic replacement. Injected faults leave destination files in an old-valid or new-valid state; partial writes never persist.
 - **Zero Raw Capability Persistence**: Coordination locks, plugin trust records, and persistent tokens must be stored as `VerifierRecord` instances, preventing capability leakage from state files.
+
+### Plugin Security & Content-Addressed Trust Gating (Phase 56)
+- **User-Owned Ledger**: Plugin authorization resides exclusively in user configuration (`~/.rush/plugin_trust_ledger.json`). Cloned repositories cannot supply pre-authorized trust receipts.
+- **Complete Closure Verification**: Changes to any imported file, configuration value, or environment requirement invalidate the closure digest, requiring explicit user reapproval.
+- **Immutable Snapshot Isolation**: Execution runs from byte-copied snapshot directories (`~/.rush/snapshots/<closure_digest>/`), eliminating in-place TOCTOU mutation.
+- **Secret Protection**: Literal secrets are strictly forbidden in manifests. Secrets are transported via protected descriptor pipes or stdin JSON handshake protocols invisible to process table observers.

@@ -46,3 +46,6 @@ Rush treats all persistent and public output boundaries as sanitization choke-po
 ## Non-Recoverable Capability Verification (Phase 55)
 
 All persistent capabilities, lock identifiers, and trust tokens are stored using `rush.io.VerifierRecord`. This uses PBKDF2-HMAC-SHA256 (100,000 iterations, 32-byte salt) and constant-time verification. Raw capabilities are never stored on disk, eliminating token disclosure in state files.
+
+### Plugin Credential Confinement (Phase 56)
+Secrets are strictly excluded from process command lines and environment blocks. Ephemeral descriptors and stdin payloads provide point-to-point credential delivery.

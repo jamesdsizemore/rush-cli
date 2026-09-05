@@ -57,3 +57,8 @@ Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-han
 - **Physical Boundary Enforcement**: Workspace paths are validated by `PhysicalRoot` to defeat symlink escapes, parent traversal, and Windows junction/reparse points.
 - **Durable Atomic Replacement**: Files written via `AtomicFile` execute in destination directories using `.rush_tmp_` prefix with explicit `flush()` and `os.fsync()` before rename.
 - **Old-or-New Destination Guarantee**: Destination files are guaranteed to remain in either their original valid state or new valid state; partial writes are wiped via manager-owned cleanup.
+
+### Plugin Execution Safety & Fail-Closed Boundaries (Phase 56)
+- External plugins run under fail-closed verification: any missing trust record, altered byte, symlink escape, or unsupported secret channel denies execution and spawns zero child processes.
+- Process command lines and environment tables never contain sensitive credentials.
+- All plugin outputs are parsed, sanitized via redactor, and adapted to canonical `ToolResultV1`.

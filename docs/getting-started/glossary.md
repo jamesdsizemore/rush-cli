@@ -71,3 +71,6 @@
 * **AtomicFile**: File writer ensuring changes are written atomically and durably to disk or fail completely without leaving corrupted partial files.
 * **PhysicalRoot**: Security boundary ensuring commands and tools cannot read or write files outside the project directory.
 * **VerifierRecord**: Security record that proves authorization without saving raw passwords or secret tokens.
+
+- **Plugin Trust Ledger**: A secure file on your machine (`~/.rush/plugin_trust_ledger.json`) tracking which custom tools you have approved to run.
+- **Snapshot Directory**: A protected copy of your plugin scripts where Rush runs them safely without risk of accidental changes.

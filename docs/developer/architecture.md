@@ -234,3 +234,8 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - `src/rush/io/physical_paths.py`: `PhysicalRoot` enforcing strict workspace path containment defeating absolute paths, parent traversals (`..`), symlinks across parent components, and Windows reparse points (`stat.FILE_ATTRIBUTE_REPARSE_POINT`).
 - `src/rush/io/atomic_file.py`: `AtomicFile` providing durable same-directory atomic replacement (`.rush_tmp_`), explicit `flush()` and `os.fsync()`, anti-swap TOCTOU validation, atomic `os.replace()`, and manager-owned cleanup accepting exclusively sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`).
 - `src/rush/io/verifier_record.py`: `VerifierRecord` providing one-way non-recoverable capability verification using PBKDF2-HMAC-SHA256 (100k rounds, 32-byte salt), constant-time `hmac.compare_digest`, and Shannon entropy validation (>= 2.5 bits/symbol).
+
+### Phase 56 Architecture: User-Owned Content-Addressed Plugin Trust
+- **Subsystem Layout**: `src/rush/plugins/` contains `closure.py`, `snapshot_store.py`, `secret_channels.py`, `trust_store.py`, `executor.py`, and `validator.py`.
+- **Security Boundary**: Pre-spawn verification re-verifies closure digest and interpreter identity immediately before process launch.
+- **Failure Behavior**: Any verification failure raises `UntrustedPluginError` or `ClosureTamperedError` and guarantees zero child process execution.

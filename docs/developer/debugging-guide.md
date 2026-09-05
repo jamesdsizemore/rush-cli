@@ -86,3 +86,9 @@ See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md
   - `WRITE_FAILED`: An injected or filesystem fault interrupted writing. Check that the destination filesystem is writable and has free space. On failure, `AtomicFile` cleans up its `.rush_tmp_*` file and leaves the original destination intact.
 - **`VerifierError`**:
   - Raised when attempting to create a `VerifierRecord` from a capability with length < 16 characters or Shannon entropy < 2.5 bits/symbol.
+
+### Troubleshooting Plugin Trust & Execution (Phase 56)
+- `UntrustedPluginError`: The plugin closure has not been granted trust in the user ledger. Run `rush trust plugin <name>` to authorize.
+- `RECEIPT_NOT_AUTHORIZING`: In-repo `.rush/trust.json` detected from a clone. Must run explicit user grant.
+- `ClosureTamperedError`: Source code or snapshot files were modified after trust grant. Run `rush trust plugin <name>` to re-approve the new closure.
+- `SecretChannelError`: Declared secret channel is unsupported on the platform. Use `stdin` channel or verify OS descriptor support.

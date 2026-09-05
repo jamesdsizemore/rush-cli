@@ -53,3 +53,8 @@ Rush enforces end-to-end recursive sanitization across all data boundaries:
 1. **One-Way Verifier Storage**: Stored capabilities, authorization tokens, and lock proofs are persisted as `VerifierRecord` hashes derived via PBKDF2-HMAC-SHA256 (100k rounds, 32-byte salt).
 2. **Zero Raw Capability Exposure**: `VerifierRecord` instances contain zero raw token information, omit raw values from `to_dict()` and `repr()`, and perform verification in constant time via `hmac.compare_digest`.
 3. **Entropy Validation**: Capabilities must have Shannon entropy >= 2.5 bits/symbol and length >= 16 characters, preventing predictable or low-entropy secrets.
+
+### Plugin Data Handling and Secret Invisibility (Phase 56)
+- Secrets referenced by plugins (`secret:<ID>`) are resolved ephemerally at launch and piped via protected descriptors or stdin.
+- Child process `argv` and environment are scrubbed; process listings (`ps`, `/proc`) cannot observe secrets.
+- Plugin stdout and stderr are sanitized by `rush.safety.redactor.sanitize_value()` before inclusion in results or logs.

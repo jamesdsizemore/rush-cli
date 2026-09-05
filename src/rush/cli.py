@@ -1225,21 +1225,94 @@ def dashboard_cmd(
 
 
 @cli.command(name="trust")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("target", required=False, default=".")
+@click.argument("extra", required=False, default=None)
 @click.option(
-    "--revoke", is_flag=True, help="Revoke trust for the specified repository."
+    "--plugin",
+    "plugin_opt",
+    default=None,
+    help="Authorize or revoke trust for a specific plugin.",
 )
-def trust_cmd(path: Path, revoke: bool) -> None:
-    """Authorize or revoke local execution trust for repository custom plugins (Control 6)."""
+@click.option(
+    "--revoke",
+    is_flag=True,
+    help="Revoke trust for the specified repository or plugin.",
+)
+def trust_cmd(
+    target: str,
+    extra: str | None,
+    plugin_opt: str | None,
+    revoke: bool,
+) -> None:
+    """Authorize or revoke local execution trust for repositories or plugins (Control 6)."""
+    from .plugins.closure import build_plugin_closure
+    from .plugins.loader import discover_plugins
+    from .plugins.snapshot_store import PluginSnapshotStore
     from .plugins.trust import revoke_trust, trust_repo
+    from .plugins.trust_store import PluginTrustStore
 
-    root = path.resolve()
-    if revoke:
-        revoke_trust(root)
-        click.echo(f"Revoked trust for repository: {root}")
+    plugin_name = plugin_opt
+    repo_path = Path(target) if target != "plugin" else Path(".")
+    if target == "plugin":
+        plugin_name = extra
+        if not plugin_name:
+            click.echo(
+                "Error: Plugin name required when using 'rush trust plugin <name>'",
+                err=True,
+            )
+            sys.exit(1)
+
+    if plugin_name:
+        root = repo_path.resolve()
+        repo_root = root if root.is_dir() else root.parent
+        trust_store = PluginTrustStore(repo_root=repo_root)
+
+        if revoke:
+            revoked = trust_store.revoke_trust(plugin_name)
+            if revoked:
+                click.echo(f"Revoked trust for plugin: {plugin_name}")
+            else:
+                click.echo(f"Plugin '{plugin_name}' was not found in trust ledger.")
+        else:
+            plugins = discover_plugins(repo_root)
+            matched = next((p for p in plugins if p.name == plugin_name), None)
+            if not matched:
+                click.echo(
+                    f"Plugin '{plugin_name}' not found in configuration.", err=True
+                )
+                sys.exit(1)
+
+            exec_path = (
+                Path(matched.command[1])
+                if len(matched.command) > 1 and not matched.command[1].startswith("-")
+                else Path(matched.command[0])
+            )
+            if not exec_path.is_absolute():
+                exec_path = (repo_root / exec_path).resolve()
+
+            plugin_root = exec_path.parent if exec_path.is_file() else repo_root
+            closure = build_plugin_closure(
+                plugin_root=plugin_root,
+                entrypoint=exec_path,
+                config={"name": matched.name, "command": matched.command},
+                plugin_name=matched.name,
+            )
+            snapshot_store = PluginSnapshotStore()
+            snapshot_dir = snapshot_store.materialize_snapshot(
+                closure=closure, plugin_root=plugin_root
+            )
+            trust_store.grant_trust(plugin_name, closure.closure_digest, snapshot_dir)
+            click.echo(
+                f"Approved plugin as trusted: {plugin_name} (digest: {closure.closure_digest[:12]}...)"
+            )
     else:
-        trust_repo(root)
-        click.echo(f"Approved repository as trusted: {root}")
+        root = repo_path.resolve()
+        if revoke:
+            revoke_trust(root)
+            click.echo(f"Revoked trust for repository: {root}")
+        else:
+            trust_repo(root)
+            click.echo(f"Approved repository as trusted: {root}")
 
 
 @cli.group(name="plugin")
@@ -1267,38 +1340,86 @@ def plugin_list(path: Path) -> None:
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
-    """Execute a configured custom plugin against path."""
-    from .plugins.loader import discover_plugins, execute_plugin
-    from .plugins.trust import is_repo_trusted
+    """Execute a configured custom plugin against path using HardenedPluginExecutor."""
+    from .contracts.operations import AdminOperationAdapter
+    from .plugins.closure import build_plugin_closure
+    from .plugins.executor import HardenedPluginExecutor
+    from .plugins.loader import PluginSpec, discover_plugins
+    from .plugins.snapshot_store import PluginSnapshotStore
+    from .plugins.trust_store import PluginTrustStore
     from .tools.common import exit_code_for
 
     root = path.resolve()
-    plugins = discover_plugins(root)
+    repo_root = root if root.is_dir() else root.parent
+    plugins = discover_plugins(repo_root)
     matched = next((p for p in plugins if p.name == plugin_name), None)
     if not matched:
         click.echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
         sys.exit(1)
 
-    trusted = is_repo_trusted(root if root.is_dir() else root.parent)
-    result = execute_plugin(matched, target_path=root, is_trusted=trusted)
+    exec_path = (
+        Path(matched.command[1])
+        if len(matched.command) > 1 and not matched.command[1].startswith("-")
+        else Path(matched.command[0])
+    )
+    if not exec_path.is_absolute():
+        exec_path = (repo_root / exec_path).resolve()
+
+    plugin_root = exec_path.parent if exec_path.is_file() else repo_root
+
+    closure = None
+    if exec_path.is_file():
+        try:
+            closure = build_plugin_closure(
+                plugin_root=plugin_root,
+                entrypoint=exec_path,
+                config={"name": matched.name, "command": matched.command},
+                plugin_name=matched.name,
+            )
+        except Exception:  # noqa: BLE001
+            closure = None
+
+    spec = PluginSpec(
+        name=matched.name,
+        executable_path=exec_path,
+        command=list(matched.command),
+        description=matched.description,
+        file_extensions=matched.file_extensions,
+        closure=closure,
+    )
+
+    trust_store = PluginTrustStore(repo_root=repo_root)
+    snapshot_store = PluginSnapshotStore()
+    executor = HardenedPluginExecutor(
+        repo_root=repo_root,
+        trust_store=trust_store,
+        snapshot_store=snapshot_store,
+    )
+
+    paths = [root] if root.is_file() else []
+    result = executor.execute(spec, paths=paths)
 
     if as_json:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json.dumps(result.to_dict(), indent=2))
     else:
         status_color = (
             "green"
-            if result["status"] == "ok"
-            else ("yellow" if result["status"] == "warn" else "red")
+            if result.status == "ok"
+            else ("yellow" if result.status == "warn" else "red")
         )
         click.secho(
-            f"[{result['tool']}] Status: {result['status']}", fg=status_color, bold=True
+            f"[{result.tool}] Status: {result.status}", fg=status_color, bold=True
         )
-        click.echo(result["summary"])
-        for finding in result.get("findings") or []:
-            click.echo(
-                f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
-            )
-    sys.exit(exit_code_for(result["status"]))
+        click.echo(result.summary)
+        for finding in result.findings:
+            click.echo(f"  - [{finding.severity}] {finding.message}")
+
+    adapter = AdminOperationAdapter(
+        operation_id="cli.plugin_run",
+        target_contract_id="ClickExitCode",
+    )
+    code = exit_code_for(result.status)
+    sys.exit(adapter.validate_output(code))
 
 
 for _catalog_tool in ALL_TOOLS:

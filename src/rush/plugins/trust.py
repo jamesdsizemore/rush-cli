@@ -1,7 +1,7 @@
-"""Repository Trust Ledger (Control 6: Repository Trust Gating).
+"""Repository & Plugin Trust Ledger (Control 6: Content-Addressed Trust Gating).
 
-Architecture §8, Phase 28.
-Prevents Remote Code Execution (RCE) via untrusted plugins in cloned repositories.
+Architecture §8, Phase 28 & Phase 56.
+Enforces user-owned cryptographic trust verification for plugins and repositories.
 """
 
 from __future__ import annotations
@@ -9,7 +9,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
+from rush.io.physical_paths import PhysicalRoot
 from rush.logging import get_logger, log_subsystem
+from rush.plugins.trust_store import (
+    PluginTrustStore,
+    TrustedPluginRecord,
+)
 
 logger = get_logger("plugins.trust")
 
@@ -35,7 +41,7 @@ def is_repo_trusted(repo_root: Path, ledger_file: Path | None = None) -> bool:
 
 
 def trust_repo(repo_root: Path, ledger_file: Path | None = None) -> None:
-    """Add repository directory to local trust ledger."""
+    """Add repository directory to local trust ledger using AtomicFile and PhysicalRoot."""
     ledger_path = ledger_file or get_trust_ledger_path()
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     trusted: list[str] = []
@@ -51,17 +57,17 @@ def trust_repo(repo_root: Path, ledger_file: Path | None = None) -> None:
     if resolved not in trusted:
         trusted.append(resolved)
 
-    from rush.safety.redactor import sanitize_value
-
-    ledger_path.write_text(
-        json.dumps(sanitize_value({"trusted_paths": trusted}).value, indent=2),
-        encoding="utf-8",
+    root = PhysicalRoot(ledger_path.parent)
+    af = AtomicFile(root)
+    af.write_json(
+        ledger_path.name,
+        SanitizedJsonValue.from_value({"trusted_paths": trusted}),
     )
     log_subsystem("trust", "INFO", f"Repository marked as trusted: {resolved}")
 
 
 def revoke_trust(repo_root: Path, ledger_file: Path | None = None) -> None:
-    """Remove repository directory from local trust ledger."""
+    """Remove repository directory from local trust ledger using AtomicFile and PhysicalRoot."""
     ledger_path = ledger_file or get_trust_ledger_path()
     if not ledger_path.is_file():
         return
@@ -72,12 +78,52 @@ def revoke_trust(repo_root: Path, ledger_file: Path | None = None) -> None:
         resolved = str(repo_root.resolve())
         if resolved in trusted:
             trusted.remove(resolved)
-            from rush.safety.redactor import sanitize_value
-
-            ledger_path.write_text(
-                json.dumps(sanitize_value({"trusted_paths": trusted}).value, indent=2),
-                encoding="utf-8",
+            root = PhysicalRoot(ledger_path.parent)
+            af = AtomicFile(root)
+            af.write_json(
+                ledger_path.name,
+                SanitizedJsonValue.from_value({"trusted_paths": trusted}),
             )
             log_subsystem("trust", "INFO", f"Trust revoked for repository: {resolved}")
     except Exception as exc:  # noqa: BLE001
         log_subsystem("trust", "ERROR", f"Failed to update trust ledger: {exc}")
+
+
+def get_plugin_trust_store(
+    ledger_path: Path | None = None, repo_root: Path | None = None
+) -> PluginTrustStore:
+    """Return configured PluginTrustStore instance."""
+    return PluginTrustStore(repo_root=repo_root, ledger_path=ledger_path)
+
+
+def is_plugin_trusted(
+    plugin_name: str,
+    closure_digest: str | Path,
+    ledger_path: Path | None = None,
+    repo_root: Path | None = None,
+) -> bool:
+    """Check if plugin closure is trusted in user ledger."""
+    store = get_plugin_trust_store(ledger_path=ledger_path, repo_root=repo_root)
+    return store.is_trusted(plugin_name, closure_digest)
+
+
+def grant_plugin_trust(
+    plugin_name: str,
+    closure_digest: str | Path,
+    snapshot_path: Path | str | None = None,
+    ledger_path: Path | None = None,
+    repo_root: Path | None = None,
+) -> TrustedPluginRecord:
+    """Grant trust for a plugin closure in user ledger."""
+    store = get_plugin_trust_store(ledger_path=ledger_path, repo_root=repo_root)
+    return store.grant_trust(plugin_name, closure_digest, snapshot_path)
+
+
+def revoke_plugin_trust(
+    plugin_name: str,
+    ledger_path: Path | None = None,
+    repo_root: Path | None = None,
+) -> bool:
+    """Revoke trust for a plugin from user ledger."""
+    store = get_plugin_trust_store(ledger_path=ledger_path, repo_root=repo_root)
+    return store.revoke_trust(plugin_name)

@@ -106,3 +106,8 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **PhysicalRoot**: Boundary validator ensuring that all filesystem operations remain strictly confined to a designated physical directory.
 * **SanitizedBytes / SanitizedJsonValue**: Typed wrappers ensuring that only sanitized, secret-redacted data can be passed to atomic write primitives.
 * **VerifierRecord**: A cryptographically salted, high-work-factor one-way verification record ensuring authorization capabilities cannot be recovered from persistent disk storage.
+
+- **Plugin Closure**: The complete cryptographic manifest encompassing an external plugin's entrypoint, all local files, configs, allowed environment names, declared secret references, runtime identity, and platform binding.
+- **Content-Addressed Snapshot**: An immutable, physical byte-copied mirror of a plugin's closure stored under `rush.io.PhysicalRoot` in `~/.rush/snapshots/<closure_digest>/` from which subprocesses execute.
+- **User Trust Ledger**: The authoritative, user-owned store located at `~/.rush/plugin_trust_ledger.json` recording user-granted plugin execution authorizations.
+- **Protected Secret Channel**: A secure transport mechanism (anonymous descriptor pipe or stdin JSON handshake) used to deliver credentials to plugin subprocesses without exposing them in command arguments or environment tables.

@@ -145,6 +145,15 @@ class FindingV1:
             "extensions": self.extensions,
         }
 
+    def __getitem__(self, item: str) -> Any:
+        try:
+            return getattr(self, item)
+        except AttributeError:
+            raise KeyError(item) from None
+
+    def get(self, item: str, default: Any = None) -> Any:
+        return getattr(self, item, default)
+
 
 @dataclass(frozen=True)
 class ToolResultV1:
@@ -172,6 +181,15 @@ class ToolResultV1:
             "raw": self.raw,
             "extensions": self.extensions,
         }
+
+    def __getitem__(self, item: str) -> Any:
+        try:
+            return getattr(self, item)
+        except AttributeError:
+            raise KeyError(item) from None
+
+    def get(self, item: str, default: Any = None) -> Any:
+        return getattr(self, item, default)
 
 
 def validate_finding(data: Any, path_prefix: str = "findings") -> FindingV1:

@@ -229,3 +229,11 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 - **PhysicalRoot (`src/rush/io/physical_paths.py`)**: Enforces strict physical path containment within designated workspaces, rejecting absolute paths, parent traversals (`..`), symlinks across all parent directories, and Windows reparse points (`stat.FILE_ATTRIBUTE_REPARSE_POINT`).
 - **AtomicFile (`src/rush/io/atomic_file.py`)**: Fail-closed atomic file replacement accepting only sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`). Employs same-directory temporary files (`.rush_tmp_`), explicit `.flush()` and `os.fsync()`, anti-swap TOCTOU validation, atomic `os.replace()`, and manager-owned cleanup.
 - **VerifierRecord (`src/rush/io/verifier_record.py`)**: Cryptographically salted, high-work-factor (`pbkdf2_sha256`, 100k rounds) one-way capability verification records with constant-time comparison (`hmac.compare_digest`), Shannon entropy validation, and zero raw capability exposure.
+
+### Control 6: User-Owned Content-Addressed Plugin Trust (Phase 56)
+External plugins execute under zero-trust immutable authorization:
+- **Authority Ledger**: Stored outside repositories in `~/.rush/plugin_trust_ledger.json`, written atomically via `rush.io.AtomicFile` within `rush.io.PhysicalRoot`. Repository-local receipts (`.rush/trust.json`) are non-authorizing evidence.
+- **Transitive Closure**: `PluginClosureManifest` hashes entrypoint, all referenced scripts/assets, configs, allowed env names, declared secrets, interpreter identity, and platform binding.
+- **Immutable Byte Snapshots**: Pure physical byte copies materialized in `~/.rush/snapshots/<closure_digest>/` under `PhysicalRoot`; symlinks, junctions, and hardlinks are rejected.
+- **Protected Secret Channels**: Delivered via anonymous descriptor pipe or stdin handshake; zero secret exposure in `argv` or `env`.
+- **Pre-Spawn Reverification**: Validates snapshot bytes immediately before spawn; approved bytes or zero child process created.

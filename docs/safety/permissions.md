@@ -55,3 +55,6 @@ Consent is specific to each invocation and target. Rush never encodes blanket br
 ## Physical Containment on Artifact Writes (Phase 55)
 
 Artifact writes granted via `--allow-artifact-write` are strictly confined to the repository root via `rush.io.PhysicalRoot`. Attempts to write artifacts through symlinks or parent directory escapes (`..`) raise `ContainmentError` and write zero bytes to disk.
+
+### Plugin Execution Permissions (Phase 56)
+Subprocesses spawned for plugin execution inherit user permissions. They execute strictly from byte-copied snapshot directories under `rush.io.PhysicalRoot` and receive secrets via protected pipes or stdin.

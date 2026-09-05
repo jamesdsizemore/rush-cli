@@ -40,3 +40,6 @@ Maintainers must verify that all newly added tools, exports, and logging calls c
 - **Zero Path Traversal / Symlink Escapes**: Disk operations targeting repository workspaces must use `PhysicalRoot.open_contained()` (`src/rush/io/physical_paths.py`), which fail-closed blocks absolute paths, parent traversals (`..`), symlinks across all parent directories, and Windows reparse points.
 - **Fail-Closed Atomic Replacement**: File writes must use `AtomicFile` (`src/rush/io/atomic_file.py`) with same-directory unique temporary files (`.rush_tmp_`), explicit `flush()` and `os.fsync()`, and owned-temp cleanup only. Target files must never be corrupted by partial writes.
 - **Non-Recoverable Capability Storage**: Stored tokens, locks, or trust credentials must never persist raw secrets. All capability verification must use `VerifierRecord` (`src/rush/io/verifier_record.py`) storing only PBKDF2-HMAC-SHA256 salted hashes with constant-time verification.
+
+### Plugin Trust Breach Triage (Phase 56)
+If a malicious plugin closure is detected, run `rush trust plugin <name> --revoke` immediately. The user ledger will purge the capability record and delete the snapshot directory.

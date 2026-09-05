@@ -202,3 +202,8 @@ Run air-gapped local ONNX code review model over codebase files.
 
 ### `rush benchmark`
 Compare performance execution samples against recorded thresholds in `.rush/baselines.json`.
+
+### Plugin CLI Commands (Phase 56)
+- `rush trust plugin <name>`: Authorize plugin closure.
+- `rush trust plugin <name> --revoke`: Revoke authorization.
+- `rush plugin run <name> [PATH]`: Execute plugin against specified path from verified snapshot.

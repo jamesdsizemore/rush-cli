@@ -48,3 +48,6 @@ See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/rel
 - **`rush.io` Primitives**: `PhysicalRoot`, `AtomicFile`, and `VerifierRecord` are canonical internal primitives.
 - **Sanitized Contracts**: `write_bytes` and `write_json` strictly enforce sanitized wrappers (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`).
 - **One-Way Verifier Compatibility**: `VerifierRecord` maintains backward-compatible verification across schema versions via explicit `version = "1.0.0"` records.
+
+### Plugin Closure & Manifest Compatibility (Phase 56)
+Plugin manifest schema versioning (`schema_version = "1.0.0"`) ensures backward compatibility for declared configuration tables and secret reference descriptors.

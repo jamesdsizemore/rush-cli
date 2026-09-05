@@ -10,3 +10,10 @@
 - Without a configured local .NET or Playwright target, the enabled path returns a structured `skipped` result with an installation/configuration hint.
 
 Normal CI uses parser and safety contracts; it never requires a browser unless explicitly authorized.
+
+### Phase 56: Plugin Trust & Execution Semantic Alignment
+- **Reconciliation**: Demoted repository `.rush/trust.json` from authority to non-authorizing evidence; established user-owned ledger `~/.rush/plugin_trust_ledger.json` via `rush.io.AtomicFile` and `rush.io.PhysicalRoot`.
+- **Closure Discovery**: Replaced single-file SHA-256 checks with complete transitive closure manifest.
+- **TOCTOU Elimination**: Replaced in-place workspace execution with immutable byte snapshots.
+- **Secret Exposure**: Replaced environment variable leakage with protected descriptor/stdin channels.
+- **Bypass Removal**: Deprecated `loader.execute_plugin()` and removed `allow_untrusted` flag.

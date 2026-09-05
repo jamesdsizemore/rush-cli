@@ -132,3 +132,6 @@ All 73 FastMCP registered tools and 17 service operations are cataloged in `gove
 - **Service Protocol Invariant**: Core MCP service protocol methods (`initialize`, `tools/list`, `ping`) return unwrapped protocol frames, managed by `ServiceOperationAdapter`, and are strictly never wrapped in `ToolResultV1`.
 - **Sanitization Invariant**: Output sanitization via Phase 53 strictly precedes schema serialization, guaranteeing that MCP responses never leak secrets to agent clients.
 - **Transport Invariant**: stdio stdout is strictly JSON-RPC; all logs and diagnostics belong on stderr.
+
+### Plugin Trust & Verification under MCP (Phase 56)
+Administrative operations for plugin management check user ledger authorization and reject unverified closures with fail-closed skipped results.

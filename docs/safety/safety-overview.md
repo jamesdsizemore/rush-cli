@@ -28,3 +28,7 @@ flowchart TD
 ```
 
 Read [Permissions](permissions.md), [Privacy](privacy-and-data-handling.md), and [Security model](security-model.md).
+
+### Plugin Safety Guarantees (Phase 56)
+- Fail-closed execution: unauthorized or tampered plugins spawn 0 child processes.
+- Process observation immunity: process tables cannot inspect secrets passed to plugins.

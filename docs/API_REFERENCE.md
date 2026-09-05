@@ -359,3 +359,11 @@ For guidelines on creating new tools or engines, see the [Developer Guide](DEVEL
   - `create(raw_capability: str | bytes, *, work_factor: int = 100_000, algorithm: str = "pbkdf2_sha256") -> VerifierRecord`: Creates non-recoverable verifier.
   - `verify(candidate: str | bytes) -> bool`: Verifies candidate in constant time.
   - `to_dict() -> dict[str, Any]` and `from_dict(data: dict[str, Any]) -> VerifierRecord`.
+
+### rush.plugins (Phase 56 Primitives)
+- `PluginClosureManifest`: Cryptographic closure covering code, config, env names, runtime, and platform.
+- `build_plugin_closure(plugin_root, entrypoint, config, allowed_env_names, declared_secret_refs)`: Constructs verified closure manifest.
+- `PluginSnapshotStore`: Manages immutable byte snapshots in `~/.rush/snapshots/<closure_digest>/` under `PhysicalRoot`.
+- `PluginTrustStore`: User-owned trust ledger managing authorization records via `AtomicFile` and `VerifierRecord`.
+- `HardenedPluginExecutor`: Pre-spawn reverification, protected secret channel negotiation, and `ToolResultV1` execution.
+- `SecretDeliveryContext`: Transport parameters for descriptor pipe, stdin handshake, or provider channels.

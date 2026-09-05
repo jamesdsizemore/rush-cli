@@ -84,3 +84,12 @@ confine_workspace_paths = true
 4. **Option Immutability**: Tool options in `ToolConfig.options` are wrapped in immutable `types.MappingProxyType` to prevent runtime mutation.
 
 See [Configuration Reference](reference/configuration-reference.md) and [Configuration Cookbook](reference/configuration-cookbook.md).
+
+### Plugin Table Schema ([plugins.<name>]) (Phase 56)
+- `command` (string or list of strings, required): Invocation command.
+- `timeout_seconds` (float, optional, default 30.0): Execution timeout.
+- `patterns` (list of strings, optional, default ["*"]): File matching patterns.
+- `description` (string, optional): Human-readable description.
+- `channel_type` (string, optional, enum ["descriptor", "stdin", "provider"]): Protected secret delivery channel.
+- `secret_refs` (list of strings, optional): Declared secret reference IDs (`secret:<NAME>`).
+- `allowed_env` (list of strings, optional): Explicit allowed non-secret environment variable names.

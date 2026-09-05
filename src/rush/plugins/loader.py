@@ -10,11 +10,13 @@ import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from rush.contracts.results import ToolResultV1
 from rush.logging import get_logger, log_subsystem
-from rush.plugins.validator import validate_plugin_output
-from rush.tools.base import ToolResult
-from rush.tools.common import run_subprocess
+
+if TYPE_CHECKING:
+    from rush.plugins.closure import PluginClosureManifest
 
 logger = get_logger("plugins.loader")
 
@@ -29,6 +31,9 @@ class PluginSpec:
     description: str = ""
     file_extensions: tuple[str, ...] = ()
     timeout_seconds: float = 30.0
+    closure: PluginClosureManifest | None = None
+    secret_refs: tuple[str, ...] = ()
+    channel_type: str = "stdin"
 
 
 @dataclass(frozen=True)
@@ -77,47 +82,81 @@ def discover_plugins(root: Path) -> list[CustomPlugin]:
 
 
 def execute_plugin(
-    plugin: CustomPlugin,
+    plugin: CustomPlugin | PluginSpec,
     target_path: Path,
-    is_trusted: bool,
+    is_trusted: bool = False,
     cwd: Path | None = None,
     extra_args: list[str] | None = None,
-) -> ToolResult:
-    """Execute custom plugin subprocess after verifying repository trust."""
+) -> ToolResultV1:
+    """Execute custom plugin subprocess (deprecated: delegates to HardenedPluginExecutor)."""
+    import warnings
+
+    warnings.warn(
+        "execute_plugin is deprecated; use HardenedPluginExecutor.execute() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from rush.plugins.closure import build_plugin_closure
+    from rush.plugins.executor import HardenedPluginExecutor
+    from rush.plugins.snapshot_store import PluginSnapshotStore
+    from rush.plugins.trust_store import PluginTrustStore
+
+    repo_root = cwd or (target_path if target_path.is_dir() else target_path.parent)
+    trust_store = PluginTrustStore(repo_root=repo_root)
+    snapshot_store = PluginSnapshotStore()
+    executor = HardenedPluginExecutor(
+        repo_root=repo_root,
+        trust_store=trust_store,
+        snapshot_store=snapshot_store,
+    )
+
+    if isinstance(plugin, PluginSpec):
+        spec = plugin
+    else:
+        exec_path = (
+            Path(plugin.command[1])
+            if len(plugin.command) > 1 and not plugin.command[1].startswith("-")
+            else Path(plugin.command[0])
+        )
+        if not exec_path.is_absolute():
+            exec_path = (repo_root / exec_path).resolve()
+        spec = PluginSpec(
+            name=plugin.name,
+            executable_path=exec_path,
+            command=list(plugin.command),
+            description=plugin.description,
+            file_extensions=plugin.file_extensions,
+        )
+
     if not is_trusted:
-        log_subsystem(
-            "plugin",
-            "TRUST_GATE",
-            f"Blocked untrusted plugin '{plugin.name}'. Run 'rush trust' to enable.",
+        return executor._fail_untrusted(spec)
+
+    # If is_trusted, ensure snapshot and trust are registered
+    if not trust_store.load_trust_store().get(spec.name):
+        plugin_root = (
+            spec.executable_path.parent if spec.executable_path.is_file() else repo_root
         )
-        return ToolResult(
-            tool=plugin.name,
-            status="skipped",
-            duration_ms=0,
-            summary=f"plugin: trust required to execute '{plugin.name}'. Run 'rush trust' to authorize.",
-            findings=[],
+        closure = build_plugin_closure(
+            plugin_root=plugin_root,
+            entrypoint=spec.executable_path,
+            config={"name": spec.name, "command": spec.command},
+            plugin_name=spec.name,
         )
-
-    exec_cmd = list(plugin.command) + [str(target_path)] + (extra_args or [])
-    log_subsystem(
-        "plugin", "INFO", f"Executing custom plugin '{plugin.name}': {exec_cmd}"
-    )
-
-    proc = run_subprocess(
-        exec_cmd,
-        cwd=cwd or (target_path if target_path.is_dir() else target_path.parent),
-    )
-
-    if proc.returncode != 0 and not proc.stdout.strip():
-        return ToolResult(
-            tool=plugin.name,
-            status="error",
-            duration_ms=0,
-            summary=f"plugin: '{plugin.name}' exited with code {proc.returncode}. Error: {proc.stderr.strip()}",
-            findings=[],
+        snap_dir = snapshot_store.materialize_snapshot(
+            closure=closure, plugin_root=plugin_root
+        )
+        trust_store.grant_trust(spec.name, closure.closure_digest, snap_dir)
+        spec = PluginSpec(
+            name=spec.name,
+            executable_path=spec.executable_path,
+            command=spec.command,
+            description=spec.description,
+            file_extensions=spec.file_extensions,
+            closure=closure,
         )
 
-    return validate_plugin_output(proc.stdout, plugin_name=plugin.name)
+    paths = [target_path] if target_path.is_file() else []
+    return executor.execute(spec, paths=paths)
 
 
 class PluginLoader:

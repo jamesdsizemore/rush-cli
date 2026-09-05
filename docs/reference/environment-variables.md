@@ -24,3 +24,6 @@ When external engines are invoked:
 - Discovered credentials, access tokens, and secret parameters are automatically redacted from all output findings and diagnostic logs as `[REDACTED]`.
 
 See [Engine Directory](engine-directory.md) and [Result Reference](result-reference.md).
+
+### Plugin Subprocess Environment Variables (Phase 56)
+Plugin subprocesses run with scrubbed environments (`SandboxedEnvironment.get_sanitized_env()`). Only explicit non-secret variables declared in `allowed_env` and minimal system variables (`PATH`, `SYSTEMROOT`) are retained.

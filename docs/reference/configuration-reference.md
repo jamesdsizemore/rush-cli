@@ -151,3 +151,6 @@ Configures commit depth, asset prune permissions, and PR base branches.
 
 ### `tools.attest`, `tools.mem-profile`, `tools.cold-start`, `tools.offline-review`, `tools.benchmark`
 Configures builder identifiers, dynamic profiling flags, model paths, and benchmark thresholds.
+
+### [plugins] Configuration Table (Phase 56)
+Configures custom external quality engines with pattern matching, timeout limits, and protected secret channels.

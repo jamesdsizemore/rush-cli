@@ -84,3 +84,8 @@ Before finalizing any release candidate:
    pytest tests/test_phase55_atomic_file.py tests/test_phase55_physical_containment.py tests/test_phase55_verifier_record.py -v
    ```
 2. Confirm `governance/remediation-phase-55.toml` status is `completed`.
+
+### Phase 56 Pre-Release Verification
+- Verify all 16 Phase 56 contract tests pass.
+- Verify user ledger authority operates outside git repositories.
+- Verify plugin output conforms to `ToolResultV1`.

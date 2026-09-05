@@ -145,3 +145,17 @@ target_ref = "HEAD"
 metric = "duration_ms"
 threshold_pct = 10.0
 ```
+
+### Plugin Configuration & Secret References (Phase 56)
+In `rush.toml`, configure plugins under `[plugins.<name>]`:
+```toml
+[plugins.custom_scanner]
+command = "python scan.py"
+timeout_seconds = 30.0
+patterns = ["*.py", "*.ts"]
+description = "Custom security scanner"
+channel_type = "stdin" # "descriptor", "stdin", "provider"
+secret_refs = ["secret:API_KEY"]
+allowed_env = ["RUSH_PROJECT_ROOT"]
+```
+Literal secrets are forbidden and will be rejected at parse time.

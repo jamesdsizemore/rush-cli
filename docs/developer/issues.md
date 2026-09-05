@@ -126,3 +126,13 @@
 - **Status**: Resolved
 - **Severity**: Critical
 - **Resolution**: Implemented `AtomicFile` (`src/rush/io/atomic_file.py`) with same-directory tempfiles, `flush()`, `os.fsync()`, anti-swap TOCTOU verification, and manager-owned cleanup. Implemented `VerifierRecord` (`src/rush/io/verifier_record.py`) using PBKDF2-HMAC-SHA256 salted hashes and constant-time verification to prevent raw token exposure. Verified via `tests/test_phase55_atomic_file.py` and `tests/test_phase55_verifier_record.py`.
+
+### ISS-056-01: Repository-Bound Trust Store and Cloned Receipt RCE Vulnerability
+- **Status**: Resolved
+- **Severity**: Critical
+- **Resolution**: Migrated plugin execution authority from in-repository `.rush/trust.json` and directory path strings to a user-owned ledger at `~/.rush/plugin_trust_ledger.json` managed via `rush.io.PhysicalRoot` and `rush.io.AtomicFile`. Cloned repository receipts are strictly non-authorizing evidence and fail closed. Verified via `tests/test_phase56_plugin_trust.py`.
+
+### ISS-056-02: Single-File Hashing, TOCTOU Workspace Mutation, and Secret Exposure
+- **Status**: Resolved
+- **Severity**: Critical
+- **Resolution**: Implemented `PluginClosureManifest` digesting all code, assets, configs, environment names, runtime, and platform identity. Materialized immutable byte-copied snapshots in `~/.rush/snapshots/<closure_digest>/` under `PhysicalRoot`. Provided protected secret channels (descriptor pipe, stdin handshake) ensuring zero secret visibility in process argv or environment. Pre-spawn reverification guarantees approved bytes or zero child process created. Verified via `tests/test_phase56_plugin_closure.py`, `tests/test_phase56_plugin_secret_channels.py`, and `tests/test_phase56_plugin_launch_identity.py`.

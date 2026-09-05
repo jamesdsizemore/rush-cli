@@ -72,3 +72,6 @@ rush skills sync
 
 - Explore the complete [Agentic Rush Overview](../AGENTIC_RUSH.md).
 - Dive into the [Everyday Developer Workflow](../user-guide/everyday-workflow.md).
+
+### Autonomous Agent Plugin Execution (Phase 56)
+AI coding agents executing plugins must ensure user trust has been granted. If trust is missing, agents cannot run plugins with bypass flags; user approval must be requested.

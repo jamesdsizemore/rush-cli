@@ -80,3 +80,7 @@ Generated help is authoritative for options. See [CLI reference](reference/cli-r
 * `--format toon`: Ultra-compact Token-Oriented Object Notation pipe-table formatting.
 * `--format yaml`: YAML formatted findings.
 * `--format ndjson`: Newline-delimited JSON stream.
+
+### Custom Plugin Quality Engine (Phase 56)
+- **Engine**: User-defined or third-party quality plugins.
+- **Execution Model**: `HardenedPluginExecutor` with user trust ledger gating, transitive closure verification, immutable snapshot isolation, and `ToolResultV1` output compliance.
