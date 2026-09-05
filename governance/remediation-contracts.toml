@@ -47,7 +47,7 @@ green_task = "P56.1.2"
 target_seam = "src/rush/plugins/"
 test_file = "tests/test_phase56_plugin_trust.py"
 test_function = "test_plugin_execution_fails_closed_without_content_digest"
-predecessor = "Phases 53-55"
+predecessor = "Phases 53-55 (Phase 55 accepted)"
 docs_owner = "docs/SECURITY.md, docs/developer/architecture.md"
 
 [[findings]]
@@ -132,7 +132,7 @@ green_task = "P58.1.2"
 target_seam = "src/rush/core/distributed_mesh.py"
 test_file = "tests/test_phase58_locks.py"
 test_function = "test_lock_acquisition_requires_caller_capability"
-predecessor = "Phase 55 AtomicFile"
+predecessor = "Phase 55 AtomicFile (accepted)"
 docs_owner = "docs/developer/architecture.md"
 
 [[findings]]
@@ -146,7 +146,7 @@ green_task = "P58.2.2"
 target_seam = "src/rush/core/persistence.py"
 test_file = "tests/test_phase58_persistence.py"
 test_function = "test_persistence_uses_atomic_file_with_schema_version"
-predecessor = "Phase 55 AtomicFile"
+predecessor = "Phase 55 AtomicFile (accepted)"
 docs_owner = "docs/developer/architecture.md"
 
 [[findings]]
@@ -232,5 +232,5 @@ green_task = "P58.3.2"
 target_seam = "src/rush/core/git_sandbox.py"
 test_file = "tests/test_phase58_patch.py"
 test_function = "test_patch_sandbox_enforces_physical_containment_and_rollback"
-predecessor = "Phase 55 AtomicFile and containment"
+predecessor = "Phase 55 AtomicFile and containment (accepted)"
 docs_owner = "docs/developer/architecture.md"

@@ -47,3 +47,9 @@ Rush enforces end-to-end recursive sanitization across all data boundaries:
 1. **Sanitization-First Serialization**: In Phase 54, `serialize_tool_result()` executes secret sanitization (Phase 53) before structural schema validation, preventing un-sanitized data from ever reaching serialized envelopes.
 2. **Canonical Finding Normalization**: Findings are coerced into immutable `FindingV1` records with normalized file paths, line coordinates, and standardized severity levels (`info`, `warning`, `error`), scrubbing unpredictable engine error fields.
 3. **Service Protocol Separation**: Service operations (like MCP connection initialization) run through isolated `ServiceOperationAdapter` layers, ensuring raw communication frames remain separate from tool result data.
+
+## 5. Non-Recoverable Capability Privacy (Phase 55)
+
+1. **One-Way Verifier Storage**: Stored capabilities, authorization tokens, and lock proofs are persisted as `VerifierRecord` hashes derived via PBKDF2-HMAC-SHA256 (100k rounds, 32-byte salt).
+2. **Zero Raw Capability Exposure**: `VerifierRecord` instances contain zero raw token information, omit raw values from `to_dict()` and `repr()`, and perform verification in constant time via `hmac.compare_digest`.
+3. **Entropy Validation**: Capabilities must have Shannon entropy >= 2.5 bits/symbol and length >= 16 characters, preventing predictable or low-entropy secrets.

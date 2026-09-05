@@ -150,3 +150,13 @@ tests/
 └── fixtures/
     └── benchmarks/      # 40 declared scenario & candidate JSON fixtures
 ```
+
+## File I/O & Containment Layout (Phase 55)
+
+```
+src/rush/io/
+├── __init__.py           # Public exports (PhysicalRoot, AtomicFile, VerifierRecord, etc.)
+├── physical_paths.py     # PhysicalRoot and ContainmentError
+├── atomic_file.py        # AtomicFile, SanitizedBytes, SanitizedJsonValue, AtomicWriteError
+└── verifier_record.py    # VerifierRecord and VerifierError
+```

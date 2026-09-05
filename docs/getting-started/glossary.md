@@ -66,3 +66,8 @@
 * **ToolResultV1**: Canonical typed schema kernel enforcing 8 required fields, ISO 8601 UTC timestamps, and standardized severity levels.
 * **FindingV1**: Structured finding model with strict path, line, message, and severity contracts.
 * **Operation Registry**: Reconciled taxonomy partitioning operations into `tool`, `admin`, and `service` domains.
+
+### Phase 55 Terms
+* **AtomicFile**: File writer ensuring changes are written atomically and durably to disk or fail completely without leaving corrupted partial files.
+* **PhysicalRoot**: Security boundary ensuring commands and tools cannot read or write files outside the project directory.
+* **VerifierRecord**: Security record that proves authorization without saving raw passwords or secret tokens.

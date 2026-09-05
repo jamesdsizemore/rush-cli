@@ -99,3 +99,10 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **ToolOperationAdapter**: Execution envelope validating and serializing tool results to `ToolResultV1`.
 * **ToolResultV1**: Fail-closed canonical schema kernel specification (`schema_version: "1.0.0"`) with ISO 8601 UTC timestamps and 8 mandatory keys.
 * **ValidationErrorV1**: Structured validation failure record carrying machine-readable reason codes (`MISSING_REQUIRED_KEY`, `INVALID_TYPE`, `INVALID_STATUS`, `INVALID_TIMESTAMP`, `INVALID_SEVERITY`).
+
+### File I/O & Physical Containment Terms (Phase 55)
+* **AtomicFile**: Primitive providing fail-closed, durable atomic file replacement using same-directory temporary files (`.rush_tmp_`), explicit `flush()`, `os.fsync()`, and manager-owned cleanup.
+* **ContainmentError**: Exception raised when a path breaches physical workspace boundaries via absolute formatting, parent traversal (`..`), symlinks, or Windows reparse points.
+* **PhysicalRoot**: Boundary validator ensuring that all filesystem operations remain strictly confined to a designated physical directory.
+* **SanitizedBytes / SanitizedJsonValue**: Typed wrappers ensuring that only sanitized, secret-redacted data can be passed to atomic write primitives.
+* **VerifierRecord**: A cryptographically salted, high-work-factor one-way verification record ensuring authorization capabilities cannot be recovered from persistent disk storage.

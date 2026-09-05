@@ -14,6 +14,11 @@ All notable changes to Rush are documented here.
 - **Version Authority Consolidation (Finding R-012)**: Replaced disparate hardcoded version literals across providers (Anthropic, OpenAI), SARIF exporters, TypeScript generators, scaffolder templates, PR synthesizers, and TUI footers with a single version authority derived from `importlib.metadata.version("rush-cli")` in `src/rush/__init__.py`.
 
 ### Added
+- **AtomicFile & Physical Containment I/O Kernel (Phase 55)**:
+  - `src/rush/io/physical_paths.py`: `PhysicalRoot` and `ContainmentError` enforcing strict physical workspace boundary containment defeating symlinks, parent traversal (`..`), Windows directory junctions, and reparse points (`stat.FILE_ATTRIBUTE_REPARSE_POINT`).
+  - `src/rush/io/atomic_file.py`: `AtomicFile` guaranteeing fail-closed atomic replacement via same-directory unique temporary files (`.rush_tmp_`), explicit `flush()`, `os.fsync()` durability, and manager-owned cleanup accepting exclusively sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`).
+  - `src/rush/io/verifier_record.py`: `VerifierRecord` and `VerifierError` providing one-way non-recoverable capability verification using PBKDF2-HMAC-SHA256 (100k rounds, 32-byte salt), constant-time `hmac.compare_digest`, and Shannon entropy validation (>= 2.5 bits/symbol).
+
 - **Remediation Scope & Release Gates (Phase 51)**:
   - First-party coverage boundary classifying 1,090 repository files (`governance/first-party-coverage.toml`).
   - Public operations inventory reconciling 129 Click subcommands and 73 FastMCP tools (`governance/public-operations.toml`).

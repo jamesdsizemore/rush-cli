@@ -229,3 +229,8 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - Two-phase execution pipeline: Engine raw output -> Phase 53 secret sanitization -> Phase 54 schema validation & serialization.
 - Operation boundary taxonomy (`src/rush/contracts/operations.py`: `ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`, `OperationRegistry`).
 - Full reconciliation of 146 public operations with fail-closed rejection of `ToolResultV1` wrapping on service protocol frames.
+
+### Phase 55 Architecture: AtomicFile, Physical Containment & Verifier Records
+- `src/rush/io/physical_paths.py`: `PhysicalRoot` enforcing strict workspace path containment defeating absolute paths, parent traversals (`..`), symlinks across parent components, and Windows reparse points (`stat.FILE_ATTRIBUTE_REPARSE_POINT`).
+- `src/rush/io/atomic_file.py`: `AtomicFile` providing durable same-directory atomic replacement (`.rush_tmp_`), explicit `flush()` and `os.fsync()`, anti-swap TOCTOU validation, atomic `os.replace()`, and manager-owned cleanup accepting exclusively sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`).
+- `src/rush/io/verifier_record.py`: `VerifierRecord` providing one-way non-recoverable capability verification using PBKDF2-HMAC-SHA256 (100k rounds, 32-byte salt), constant-time `hmac.compare_digest`, and Shannon entropy validation (>= 2.5 bits/symbol).

@@ -430,3 +430,7 @@ Retrieve relevant codebase chunks using multi-vector embeddings and semantic CCR
 
 ### `rush context-mistakes`
 Query and record past codebase anti-patterns in Mistake Memory.
+
+## Output File Write Safety & Containment (Phase 55)
+
+All file writing operations triggered by CLI exporter flags (`--export-html`, `--export-sarif`, `--allow-artifact-write`) are constrained to physical repository boundaries via `rush.io.PhysicalRoot` and written with `rush.io.AtomicFile` fsync durability.

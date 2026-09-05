@@ -51,3 +51,7 @@ Every tool returns canonical execution metadata:
 ```
 
 Consent is specific to each invocation and target. Rush never encodes blanket browser/network/publication permission in an assistant prompt or shared config.
+
+## Physical Containment on Artifact Writes (Phase 55)
+
+Artifact writes granted via `--allow-artifact-write` are strictly confined to the repository root via `rush.io.PhysicalRoot`. Attempts to write artifacts through symlinks or parent directory escapes (`..`) raise `ContainmentError` and write zero bytes to disk.

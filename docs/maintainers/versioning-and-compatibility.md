@@ -40,3 +40,11 @@ If a breaking change is unavoidable:
 - **Standard Library Invariant**: Schema models are implemented in pure standard library dataclasses (`src/rush/contracts/results.py`) without external schema dependencies (e.g. Pydantic).
 
 See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/release-process.md).
+
+---
+
+## 5. File I/O Primitives Compatibility (Phase 55)
+
+- **`rush.io` Primitives**: `PhysicalRoot`, `AtomicFile`, and `VerifierRecord` are canonical internal primitives.
+- **Sanitized Contracts**: `write_bytes` and `write_json` strictly enforce sanitized wrappers (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`).
+- **One-Way Verifier Compatibility**: `VerifierRecord` maintains backward-compatible verification across schema versions via explicit `version = "1.0.0"` records.

@@ -128,3 +128,7 @@ Adapt shell syntax to your platform. Preserve the JSON in CI artifacts when it h
 - `metadata.unclosed_resources`: List of unclosed files/connections detected.
 - `metadata.heavy_imports`: List of heavy top-level package imports flagged.
 - `metadata.benchmark_stats`: Sample statistics (`mean`, `median`, `min`, `max`, `count`).
+
+## Export Artifact Containment & Durability (Phase 55)
+
+When exporting results via `--export-html` or `--export-sarif`, files are verified via `rush.io.PhysicalRoot` and written atomically via `rush.io.AtomicFile`. Destination paths that escape root or contain symlinks are blocked fail-closed.

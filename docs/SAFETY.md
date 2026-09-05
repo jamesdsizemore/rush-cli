@@ -52,3 +52,8 @@ Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-han
 - **Downstream Schema Verification**: Tool results run Phase 54 schema validation downstream of Phase 53 sanitization, guaranteeing that structurally invalid findings or malformed statuses are caught before emission.
 - **Fail-Closed Result Normalization**: Invalid results raise structured `ValidationErrorV1` records with standard error codes (`MISSING_REQUIRED_KEY`, `INVALID_TYPE`, `INVALID_STATUS`, `INVALID_TIMESTAMP`, `INVALID_SEVERITY`).
 - **Operation Isolation**: Public operations are partitioned into `tool`, `admin`, and `service` domains. Service operations (e.g. MCP transport initialization) are prohibited from returning wrapped tool results, maintaining protocol security.
+
+## Physical Containment & Durable Atomic Replacement (Phase 55)
+- **Physical Boundary Enforcement**: Workspace paths are validated by `PhysicalRoot` to defeat symlink escapes, parent traversal, and Windows junction/reparse points.
+- **Durable Atomic Replacement**: Files written via `AtomicFile` execute in destination directories using `.rush_tmp_` prefix with explicit `flush()` and `os.fsync()` before rename.
+- **Old-or-New Destination Guarantee**: Destination files are guaranteed to remain in either their original valid state or new valid state; partial writes are wiped via manager-owned cleanup.

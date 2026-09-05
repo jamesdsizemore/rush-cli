@@ -98,3 +98,17 @@ See [Engine Development](engine-development.md) and [Coding Standards](coding-st
 - `cold-start`: Static heavy top-level import detection and dynamic `-X importtime` execution under `--allow-slow`.
 - `offline-review`: Local air-gapped ONNX review runner; gracefully skips when ONNX models or runners are absent.
 - `benchmark`: Repeated benchmark execution using stdlib `statistics`, storing baselines in `.rush/baselines.json`.
+
+### 1.2 Using AtomicFile for Output Writes (Phase 55)
+
+All new tools that generate artifacts or write reports must utilize `rush.io.AtomicFile` bound to a `rush.io.PhysicalRoot`:
+```python
+from rush.io import AtomicFile, PhysicalRoot, SanitizedBytes, SanitizedJsonValue
+
+root = PhysicalRoot(workspace_dir)
+writer = AtomicFile(root)
+
+# Write sanitized JSON report
+writer.write_json("reports/summary.json", SanitizedJsonValue.from_value(report_dict))
+```
+This guarantees fail-closed path containment, fsync durability, and atomic replacement without corrupted partial files.

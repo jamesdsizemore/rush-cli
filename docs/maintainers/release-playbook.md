@@ -76,3 +76,11 @@ Before finalizing any release candidate:
    pytest tests/test_phase51_public_operations.py -v
    ```
 3. Confirm `governance/remediation-phase-54.toml` status is `completed` and R-011 in `governance/remediation-contracts.toml` is marked `completed`.
+
+## Pre-Release Physical Containment & Verifier Probes (Phase 55: Foundations for R-003, R-009, R-010, R-016)
+Before finalizing any release candidate:
+1. Verify Phase 55 contract suites:
+   ```bash
+   pytest tests/test_phase55_atomic_file.py tests/test_phase55_physical_containment.py tests/test_phase55_verifier_record.py -v
+   ```
+2. Confirm `governance/remediation-phase-55.toml` status is `completed`.

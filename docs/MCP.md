@@ -39,3 +39,7 @@ The assistant does not gain a working model review through Rush: default review 
 ## Next
 
 Use [client setup](integrations/mcp-client-setup.md) and the [tool reference](reference/mcp-tool-reference.md).
+
+## Workspace Physical Containment for MCP Tools (Phase 55)
+- **Path Containment Invariant**: All MCP tools operating on local file paths are validated against `PhysicalRoot` to defeat symlink path traversal and Windows reparse point escapes.
+- **Atomic Persistence**: Server-side session and scratch writes utilize `AtomicFile` to eliminate race conditions and corrupted partial files during tool execution.

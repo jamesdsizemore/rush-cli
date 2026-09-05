@@ -345,3 +345,17 @@ For guidelines on creating new tools or engines, see the [Developer Guide](DEVEL
 - `ColdStartTool`: Identifies heavy top-level imports and parses `-X importtime`.
 - `OfflineReviewTool`: Executes air-gapped local ONNX code review.
 - `BenchmarkTool`: Compares performance samples against baselines using stdlib `statistics`.
+
+### 1.2 File I/O & Containment Primitives (`rush.io`) (Phase 55)
+
+- **`rush.io.PhysicalRoot(root_path: Path | str)`**:
+  - `open_contained(relative_path: Path | str, purpose: str = "read") -> Path`: Validates that `relative_path` is contained strictly within `root_path`. Rejects absolute paths, traversal (`..`), symlinks, and Windows reparse points fail-closed.
+- **`rush.io.AtomicFile(physical_root: PhysicalRoot)`**:
+  - `write_bytes(relative_path: Path | str, content: SanitizedBytes | SanitizationResult) -> Path`: Writes bytes atomically with fsync durability and owned temp cleanup.
+  - `write_json(relative_path: Path | str, content: SanitizedJsonValue | SanitizationResult) -> Path`: Writes sanitized JSON structures atomically.
+- **`rush.io.SanitizedBytes(data: bytes, redaction_count: int = 0)`**: Wrapper for sanitized byte data.
+- **`rush.io.SanitizedJsonValue(value: Any, redaction_count: int = 0)`**: Wrapper for sanitized JSON structures.
+- **`rush.io.VerifierRecord`**:
+  - `create(raw_capability: str | bytes, *, work_factor: int = 100_000, algorithm: str = "pbkdf2_sha256") -> VerifierRecord`: Creates non-recoverable verifier.
+  - `verify(candidate: str | bytes) -> bool`: Verifies candidate in constant time.
+  - `to_dict() -> dict[str, Any]` and `from_dict(data: dict[str, Any]) -> VerifierRecord`.

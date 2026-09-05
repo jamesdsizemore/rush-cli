@@ -110,3 +110,8 @@ Key invariants:
 ## 11. Phase 54 Contract Test Suites (Tool Result Schema Kernel & Operation Adapters)
 - `tests/test_phase54_result_schema.py`: Validation of canonical `ToolResultV1` dataclass, 8 required keys, ISO 8601 UTC timestamp format (`Z`), severity mapping (`info`, `warning`, `error`), schema error code validation (`MISSING_REQUIRED_KEY`, `INVALID_TYPE`, etc.), fail-closed structural validation, JSON serialization, and legacy adapter backward compatibility (`adapt_legacy_tool_result`, `adapt_legacy_finding`).
 - `tests/test_phase54_operation_adapters.py`: Operation adapter taxonomy (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`, `OperationRegistry`), complete reconciliation with `governance/public-operations.toml` (146 operations: 67 tool, 62 admin, 17 service), tool execution output validation, and strict rejection of `ToolResultV1` wrapping on raw protocol frames (`mcp.initialize`, etc.).
+
+## 12. Phase 55 Contract Test Suites (AtomicFile, Physical Containment & Verifier Records)
+- `tests/test_phase55_atomic_file.py`: Validation of sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`), single implementation ownership, raw secret wrapper rejection, injected fault durability (old-or-new valid destination), and manager-owned tempfile cleanup.
+- `tests/test_phase55_physical_containment.py`: Validation of symlink rejection (file/directory), Windows reparse point / junction rejection (`stat.FILE_ATTRIBUTE_REPARSE_POINT`), parent target swap detection, and outside sentinel preservation.
+- `tests/test_phase55_verifier_record.py`: Validation of zero raw capability retention, constant-time verification (`hmac.compare_digest`), low-entropy capability rejection, and metadata non-invertibility.

@@ -74,3 +74,15 @@ See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md
   - `FINDING_MISSING_REQUIRED_KEY`: Finding is missing `id`, `path`, `line`, `message`, or `severity`.
   - `INVALID_SEVERITY`: Finding severity is not one of `info`, `warning`, `error`.
   - `SERVICE_TOOL_RESULT_PROHIBITED`: A service-kind operation (e.g. MCP protocol handler) attempted to return a wrapped `ToolResultV1`.
+
+### Phase 55 Troubleshooting: Physical Containment & Atomic Write Errors
+- **`ContainmentError` codes**:
+  - `ABSOLUTE_PATH_DISALLOWED`: Target path starts with `/`, `\\`, or a drive letter. Ensure relative paths are passed.
+  - `PARENT_TRAVERSAL_DISALLOWED`: Path contains `..` components. Use normalized relative paths within the workspace.
+  - `SYMLINK_DISALLOWED`: A component along the path is a symlink. Symlinks within contained workspaces are forbidden.
+  - `REPARSE_POINT_DISALLOWED`: Path target or parent is a Windows directory junction or reparse point.
+  - `PATH_ESCAPE_DISALLOWED`: Resolved target path escapes the physical root directory.
+- **`AtomicWriteError` codes**:
+  - `WRITE_FAILED`: An injected or filesystem fault interrupted writing. Check that the destination filesystem is writable and has free space. On failure, `AtomicFile` cleans up its `.rush_tmp_*` file and leaves the original destination intact.
+- **`VerifierError`**:
+  - Raised when attempting to create a `VerifierRecord` from a capability with length < 16 characters or Shannon entropy < 2.5 bits/symbol.

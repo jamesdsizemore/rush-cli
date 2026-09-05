@@ -98,3 +98,8 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 - **Pre-Truncation Redaction**: Subprocess stdout/stderr sanitization runs strictly before truncation to prevent secret leakage at slice boundaries.
 - **Sealed Serialization & Persistent Boundaries**: Output generators (SARIF, HTML, ResultCache, CLI JSON) and disk writers (governance rules, mesh locks, security audit logs, patch memory, session flights, preferences, invariant graphs, attestations, IAM policies, dead asset manifests, and benchmarks) enforce copy-sanitization prior to emission or disk writes without mutating execution inputs.
 - **Fail-Safe Structured Diagnostics**: `NdjsonHandler.emit` formats exception tracebacks with credential redaction and includes a structured fallback handler, guaranteeing stderr log records are never silently dropped. Stdout remains strictly dedicated to JSON-RPC and CLI outputs.
+
+## Physical Containment & Non-Recoverable Capability Invariants (Phase 55)
+- **Control 2 Enhancement (Physical Containment)**: `PhysicalRoot.open_contained()` validates that paths cannot escape workspace roots via directory or file symlinks, Windows reparse points / junctions, or parent traversal components.
+- **Fail-Closed Atomic Replacement**: `AtomicFile` ensures files are written with fsync durability and atomic replacement. Injected faults leave destination files in an old-valid or new-valid state; partial writes never persist.
+- **Zero Raw Capability Persistence**: Coordination locks, plugin trust records, and persistent tokens must be stored as `VerifierRecord` instances, preventing capability leakage from state files.

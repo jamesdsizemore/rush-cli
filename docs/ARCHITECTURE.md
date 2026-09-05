@@ -223,3 +223,9 @@ The `ShipCockpit` (`src/rush/tools/ship/cockpit.py`) runs 7 orthogonal release v
 * `scripts/benchmarks/context.py`: `ContextPacker` token reduction and `CCRStore` exact byte restoration verification.
 * `scripts/benchmarks/coordination.py`: `MeshLockManager` mutual exclusion, `CheckpointJournal` recovery, and `FlightRecorder` session replay validation.
 * `scripts/benchmarks/local.py`: Host hardware capability profiling, external model cache validation, and strict rejection of `ollama`.
+
+## Physical Containment, Atomic Replacement & Verifier Records (Phase 55)
+
+- **PhysicalRoot (`src/rush/io/physical_paths.py`)**: Enforces strict physical path containment within designated workspaces, rejecting absolute paths, parent traversals (`..`), symlinks across all parent directories, and Windows reparse points (`stat.FILE_ATTRIBUTE_REPARSE_POINT`).
+- **AtomicFile (`src/rush/io/atomic_file.py`)**: Fail-closed atomic file replacement accepting only sanitized contracts (`SanitizedBytes`, `SanitizedJsonValue`, `SanitizationResult`). Employs same-directory temporary files (`.rush_tmp_`), explicit `.flush()` and `os.fsync()`, anti-swap TOCTOU validation, atomic `os.replace()`, and manager-owned cleanup.
+- **VerifierRecord (`src/rush/io/verifier_record.py`)**: Cryptographically salted, high-work-factor (`pbkdf2_sha256`, 100k rounds) one-way capability verification records with constant-time comparison (`hmac.compare_digest`), Shannon entropy validation, and zero raw capability exposure.

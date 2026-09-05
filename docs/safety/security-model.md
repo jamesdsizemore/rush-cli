@@ -50,6 +50,10 @@ Rush enforces seven architectural defensive controls across all operations:
 - Explicit permission gates and dry-run defaults;
 - Recursive deep sanitization of all emitted JSON and persistent disk writes (Phase 53);
 - Strict stdout purity and fail-safe stderr NDJSON logging with credential redaction (Phase 53).
+- Physical path boundary containment defeating symlinks and Windows reparse points (`src/rush/io/physical_paths.py`, Phase 55);
+- Durable atomic file replacement accepting only sanitized contracts with manager-owned temp cleanup (`src/rush/io/atomic_file.py`, Phase 55);
+- One-way non-recoverable capability verification records defeating token leakage in state files (`src/rush/io/verifier_record.py`, Phase 55).
+
 
 ## Non-goals
 
