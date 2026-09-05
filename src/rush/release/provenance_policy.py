@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import unicodedata
 from pathlib import Path  # noqa: F401 - standard library as required by spec
 from typing import Any
 
@@ -11,6 +13,93 @@ from rush.release.provenance import ProvenanceError
 
 class SchemaMismatchError(ProvenanceError):
     """Raised when a provenance statement fails in-toto / SLSA schema validation."""
+
+
+class DuplicateKeyError(ProvenanceError):
+    """Raised when JSON input contains duplicate keys at any nesting level."""
+
+    def __init__(self, key: str, path: str = "$", message: str | None = None) -> None:
+        self.key = key
+        self.path = path
+        super().__init__(
+            message
+            or f"Duplicate key detected in provenance JSON: '{key}' at path '{path}'"
+        )
+
+
+class AmbiguousKeyError(ProvenanceError):
+    """Raised when keys collide under Unicode normalization (NFKC) or escape representation."""
+
+    def __init__(
+        self, key1: str, key2: str, path: str = "$", message: str | None = None
+    ) -> None:
+        self.key1 = key1
+        self.key2 = key2
+        self.path = path
+        super().__init__(
+            message
+            or f"Ambiguous key collision detected: '{key1}' vs '{key2}' at path '{path}'"
+        )
+
+
+class StrictProvenanceParser:
+    """Strict JSON parser that rejects duplicate and ambiguous keys at all nesting levels."""
+
+    @staticmethod
+    def parse(raw_json: str | bytes) -> dict[str, Any]:
+        """Parses JSON text/bytes into a dictionary, enforcing key uniqueness and NFKC normalization.
+
+        Raises:
+            ProvenanceError: If input is invalid UTF-8, malformed, truncated, or not a JSON object.
+            DuplicateKeyError: If duplicate keys are encountered at any nesting level.
+            AmbiguousKeyError: If keys collide under Unicode NFKC normalization.
+        """
+        if isinstance(raw_json, (bytes, bytearray)):
+            try:
+                text = raw_json.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ProvenanceError(
+                    f"Malformed or truncated JSON: invalid UTF-8 bytes: {exc}"
+                ) from exc
+        elif isinstance(raw_json, str):
+            text = raw_json
+        else:
+            raise ProvenanceError(
+                f"Malformed or truncated JSON: expected str or bytes, got {type(raw_json).__name__}"
+            )
+
+        if not text.strip():
+            raise ProvenanceError("Malformed or truncated JSON: input string is empty")
+
+        def _pairs_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            seen_exact: set[str] = set()
+            seen_normalized: dict[str, str] = {}
+            obj: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in seen_exact:
+                    raise DuplicateKeyError(key=key, path="$")
+                seen_exact.add(key)
+                norm_key = unicodedata.normalize("NFKC", key)
+                if norm_key in seen_normalized:
+                    orig_key = seen_normalized[norm_key]
+                    if orig_key != key:
+                        raise AmbiguousKeyError(key1=orig_key, key2=key, path="$")
+                seen_normalized[norm_key] = key
+                obj[key] = value
+            return obj
+
+        decoder = json.JSONDecoder(object_pairs_hook=_pairs_hook)
+        try:
+            parsed = decoder.decode(text)
+        except json.JSONDecodeError as exc:
+            raise ProvenanceError(f"Malformed or truncated JSON: {exc}") from exc
+
+        if not isinstance(parsed, dict):
+            raise ProvenanceError(
+                f"Malformed or truncated JSON: Expected JSON object at root, got {type(parsed).__name__}"
+            )
+
+        return parsed
 
 
 IN_TOTO_STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
@@ -410,8 +499,10 @@ __all__ = [
     "RUSH_BUILDER_ID_V1",
     "RUSH_BUILD_TYPE_DRAFT_V1",
     "SLSA_PREDICATE_TYPE_V1",
+    "AmbiguousKeyError",
     "BuildDefinitionV1",
     "BuilderDetailsV1",
+    "DuplicateKeyError",
     "ExternalParametersV1",
     "InternalParametersV1",
     "ProvenanceDraft",
@@ -421,6 +512,7 @@ __all__ = [
     "SLSAPredicateV1",
     "SchemaMismatchError",
     "StatementV1",
+    "StrictProvenanceParser",
     "SubjectV1",
     "validate_provenance_statement",
 ]
