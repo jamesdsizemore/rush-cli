@@ -24,3 +24,7 @@ This document defines what is explicitly in-scope and out-of-scope for Rush CLI 
 - **Automated Git Mutation**: Rush does not commit, create Git tags, rewrite history, or push branches to remote repositories.
 
 See [v0.2 Scope Specification](V0_2_SCOPE.md) and [Design Principles](DESIGN_PRINCIPLES.md).
+
+## Physical Scope & Target Containment (Phase 57)
+
+Target paths are resolved under `rush.io.PhysicalRoot`. Directory junctions, symlinks pointing outside the workspace, and parent traversals (`..`) are rejected fail-closed with `ScopeWideningError`.

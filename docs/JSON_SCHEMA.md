@@ -219,3 +219,7 @@ When validation fails, validation functions raise `ValidationErrorV1` carrying:
 - `PluginClosureManifest`: Validates `schema_version`, `plugin_name`, `entrypoint`, `file_manifest`, `config_digest`, `allowed_env_names`, `declared_secret_refs`, `runtime_identity`, `platform_identity`, `closure_digest`.
 - `TrustedPluginRecord`: Validates `name`, `closure_digest`, `snapshot_path`, `granted_at`, `granted_by`, `verifier_record`.
 - Plugin Subprocess Output: Validated against canonical `ToolResultV1` schema with `FindingV1` records.
+
+## Invocation & Cache JSON Schemas (Phase 57)
+
+Schemas for `InvocationContext`, `PhysicalTarget`, `CacheDecision`, and cached `ToolResultV1` payloads are validated against Phase 54 schema kernels.

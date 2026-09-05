@@ -36,3 +36,6 @@ def render_gain_dashboard(
         subtitle="[dim]Powered by TOON, Skeletons & Distillers[/dim]",
     )
     console.print(panel)
+
+
+render_gain_summary = render_gain_dashboard

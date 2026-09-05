@@ -64,6 +64,7 @@ test_file = "tests/test_phase57_operations.py"
 test_function = "test_transport_contracts_reconcile_with_operation_manifest"
 predecessor = "Phases 52-54"
 docs_owner = "docs/CLI_REFERENCE.md, docs/MCP_REFERENCE.md"
+status = "completed"
 
 [[findings]]
 id = "R-005"
@@ -78,6 +79,7 @@ test_file = "tests/test_phase57_cache.py"
 test_function = "test_cache_identity_and_bypass_contracts"
 predecessor = "Phase 51 public operations manifest"
 docs_owner = "docs/developer/architecture.md"
+status = "completed"
 
 [[findings]]
 id = "R-006"
@@ -92,6 +94,7 @@ test_file = "tests/test_phase57_egress.py"
 test_function = "test_output_egress_and_error_codes"
 predecessor = "Phase 51 public operations manifest"
 docs_owner = "docs/CLI_REFERENCE.md"
+status = "completed"
 
 [[findings]]
 id = "R-007"
@@ -106,6 +109,7 @@ test_file = "tests/test_phase57_parity.py"
 test_function = "test_dual_transport_parity_across_transports"
 predecessor = "Phase 51 public operations manifest"
 docs_owner = "docs/MCP_REFERENCE.md"
+status = "completed"
 
 [[findings]]
 id = "R-008"

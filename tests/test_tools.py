@@ -206,8 +206,15 @@ def test_review_llm_requires_env_key(tmp_path: Path):
 
 
 def test_review_llm_with_env_key_returns_llm_kind(tmp_path: Path, monkeypatch):
-    """When env keys are set, --llm returns review_kind=llm."""
+    """When env keys are set and valid completion received, --llm returns review_kind=llm."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake")
+    monkeypatch.setattr(
+        "rush.providers.anthropic.safe_provider_post",
+        lambda *args, **kwargs: (
+            200,
+            b'{"content": [{"type": "text", "text": "clean"}], "stop_reason": "end_turn"}',
+        ),
+    )
     repo = tmp_path / "r"
     repo.mkdir()
     (repo / "pyproject.toml").write_text('[project]\nname = "x"\n')

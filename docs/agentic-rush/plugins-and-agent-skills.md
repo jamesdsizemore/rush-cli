@@ -75,3 +75,9 @@ rush skills sync
 
 ### Autonomous Agent Plugin Execution (Phase 56)
 AI coding agents executing plugins must ensure user trust has been granted. If trust is missing, agents cannot run plugins with bypass flags; user approval must be requested.
+
+## Agent Invocation & Cache Integration (Phase 57)
+
+Autonomous agents invoking Rush via MCP enjoy full parity with human CLI users:
+- Unified context resolution guarantees identical tool behavior.
+- Cache lookups accelerate repetitive quality checks without risk of stale dirty-state hits.

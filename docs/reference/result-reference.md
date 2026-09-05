@@ -135,3 +135,7 @@ When exporting results via `--export-html` or `--export-sarif`, files are verifi
 
 ### Plugin ToolResultV1 Output (Phase 56)
 Plugin executions emit `ToolResultV1` with `tool="plugin"`, `engine="<name>"`, and findings adhering to `FindingV1` (`info`, `warning`, `error`).
+
+## Cached ToolResultV1 Shapes (Phase 57)
+
+Cached payloads conform to the canonical `ToolResultV1` schema, ensuring consistent deserialization across cached and uncached executions.

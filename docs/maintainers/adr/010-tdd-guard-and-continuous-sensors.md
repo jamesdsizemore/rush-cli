@@ -12,3 +12,7 @@ Code bases rapidly accumulate architectural drift, AI code bloat (slop), and mis
 
 ## Consequences
 - Guaranteed regression protection for AI pair-programming and developer workflows.
+
+## Invocation Cache Integration (Phase 57)
+
+TDD sensors and verification probes integrate with `rush.invocation.decide_cache()`, skipping unchanged test runs while ensuring dirty worktrees trigger full verification.

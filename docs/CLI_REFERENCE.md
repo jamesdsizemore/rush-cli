@@ -439,3 +439,10 @@ All file writing operations triggered by CLI exporter flags (`--export-html`, `-
 - `rush trust plugin <name>`: Authorize a plugin closure in the user-owned trust ledger.
 - `rush trust plugin <name> --revoke`: Revoke authorization for a plugin closure.
 - `rush plugin run <name> <path>`: Execute an authorized plugin from its verified snapshot; outputs `ToolResultV1` JSON when `--json` flag is provided.
+
+## Invocation Semantics and Exit Codes (Phase 57)
+
+All CLI commands resolve through `rush.invocation`:
+- `--no-cache`: Explicitly sets `cache_policy = "bypass"`, performing strictly 0 cache reads and 0 cache writes.
+- Exit codes: Tool commands exit with 0 for `ok` or `skipped`, 1 for `warn`, and 2 for `error` or blocked actions. Admin commands preserve native integer exit codes.
+- Output formatting: Terminal and JSON outputs are recursively sanitized before rendering.

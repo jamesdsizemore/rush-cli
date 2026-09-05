@@ -237,3 +237,12 @@ External plugins execute under zero-trust immutable authorization:
 - **Immutable Byte Snapshots**: Pure physical byte copies materialized in `~/.rush/snapshots/<closure_digest>/` under `PhysicalRoot`; symlinks, junctions, and hardlinks are rejected.
 - **Protected Secret Channels**: Delivered via anonymous descriptor pipe or stdin handshake; zero secret exposure in `argv` or `env`.
 - **Pre-Spawn Reverification**: Validates snapshot bytes immediately before spawn; approved bytes or zero child process created.
+
+## Phase 57 Invocation Architecture, Containment & Cache Security
+
+Rush enforces an authoritative, unified invocation model (`rush.invocation`) across both CLI and FastMCP transports:
+1. **Authoritative `InvocationContext`**: Resolves immutable, transport-equivalent execution parameters, effective configuration digests, and capability permissions before invoking any tool.
+2. **Physical Scope Containment**: Target selections (`PhysicalTarget`) are strictly validated against `rush.io.PhysicalRoot`, rejecting symlinks, directory junctions, and parent traversals fail-closed with `ScopeWideningError`.
+3. **Single Execution Boundary**: Operation signatures are adapted once at registration; operations execute strictly once, eliminating runtime `TypeError` retry vulnerabilities.
+4. **Deterministic Cryptographic Cache**: Operation purity gates cache eligibility; cache keys bind all context, target, and build identities without fallback salts. The `--no-cache` flag executes zero cache I/O.
+5. **Truthful Provider Egress**: LLM provider outcomes (`completed`, `skipped`, `error`) are validated against approved HTTPS origins with fail-closed redirect prevention.

@@ -9,6 +9,7 @@ from rush.contracts.operations import (
     OperationRegistry,
     ServiceOperationAdapter,
     ToolOperationAdapter,
+    get_operation_registry,
 )
 from rush.contracts.results import (
     LEGACY_SEVERITY_MAP,
@@ -39,6 +40,7 @@ __all__ = [
     "ValidationErrorV1",
     "adapt_legacy_finding",
     "adapt_legacy_tool_result",
+    "get_operation_registry",
     "serialize_tool_result",
     "validate_finding",
     "validate_tool_result",

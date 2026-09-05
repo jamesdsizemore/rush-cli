@@ -51,3 +51,7 @@ See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/rel
 
 ### Plugin Closure & Manifest Compatibility (Phase 56)
 Plugin manifest schema versioning (`schema_version = "1.0.0"`) ensures backward compatibility for declared configuration tables and secret reference descriptors.
+
+## Invocation Contract Compatibility (Phase 57)
+
+Changes to `InvocationContext` fields must preserve backwards compatibility with existing CLI and FastMCP callers. Cache key format changes automatically invalidate previous entries without manual migration.

@@ -109,3 +109,9 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 - **Complete Closure Verification**: Changes to any imported file, configuration value, or environment requirement invalidate the closure digest, requiring explicit user reapproval.
 - **Immutable Snapshot Isolation**: Execution runs from byte-copied snapshot directories (`~/.rush/snapshots/<closure_digest>/`), eliminating in-place TOCTOU mutation.
 - **Secret Protection**: Literal secrets are strictly forbidden in manifests. Secrets are transported via protected descriptor pipes or stdin JSON handshake protocols invisible to process table observers.
+
+## Control 7: Invocation Containment, Cache Identity & Provider Egress (Phase 57)
+
+- **Target Containment**: Physical paths are bound within the project directory using `rush.io.PhysicalRoot`. Directory junctions, symlinks, and path swaps fail closed with `ScopeWideningError`.
+- **Cache Poisoning Prevention**: Cache keys cryptographically bind operation identity, effective configuration digest, active permissions, environment, and physical target content hashes. Missing identities yield `decision = "bypass"` (zero fallback salts).
+- **Cross-Origin Egress Protection**: AI review calls strictly validate destination URLs against approved HTTPS origins (`api.openai.com`, `api.anthropic.com`). Cross-origin redirects are refused fail-closed without leaking authorization tokens or prompt payloads.

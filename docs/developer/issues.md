@@ -136,3 +136,8 @@
 - **Status**: Resolved
 - **Severity**: Critical
 - **Resolution**: Implemented `PluginClosureManifest` digesting all code, assets, configs, environment names, runtime, and platform identity. Materialized immutable byte-copied snapshots in `~/.rush/snapshots/<closure_digest>/` under `PhysicalRoot`. Provided protected secret channels (descriptor pipe, stdin handshake) ensuring zero secret visibility in process argv or environment. Pre-spawn reverification guarantees approved bytes or zero child process created. Verified via `tests/test_phase56_plugin_closure.py`, `tests/test_phase56_plugin_secret_channels.py`, and `tests/test_phase56_plugin_launch_identity.py`.
+
+## Resolved Issues: ISS-057-01 & ISS-057-02 (Phase 57)
+
+- **ISS-057-01 (Transport Divergence & Scope Widening)**: Resolved by introducing unified `InvocationContext` and `PhysicalTarget` containment under `PhysicalRoot`.
+- **ISS-057-02 (Cache Incompleteness & Provider Labeling Drift)**: Resolved by binding all behavior identities in `decide_cache()` and enforcing approved HTTPS origin validation for LLM reviews.

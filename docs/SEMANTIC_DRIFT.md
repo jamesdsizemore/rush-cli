@@ -17,3 +17,7 @@ Normal CI uses parser and safety contracts; it never requires a browser unless e
 - **TOCTOU Elimination**: Replaced in-place workspace execution with immutable byte snapshots.
 - **Secret Exposure**: Replaced environment variable leakage with protected descriptor/stdin channels.
 - **Bypass Removal**: Deprecated `loader.execute_plugin()` and removed `allow_untrusted` flag.
+
+## Reconciliation of Invocation Semantic Drift (Phase 57)
+
+Phase 57 resolved seven core semantic drifts: transport divergence, scope widening, TypeError retries, public route drift, cache key incompleteness, misleading LLM labeling, and dual-transport parity deficits.

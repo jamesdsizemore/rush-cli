@@ -51,6 +51,7 @@
 | **Phase 54** | ToolResultV1 Schema Kernel & Operation Adapters | Canonical `ToolResultV1`, `FindingV1` (`info|warning|error`), legacy mappings, 146 operation adapters, R-011 closed | **Complete** |
 | **Phase 55** | AtomicFile, Physical Containment & Verifier Records | Single `src/rush/io/` primitive, `PhysicalRoot` anti-symlink/reparse checks, `AtomicFile` durably fsync'd same-dir replacement, `VerifierRecord` salted one-way hash, unblocking R-003, R-009, R-010, R-016 | **Complete** |
 | **Phase 56** | User-Owned Content-Addressed Plugin Trust | User trust ledger, `PluginClosureManifest`, immutable snapshot store, protected secret channels, pre-spawn reverification, ToolResultV1 compliance, R-003 closed | **Complete** |
+| **Phase 57** | Invocation Scope, Public Operations, Cache Policy & Provider Egress | Unified `InvocationContext`, `PhysicalTarget` scope containment, single execution boundary, cryptographic cache key derivation, truthful provider egress labeling, closing R-004, R-005, R-006, R-007 | **Complete** |
 | **Benchmark Harness** | Reproducible Verification & Provider Routing (Phases B1–B6) | `scripts.benchmarks.run`, 40 declared scenarios, 11 decision records, CI harness | **Complete** |
 
 ---

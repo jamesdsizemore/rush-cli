@@ -159,3 +159,7 @@ secret_refs = ["secret:API_KEY"]
 allowed_env = ["RUSH_PROJECT_ROOT"]
 ```
 Literal secrets are forbidden and will be rejected at parse time.
+
+## Invocation Context & Cache Configuration (Phase 57)
+
+Configuration digests (`effective_config_digest`) are derived from normalized tool configuration tables. Modifications to tool settings invalidate cached results deterministically without relying on ad-hoc salt defaults.

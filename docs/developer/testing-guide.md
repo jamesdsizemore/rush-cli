@@ -121,3 +121,12 @@ Run all 16 Phase 56 contract tests:
 ```powershell
 .venv/Scripts/python.exe -m pytest tests/test_phase56_plugin_trust.py tests/test_phase56_plugin_closure.py tests/test_phase56_plugin_secret_channels.py tests/test_phase56_plugin_launch_identity.py tests/test_phase56_plugin_public_routes.py -v
 ```
+
+## Phase 57 Invocation & Egress Contract Testing
+
+Phase 57 introduced 25 contract tests across 5 test modules:
+- `tests/test_phase57_invocation_context.py`: Transport equivalence, immutability, parity.
+- `tests/test_phase57_physical_scope.py`: Scope widening, symlink/junction containment.
+- `tests/test_phase57_public_operations.py`: Single execution, signature adaptation, route reconciliation, egress codes.
+- `tests/test_phase57_cache_policy.py`: Cache key identity binding, bypass contracts, get/set sanitization.
+- `tests/test_phase57_provider_egress.py`: Truthful provider outcomes, approved origins, redirect refusal.

@@ -58,3 +58,7 @@ Artifact writes granted via `--allow-artifact-write` are strictly confined to th
 
 ### Plugin Execution Permissions (Phase 56)
 Subprocesses spawned for plugin execution inherit user permissions. They execute strictly from byte-copied snapshot directories under `rush.io.PhysicalRoot` and receive secrets via protected pipes or stdin.
+
+## Permission Snapshots in Invocation Context (Phase 57)
+
+Permissions granted via `PermissionManager` are captured as an immutable tuple within `InvocationContext.permissions`. Mutating permissions during execution cannot alter the active context.

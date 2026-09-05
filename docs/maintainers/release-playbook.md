@@ -89,3 +89,10 @@ Before finalizing any release candidate:
 - Verify all 16 Phase 56 contract tests pass.
 - Verify user ledger authority operates outside git repositories.
 - Verify plugin output conforms to `ToolResultV1`.
+
+## Phase 57 Release Gates
+
+Prior to release:
+1. Verify all 48 Phase 57 tests pass (`pytest tests/test_phase57_*.py`).
+2. Verify full test suite passes with >= 1,134 tests.
+3. Verify public operations manifest reconciles with 100% of declared operations.

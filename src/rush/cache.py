@@ -14,10 +14,35 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from rush.contracts.results import (
+    ToolResultV1,
+    ValidationErrorV1,
+    adapt_legacy_tool_result,
+    validate_tool_result,
+)
+from rush.invocation.cache_policy import decide_cache
 from rush.logging import get_logger, log_subsystem
+from rush.safety.redactor import sanitize_value
 from rush.tools.base import ToolResult
 
 logger = get_logger("cache")
+
+
+class CachedToolResult(ToolResultV1, dict):
+    """Dual-contract cached tool result satisfying both ToolResultV1 dataclass and dict interfaces."""
+
+    def __init__(self, v1: ToolResultV1) -> None:
+        dict.__init__(self, v1.to_dict())
+        for f in v1.__dataclass_fields__:
+            object.__setattr__(self, f, getattr(v1, f))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ToolResultV1):
+            return self.to_dict() == other.to_dict()
+        if isinstance(other, dict):
+            return dict(self) == other
+        return super().__eq__(other)
+
 
 CACHE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS cache_entries (
@@ -101,7 +126,7 @@ class ResultCache:
         except Exception as exc:  # noqa: BLE001
             log_subsystem("cache", "WARN", f"Cache initialization warning: {exc}")
 
-    def get(self, key: str, file_path: Path | None = None) -> ToolResult | None:
+    def get(self, key: str, file_path: Path | None = None) -> ToolResultV1 | None:
         """Retrieve cached ToolResult by cryptographic key."""
         try:
             with self._get_connection() as conn:
@@ -113,24 +138,56 @@ class ResultCache:
                 row = cursor.fetchone()
                 if row:
                     data = json.loads(row["result_json"])
-                    from rush.safety.redactor import sanitize_value
-
                     clean_data = sanitize_value(data).value
+                    if (
+                        isinstance(clean_data, dict)
+                        and "schema_version" not in clean_data
+                    ):
+                        clean_data = adapt_legacy_tool_result(clean_data).to_dict()
+                    validated = validate_tool_result(clean_data)
                     log_subsystem("cache", "INFO", f"Cache HIT for key {key[:12]}")
-                    return clean_data
+                    return CachedToolResult(validated)
             log_subsystem("cache", "INFO", f"Cache MISS for key {key[:12]}")
+            return None
+        except ValidationErrorV1 as val_err:
+            log_subsystem(
+                "cache",
+                "WARN",
+                f"Cache retrieval validation failed for key {key[:12]}: {val_err}",
+            )
             return None
         except Exception as exc:  # noqa: BLE001
             log_subsystem("cache", "WARN", f"Cache retrieval error: {exc}")
             return None
 
-    def set(self, key: str, result: ToolResult, file_path: Path) -> None:
+    def set(
+        self,
+        key: str,
+        result: ToolResult | ToolResultV1 | dict[str, Any],
+        file_path: Path | str | None = None,
+    ) -> ToolResultV1:
         """Store ToolResult in SQLite cache using parameterized query."""
-        try:
-            from rush.safety.redactor import sanitize_value
+        if isinstance(result, ToolResultV1):
+            result_dict = result.to_dict()
+        elif isinstance(result, dict):
+            if "schema_version" not in result:
+                result_dict = adapt_legacy_tool_result(result).to_dict()
+            else:
+                result_dict = dict(result)
+        else:
+            raise ValidationErrorV1(
+                code="INVALID_TYPE",
+                message=f"Expected ToolResultV1 or dict, got {type(result).__name__}",
+                path="",
+                invalid_value=result,
+            )
 
-            clean_result = sanitize_value(result).value
-            result_json = json.dumps(clean_result)
+        clean_result = sanitize_value(result_dict).value
+        validated = validate_tool_result(clean_result)
+        result_json = json.dumps(validated.to_dict())
+        target_file_path = str(file_path) if file_path is not None else ""
+
+        try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -143,17 +200,19 @@ class ResultCache:
                     """,
                     (
                         key,
-                        str(file_path),
-                        str(result.get("tool", "")),
-                        result.get("engine"),
-                        result.get("engine_version"),
+                        target_file_path,
+                        str(validated.tool),
+                        validated.engine,
+                        validated.engine_version,
                         result_json,
                     ),
                 )
                 conn.commit()
             self._maybe_evict_lru()
-        except Exception as exc:  # noqa: BLE001
+            return validated
+        except Exception as exc:
             log_subsystem("cache", "WARN", f"Cache store error: {exc}")
+            raise
 
     def _maybe_evict_lru(self) -> None:
         """Evict oldest 20% of entries if database file exceeds max_size_mb."""
@@ -206,3 +265,17 @@ class ResultCache:
                 }
         except Exception as exc:  # noqa: BLE001
             return {"entries": 0, "size_bytes": 0, "size_mb": 0.0, "error": str(exc)}
+
+    def decide(self, context: Any, pure: bool = True) -> Any:
+        """Evaluate cache eligibility and derive cache key for an InvocationContext."""
+        return decide_cache(context, pure=pure)
+
+
+__all__ = [
+    "CACHE_SCHEMA",
+    "CachedToolResult",
+    "ResultCache",
+    "compute_cache_key",
+    "compute_file_hash",
+    "decide_cache",
+]

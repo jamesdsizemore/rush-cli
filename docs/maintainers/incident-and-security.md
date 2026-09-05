@@ -43,3 +43,9 @@ Maintainers must verify that all newly added tools, exports, and logging calls c
 
 ### Plugin Trust Breach Triage (Phase 56)
 If a malicious plugin closure is detected, run `rush trust plugin <name> --revoke` immediately. The user ledger will purge the capability record and delete the snapshot directory.
+
+## Cache & Egress Incident Procedures (Phase 57)
+
+If cache poisoning is suspected:
+1. Purge cache with `rush cache clear` or remove the SQLite database.
+2. Verify provider API keys and review egress logs for unauthorized redirect attempts.

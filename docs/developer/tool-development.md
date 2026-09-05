@@ -120,3 +120,8 @@ Plugins must conform to the Phase 56 content-addressed model:
 3. Declare credentials using `secret_refs` and `channel_type = "stdin"` or `"descriptor"`.
 4. Emit valid JSON conforming to canonical `ToolResultV1` on stdout.
 5. Authorize using `rush trust plugin <name>`.
+
+## Tool Signature Adaptation and Cache Purity (Phase 57)
+
+- **Signature Registration**: Tools register their callable with `InvocationExecutor`. Parameter signatures are inspected once at startup.
+- **Cache Declaration**: Tools declaring deterministic behavior specify `pure = True` in `governance/public-operations.toml` to participate in invocation caching.

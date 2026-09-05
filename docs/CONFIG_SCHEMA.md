@@ -93,3 +93,8 @@ See [Configuration Reference](reference/configuration-reference.md) and [Configu
 - `channel_type` (string, optional, enum ["descriptor", "stdin", "provider"]): Protected secret delivery channel.
 - `secret_refs` (list of strings, optional): Declared secret reference IDs (`secret:<NAME>`).
 - `allowed_env` (list of strings, optional): Explicit allowed non-secret environment variable names.
+
+## Invocation and Cache Schema Attributes (Phase 57)
+
+- `[cache]`: Controls invocation cache enablement, cache directory overrides, and maximum entry age.
+- `[tools.<name>].pure`: Boolean flag indicating whether tool execution is pure and eligible for invocation caching.

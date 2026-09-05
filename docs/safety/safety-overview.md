@@ -32,3 +32,7 @@ Read [Permissions](permissions.md), [Privacy](privacy-and-data-handling.md), and
 ### Plugin Safety Guarantees (Phase 56)
 - Fail-closed execution: unauthorized or tampered plugins spawn 0 child processes.
 - Process observation immunity: process tables cannot inspect secrets passed to plugins.
+
+## Invocation & Parity Safety Summary (Phase 57)
+
+Phase 57 guarantees that CLI and MCP interactions share identical safety guarantees, physical scope restrictions, and cryptographic execution caching.

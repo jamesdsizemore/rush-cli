@@ -207,3 +207,8 @@ Compare performance execution samples against recorded thresholds in `.rush/base
 - `rush trust plugin <name>`: Authorize plugin closure.
 - `rush trust plugin <name> --revoke`: Revoke authorization.
 - `rush plugin run <name> [PATH]`: Execute plugin against specified path from verified snapshot.
+
+## Invocation Flags and Exit Behavior (Phase 57)
+
+- `--no-cache`: Explicit bypass performing 0 cache reads and 0 cache writes.
+- Exit Codes: 0 (OK/Skipped), 1 (Warning), 2 (Error/Blocked). Admin commands preserve explicit integer codes.

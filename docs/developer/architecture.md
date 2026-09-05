@@ -239,3 +239,12 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - **Subsystem Layout**: `src/rush/plugins/` contains `closure.py`, `snapshot_store.py`, `secret_channels.py`, `trust_store.py`, `executor.py`, and `validator.py`.
 - **Security Boundary**: Pre-spawn verification re-verifies closure digest and interpreter identity immediately before process launch.
 - **Failure Behavior**: Any verification failure raises `UntrustedPluginError` or `ClosureTamperedError` and guarantees zero child process execution.
+
+## Invocation Subsystem & Transport Unification (Phase 57)
+
+The `src/rush/invocation/` subsystem provides transport-neutral execution:
+- `models.py`: Immutable data models.
+- `resolver.py`: Authority context resolver.
+- `targets.py`: Physical target allowlist builder and containment checker.
+- `executor.py`: Single execution boundary with registration-time signature adaptation.
+- `cache_policy.py`: Cryptographic cache key derivation and bypass gating.

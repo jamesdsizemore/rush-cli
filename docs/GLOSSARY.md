@@ -111,3 +111,10 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 - **Content-Addressed Snapshot**: An immutable, physical byte-copied mirror of a plugin's closure stored under `rush.io.PhysicalRoot` in `~/.rush/snapshots/<closure_digest>/` from which subprocesses execute.
 - **User Trust Ledger**: The authoritative, user-owned store located at `~/.rush/plugin_trust_ledger.json` recording user-granted plugin execution authorizations.
 - **Protected Secret Channel**: A secure transport mechanism (anonymous descriptor pipe or stdin JSON handshake) used to deliver credentials to plugin subprocesses without exposing them in command arguments or environment tables.
+
+## Phase 57 Architectural Terms
+
+- **`InvocationContext`**: The authoritative, immutable execution context constructed before any tool or command runs.
+- **`PhysicalTarget`**: A contained workspace target with verified physical existence, state, provenance, and content hash.
+- **`CacheDecision`**: The deterministic outcome (`eligible` or `bypass`) indicating whether an invocation can be cached.
+- **`Effective Origin`**: The verified destination origin of an HTTP provider call, ensuring requests target approved HTTPS endpoints.

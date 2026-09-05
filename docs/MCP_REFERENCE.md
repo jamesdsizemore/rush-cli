@@ -135,3 +135,7 @@ All 73 FastMCP registered tools and 17 service operations are cataloged in `gove
 
 ### Plugin Trust & Verification under MCP (Phase 56)
 Administrative operations for plugin management check user ledger authorization and reject unverified closures with fail-closed skipped results.
+
+## Core Tool Parity & Schemas (Phase 57)
+
+All 10 core quality tools (`continuity`, `semantic-drift`, `review`, `lint`, `format`, `test`, `security`, `typecheck`, `dead`, `complexity`) provide identical schemas, input normalization, and `ToolResultV1` output shapes across FastMCP stdio and CLI.

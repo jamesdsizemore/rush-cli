@@ -14,6 +14,14 @@ All notable changes to Rush are documented here.
 - **Version Authority Consolidation (Finding R-012)**: Replaced disparate hardcoded version literals across providers (Anthropic, OpenAI), SARIF exporters, TypeScript generators, scaffolder templates, PR synthesizers, and TUI footers with a single version authority derived from `importlib.metadata.version("rush-cli")` in `src/rush/__init__.py`.
 
 ### Added
+- **Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress (Phase 57 - Findings R-004, R-005, R-006, R-007)**:
+  - `src/rush/invocation/models.py`: Immutable `InvocationContext`, `PhysicalTarget`, and `CacheDecision` contracts unifying execution context across CLI and MCP transports.
+  - `src/rush/invocation/resolver.py`: Authority resolver `resolve_invocation()` computing canonical digests, parameter normalization, and guaranteed frozen isolation (zero mutable config leaks to MCP).
+  - `src/rush/invocation/targets.py`: Physical target allowlists contained under `rush.io.PhysicalRoot` preventing scope widening via symlinks, Windows junctions, or directory swaps fail-closed with `ScopeWideningError`.
+  - `src/rush/invocation/executor.py`: `InvocationExecutor` enforcing a single execution boundary with registration-time signature adaptation, eliminating runtime `TypeError` retry bugs.
+  - `src/rush/invocation/cache_policy.py`: Deterministic cryptographic cache key policy (`decide_cache`) binding all behavior identities with zero fallback salts, zero I/O on `--no-cache`, and sanitized/validated `ToolResultV1` caching.
+  - `src/rush/providers/` & `src/rush/tools/review.py`: Explicit provider outcome states (`completed`, `skipped`, `error`), fail-closed cross-origin redirect prevention without prompt or credential leakage, and strict requirement of schema-valid non-empty completion from approved HTTPS origins for `review_kind = "llm"`.
+
 - **User-Owned Content-Addressed Plugin Trust (Phase 56)**:
   - `src/rush/plugins/trust_store.py` & `trust.py`: User-owned trust ledger authority (`~/.rush/plugin_trust_ledger.json`) persisted durably via `rush.io.AtomicFile` and `rush.io.PhysicalRoot`; repository receipts demoted to non-authorizing evidence; explicit reapproval required.
   - `src/rush/plugins/closure.py`: `PluginClosureManifest` discovering and cryptographically digesting transitive closure (entrypoint, code files, configs, allowed env names, declared secrets, runtime, platform).
@@ -49,6 +57,14 @@ All notable changes to Rush are documented here.
 ## [0.2.0] - 2026-08-21
 
 ### Added
+- **Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress (Phase 57 - Findings R-004, R-005, R-006, R-007)**:
+  - `src/rush/invocation/models.py`: Immutable `InvocationContext`, `PhysicalTarget`, and `CacheDecision` contracts unifying execution context across CLI and MCP transports.
+  - `src/rush/invocation/resolver.py`: Authority resolver `resolve_invocation()` computing canonical digests, parameter normalization, and guaranteed frozen isolation (zero mutable config leaks to MCP).
+  - `src/rush/invocation/targets.py`: Physical target allowlists contained under `rush.io.PhysicalRoot` preventing scope widening via symlinks, Windows junctions, or directory swaps fail-closed with `ScopeWideningError`.
+  - `src/rush/invocation/executor.py`: `InvocationExecutor` enforcing a single execution boundary with registration-time signature adaptation, eliminating runtime `TypeError` retry bugs.
+  - `src/rush/invocation/cache_policy.py`: Deterministic cryptographic cache key policy (`decide_cache`) binding all behavior identities with zero fallback salts, zero I/O on `--no-cache`, and sanitized/validated `ToolResultV1` caching.
+  - `src/rush/providers/` & `src/rush/tools/review.py`: Explicit provider outcome states (`completed`, `skipped`, `error`), fail-closed cross-origin redirect prevention without prompt or credential leakage, and strict requirement of schema-valid non-empty completion from approved HTTPS origins for `review_kind = "llm"`.
+
 
 - Phase 20–40 Comprehensive Architecture:
   - Phase 20: AI anti-slop detection (`rush slop`), modular boundaries (`TachEngine`), and AST-level continuous sensors.
@@ -161,6 +177,14 @@ All notable changes to Rush are documented here.
 ## 0.1.0-alpha — 2026-08-17
 
 ### Added
+- **Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress (Phase 57 - Findings R-004, R-005, R-006, R-007)**:
+  - `src/rush/invocation/models.py`: Immutable `InvocationContext`, `PhysicalTarget`, and `CacheDecision` contracts unifying execution context across CLI and MCP transports.
+  - `src/rush/invocation/resolver.py`: Authority resolver `resolve_invocation()` computing canonical digests, parameter normalization, and guaranteed frozen isolation (zero mutable config leaks to MCP).
+  - `src/rush/invocation/targets.py`: Physical target allowlists contained under `rush.io.PhysicalRoot` preventing scope widening via symlinks, Windows junctions, or directory swaps fail-closed with `ScopeWideningError`.
+  - `src/rush/invocation/executor.py`: `InvocationExecutor` enforcing a single execution boundary with registration-time signature adaptation, eliminating runtime `TypeError` retry bugs.
+  - `src/rush/invocation/cache_policy.py`: Deterministic cryptographic cache key policy (`decide_cache`) binding all behavior identities with zero fallback salts, zero I/O on `--no-cache`, and sanitized/validated `ToolResultV1` caching.
+  - `src/rush/providers/` & `src/rush/tools/review.py`: Explicit provider outcome states (`completed`, `skipped`, `error`), fail-closed cross-origin redirect prevention without prompt or credential leakage, and strict requirement of schema-valid non-empty completion from approved HTTPS origins for `review_kind = "llm"`.
+
 
 - `rush` CLI commands for deterministic `review`, engine-backed `lint`,
   check-only `format`, `test`, and `security`.

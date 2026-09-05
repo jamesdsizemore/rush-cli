@@ -165,3 +165,15 @@ src/rush/io/
 - `src/rush/plugins/snapshot_store.py`: Content-addressed physical byte snapshot materialization under `rush.io.PhysicalRoot`.
 - `src/rush/plugins/secret_channels.py`: Protected secret delivery channels (descriptor pipe, stdin handshake, provider).
 - `src/rush/plugins/trust_store.py`: User-owned trust ledger authority and capability verification.
+
+## `src/rush/invocation/` Source Tree Layout (Phase 57)
+
+```
+src/rush/invocation/
+├── __init__.py         # Public exports (models, resolver, targets, executor, cache_policy)
+├── models.py           # InvocationContext, PhysicalTarget, CacheDecision, exceptions
+├── resolver.py         # resolve_invocation() authority
+├── targets.py          # resolve_target(), build_physical_targets()
+├── executor.py         # InvocationExecutor, RegisteredOperation
+└── cache_policy.py     # decide_cache() cryptographic key derivation
+```

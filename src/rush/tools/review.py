@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import ast
 import re
+import urllib.error
 from pathlib import Path
+from typing import Any
 
 from .base import Finding, ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, finding_fingerprint, now_ms
@@ -138,8 +140,8 @@ class ReviewTool(ToolFn):
         review_kind = "heuristic"
         review_provider: str | None = None
         if use_llm:
-            llm_summary = _maybe_call_llm(findings)
-            if llm_summary:
+            llm_summary = _maybe_call_llm(findings, allow_network=True)
+            if llm_summary and llm_summary.get("review_kind") == "llm":
                 review_kind = "llm"
                 review_provider = llm_summary.get("provider")
                 findings.append(
@@ -151,6 +153,9 @@ class ReviewTool(ToolFn):
                         "message": llm_summary.get("summary", ""),
                     }
                 )
+            else:
+                review_kind = "heuristic"
+                review_provider = None
 
         for finding in findings:
             if "evidence" not in finding and finding.get("path"):
@@ -452,27 +457,63 @@ def _scaffold_marker_heuristic(path: Path, markers: list[str]) -> list[Finding]:
 # --- LLM opt-in -------------------------------------------------------------
 
 
-def _maybe_call_llm(findings: list[Finding]) -> dict | None:
-    """Call configured LLM provider if env key is present.
+def _maybe_call_llm(
+    findings: list[Finding] | list[dict],
+    *,
+    provider: Any | None = None,
+    allow_network: bool = True,
+    allowed_origins: frozenset[str] | None = None,
+) -> dict | None:
+    """Call configured LLM provider if credentials exist.
 
-    Architecture §10.1:
-      - Discovers active provider (Anthropic, OpenAI) from environment
-      - Returns {"provider": ..., "summary": ...} or None if no key configured
+    Phase 57 / Architecture §10.1:
+      - Validates provider outcome, non-empty completion, and approved effective HTTPS origin.
+      - Sets review_kind="llm" ONLY when outcome=="completed", content is non-empty, and effective origin is approved.
+      - Falls back to heuristic review (or error) otherwise.
     """
-    from ..providers import get_configured_provider
+    from ..providers import (
+        APPROVED_PROVIDER_ORIGINS,
+        ProviderOutcome,
+        get_configured_provider,
+    )
 
-    provider = get_configured_provider()
+    if allowed_origins is None:
+        allowed_origins = APPROVED_PROVIDER_ORIGINS
+
+    if provider is None:
+        provider = get_configured_provider()
     if provider is None:
         return None
 
-    # Format findings as raw dicts for provider consumption
     raw_findings = [f if isinstance(f, dict) else f.to_dict() for f in findings]
-    response = provider.summarize_findings(raw_findings)
+    try:
+        response = provider.summarize_findings(
+            raw_findings, allow_network=allow_network
+        )
+    except (OSError, TimeoutError, urllib.error.URLError, ValueError, KeyError):
+        return None
+
     if response is None:
         return None
 
-    return {
-        "provider": response.provider,
-        "summary": response.content,
-        "model": response.model,
-    }
+    outcome = getattr(response, "outcome", "")
+    content = getattr(response, "content", "")
+    effective_origin = getattr(response, "effective_origin", "")
+    model = getattr(response, "model", "")
+    provider_name = getattr(response, "provider", getattr(provider, "name", "unknown"))
+
+    if (
+        outcome == ProviderOutcome.COMPLETED.value
+        and content.strip()
+        and effective_origin in allowed_origins
+    ):
+        return {
+            "provider": provider_name,
+            "summary": content,
+            "model": model,
+            "review_kind": "llm",
+            "outcome": outcome,
+            "effective_origin": effective_origin,
+        }
+
+    return None

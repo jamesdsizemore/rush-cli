@@ -5,16 +5,23 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
-import urllib.request
 from typing import Any
 
 from .. import __version__
-from .base import LLMProvider, LLMResponse
+from .base import (
+    LLMProvider,
+    ProviderEgressError,
+    ProviderOutcome,
+    ProviderResult,
+    safe_provider_post,
+)
 
 
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
     default_model = "claude-3-5-sonnet-20241022"
+    endpoint_url = "https://api.anthropic.com/v1/messages"
+    effective_origin = "https://api.anthropic.com"
 
     def is_configured(self) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -24,7 +31,7 @@ class AnthropicProvider(LLMProvider):
         findings: list[dict[str, Any]],
         *,
         allow_network: bool = False,
-    ) -> LLMResponse | None:
+    ) -> ProviderResult | None:
         if not self.is_configured():
             return None
 
@@ -36,10 +43,12 @@ class AnthropicProvider(LLMProvider):
                 f"[Anthropic Claude] Analyzed {n_findings} code review finding(s) "
                 f"using {self.default_model}."
             )
-            return LLMResponse(
-                provider=self.name,
-                model=self.default_model,
+            return ProviderResult(
+                outcome=ProviderOutcome.SKIPPED.value,
                 content=summary,
+                model=self.default_model,
+                provider=self.name,
+                effective_origin=self.effective_origin,
             )
 
         prompt = (
@@ -60,36 +69,56 @@ class AnthropicProvider(LLMProvider):
             "messages": [{"role": "user", "content": prompt}],
         }
 
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                text_content = ""
-                for block in data.get("content", []):
-                    if block.get("type") == "text":
-                        text_content += block.get("text", "")
-                return LLMResponse(
-                    provider=self.name,
+            _status, body = safe_provider_post(
+                self.endpoint_url,
+                headers=headers,
+                data=json.dumps(payload),
+            )
+            data = json.loads(body.decode("utf-8"))
+            text_content = ""
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    text_content += block.get("text", "")
+            finish_reason = data.get("stop_reason", "")
+
+            if not text_content.strip():
+                return ProviderResult(
+                    outcome=ProviderOutcome.ERROR.value,
+                    content="",
                     model=data.get("model", self.default_model),
-                    content=text_content
-                    or f"[Anthropic Claude] Analyzed {n_findings} findings.",
+                    finish_reason=finish_reason,
+                    error_message="Empty completion received from Anthropic API",
+                    provider=self.name,
+                    effective_origin=self.effective_origin,
+                    raw=data,
                 )
+
+            return ProviderResult(
+                outcome=ProviderOutcome.COMPLETED.value,
+                content=text_content,
+                model=data.get("model", self.default_model),
+                finish_reason=finish_reason,
+                provider=self.name,
+                effective_origin=self.effective_origin,
+                raw=data,
+            )
+        except ProviderEgressError:
+            raise
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
             OSError,
+            TimeoutError,
             json.JSONDecodeError,
             KeyError,
             ValueError,
         ) as err:
-            return LLMResponse(
-                provider=self.name,
+            return ProviderResult(
+                outcome=ProviderOutcome.ERROR.value,
+                content="",
                 model=self.default_model,
-                content=f"[Anthropic Claude Error] API request failed: {err}",
+                error_message=f"[Anthropic Claude Error] API request failed: {err}",
+                provider=self.name,
+                effective_origin=self.effective_origin,
             )

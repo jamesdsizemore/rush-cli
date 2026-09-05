@@ -984,6 +984,7 @@ safe_probe = "rush commit-msg --help"
 [[operations]]
 id = "tool.complexity"
 kind = "tool"
+pure = true
 canonical_impl = "rush.tools.complexity:ComplexityTool"
 cli_command = "complexity"
 mcp_tool = "rush_complexity"
@@ -1028,6 +1029,7 @@ safe_probe = "rush context pack --help"
 [[operations]]
 id = "tool.continuity"
 kind = "tool"
+pure = true
 canonical_impl = "rush.tools.continuity:SessionContinuityTool"
 cli_command = "continuity"
 mcp_tool = "rush_continuity"
@@ -1061,6 +1063,7 @@ safe_probe = "rush coverage --help"
 [[operations]]
 id = "tool.dead"
 kind = "tool"
+pure = true
 canonical_impl = "rush.tools.dead:DeadTool"
 cli_command = "dead"
 mcp_tool = "rush_dead"
@@ -1193,6 +1196,7 @@ safe_probe = "rush license-matrix --help"
 [[operations]]
 id = "tool.lint"
 kind = "tool"
+pure = true
 canonical_impl = "rush.tools.lint:LintTool"
 cli_command = "lint"
 mcp_tool = "rush_lint"
@@ -1358,6 +1362,7 @@ safe_probe = "rush security --help"
 [[operations]]
 id = "tool.semantic_drift"
 kind = "tool"
+pure = true
 canonical_impl = "rush.tools.semantic_drift:SemanticDriftTool"
 cli_command = "semantic-drift"
 mcp_tool = "rush_semantic_drift"
@@ -1490,6 +1495,7 @@ safe_probe = "rush tui-diff --help"
 [[operations]]
 id = "tool.typecheck"
 kind = "tool"
+pure = true
 canonical_impl = "rush.tools.typecheck:TypecheckTool"
 cli_command = "typecheck"
 mcp_tool = "rush_typecheck"

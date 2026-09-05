@@ -61,3 +61,10 @@ Rush is not a sandbox, antivirus, complete SAST platform, credential vault, or r
 
 ### Plugin Security Model (Phase 56)
 Plugins execute with ambient user permissions. Rush provides cryptographic content authorization, transitive closure verification, and protected secret channels, but does not provide kernel-level sandboxing.
+
+## Provider Egress Threat Model & Containment (Phase 57)
+
+Remote AI provider calls enforce strict outbound network containment:
+- Requests must use `https://`.
+- Host must exist in `APPROVED_PROVIDER_ORIGINS`.
+- Redirects (3xx) to foreign hosts abort immediately, preventing token leakage.

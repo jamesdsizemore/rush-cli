@@ -74,3 +74,9 @@
 
 - **Plugin Trust Ledger**: A secure file on your machine (`~/.rush/plugin_trust_ledger.json`) tracking which custom tools you have approved to run.
 - **Snapshot Directory**: A protected copy of your plugin scripts where Rush runs them safely without risk of accidental changes.
+
+## Phase 57 Concepts
+
+- **Invocation Context**: The complete set of inputs, configurations, and permissions for a tool run.
+- **Physical Target**: A file or directory contained safely within the project boundary.
+- **Cache Decision**: Determination of whether a result can be retrieved from or saved to cache.

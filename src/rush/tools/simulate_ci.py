@@ -51,3 +51,6 @@ class SimulateCi:
             "steps_executed": len(results),
             "steps": results,
         }
+
+
+SimulateCiTool = SimulateCi

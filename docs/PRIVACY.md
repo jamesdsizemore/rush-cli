@@ -58,3 +58,8 @@ Rush enforces end-to-end recursive sanitization across all data boundaries:
 - Secrets referenced by plugins (`secret:<ID>`) are resolved ephemerally at launch and piped via protected descriptors or stdin.
 - Child process `argv` and environment are scrubbed; process listings (`ps`, `/proc`) cannot observe secrets.
 - Plugin stdout and stderr are sanitized by `rush.safety.redactor.sanitize_value()` before inclusion in results or logs.
+
+## Invocation & Cache Data Hygiene (Phase 57)
+
+- **Cache Sanitization**: All data written to or retrieved from `ResultCache` is recursively sanitized via `rush.safety.redactor.sanitize_value` and validated against `ToolResultV1`.
+- **Egress Redirection Containment**: When making remote AI provider requests, HTTP redirects to unauthorized or unapproved origins immediately strip sensitive headers and terminate execution, preventing token exfiltration.

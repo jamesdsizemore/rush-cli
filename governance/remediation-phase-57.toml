@@ -1,0 +1,42 @@
+# Phase 57 Remediation Manifest: Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress
+[phase]
+id = 57
+name = "invocation-scope-operations-cache-egress"
+title = "Invocation Context, Physical Scope, Public Operations, Cache Policy, and Provider Egress"
+status = "completed"
+completed_at = "2026-09-05T07:55:00Z"
+test_count = 25
+full_suite_test_count = 1134
+
+[requirements]
+closed = ["R-004", "R-005", "R-006", "R-007"]
+unblocked = ["R-009", "R-010", "R-016"]
+
+[contracts]
+r_004_1 = "Authoritative InvocationContext resolving equivalent state for CLI and MCP"
+r_004_2 = "Zero mutable config leakage to MCP requests (frozen declared values)"
+r_004_3 = "Reconciliation of all 146 operations in public-operations.toml with canonical implementations"
+r_005_1 = "PhysicalTarget allowlist contained under rush.io.PhysicalRoot with immutable states"
+r_005_2 = "Scope widening prevention rejecting symlinks and junctions fail-closed"
+r_005_3 = "Cryptographic cache key derivation binding all context, target, and build identities"
+r_005_4 = "Cache bypass guarantee (--no-cache performs 0 read and 0 write I/O)"
+r_006_1 = "Single execution boundary eliminating runtime TypeError retries"
+r_006_2 = "Registration-time signature adaptation and validation"
+r_006_3 = "Sanitized and validated ToolResultV1 get and set in cache"
+r_006_4 = "Output egress exit code mapping and stdout/stderr redaction"
+r_007_1 = "Dual-transport parity across CLI and MCP for all core quality tools"
+r_007_2 = "Approved effective HTTPS origin validation for LLM provider labeling"
+r_007_3 = "Cross-origin redirect refusal fail-closed without prompt or token leakage"
+
+[tests]
+files = [
+    "tests/test_phase57_invocation_context.py",
+    "tests/test_phase57_physical_scope.py",
+    "tests/test_phase57_public_operations.py",
+    "tests/test_phase57_cache_policy.py",
+    "tests/test_phase57_provider_egress.py",
+    "tests/test_phase57_operations.py",
+    "tests/test_phase57_cache.py",
+    "tests/test_phase57_egress.py",
+    "tests/test_phase57_parity.py",
+]

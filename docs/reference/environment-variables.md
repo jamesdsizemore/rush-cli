@@ -27,3 +27,7 @@ See [Engine Directory](engine-directory.md) and [Result Reference](result-refere
 
 ### Plugin Subprocess Environment Variables (Phase 56)
 Plugin subprocesses run with scrubbed environments (`SandboxedEnvironment.get_sanitized_env()`). Only explicit non-secret variables declared in `allowed_env` and minimal system variables (`PATH`, `SYSTEMROOT`) are retained.
+
+## Environment Variables in Invocation Context (Phase 57)
+
+The `environment_digest` captures environment variables influencing tool behavior (e.g., `RUSH_*`, `PATH`, provider keys), ensuring environment changes invalidate stale cache entries.

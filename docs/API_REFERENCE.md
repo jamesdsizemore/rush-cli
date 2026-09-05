@@ -367,3 +367,12 @@ For guidelines on creating new tools or engines, see the [Developer Guide](DEVEL
 - `PluginTrustStore`: User-owned trust ledger managing authorization records via `AtomicFile` and `VerifierRecord`.
 - `HardenedPluginExecutor`: Pre-spawn reverification, protected secret channel negotiation, and `ToolResultV1` execution.
 - `SecretDeliveryContext`: Transport parameters for descriptor pipe, stdin handshake, or provider channels.
+
+## `rush.invocation` Module Reference (Phase 57)
+
+The `rush.invocation` subsystem coordinates unified execution across CLI and MCP:
+- `InvocationContext`: Frozen dataclass containing workspace root, transport, operation ID, physical targets, config digest, permissions, and build identities.
+- `PhysicalTarget`: Frozen dataclass describing contained target path, state (`present|deleted|renamed`), capability, provenance, and SHA-256 content hash.
+- `resolve_invocation(request, transport, ...)`: Normalizes arguments and constructs authoritative `InvocationContext`.
+- `decide_cache(context, pure=True)`: Determines cache eligibility and derives deterministic SHA-256 cache key.
+- `InvocationExecutor`: Registers operations, adapts callable signatures, and executes operations under a single execution boundary.

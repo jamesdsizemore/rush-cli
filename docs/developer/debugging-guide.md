@@ -92,3 +92,9 @@ See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md
 - `RECEIPT_NOT_AUTHORIZING`: In-repo `.rush/trust.json` detected from a clone. Must run explicit user grant.
 - `ClosureTamperedError`: Source code or snapshot files were modified after trust grant. Run `rush trust plugin <name>` to re-approve the new closure.
 - `SecretChannelError`: Declared secret channel is unsupported on the platform. Use `stdin` channel or verify OS descriptor support.
+
+## Debugging Invocation & Cache Issues (Phase 57)
+
+- **Cache Misses**: Verify all required identity fields (`tool_revision`, `normalizer_revision`, `environment_digest`) are populated in `InvocationContext`.
+- **`ScopeWideningError`**: Check whether target paths navigate through symlinks or junctions outside the workspace root.
+- **`ProviderEgressError`**: Verify remote endpoint matches `APPROVED_PROVIDER_ORIGINS` and does not issue cross-origin redirects.

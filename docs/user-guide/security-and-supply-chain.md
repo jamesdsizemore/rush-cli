@@ -111,3 +111,10 @@ rush attest . --export-path artifacts/provenance.json --allow-artifact-write
 
 ### Running Custom Plugins Securely (Phase 56)
 When using community plugins or scripts from git repositories, Rush requires explicit trust authorization before execution. Run `rush trust plugin <name>` to approve the plugin closure.
+
+## Secure AI Review and Network Boundaries (Phase 57)
+
+Rush protects your code and credentials during AI reviews:
+- Only approved HTTPS origins receive requests.
+- Redirects to untrusted hosts are immediately blocked.
+- Results are marked as AI-generated only when authentic model responses are received.

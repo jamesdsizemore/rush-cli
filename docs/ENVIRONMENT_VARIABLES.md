@@ -25,3 +25,8 @@ When Rush launches external engine subprocesses via `run_subprocess()`:
 - Child processes are executed with `stdin=DEVNULL`, preventing any inheritance of terminal input.
 
 See [Result Reference](reference/result-reference.md) and [Security Model](safety/security-model.md).
+
+## Invocation & Provider Environment Variables (Phase 57)
+
+- `RUSH_CACHE_DIR`: Directory override for invocation result cache SQLite database.
+- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`: Credentials for AI review providers, validated against approved HTTPS origins.

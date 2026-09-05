@@ -62,3 +62,8 @@ Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-han
 - External plugins run under fail-closed verification: any missing trust record, altered byte, symlink escape, or unsupported secret channel denies execution and spawns zero child processes.
 - Process command lines and environment tables never contain sensitive credentials.
 - All plugin outputs are parsed, sanitized via redactor, and adapted to canonical `ToolResultV1`.
+
+## Single Execution Boundary and Fail-Closed Egress (Phase 57)
+
+- **Zero Runtime TypeError Retries**: Callables are adapted once during registration. If an operation raises an internal `TypeError` after side effects, the error propagates directly without retry.
+- **Provider Egress Truthfulness**: The `review_kind = "llm"` label is assigned strictly after receiving a non-empty, schema-valid response from an approved HTTPS origin. Network failures, timeouts, or permission denials fall back to heuristic reviews or structured error states.

@@ -46,3 +46,10 @@ Use [client setup](integrations/mcp-client-setup.md) and the [tool reference](re
 
 ### Plugin Execution Security under MCP (Phase 56)
 Plugin executions initiated via MCP administrative endpoints enforce user-owned ledger authorization and snapshot integrity. Cloned repository receipts are strictly rejected as non-authorizing evidence.
+
+## Dual-Transport Parity and Immutability (Phase 57)
+
+FastMCP tools in Rush achieve 100% contract parity with the CLI:
+- Every core tool call is routed through `resolve_invocation(request, transport="mcp")`.
+- MCP tool handlers receive frozen copies of declared configuration, preventing mutable configuration leakage.
+- All core tools emit canonical `ToolResultV1` schemas across both CLI and MCP.

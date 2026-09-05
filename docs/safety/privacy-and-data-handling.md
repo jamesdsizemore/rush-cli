@@ -49,3 +49,7 @@ All persistent capabilities, lock identifiers, and trust tokens are stored using
 
 ### Plugin Credential Confinement (Phase 56)
 Secrets are strictly excluded from process command lines and environment blocks. Ephemeral descriptors and stdin payloads provide point-to-point credential delivery.
+
+## Cache Storage & Prompt Privacy (Phase 57)
+
+Data written to the invocation cache is sanitized prior to persistence. Prompts sent to LLM providers are guarded against unintended redirect exfiltration.

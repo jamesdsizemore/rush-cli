@@ -154,3 +154,7 @@ Configures builder identifiers, dynamic profiling flags, model paths, and benchm
 
 ### [plugins] Configuration Table (Phase 56)
 Configures custom external quality engines with pattern matching, timeout limits, and protected secret channels.
+
+## Invocation & Cache Configuration Reference (Phase 57)
+
+Configuration options for `[cache]` and `[tools.<name>]` control cache storage paths, TTL, and purity declarations.

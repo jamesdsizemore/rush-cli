@@ -5,16 +5,23 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
-import urllib.request
 from typing import Any
 
 from .. import __version__
-from .base import LLMProvider, LLMResponse
+from .base import (
+    LLMProvider,
+    ProviderEgressError,
+    ProviderOutcome,
+    ProviderResult,
+    safe_provider_post,
+)
 
 
 class OpenAIProvider(LLMProvider):
     name = "openai"
     default_model = "gpt-4o"
+    endpoint_url = "https://api.openai.com/v1/chat/completions"
+    effective_origin = "https://api.openai.com"
 
     def is_configured(self) -> bool:
         return bool(os.environ.get("OPENAI_API_KEY"))
@@ -24,7 +31,7 @@ class OpenAIProvider(LLMProvider):
         findings: list[dict[str, Any]],
         *,
         allow_network: bool = False,
-    ) -> LLMResponse | None:
+    ) -> ProviderResult | None:
         if not self.is_configured():
             return None
 
@@ -36,10 +43,12 @@ class OpenAIProvider(LLMProvider):
                 f"[OpenAI GPT] Analyzed {n_findings} code review finding(s) "
                 f"using {self.default_model}."
             )
-            return LLMResponse(
-                provider=self.name,
-                model=self.default_model,
+            return ProviderResult(
+                outcome=ProviderOutcome.SKIPPED.value,
                 content=summary,
+                model=self.default_model,
+                provider=self.name,
+                effective_origin=self.effective_origin,
             )
 
         prompt = (
@@ -62,36 +71,58 @@ class OpenAIProvider(LLMProvider):
             ],
         }
 
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                choices = data.get("choices", [])
-                text_content = ""
-                if choices:
-                    text_content = choices[0].get("message", {}).get("content", "")
-                return LLMResponse(
-                    provider=self.name,
+            _status, body = safe_provider_post(
+                self.endpoint_url,
+                headers=headers,
+                data=json.dumps(payload),
+            )
+            data = json.loads(body.decode("utf-8"))
+            choices = data.get("choices", [])
+            text_content = ""
+            finish_reason = ""
+            if choices:
+                choice = choices[0]
+                text_content = choice.get("message", {}).get("content", "") or ""
+                finish_reason = choice.get("finish_reason", "")
+
+            if not text_content.strip():
+                return ProviderResult(
+                    outcome=ProviderOutcome.ERROR.value,
+                    content="",
                     model=data.get("model", self.default_model),
-                    content=text_content
-                    or f"[OpenAI GPT] Analyzed {n_findings} findings.",
+                    finish_reason=finish_reason,
+                    error_message="Empty completion received from OpenAI API",
+                    provider=self.name,
+                    effective_origin=self.effective_origin,
+                    raw=data,
                 )
+
+            return ProviderResult(
+                outcome=ProviderOutcome.COMPLETED.value,
+                content=text_content,
+                model=data.get("model", self.default_model),
+                finish_reason=finish_reason,
+                provider=self.name,
+                effective_origin=self.effective_origin,
+                raw=data,
+            )
+        except ProviderEgressError:
+            raise
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
             OSError,
+            TimeoutError,
             json.JSONDecodeError,
             KeyError,
             ValueError,
         ) as err:
-            return LLMResponse(
-                provider=self.name,
+            return ProviderResult(
+                outcome=ProviderOutcome.ERROR.value,
+                content="",
                 model=self.default_model,
-                content=f"[OpenAI GPT Error] API request failed: {err}",
+                error_message=f"[OpenAI GPT Error] API request failed: {err}",
+                provider=self.name,
+                effective_origin=self.effective_origin,
             )

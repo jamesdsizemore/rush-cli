@@ -84,3 +84,8 @@ Generated help is authoritative for options. See [CLI reference](reference/cli-r
 ### Custom Plugin Quality Engine (Phase 56)
 - **Engine**: User-defined or third-party quality plugins.
 - **Execution Model**: `HardenedPluginExecutor` with user trust ledger gating, transitive closure verification, immutable snapshot isolation, and `ToolResultV1` output compliance.
+
+## Tool Cache Purity Catalog (Phase 57)
+
+- **Pure Operations (Cache Eligible)**: `tool.lint`, `tool.typecheck`, `tool.complexity`, `tool.dead`, `tool.continuity`, `tool.semantic_drift`.
+- **Side-Effecting Operations (Cache Bypassed)**: `tool.format` (in-place writes), `tool.test` (runtime execution), `tool.fix` (code patching), `admin.*`, `service.*`.
