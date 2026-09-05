@@ -2867,6 +2867,25 @@ def simulate_ci_cmd(workflow: str) -> None:
     default="https://rush-cli.org/builder/v1",
     help="Builder ID URI.",
 )
+@click.option(
+    "--verify",
+    "verify_envelope",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Verify signed provenance envelope against policy.",
+)
+@click.option(
+    "--trusted-root",
+    "trusted_roots",
+    multiple=True,
+    help="Trusted root public key for verification.",
+)
+@click.option(
+    "--allowed-signer",
+    "allowed_signers",
+    multiple=True,
+    help="Allowed signer ID for verification.",
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def attest_cmd(
@@ -2874,6 +2893,9 @@ def attest_cmd(
     artifact_path: Path | None,
     output_path: Path | None,
     builder_id: str,
+    verify_envelope: Path | None,
+    trusted_roots: tuple[str, ...],
+    allowed_signers: tuple[str, ...],
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -2902,6 +2924,9 @@ def attest_cmd(
             "artifact_path": str(artifact_path) if artifact_path else None,
             "output_path": str(output_path) if output_path else None,
             "builder_id": builder_id,
+            "verify": str(verify_envelope) if verify_envelope else None,
+            "trusted_roots": tuple(trusted_roots) if trusted_roots else (),
+            "allowed_signers": tuple(allowed_signers) if allowed_signers else (),
         },
     )
 

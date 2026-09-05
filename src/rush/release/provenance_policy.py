@@ -2,17 +2,37 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import dataclasses
+import hashlib
 import json
+import re
 import unicodedata
-from pathlib import Path  # noqa: F401 - standard library as required by spec
+from pathlib import Path
 from typing import Any
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from rush.release.provenance import ProvenanceError
 
 
 class SchemaMismatchError(ProvenanceError):
     """Raised when a provenance statement fails in-toto / SLSA schema validation."""
+
+
+class UntrustedSignerError(ProvenanceError):
+    """Raised when an envelope is signed by an unauthorized or untrusted signer/root."""
+
+
+class SubjectMismatchError(ProvenanceError):
+    """Raised when artifact digest does not match provenance statement subject."""
+
+
+class BuilderMismatchError(ProvenanceError):
+    """Raised when builder ID or build type does not match policy expectations."""
 
 
 class DuplicateKeyError(ProvenanceError):
@@ -255,7 +275,9 @@ class ProvenanceDraft:
         return cls(statement=stmt, assurance=assurance, is_signed=False)
 
 
-def validate_provenance_statement(data: dict[str, Any]) -> StatementV1:
+def validate_provenance_statement(
+    data: dict[str, Any], expected_build_type: str | None = RUSH_BUILD_TYPE_DRAFT_V1
+) -> StatementV1:
     """Validates an in-toto Statement v1 with SLSA Provenance v1 predicate."""
     if not isinstance(data, dict):
         raise SchemaMismatchError(
@@ -356,9 +378,13 @@ def validate_provenance_statement(data: dict[str, Any]) -> StatementV1:
         )
 
     build_type = bdef_raw["buildType"]
-    if build_type != RUSH_BUILD_TYPE_DRAFT_V1:
+    if not isinstance(build_type, str) or not build_type.strip():
         raise SchemaMismatchError(
-            f"Invalid buildType: expected '{RUSH_BUILD_TYPE_DRAFT_V1}', got '{build_type}'"
+            "buildDefinition.buildType must be a non-empty string"
+        )
+    if expected_build_type is not None and build_type != expected_build_type:
+        raise SchemaMismatchError(
+            f"Invalid buildType: expected '{expected_build_type}', got '{build_type}'"
         )
 
     ext_raw = bdef_raw["externalParameters"]
@@ -494,6 +520,315 @@ def validate_provenance_statement(data: dict[str, Any]) -> StatementV1:
     )
 
 
+def _normalize_pubkey(key_input: str | bytes) -> bytes:
+    """Normalizes raw bytes, hex, base64, or PEM encoded Ed25519 public key to 32 raw bytes."""
+    if isinstance(key_input, (bytes, bytearray)):
+        raw = bytes(key_input)
+        if len(raw) == 32:
+            return raw
+        try:
+            h = bytes.fromhex(raw.decode("ascii"))
+            if len(h) == 32:
+                return h
+        except (ValueError, UnicodeDecodeError):
+            pass
+        try:
+            b = base64.b64decode(raw)
+            if len(b) == 32:
+                return b
+        except (ValueError, binascii.Error):
+            pass
+        return raw
+
+    if isinstance(key_input, str):
+        key_str = key_input.strip()
+        if "BEGIN PUBLIC KEY" in key_str:
+            pub_obj = serialization.load_pem_public_key(key_str.encode())
+            return pub_obj.public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+        if len(key_str) == 64:
+            try:
+                return bytes.fromhex(key_str)
+            except ValueError:
+                pass
+        try:
+            b = base64.b64decode(key_str)
+            if len(b) == 32:
+                return b
+        except (ValueError, binascii.Error):
+            pass
+        try:
+            return bytes.fromhex(key_str)
+        except ValueError:
+            pass
+    raise ValueError(f"Unable to parse Ed25519 public key from {key_input!r}")
+
+
+@dataclasses.dataclass(frozen=True)
+class SignedProvenancePolicy:
+    trusted_roots: tuple[str, ...] = ()
+    allowed_signers: tuple[str, ...] = ()
+    allowed_builders: tuple[str, ...] = ()
+    expected_build_type: str = RUSH_BUILD_TYPE_DRAFT_V1
+    source_uri_pattern: str = r"^https://github\.com/rush-cli/rush.*$"
+    allow_unsigned: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trusted_roots, tuple):
+            object.__setattr__(self, "trusted_roots", tuple(self.trusted_roots))
+        if not isinstance(self.allowed_signers, tuple):
+            object.__setattr__(self, "allowed_signers", tuple(self.allowed_signers))
+        if not isinstance(self.allowed_builders, tuple):
+            object.__setattr__(self, "allowed_builders", tuple(self.allowed_builders))
+
+
+@dataclasses.dataclass(frozen=True)
+class ProvenanceVerificationResult:
+    is_valid: bool
+    signer_id: str | None
+    builder_id: str
+    subject_digest: str
+    statement: StatementV1
+    summary: str
+    warnings: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.warnings, tuple):
+            object.__setattr__(self, "warnings", tuple(self.warnings))
+
+
+class ProvenancePolicyVerifier:
+    """Verifies cryptographic in-toto DSSE provenance envelopes against SignedProvenancePolicy."""
+
+    def __init__(self, policy: SignedProvenancePolicy) -> None:
+        self.policy = policy
+
+    def verify(
+        self,
+        raw_envelope: str | bytes,
+        expected_artifact_path: Path | None = None,
+    ) -> ProvenanceVerificationResult:
+        """Verifies DSSE envelope cryptographic signature, SLSA statement, and security policies.
+
+        Raises:
+            UntrustedSignerError: If signer key ID or public root is unauthorized or allowlists are empty.
+            BuilderMismatchError: If builder ID or build type does not match policy constraints.
+            SubjectMismatchError: If expected artifact hash does not match statement subject.
+            DuplicateKeyError: If raw envelope or statement JSON contains duplicate keys.
+            AmbiguousKeyError: If JSON keys collide under Unicode normalization.
+            ProvenanceError: If payload or signature is tampered, malformed, or violates source URI.
+        """
+        if isinstance(raw_envelope, dict):
+            raw_input = json.dumps(raw_envelope)
+        else:
+            raw_input = raw_envelope
+
+        envelope = StrictProvenanceParser.parse(raw_input)
+        if not isinstance(envelope, dict):
+            raise ProvenanceError("Malformed envelope: expected JSON object")
+
+        for req_field in ("payloadType", "payload", "signatures"):
+            if req_field not in envelope:
+                raise ProvenanceError(
+                    f"Envelope missing required DSSE field: '{req_field}'"
+                )
+
+        payload_type = envelope["payloadType"]
+        if payload_type != "application/vnd.in-toto+json":
+            raise ProvenanceError(
+                f"Unsupported payloadType: expected 'application/vnd.in-toto+json', got '{payload_type}'"
+            )
+
+        signatures = envelope.get("signatures")
+        if not isinstance(signatures, (list, tuple)):
+            raise ProvenanceError("Envelope signatures field must be a list")
+
+        # Fail-closed allowlist checks
+        if not self.policy.allow_unsigned:
+            if not signatures:
+                raise UntrustedSignerError(
+                    "Envelope does not contain signatures and unsigned envelopes are disallowed by policy"
+                )
+            if not self.policy.trusted_roots:
+                raise UntrustedSignerError("Policy trusted_roots is empty: fail-closed")
+            if not self.policy.allowed_signers:
+                raise UntrustedSignerError(
+                    "Policy allowed_signers is empty: fail-closed"
+                )
+
+        # Signer ID verification
+        signer_id: str | None = None
+        if signatures:
+            sig_entry = signatures[0]
+            if not isinstance(sig_entry, dict):
+                raise ProvenanceError("Signature entry must be a dictionary")
+            signer_id = sig_entry.get("keyid")
+            if not signer_id or signer_id not in self.policy.allowed_signers:
+                raise UntrustedSignerError(
+                    f"Signer '{signer_id}' is not in policy allowed_signers: {self.policy.allowed_signers}"
+                )
+
+        # Decode base64 payload
+        raw_payload_b64 = envelope["payload"]
+        if not isinstance(raw_payload_b64, str):
+            raise ProvenanceError("Envelope payload must be a base64-encoded string")
+        try:
+            payload_bytes = base64.b64decode(raw_payload_b64)
+        except Exception as exc:
+            raise ProvenanceError(
+                f"Envelope payload is not valid base64: {exc}"
+            ) from exc
+
+        # Parse and validate in-toto Statement v1 / SLSA Predicate v1
+        stmt_dict = StrictProvenanceParser.parse(payload_bytes)
+        statement = validate_provenance_statement(stmt_dict, expected_build_type=None)
+
+        # Cryptographic signature verification over DSSE PAE
+        if signatures:
+            sig_entry = signatures[0]
+            sig_b64 = sig_entry.get("sig")
+            if not isinstance(sig_b64, str):
+                raise ProvenanceError("Signature 'sig' must be a base64 string")
+            try:
+                sig_bytes = base64.b64decode(sig_b64)
+            except Exception as exc:
+                raise ProvenanceError(f"Invalid base64 signature: {exc}") from exc
+
+            pae = (
+                f"DSSEv1 {len(payload_type)} {payload_type} {len(payload_bytes)} ".encode()
+                + payload_bytes
+            )
+
+            trusted_raw_roots: list[bytes] = []
+            for root in self.policy.trusted_roots:
+                try:
+                    trusted_raw_roots.append(_normalize_pubkey(root))
+                except Exception as exc:
+                    raise UntrustedSignerError(
+                        f"Invalid trusted root key in policy: {exc}"
+                    ) from exc
+
+            if "publicKey" in envelope:
+                try:
+                    env_pub_raw = _normalize_pubkey(envelope["publicKey"])
+                except Exception as exc:
+                    raise UntrustedSignerError(
+                        f"Invalid publicKey in envelope: {exc}"
+                    ) from exc
+                if env_pub_raw not in trusted_raw_roots:
+                    raise UntrustedSignerError(
+                        "Envelope publicKey is not present in policy trusted_roots"
+                    )
+                candidate_keys = [env_pub_raw]
+            else:
+                candidate_keys = trusted_raw_roots
+
+            if not candidate_keys:
+                raise UntrustedSignerError(
+                    "No trusted root keys available for signature verification"
+                )
+
+            verified = False
+            for cand_bytes in candidate_keys:
+                try:
+                    pub_obj = ed25519.Ed25519PublicKey.from_public_bytes(cand_bytes)
+                    pub_obj.verify(sig_bytes, pae)
+                    verified = True
+                    break
+                except InvalidSignature:
+                    continue
+                except Exception as exc:
+                    raise ProvenanceError(
+                        f"Cryptographic verification error: {exc}"
+                    ) from exc
+
+            if not verified:
+                raise ProvenanceError(
+                    "Cryptographic signature verification failed: invalid signature"
+                )
+
+        # Builder ID verification
+        if not self.policy.allowed_builders:
+            raise BuilderMismatchError("Policy allowed_builders is empty: fail-closed")
+
+        builder_id = statement.predicate.run_details.builder.id
+        int_builder_id = (
+            statement.predicate.build_definition.internal_parameters.builder_id
+        )
+        if builder_id not in self.policy.allowed_builders:
+            raise BuilderMismatchError(
+                f"Builder ID '{builder_id}' is not in policy allowed_builders: {self.policy.allowed_builders}"
+            )
+        if int_builder_id not in self.policy.allowed_builders:
+            raise BuilderMismatchError(
+                f"Internal builder ID '{int_builder_id}' is not in policy allowed_builders: {self.policy.allowed_builders}"
+            )
+
+        # Build type verification
+        build_type = statement.predicate.build_definition.build_type
+        if build_type != self.policy.expected_build_type:
+            raise BuilderMismatchError(
+                f"Build type '{build_type}' does not match expected '{self.policy.expected_build_type}'"
+            )
+
+        # Source URI verification
+        source_uri = statement.predicate.build_definition.external_parameters.source_uri
+        if not re.match(self.policy.source_uri_pattern, source_uri):
+            raise ProvenanceError(
+                f"Source URI '{source_uri}' does not match policy pattern '{self.policy.source_uri_pattern}'"
+            )
+
+        # Expected artifact hash verification
+        if expected_artifact_path is not None:
+            art_file = Path(expected_artifact_path)
+            if not art_file.is_file():
+                raise SubjectMismatchError(
+                    f"Specified artifact file '{art_file}' does not exist"
+                )
+            hasher = hashlib.sha256()
+            with open(art_file, "rb") as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            actual_sha = hasher.hexdigest()
+
+            subject_digests = [
+                s.digest.get("sha256")
+                for s in statement.subject
+                if isinstance(s.digest, dict) and "sha256" in s.digest
+            ]
+            if actual_sha not in subject_digests:
+                raise SubjectMismatchError(
+                    f"Artifact SHA-256 '{actual_sha}' does not match statement subject digests: {subject_digests}"
+                )
+
+        first_subject = statement.subject[0] if statement.subject else None
+        subject_name = first_subject.name if first_subject else "artifact"
+        subject_digest = (
+            first_subject.digest.get("sha256", "")
+            if first_subject and isinstance(first_subject.digest, dict)
+            else ""
+        )
+        summary = (
+            f"Verified signed provenance for {subject_name} "
+            f"(signer: {signer_id or 'unsigned'}, builder: {builder_id})"
+        )
+
+        warnings: tuple[str, ...] = ()
+        if not signatures and self.policy.allow_unsigned:
+            warnings = ("Unsigned envelope verified under allow_unsigned policy",)
+
+        return ProvenanceVerificationResult(
+            is_valid=True,
+            signer_id=signer_id,
+            builder_id=builder_id,
+            subject_digest=subject_digest,
+            statement=statement,
+            summary=summary,
+            warnings=warnings,
+        )
+
+
 __all__ = [
     "IN_TOTO_STATEMENT_TYPE",
     "RUSH_BUILDER_ID_V1",
@@ -502,17 +837,23 @@ __all__ = [
     "AmbiguousKeyError",
     "BuildDefinitionV1",
     "BuilderDetailsV1",
+    "BuilderMismatchError",
     "DuplicateKeyError",
     "ExternalParametersV1",
     "InternalParametersV1",
     "ProvenanceDraft",
     "ProvenanceError",
+    "ProvenancePolicyVerifier",
+    "ProvenanceVerificationResult",
     "RunDetailsV1",
     "RunMetadataV1",
     "SLSAPredicateV1",
     "SchemaMismatchError",
+    "SignedProvenancePolicy",
     "StatementV1",
     "StrictProvenanceParser",
+    "SubjectMismatchError",
     "SubjectV1",
+    "UntrustedSignerError",
     "validate_provenance_statement",
 ]

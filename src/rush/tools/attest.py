@@ -35,6 +35,10 @@ class AttestationTool(ToolFn):
         artifact_path: str = "",
         output_path: str = "",
         builder_id: str = "https://rush-cli.org/builder/v1",
+        verify: str = "",
+        trusted_roots: tuple[str, ...] = (),
+        allowed_signers: tuple[str, ...] = (),
+        allowed_builders: tuple[str, ...] = (),
         allow_network: bool = False,
         allow_download: bool = False,
         allow_cache_write: bool = False,
@@ -59,6 +63,10 @@ class AttestationTool(ToolFn):
             artifact_path=artifact_path or None,
             output_path=output_path or None,
             builder_id=builder_id,
+            verify=verify or None,
+            trusted_roots=trusted_roots,
+            allowed_signers=allowed_signers,
+            allowed_builders=allowed_builders,
             permissions=permissions,
         )
 
@@ -69,6 +77,10 @@ class AttestationTool(ToolFn):
         artifact_path: str | Path | None = None,
         output_path: str | Path | None = None,
         builder_id: str = "https://rush-cli.org/builder/v1",
+        verify: str | Path | None = None,
+        trusted_roots: tuple[str, ...] = (),
+        allowed_signers: tuple[str, ...] = (),
+        allowed_builders: tuple[str, ...] = (),
         config: Any = None,
         permissions: Any = None,
     ) -> ToolResult:
@@ -81,6 +93,103 @@ class AttestationTool(ToolFn):
         start = now_ms()
         target_dir = path if path.is_dir() else path.parent
         target_dir = target_dir.resolve()
+
+        if verify:
+            raw_verify = Path(verify)
+            verify_file = (
+                raw_verify if raw_verify.is_absolute() else (target_dir / raw_verify)
+            )
+            if not verify_file.is_file():
+                return error_result(
+                    self.name,
+                    None,
+                    f"attest: specified verification envelope path '{verify}' does not exist",
+                    duration_ms=elapsed_ms(start),
+                )
+            try:
+                raw_envelope = verify_file.read_text(encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                return error_result(
+                    self.name,
+                    None,
+                    f"attest: failed to read envelope '{verify}': {exc}",
+                    duration_ms=elapsed_ms(start),
+                )
+
+            candidate_art: Path | None = None
+            if artifact_path:
+                raw_art = Path(artifact_path)
+                cand = raw_art if raw_art.is_absolute() else (target_dir / raw_art)
+                if cand.is_file():
+                    candidate_art = cand
+
+            from rush.release.provenance_policy import (
+                ProvenancePolicyVerifier,
+                SignedProvenancePolicy,
+            )
+
+            tool_cfg = None
+            if hasattr(config, "tools") and isinstance(config.tools, dict):
+                tool_cfg = config.tools.get(self.name)
+            elif isinstance(config, dict):
+                tool_cfg = config.get(self.name) or config
+
+            cfg_opts = (
+                getattr(tool_cfg, "options", {})
+                if tool_cfg
+                else (config.get("options", {}) if isinstance(config, dict) else {})
+            )
+            if not isinstance(cfg_opts, dict):
+                cfg_opts = {}
+
+            resolved_roots = tuple(trusted_roots) or tuple(
+                cfg_opts.get("trusted_roots", ())
+            )
+            resolved_signers = tuple(allowed_signers) or tuple(
+                cfg_opts.get("allowed_signers", ())
+            )
+            resolved_builders = tuple(allowed_builders) or tuple(
+                cfg_opts.get("allowed_builders", (builder_id,))
+            )
+            allow_unsigned = bool(cfg_opts.get("allow_unsigned", False))
+
+            policy = SignedProvenancePolicy(
+                trusted_roots=resolved_roots,
+                allowed_signers=resolved_signers,
+                allowed_builders=resolved_builders,
+                allow_unsigned=allow_unsigned,
+            )
+            verifier = ProvenancePolicyVerifier(policy)
+            try:
+                res = verifier.verify(
+                    raw_envelope, expected_artifact_path=candidate_art
+                )
+            except Exception as exc:  # noqa: BLE001
+                return error_result(
+                    self.name,
+                    None,
+                    f"attest verification failed: {exc}",
+                    duration_ms=elapsed_ms(start),
+                )
+
+            return ToolResult(
+                tool=self.name,
+                engine=None,
+                engine_version=None,
+                status="ok",
+                duration_ms=elapsed_ms(start),
+                summary=res.summary,
+                findings=[],
+                raw=res.statement.to_dict(),
+                artifacts=[str(verify_file)],
+                metadata={
+                    "is_valid": res.is_valid,
+                    "signer_id": res.signer_id,
+                    "builder_id": res.builder_id,
+                    "subject_digest": res.subject_digest,
+                    "statement": res.statement.to_dict(),
+                },
+            )
 
         # Subject resolution and real artifact digest calculation
         if artifact_path:
