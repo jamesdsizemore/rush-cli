@@ -117,3 +117,100 @@ All JSON emissions (CLI `--json`, FastMCP responses, SARIF, cache entries) confo
 1. **Key & Value Redaction**: Every string value and dictionary key within `ToolResult`, including nested `raw`, `findings`, and `metadata`, is stripped of recognized secret patterns (API keys, bearer tokens, private keys, passwords, URL credentials).
 2. **Loss-Visible Key Collisions**: If key redaction creates collision within an object, keys are suffixed with `__collision_{i}` to prevent silent loss of data.
 3. **Fail-Closed Placeholder**: Unsupported or opaque object types within `raw` or `metadata` serialize as `"[UNSUPPORTED_TYPE:<type>]"` rather than leaking uninspected string representations.
+
+---
+
+## 3. ToolResultV1 & FindingV1 Specification (Phase 54)
+
+`ToolResultV1` establishes the canonical, version-enforced output contract implemented in `src/rush/contracts/results.py`:
+
+### 3.1 ToolResultV1 JSON Schema
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ToolResultV1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool",
+    "status",
+    "duration_ms",
+    "summary",
+    "findings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "tool": { "type": "string", "minLength": 1 },
+    "engine": { "type": ["string", "null"] },
+    "engine_version": { "type": ["string", "null"] },
+    "status": { "type": "string", "enum": ["ok", "warn", "fail", "error", "skipped"] },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/FindingV1" }
+    },
+    "raw": {},
+    "extensions": {
+      "type": "object",
+      "description": "Namespaced JSON-safe container for engine-specific or optional metrics/artifacts"
+    }
+  },
+  "$defs": {
+    "FindingV1": {
+      "type": "object",
+      "required": [
+        "path",
+        "line",
+        "column",
+        "rule_id",
+        "severity",
+        "message",
+        "fingerprint"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 },
+        "rule_id": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+        "message": { "type": "string" },
+        "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "rule": { "type": ["string", "null"] },
+        "fix": { "type": ["object", "null"] },
+        "remediation": { "type": ["object", "string", "null"] },
+        "evidence": { "type": ["object", "string", "null"] },
+        "provenance": { "type": ["string", "null"] },
+        "freshness": { "type": ["string", "null"] },
+        "patch": { "type": ["string", "null"] },
+        "suggested_fix": { "type": ["string", "null"] },
+        "extensions": { "type": "object" }
+      }
+    }
+  }
+}
+```
+
+### 3.2 Canonical Severity and Legacy Mapping
+- **Finding Severities**: Canonical severities in `FindingV1` are strictly `"info"`, `"warning"`, and `"error"`.
+- **Legacy Mappings**:
+  - Legacy finding severity `"warn"` maps strictly to `"warning"`.
+  - Legacy finding severity `"fail"` maps strictly to `"error"`.
+  - Any unmappable or missing severity raises `ValidationErrorV1(code="INVALID_SEVERITY")`. Silent default coercion is strictly prohibited.
+
+### 3.3 Strict Top-Level Key Rejection
+Any unrecognized key at the top-level of `ToolResultV1` or `FindingV1` raises `ValidationErrorV1(code="UNKNOWN_TOP_LEVEL_KEY")`. Extensions and auxiliary fields (`metrics`, `artifacts`, `metadata`) must be encapsulated within `extensions: dict[str, Any]`.
+
+### 3.4 ValidationErrorV1 Structure
+When validation fails, validation functions raise `ValidationErrorV1` carrying:
+```json
+{
+  "error": "validation_error",
+  "code": "MISSING_REQUIRED_FIELD | UNKNOWN_TOP_LEVEL_KEY | INVALID_STATUS | INVALID_SEVERITY | INVALID_SCHEMA_VERSION | INVALID_TYPE | NON_JSON_SAFE_VALUE",
+  "message": "Human-readable failure description",
+  "path": "field.subfield[index]",
+  "invalid_value": "..."
+}
+```

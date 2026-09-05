@@ -1,0 +1,80 @@
+{
+  "missing_schema_version": {
+    "tool": "lint",
+    "engine": "ruff",
+    "engine_version": "0.9.9",
+    "status": "ok",
+    "duration_ms": 10,
+    "summary": "clean",
+    "findings": []
+  },
+  "invalid_schema_version": {
+    "schema_version": "2.0.0",
+    "tool": "lint",
+    "engine": "ruff",
+    "engine_version": "0.9.9",
+    "status": "ok",
+    "duration_ms": 10,
+    "summary": "clean",
+    "findings": []
+  },
+  "invalid_status": {
+    "schema_version": "1.0.0",
+    "tool": "lint",
+    "engine": "ruff",
+    "engine_version": "0.9.9",
+    "status": "passed",
+    "duration_ms": 10,
+    "summary": "clean",
+    "findings": []
+  },
+  "unknown_top_level_key": {
+    "schema_version": "1.0.0",
+    "tool": "lint",
+    "engine": "ruff",
+    "engine_version": "0.9.9",
+    "status": "ok",
+    "duration_ms": 10,
+    "summary": "clean",
+    "findings": [],
+    "unexpected_key": "not allowed"
+  },
+  "negative_duration": {
+    "schema_version": "1.0.0",
+    "tool": "lint",
+    "engine": "ruff",
+    "engine_version": "0.9.9",
+    "status": "ok",
+    "duration_ms": -5,
+    "summary": "clean",
+    "findings": []
+  },
+  "invalid_severity": {
+    "path": "src/rush/main.py",
+    "line": 1,
+    "column": 1,
+    "rule_id": "R001",
+    "severity": "fatal",
+    "message": "bad error",
+    "fingerprint": "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0"
+  },
+  "missing_rule_id": {
+    "path": "src/rush/main.py",
+    "line": 1,
+    "column": 1,
+    "rule_id": "",
+    "severity": "error",
+    "message": "bad error",
+    "fingerprint": "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0"
+  },
+  "unknown_finding_key": {
+    "path": "src/rush/main.py",
+    "line": 1,
+    "column": 1,
+    "rule_id": "R001",
+    "severity": "error",
+    "message": "bad error",
+    "fingerprint": "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0",
+    "extra_finding_key": "prohibited"
+  }
+}

@@ -12,7 +12,7 @@ Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional che
 
 ## Common result
 
-Every tool returns canonical ToolResult data documented in [Result reference](result-reference.md). A missing optional engine is a structured `skipped` result, not an installation request.
+Every tool returns canonical `ToolResultV1` data (`schema_version: "1.0.0"`) documented in [Result reference](result-reference.md), featuring canonical finding severities (`info`, `warning`, `error`). Service operations (such as stdio protocol initializations) remain unwrapped JSON-RPC protocol frames. A missing optional engine is a structured `skipped` result, not an installation request.
 
 ## Inputs
 

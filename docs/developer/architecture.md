@@ -213,3 +213,19 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - `probe_installed_artifacts.py` (`scripts/probe_installed_artifacts.py`): Clean wheel/sdist virtualenv harness executing outside checkout with scrubbed `PYTHONPATH` and reproducing R-001 packaging failures.
 - `EngineSupportPolicy` (`governance/engine-support.toml`): 19 engine families classified into `mandatory`, `supported-optional`, and `best-effort` with strict skip prohibitions.
 - `RemediationContracts` (`governance/remediation-contracts.toml`): Single-owner ledger assigning findings R-001 through R-016 to distinct RED/GREEN pairs across successor Phases 52–60.
+
+### Phase 52 Architecture: Package Identity, Artifacts & Version Authority
+- Clean wheel/sdist packaging isolation outside repository root.
+- Strict canonical `rush` namespace enforcement preventing `src.rush` imports.
+- Dynamic version resolution authority (`rush.__version__`) resolving via `importlib.metadata.version("rush-cli")`.
+
+### Phase 53 Architecture: AST Redaction & Write Boundaries
+- Bounded recursive syntax-aware secret sanitization kernel (`src/rush/contracts/sanitization.py`).
+- Pre-truncation output redaction and fail-closed unsupported object protection.
+- Diagnostic NDJSON exception logging to stderr with credential masking (resolving R-002, R-008).
+
+### Phase 54 Architecture: Tool Result Schema Kernel & Operation Adapters
+- Canonical typed result schema (`src/rush/contracts/results.py`: `ToolResultV1`, `FindingV1`, `ValidationErrorV1`, validators, adapters).
+- Two-phase execution pipeline: Engine raw output -> Phase 53 secret sanitization -> Phase 54 schema validation & serialization.
+- Operation boundary taxonomy (`src/rush/contracts/operations.py`: `ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`, `OperationRegistry`).
+- Full reconciliation of 146 public operations with fail-closed rejection of `ToolResultV1` wrapping on service protocol frames.

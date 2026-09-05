@@ -18,14 +18,14 @@ Use `rush session resume NAME --provider claude_code|codex_cli|antigravity_cli -
 
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
-## Operations Reconciliation & Inventory (Phase 51: RM-P0-02)
+## Operations Reconciliation & Inventory (Phase 51 & Phase 54)
 
-All 129 Click command leaves and subcommands are formally inventoried and reconciled in `governance/public-operations.toml`. Each operation declares:
-- **Canonical Implementation**: `src/rush/tools/` or `src/rush/cli.py`
-- **FastMCP Route**: Paired `rush_<name>` tool name
-- **Contract Classes**: Input contract (`ToolInputOptions`, `ClickArguments`) and output contract (`ToolResult`, `ClickExitCode`)
-- **Effect Classification**: `read-only`, `idempotent-write`, or `stateful-mutation`
-- **Safe Probe**: Non-live, non-destructive probe command (`rush <cmd> --help`)
+All 146 public operations (129 Click command leaves/subcommands and FastMCP routes) are formally inventoried in `governance/public-operations.toml` and bound to runtime adapters in `rush.contracts.operations`:
+- **Tool Operations (`kind = "tool"`)**: Exactly 67 operations. When invoked with `--json`, return canonical `ToolResultV1` JSON (`schema_version: "1.0.0"`), validated through `ToolOperationAdapter`.
+- **Admin Operations (`kind = "admin"`)**: Exactly 62 operations (e.g. `version`, `doctor`, `capabilities`). Return exit codes (`ClickExitCode`) or specialized admin data, validated through `AdminOperationAdapter`, and are not wrapped in `ToolResultV1`.
+- **Service Operations (`kind = "service"`)**: Exactly 17 operations (e.g. `rush mcp serve`). Handle stdio and protocol streams, validated through `ServiceOperationAdapter`.
+- **Effect Classification**: `read-only`, `idempotent-write`, or `stateful-mutation`.
+- **Safe Probe**: Non-live, non-destructive probe command (`rush <cmd> --help`).
 
 ## Which command should I run?
 

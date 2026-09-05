@@ -22,7 +22,7 @@
 
 **stdio** — Standard input/output pipes used for local process communication. Rush's MCP mode reserves stdout for protocol messages.
 
-**ToolResult** — Rush's consistent result object. See [Result reference](../reference/result-reference.md).
+**ToolResult** — Rush's consistent result object (`ToolResultV1`), containing 8 canonical fields (`schema_version`, `tool`, `engine`, `status`, `duration_ms`, `timestamp`, `summary`, `findings`). See [Result reference](../reference/result-reference.md).
 
 ### Context Intelligence Terms
 * **TOON**: Ultra-compact pipe-table wire format.
@@ -61,3 +61,8 @@
 * **SLSA Attestation**: Cryptographic build provenance statement.
 * **License Matrix**: Dependency license scanner.
 * **IAM Audit**: Least-privilege cloud policy generator.
+
+### Phase 54 Terms
+* **ToolResultV1**: Canonical typed schema kernel enforcing 8 required fields, ISO 8601 UTC timestamps, and standardized severity levels.
+* **FindingV1**: Structured finding model with strict path, line, message, and severity contracts.
+* **Operation Registry**: Reconciled taxonomy partitioning operations into `tool`, `admin`, and `service` domains.

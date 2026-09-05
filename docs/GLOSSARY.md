@@ -6,7 +6,7 @@ A comprehensive reference for terms, architectural concepts, and acronyms used a
 
 **AI Evaluator** — Specialized tools (Promptfoo, Garak, DeepEval, Guardrails) that probe and grade LLM prompts, agent workflows, and safety policies.
 
-**Canonical ToolResult** — The standard JSON dictionary returned by every Rush tool, containing `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`, and optional `metadata`.
+**Canonical ToolResult (`ToolResultV1`)** — The standard JSON dictionary returned by every Rush quality tool, containing `schema_version` ("1.0.0"), `tool`, `engine`, `status`, `duration_ms`, `timestamp`, `summary`, `findings`, and optional `raw`/`metadata`.
 
 **Deterministic Aggregation** — Multi-engine result combination with strict status precedence (`error > fail > warn > ok > skipped`), sum of durations, and coordinate-sorted findings.
 
@@ -92,3 +92,10 @@ See [Getting Started Glossary](getting-started/glossary.md) and [Result Referenc
 * **ProvenanceAiTool**: Git commit trailer attribution analyzer evaluating AI co-authorship and model provenance metadata.
 * **PrSynthesizeTool**: Pull request description generator synthesizing Git diff statistics and ToolResult quality evidence.
 * **TuiDiffTool**: Git finding delta computer and Rich terminal comparison table renderer.
+
+### Schema Kernel & Operation Terms (Phase 54)
+* **FindingV1**: Typed model for static analysis findings enforcing valid severity (`info`, `warning`, `error`), non-empty identifier, and line coordinates.
+* **OperationRegistry**: Central taxonomy registering and reconciling all 146 public operations across `tool`, `admin`, and `service` domains.
+* **ToolOperationAdapter**: Execution envelope validating and serializing tool results to `ToolResultV1`.
+* **ToolResultV1**: Fail-closed canonical schema kernel specification (`schema_version: "1.0.0"`) with ISO 8601 UTC timestamps and 8 mandatory keys.
+* **ValidationErrorV1**: Structured validation failure record carrying machine-readable reason codes (`MISSING_REQUIRED_KEY`, `INVALID_TYPE`, `INVALID_STATUS`, `INVALID_TIMESTAMP`, `INVALID_SEVERITY`).

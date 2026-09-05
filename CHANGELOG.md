@@ -5,6 +5,8 @@ All notable changes to Rush are documented here.
 ## [0.3.0] - 2026-09-03
 
 ### Fixed
+- **ToolResult Schema Kernel & Vocabulary Reconciliation (Finding R-011)**: Implemented canonical `ToolResultV1` and `FindingV1` contracts in `src/rush/contracts/results.py`. Reconciled finding severity vocabulary to canonical `info`, `warning`, `error` with deterministic legacy mapping (`warn`->`warning`, `fail`->`error`), and strictly rejected unmappable values with structured `ValidationErrorV1(code="INVALID_SEVERITY")` to eliminate silent default coercion. Unknown top-level keys are rejected with `UNKNOWN_TOP_LEVEL_KEY` while non-core properties are namespaced within `extensions`. Output serialization is byte-deterministic with compact separators and sorted keys, preceded by Phase 53 sanitization.
+- **Public Operations Contract Reconciliation**: Formalized `BaseOperationAdapter` hierarchy and `OperationRegistry` in `src/rush/contracts/operations.py`, reconciling 100% of the 146 operations from `governance/public-operations.toml` (`67 tool`, `62 admin`, `17 service`). Ensured tools target `ToolResultV1`, admin commands target named admin contracts, and service protocol methods (`initialize`, `tools/list`) remain unwrapped JSON-RPC protocol frames.
 - **Universal Recursive Sanitization & Write Boundaries (Finding R-002)**: Implemented recursive `sanitize_value` in `src/rush/safety/redactor.py` covering dictionary values AND keys, sequences, strings, and exceptions. Colliding redacted keys are deterministically suffixed with `__collision_{i}` to eliminate silent data loss. Output generators (SARIF, HTML, ResultCache, CLI JSON) and persistent disk writers (governance synchronizers, mesh locks, security audit logs, SQLite patch memory, session flights, preferences, invariant graphs, attestations, IAM policies, and benchmarks) now enforce deep sanitization before writes. Subprocess outputs are sanitized strictly *before* character truncation.
 - **Fail-Safe Exception Diagnostics & Transport Purity (Finding R-008)**: Corrected `LogRecord.exc_info` tuple formatting in `NdjsonHandler.emit` (`src/rush/logging.py`) so exception tracebacks are formatted safely without AttributeError crashes. Applied secret redaction to log messages and stack traces, added a structured stderr fallback emitter on unexpected format failures, and guaranteed that standard logging operations never pollute `sys.stdout`.
 - **Package Identity & Installed Artifacts (Finding R-001)**: Eliminated all 74 occurrences of invalid `src.rush` imports across 15 production files and 14 test files in favor of canonical `rush` imports. Wheel and sdist packages now install and start cleanly in scrubbed virtual environments outside the repository checkout with zero origin leakage.
@@ -28,6 +30,9 @@ All notable changes to Rush are documented here.
   - `tests/test_phase53_governance_writers.py`: Verifies sanitization of governance configs, agent sync rules, tamper hooks, and MCP mesh lock managers on success and abort.
   - `tests/test_phase53_state_writers.py`: Verifies sanitization of 25 state, security, and release writers on success and abort.
   - `tests/test_phase53_logging_diagnostics.py`: Verifies redacted NDJSON exception diagnostics, stdout purity, and structured formatting fallbacks.
+- **Phase 54 Contract Test Suites**:
+  - `tests/test_phase54_result_schema.py`: Verifies 8 core fields, `FindingV1` canonical severities, namespaced extensions, unknown key rejection, byte-deterministic serialization, legacy mappings, and structured validation errors.
+  - `tests/test_phase54_operation_adapters.py`: Verifies `ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`, and 100% manifest reconciliation across 146 operations.
 
 ## [0.2.0] - 2026-08-21
 

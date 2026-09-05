@@ -10,7 +10,21 @@ from __future__ import annotations
 from .actions import ActionsTool
 from .ai_eval import AiEvalTool
 from .attest import AttestationTool
-from .base import Finding, LlmStatus, Severity, ToolFn, ToolName, ToolResult, ToolStatus
+from .base import (
+    Finding,
+    FindingV1,
+    LlmStatus,
+    Severity,
+    ToolFn,
+    ToolName,
+    ToolResult,
+    ToolResultV1,
+    ToolStatus,
+    ValidationErrorV1,
+    adapt_legacy_finding,
+    adapt_legacy_tool_result,
+    validate_tool_result,
+)
 from .benchmark import BenchmarkTool
 from .ci import CiTool
 from .codeql import CodeqlTool
@@ -139,6 +153,7 @@ __all__ = [  # noqa: RUF022
     "DoctorTool",
     "ErrorCatalogTool",
     "Finding",
+    "FindingV1",
     "FixTool",
     "FormatTool",
     "IamAuditTool",
@@ -164,6 +179,11 @@ __all__ = [  # noqa: RUF022
     "ToolFn",
     "ToolName",
     "ToolResult",
+    "ToolResultV1",
+    "ValidationErrorV1",
+    "adapt_legacy_finding",
+    "adapt_legacy_tool_result",
+    "validate_tool_result",
     "TuiDiffTool",
     # core types
     "ToolStatus",

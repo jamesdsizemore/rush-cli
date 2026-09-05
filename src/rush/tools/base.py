@@ -13,6 +13,16 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 # --- String literal unions --------------------------------------------------
+from rush.contracts.results import (
+    FindingSeverity,
+    FindingV1,
+    ToolResultV1,
+    ValidationErrorV1,
+    adapt_legacy_finding,
+    adapt_legacy_tool_result,
+    validate_finding,
+    validate_tool_result,
+)
 
 ToolStatus = Literal["ok", "warn", "fail", "error", "skipped"]
 ToolName = str
@@ -97,3 +107,22 @@ class ToolFn(ABC):
         status='error' if anything goes wrong.
         """
         ...
+
+
+__all__ = [
+    "Finding",
+    "FindingSeverity",
+    "FindingV1",
+    "LlmStatus",
+    "Severity",
+    "ToolFn",
+    "ToolName",
+    "ToolResult",
+    "ToolResultV1",
+    "ToolStatus",
+    "ValidationErrorV1",
+    "adapt_legacy_finding",
+    "adapt_legacy_tool_result",
+    "validate_finding",
+    "validate_tool_result",
+]

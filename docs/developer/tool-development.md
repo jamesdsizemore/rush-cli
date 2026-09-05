@@ -40,6 +40,14 @@ class MyTool(ToolFn):
         ...
 ```
 
+### 1.1 Result Schema Kernel & Contracts (Phase 54)
+
+Every tool output is validated against the canonical `ToolResultV1` schema (`schema_version: "1.0.0"`) defined in `src/rush/contracts/results.py`:
+- Use `ToolResultV1` and `FindingV1` dataclasses for typed, fail-closed results.
+- `serialize_tool_result()` automatically sanitizes secrets (Phase 53) and enforces validation (Phase 54).
+- Legacy dictionaries can be migrated via `adapt_legacy_tool_result()` and `adapt_legacy_finding()`.
+- Operation routing is managed via `src/rush/contracts/operations.py` (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`).
+
 ---
 
 ---

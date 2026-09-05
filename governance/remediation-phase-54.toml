@@ -1,0 +1,54 @@
+[phase]
+id = 54
+name = "tool-result-schema-kernel-and-operation-adapters"
+remediation_phase = 3
+status = "completed"
+revision = "feat/phase-54-schema-kernel"
+branch = "feat/phase-54-schema-kernel"
+created_at = "2026-09-04T16:54:00-07:00"
+completed_at = "2026-09-04T17:05:00-07:00"
+
+[environment]
+python_version = "3.12.13"
+uv_version = "0.6.14"
+test_baseline = 1041
+test_completed = 1052
+manifest_operations_count = 146
+tool_operations_count = 67
+admin_operations_count = 62
+service_operations_count = 17
+
+[authorities]
+roadmap = "docs/developer/repository-remediation-plan.md"
+agents_guide = "AGENTS.md"
+phase_plan = "docs/phase-plans/phase-54-tool-result-schema-kernel-plan.md"
+contracts = "governance/remediation-contracts.toml"
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = ["R-011"]
+findings_completed = ["R-011"]
+
+[remediation_results]
+schema_kernel = "src/rush/contracts/results.py"
+operation_adapters = "src/rush/contracts/operations.py"
+schema_version = "1.0.0"
+finding_severities = ["info", "warning", "error"]
+tool_statuses = ["ok", "warn", "fail", "error", "skipped"]
+legacy_severity_mapping = "warn->warning, fail->error; unmappable raises ValidationErrorV1"
+unknown_top_level_keys = "strictly rejected with ValidationErrorV1(code='UNKNOWN_TOP_LEVEL_KEY')"
+serialization = "byte-deterministic json.dumps with sort_keys=True, separators=(',', ':'), ensure_ascii=False"
+dependency_invariant = "pure python standard library (dataclasses, typing, json, sanitize_value); zero pydantic"
+manifest_reconciliation = "100% (146 of 146 operations mapped to ToolOperationAdapter, AdminOperationAdapter, ServiceOperationAdapter)"
+
+[contract_tests]
+test_files = [
+    "tests/test_phase54_result_schema.py",
+    "tests/test_phase54_operation_adapters.py",
+]
+total_contract_tests = 11
+all_contract_tests_passed = true
+
+[successors]
+phases = [55, 56, 57, 58, 59, 60]
+ready_for = [55, 56]

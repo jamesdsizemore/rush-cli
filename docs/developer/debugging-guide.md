@@ -64,3 +64,13 @@ See [Testing Guide](testing-guide.md) and [Tool Development](tool-development.md
 - **Disappearing exception tracebacks (R-008)**: Previously, logging an exception with `exc_info` failed silently inside `NdjsonHandler.emit` due to tuple formatting. This is resolved: all exceptions emit complete single-line redacted NDJSON to stderr with a fallback JSON emitter on formatting failure.
 - **Sanitized dictionary keys & collision suffixing**: If two dictionary keys contain distinct secrets that both redact to `"[REDACTED — secret-like value]"`, the second key is deterministically suffixed with `__collision_1` and recorded in collision metadata rather than overwriting the first key.
 - **Strict stderr logging**: MCP JSON-RPC requires that stdout contain zero logging output. Logging must always go through `get_logger()` or `NdjsonHandler` to ensure only stderr is used.
+
+### Phase 54 Troubleshooting: ToolResultV1 Schema Validation
+- **`ValidationErrorV1` failure codes**:
+  - `MISSING_REQUIRED_KEY`: One of the 8 canonical fields (`schema_version`, `tool`, `engine`, `status`, `duration_ms`, `timestamp`, `summary`, `findings`) was missing from output.
+  - `INVALID_TYPE`: Field type does not conform (e.g. `duration_ms` is negative or float, `findings` is not a list).
+  - `INVALID_STATUS`: Status is not one of `ok`, `warn`, `fail`, `error`, `skipped`.
+  - `INVALID_TIMESTAMP`: Timestamp is not a valid ISO 8601 UTC string ending in `Z`.
+  - `FINDING_MISSING_REQUIRED_KEY`: Finding is missing `id`, `path`, `line`, `message`, or `severity`.
+  - `INVALID_SEVERITY`: Finding severity is not one of `info`, `warning`, `error`.
+  - `SERVICE_TOOL_RESULT_PROHIBITED`: A service-kind operation (e.g. MCP protocol handler) attempted to return a wrapped `ToolResultV1`.

@@ -31,6 +31,11 @@ The assistant does not gain a working model review through Rush: default review 
 - **Fail-Safe Diagnostics**: Diagnostic errors emitted to `sys.stderr` are serialized as structured NDJSON records with fully formatted, credential-redacted stack traces. If formatting encounters an error, a structured fallback line is written so diagnostics never silently vanish.
 - **Recursive Response Sanitization**: All `ToolResult` dictionaries and MCP responses are sanitized via `sanitize_value`, ensuring that secrets and API keys are redacted from both values and nested keys.
 
+## Operation Taxonomy & Schema Kernel Integration (Phase 54)
+- **Tool Operation Separation**: Tool operations (`kind = "tool"`, e.g. `rush_lint`, `rush_security`) return validated `ToolResultV1` structures compliant with schema version `1.0.0`.
+- **Protocol Frame Integrity**: Service and protocol-level operations (`kind = "service"`, e.g. `mcp.initialize`, `mcp.ping`, `mcp.list_tools`) return raw protocol frames without `ToolResultV1` wrapping. `ServiceOperationAdapter` enforces this separation fail-closed.
+- **Admin Operation Routing**: Admin commands (`kind = "admin"`, e.g. cache purges, info queries) return typed operation envelopes or direct status payloads.
+
 ## Next
 
 Use [client setup](integrations/mcp-client-setup.md) and the [tool reference](reference/mcp-tool-reference.md).

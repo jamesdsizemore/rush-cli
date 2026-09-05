@@ -137,3 +137,11 @@ Over time, projects accumulate helper functions, classes, and dependencies that 
 ## License & IAM Auditing
 * `rush license-matrix`: Classify dependency licenses.
 * `rush iam-audit`: Generate cloud access policies.
+
+## Finding Severities & Schema (Phase 54)
+Every Rush tool returns structured findings with canonical severity levels:
+- **`info`**: Informational notices, clean suggestions, or non-blocking tips.
+- **`warning`**: Style inconsistencies, potential performance bottlenecks, or mild code smells.
+- **`error`**: Syntax errors, security vulnerabilities, breaking type mismatches, or failed tests.
+
+All outputs conform to the canonical `ToolResultV1` schema specification.

@@ -69,7 +69,28 @@ A finding always has path, line, rule, severity, and message values after normal
 
 ## Status versus finding severity
 
-Result status describes the whole operation. Finding severity (`info`, `warn`, `error`) describes one record. An advisory review can return `warn` while containing informational findings.
+Result status describes the whole operation (`ok`, `warn`, `fail`, `error`, `skipped`). Finding severity describes one issue.
+
+In legacy TypedDicts, severities were `"info"`, `"warn"`, `"error"`. Under **Phase 54 (`rush.contracts.results:FindingV1`)**, canonical severities are strictly:
+- `info`: informational diagnostic
+- `warning`: advisory rule or style issue (replaces `warn`)
+- `error`: functional, security, or build failure (subsumes `fail`)
+
+### Legacy Severity Mapping Table
+| Legacy Raw Severity | Canonical `FindingV1` Severity | Action |
+|---|---|---|
+| `"info"` | `"info"` | Identity |
+| `"warn"` | `"warning"` | Canonical mapping |
+| `"warning"` | `"warning"` | Identity |
+| `"error"` | `"error"` | Identity |
+| `"fail"` | `"error"` | Canonical mapping |
+| Unknown / unmappable | *None* | Raises `ValidationErrorV1(code="INVALID_SEVERITY")` (Zero silent coercion) |
+
+### ToolResultV1 Schema Version & Extension Boundary
+`ToolResultV1` strictly requires:
+- `schema_version: "1.0.0"`
+- Unknown top-level keys are rejected with `ValidationErrorV1(code="UNKNOWN_TOP_LEVEL_KEY")`.
+- Non-core fields (`metrics`, `artifacts`, `metadata`, `review_kind`, `review_provider`) reside within `extensions: dict[str, Any]`.
 
 ## Phase 50a Result Shapes
 

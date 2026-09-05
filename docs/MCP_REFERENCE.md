@@ -125,9 +125,10 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 
 ---
 
-## FastMCP Route Reconciliation & Governance (Phase 51: RM-P0-02)
+## FastMCP Route Reconciliation & Governance (Phase 51 & Phase 54)
 
-All 73 FastMCP registered tools are cataloged in `governance/public-operations.toml`:
-- Each catalog tool is registered dynamically with snake_case normalization pointing to canonical implementations in `src/rush/tools/`.
-- Safe probes are provided via MCP protocol list/schema requests (`mcp:inspect:<name>`).
-- Transport invariant: stdio stdout is strictly JSON-RPC; all logs and diagnostics belong on stderr.
+All 73 FastMCP registered tools and 17 service operations are cataloged in `governance/public-operations.toml` and bound to runtime adapters in `rush.contracts.operations`:
+- **Tool Operation Responses**: FastMCP tool executions return canonical `ToolResultV1` JSON (`schema_version: "1.0.0"`), validated through `ToolOperationAdapter`.
+- **Service Protocol Invariant**: Core MCP service protocol methods (`initialize`, `tools/list`, `ping`) return unwrapped protocol frames, managed by `ServiceOperationAdapter`, and are strictly never wrapped in `ToolResultV1`.
+- **Sanitization Invariant**: Output sanitization via Phase 53 strictly precedes schema serialization, guaranteeing that MCP responses never leak secrets to agent clients.
+- **Transport Invariant**: stdio stdout is strictly JSON-RPC; all logs and diagnostics belong on stderr.

@@ -64,3 +64,15 @@ Before finalizing any release candidate:
    pytest tests/test_phase53_logging_diagnostics.py -v
    ```
 3. Confirm `governance/remediation-phase-53.toml` status is `completed` and R-002 and R-008 in `governance/remediation-contracts.toml` are marked `completed`.
+
+## Pre-Release Tool Result Schema & Operation Probes (Phase 54: Finding R-011 Closed)
+Before finalizing any release candidate:
+1. Verify ToolResultV1 schema kernel and operation adapter contract suites:
+   ```bash
+   pytest tests/test_phase54_result_schema.py tests/test_phase54_operation_adapters.py -v
+   ```
+2. Confirm 100% operation reconciliation (146 operations) across Click leaves and FastMCP routes:
+   ```bash
+   pytest tests/test_phase51_public_operations.py -v
+   ```
+3. Confirm `governance/remediation-phase-54.toml` status is `completed` and R-011 in `governance/remediation-contracts.toml` is marked `completed`.

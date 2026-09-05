@@ -28,4 +28,15 @@ If a breaking change is unavoidable:
 - **Distribution Metadata Resolution**: `rush.__version__` resolves dynamically via `importlib.metadata.version("rush-cli")`. When running uninstalled, it falls back to `"0.3.0"`.
 - **Strict Root Namespace**: All internal imports across `src/` and `tests/` must use canonical `rush` or relative imports. `src.rush` imports are strictly prohibited.
 
+---
+
+## 4. Result Schema Evolution & Compatibility (Phase 54)
+
+- **Schema Version Header**: Every serialized tool result includes `schema_version = "1.0.0"`. SemVer rules apply to schema changes:
+  - Patch updates: Non-breaking metadata additions.
+  - Minor updates: Optional additive fields.
+  - Major updates: Field deprecation, name changes, or structural alterations.
+- **Legacy Adapter Compatibility**: The schema kernel provides backward compatibility through `adapt_legacy_tool_result()` and `adapt_legacy_finding()`. Legacy severities (`notice`, `suggestion`, `fatal`) map deterministically to canonical levels (`info`, `warning`, `error`).
+- **Standard Library Invariant**: Schema models are implemented in pure standard library dataclasses (`src/rush/contracts/results.py`) without external schema dependencies (e.g. Pydantic).
+
 See [Versioning Policy](../VERSIONING.md) and [Release Process](../developer/release-process.md).

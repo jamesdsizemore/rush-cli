@@ -90,6 +90,31 @@ class Finding(TypedDict):
 
 ---
 
+## 1.1 Contracts Kernel (`src/rush/contracts/`)
+
+Phase 54 introduces the immutable contract types in `rush.contracts`, providing standard library schema definitions, validation, and adapter boundaries:
+
+### Result Contracts (`src/rush/contracts/results.py`)
+
+- **`ToolResultV1`**: Frozen dataclass enforcing `schema_version = "1.0.0"`, status vocabulary (`"ok"`, `"warn"`, `"fail"`, `"error"`, `"skipped"`), `duration_ms >= 0`, `findings: list[FindingV1]`, and namespaced `extensions: dict[str, Any]`.
+- **`FindingV1`**: Frozen dataclass enforcing canonical severities (`"info"`, `"warning"`, `"error"`), non-negative line/column, 64-character hex fingerprint, and namespaced `extensions`.
+- **`ValidationErrorV1(Exception)`**: Structured exception holding `code`, `message`, `path`, and `invalid_value`. Canonical codes include `MISSING_REQUIRED_FIELD`, `UNKNOWN_TOP_LEVEL_KEY`, `INVALID_STATUS`, `INVALID_SEVERITY`, `INVALID_SCHEMA_VERSION`, `INVALID_TYPE`, `NON_JSON_SAFE_VALUE`.
+- **`validate_tool_result(data: Any) -> ToolResultV1`**: Strict validator rejecting unknown top-level keys and invalid values.
+- **`validate_finding(data: Any, path_prefix: str) -> FindingV1`**: Validates finding structures against `FindingV1`.
+- **`serialize_tool_result(result: ToolResultV1 | dict[str, Any]) -> str`**: Sanitizes via Phase 53 `sanitize_value`, validates via `validate_tool_result`, and encodes deterministically using sorted keys and compact separators `(',', ':')`.
+- **`adapt_legacy_finding(legacy: dict[str, Any]) -> FindingV1`**: Converts legacy findings, strictly mapping `"warn"` -> `"warning"` and `"fail"` -> `"error"`, synthesizing missing fingerprints, and routing unrecognized keys to `extensions`.
+- **`adapt_legacy_tool_result(legacy: dict[str, Any]) -> ToolResultV1`**: Adapts legacy `ToolResult` dictionaries into `ToolResultV1` with `schema_version = "1.0.0"`.
+
+### Operation Adapters (`src/rush/contracts/operations.py`)
+
+- **`BaseOperationAdapter`**: Abstract base defining `operation_id`, `kind: Literal["tool", "admin", "service"]`, `target_contract_id`, and abstract `validate_output(output)`.
+- **`ToolOperationAdapter`**: Binds `kind = "tool"` operations to `ToolResultV1`.
+- **`AdminOperationAdapter`**: Binds `kind = "admin"` operations to named admin contracts (such as integer exit codes or admin payload dictionaries).
+- **`ServiceOperationAdapter`**: Binds `kind = "service"` operations to protocol frames, strictly rejecting `ToolResultV1` wrapping on stdio JSON-RPC frames (`initialize`, `tools/list`).
+- **`OperationRegistry`**: Central registry that reconciles 100% of the 146 operations from `governance/public-operations.toml`.
+
+---
+
 ## 2. Engine Adapter Contract (`src/rush/engines/base.py`)
 
 ### `Engine`

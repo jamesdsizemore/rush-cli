@@ -39,3 +39,11 @@ Rush enforces end-to-end recursive sanitization across all data boundaries:
 3. **Loss-Visible Key Collisions**: Colliding redacted dictionary keys are preserved deterministically via suffixing rather than discarded, preventing silent state corruption while logging collision metadata.
 4. **Clean Persistent State**: Audit logs, SQLite patch memory, session flight logs, preferences, and generated artifacts (SARIF, HTML, in-toto statements, IAM policies) are sanitized before writing to disk.
 5. **Redacted Diagnostics**: Stderr NDJSON logs redact secrets from both log messages and full exception tracebacks, ensuring diagnostic clarity without credential exposure.
+
+---
+
+## 4. Schema Normalization & Operation Boundary Privacy (Phase 54)
+
+1. **Sanitization-First Serialization**: In Phase 54, `serialize_tool_result()` executes secret sanitization (Phase 53) before structural schema validation, preventing un-sanitized data from ever reaching serialized envelopes.
+2. **Canonical Finding Normalization**: Findings are coerced into immutable `FindingV1` records with normalized file paths, line coordinates, and standardized severity levels (`info`, `warning`, `error`), scrubbing unpredictable engine error fields.
+3. **Service Protocol Separation**: Service operations (like MCP connection initialization) run through isolated `ServiceOperationAdapter` layers, ensuring raw communication frames remain separate from tool result data.
