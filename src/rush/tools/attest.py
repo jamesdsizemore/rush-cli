@@ -26,10 +26,7 @@ class AttestationTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Generate in-toto Statement v1 SLSA provenance draft for build artifacts. "
-            "Exporting requires explicit artifact_write permission."
-        )
+        return "Generate in-toto Statement v1 SLSA provenance unsigned draft for build artifacts."
 
     def __call__(
         self,
@@ -108,16 +105,15 @@ class AttestationTool(ToolFn):
                     f
                     for f in dist_dir.iterdir()
                     if f.is_file()
-                    and (
-                        f.suffix in (".whl", ".zip", ".tar", ".gz")
-                        or f.name.endswith(".tar.gz")
-                    )
+                    and (f.name.endswith(".whl") or f.name.endswith(".tar.gz"))
                 ]
                 if dist_dir.is_dir()
                 else []
             )
             if dist_files:
-                dist_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                dist_files.sort(
+                    key=lambda f: (0 if f.name.endswith(".whl") else 1, f.name)
+                )
                 target_art = dist_files[0]
                 subject_name = target_art.name
                 subject_digest = hashlib.sha256(target_art.read_bytes()).hexdigest()
@@ -184,6 +180,9 @@ class AttestationTool(ToolFn):
                 },
             },
         }
+        from rush.safety.redactor import sanitize_value
+
+        clean_statement = sanitize_value(statement).value
 
         artifacts: list[str] = []
         if output_path:
@@ -206,9 +205,6 @@ class AttestationTool(ToolFn):
                     },
                 )
             try:
-                from rush.safety.redactor import sanitize_value
-
-                clean_statement = sanitize_value(statement).value
                 data_bytes = json.dumps(clean_statement, indent=2).encode("utf-8")
                 written = atomic_write_bytes(target_dir, output_path, data_bytes)
                 artifacts.append(str(written))
@@ -233,11 +229,16 @@ class AttestationTool(ToolFn):
             engine_version=None,
             status="ok",
             duration_ms=elapsed_ms(start),
-            summary=f"Generated in-toto v1 SLSA Provenance v1 draft statement for {subject_name}",
+            summary=f"Generated unsigned in-toto v1 SLSA Provenance v1 draft statement for {subject_name}",
             findings=[],
-            raw=statement,
+            raw=clean_statement,
             artifacts=artifacts,
-            metadata={"statement": statement, "execution": exec_meta},
+            metadata={
+                "statement": clean_statement,
+                "is_signed": False,
+                "assurance": "unsigned_draft",
+                "execution": exec_meta,
+            },
         )
 
 

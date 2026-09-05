@@ -1,0 +1,36 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "rush-0.3.0-py3-none-any.whl",
+      "digest": {
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://rush-cli.org/build/draft/v1",
+      "externalParameters": {
+        "sourceUri": "https://github.com/rush-cli/rush",
+        "commit": "0000000000000000000000000000000000000000",
+        "entryPoint": "rush attest"
+      },
+      "internalParameters": {
+        "builderId": "https://rush-cli.org/builder/v1"
+      }
+    },
+    "runDetails": {
+      "builder": {
+        "id": "https://rush-cli.org/builder/v1"
+      },
+      "metadata": {
+        "invocationId": "rush-draft-fixture",
+        "startedOn": "2026-09-05T00:00:00Z",
+        "finishedOn": "2026-09-05T00:00:00Z",
+        "assurance": "unsigned_draft"
+      }
+    }
+  }
+}
