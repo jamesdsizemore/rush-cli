@@ -262,3 +262,46 @@ def test_review_facade_meets_c901_threshold() -> None:
     assert "All checks passed!" in proc.stdout, (
         f"Expected clean pass, got:\n{proc.stdout}"
     )
+
+
+def test_runtime_modules_meet_c901_threshold() -> None:
+    """T-60.21: Verify runtime modules and common.py facade comply with McCabe C901 <= 10."""
+    import shutil
+    import subprocess
+    import sys
+
+    assert (PROJECT_ROOT / "src" / "rush" / "runtime").is_dir(), (
+        "src/rush/runtime directory does not exist"
+    )
+
+    ruff_path = (
+        PROJECT_ROOT
+        / ".venv"
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / ("ruff.exe" if sys.platform == "win32" else "ruff")
+    )
+    ruff_cmd = str(ruff_path) if ruff_path.exists() else shutil.which("ruff")
+    assert ruff_cmd, "ruff executable not found"
+
+    cmd = [
+        ruff_cmd,
+        "check",
+        "--select",
+        "C901",
+        "--config",
+        "lint.mccabe.max-complexity = 10",
+        "--output-format",
+        "concise",
+        "src/rush/runtime",
+        "src/rush/tools/common.py",
+    ]
+    proc = subprocess.run(
+        cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"Ruff C901 check failed (returncode={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert "C901" not in proc.stdout, f"Expected 0 findings, got:\n{proc.stdout}"
+    assert "All checks passed!" in proc.stdout, (
+        f"Expected clean pass, got:\n{proc.stdout}"
+    )

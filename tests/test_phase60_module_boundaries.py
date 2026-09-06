@@ -218,3 +218,87 @@ def test_review_modules_own_exact_symbols() -> None:
     assert results.assemble_review_result.__module__ == "rush.review.results", (
         "assemble_review_result not defined in rush.review.results"
     )
+
+
+def test_runtime_modules_own_exact_symbols() -> None:
+    """T-60.15: Runtime modules own binaries, subprocesses, and result_helpers directly."""
+    from rush.runtime import binaries, result_helpers, subprocesses
+
+    for sym in (
+        "_venv_scripts_dir",
+        "_resolve_binary_cached",
+        "clear_binary_cache",
+        "resolve_binary",
+        "engine_on_path",
+    ):
+        assert hasattr(binaries, sym), f"{sym} missing from rush.runtime.binaries"
+        fn = getattr(binaries, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.runtime.binaries", (
+            f"{sym} not defined in rush.runtime.binaries"
+        )
+
+    for sym in (
+        "_bounded_redacted_output",
+        "run_subprocess",
+        "run_engine",
+        "_install_hint",
+    ):
+        assert hasattr(subprocesses, sym), (
+            f"{sym} missing from rush.runtime.subprocesses"
+        )
+        fn = getattr(subprocesses, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.runtime.subprocesses", (
+            f"{sym} not defined in rush.runtime.subprocesses"
+        )
+
+    for sym in (
+        "skipped_result",
+        "error_result",
+        "_redact_finding_message",
+        "finding_fingerprint",
+        "normalize_findings",
+        "exit_code_for",
+        "now_ms",
+        "elapsed_ms",
+    ):
+        assert hasattr(result_helpers, sym), (
+            f"{sym} missing from rush.runtime.result_helpers"
+        )
+        fn = getattr(result_helpers, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.runtime.result_helpers", (
+            f"{sym} not defined in rush.runtime.result_helpers"
+        )
+
+
+def test_common_is_compatibility_reexport_without_duplicate_definitions() -> None:
+    """T-60.16: common.py is a pure compatibility re-export facade with zero duplicate definitions."""
+    import ast
+    from pathlib import Path
+
+    import rush.runtime.binaries
+    import rush.runtime.result_helpers
+    import rush.runtime.subprocesses
+    import rush.tools.common
+
+    common_file = Path(rush.tools.common.__file__).resolve()
+    tree = ast.parse(common_file.read_text(encoding="utf-8"))
+
+    for node in ast.walk(tree):
+        assert not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)), (
+            f"Found forbidden function definition '{node.name}' in rush.tools.common"
+        )
+        assert not isinstance(node, ast.ClassDef), (
+            f"Found forbidden class definition '{node.name}' in rush.tools.common"
+        )
+
+    assert rush.tools.common.resolve_binary is rush.runtime.binaries.resolve_binary
+    assert rush.tools.common.run_subprocess is rush.runtime.subprocesses.run_subprocess
+    assert rush.tools.common.run_engine is rush.runtime.subprocesses.run_engine
+    assert (
+        rush.tools.common.skipped_result is rush.runtime.result_helpers.skipped_result
+    )
+    assert rush.tools.common.error_result is rush.runtime.result_helpers.error_result
+    assert rush.tools.common.exit_code_for is rush.runtime.result_helpers.exit_code_for

@@ -1,25 +1,19 @@
-"""Subprocess runner + engine discovery.
-
-Architecture §4.4 — enforces requirement C10 (engine discovery, never hard-fail).
-Backwards-compatibility re-export facade for rush.runtime.
-"""
+"""Rush runtime boundary primitives (binaries, subprocesses, results, filesystem)."""
 
 from __future__ import annotations
 
-import subprocess
-
-from ..runtime.binaries import (
+from .binaries import (
     _resolve_binary_cached,
     _venv_scripts_dir,
     clear_binary_cache,
     engine_on_path,
     resolve_binary,
 )
-from ..runtime.filesystem import (
+from .filesystem import (
     atomic_write_bytes,
     resolve_contained_output,
 )
-from ..runtime.result_helpers import (
+from .result_helpers import (
     _redact_finding_message,
     elapsed_ms,
     error_result,
@@ -29,19 +23,16 @@ from ..runtime.result_helpers import (
     now_ms,
     skipped_result,
 )
-from ..runtime.subprocesses import (
+from .subprocesses import (
     MAX_SUBPROCESS_OUTPUT_CHARS,
     _bounded_redacted_output,
     _install_hint,
     run_engine,
     run_subprocess,
 )
-from .base import Finding, ToolResult
 
 __all__ = [
     "MAX_SUBPROCESS_OUTPUT_CHARS",
-    "Finding",
-    "ToolResult",
     "_bounded_redacted_output",
     "_install_hint",
     "_redact_finding_message",
@@ -61,5 +52,4 @@ __all__ = [
     "run_engine",
     "run_subprocess",
     "skipped_result",
-    "subprocess",
 ]
