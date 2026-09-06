@@ -73,3 +73,60 @@ def test_mcp_support_modules_own_exact_symbols() -> None:
         assert fn.__module__ == "rush.mcp_support.tool_registry", (
             f"{sym} not defined in tool_registry"
         )
+
+
+def test_continuity_modules_own_exact_symbols() -> None:
+    """T-60.13: Continuity submodules own context, coordination, providers, and receipts operations directly."""
+    from rush.continuity import context, coordination, providers, receipts
+
+    # Context operations
+    for sym_options in (
+        ("pack_context", "_context_pack"),
+        ("retrieve_context", "_context_retrieve"),
+    ):
+        found_fn = None
+        for sym in sym_options:
+            if hasattr(context, sym):
+                found_fn = getattr(context, sym)
+                break
+        assert found_fn is not None, (
+            f"Neither {' or '.join(sym_options)} found in context"
+        )
+        assert callable(found_fn), f"{found_fn} is not callable"
+        assert found_fn.__module__ == "rush.continuity.context", (
+            f"{found_fn} not defined in rush.continuity.context"
+        )
+
+    # Coordination operations
+    for sym in ("check_coordination", "preview_merge", "recover_coordination"):
+        assert hasattr(coordination, sym), f"{sym} missing from coordination"
+        fn = getattr(coordination, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.continuity.coordination", (
+            f"{sym} not defined in rush.continuity.coordination"
+        )
+
+    # Provider operations
+    for sym in (
+        "resume_provider",
+        "resume_omniroute",
+        "provider_handoff",
+        "windows_cmd_command",
+        "provider_command",
+        "provider_prompt",
+    ):
+        assert hasattr(providers, sym), f"{sym} missing from providers"
+        fn = getattr(providers, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.continuity.providers", (
+            f"{sym} not defined in rush.continuity.providers"
+        )
+
+    # Receipts operations
+    for sym in ("save_receipt", "restore_receipt"):
+        assert hasattr(receipts, sym), f"{sym} missing from receipts"
+        fn = getattr(receipts, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.continuity.receipts", (
+            f"{sym} not defined in rush.continuity.receipts"
+        )

@@ -3,33 +3,37 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-import shutil
-import sqlite3
-import subprocess
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
-from ..codegraph.context_packer import ContextPacker
-from ..contracts.results import ToolResultV1, adapt_legacy_tool_result
-from ..mcp_mesh.lock_manager import MeshLockManager
+from ..continuity.context import pack_context, retrieve_context
+from ..continuity.coordination import (
+    check_coordination,
+    preview_merge,
+    recover_coordination,
+)
+from ..continuity.providers import (
+    provider_command,
+    provider_handoff,
+    provider_prompt,
+    resume_omniroute,
+    resume_provider,
+    windows_cmd_command,
+)
+from ..continuity.receipts import restore_receipt, save_receipt
+from ..continuity.results import (
+    ContinuityResult,
+    build_continuity_result,
+    valid_name,
+)
+from ..contracts.results import ToolResultV1
 from ..memory.checkpoint_journal import CheckpointJournal
-from ..memory.failure_ledger import FailureLedger
-from ..memory.merkle_invalidator import MerkleInvalidator
-from ..memory.mistake_miner import MistakeMiner
 from ..permissions import (
     ExecutionPermissions,
-    build_execution_metadata,
     check_permissions,
 )
-from ..safety.redactor import SecretRedactor
-from ..token_economy.ccr_store import CCRStore
-from ..tools.flight_recorder import FlightRecorder
 from .base import Finding, ToolFn, ToolResult
 
 SessionOperation = Literal[
@@ -45,12 +49,23 @@ SessionOperation = Literal[
 ]
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
 
+VALID_OPERATIONS = {
+    "save",
+    "list",
+    "restore",
+    "context_pack",
+    "context_retrieve",
+    "coordination_check",
+    "coordination_merge_preview",
+    "coordination_recovery",
+    "provider_resume",
+}
 
-class ContinuityResult(dict):
-    """ToolResult dictionary conforming to ToolResultV1 contract via to_tool_result_v1."""
-
-    def to_tool_result_v1(self) -> ToolResultV1:
-        return adapt_legacy_tool_result(self)
+__all__ = [
+    "ContinuityResult",
+    "SessionContinuityTool",
+    "os",
+]
 
 
 class SessionContinuityTool(ToolFn):
@@ -153,17 +168,7 @@ class SessionContinuityTool(ToolFn):
         root = path.resolve()
         granted = permissions or ExecutionPermissions()
 
-        if operation not in {
-            "save",
-            "list",
-            "restore",
-            "context_pack",
-            "context_retrieve",
-            "coordination_check",
-            "coordination_merge_preview",
-            "coordination_recovery",
-            "provider_resume",
-        }:
+        if operation not in VALID_OPERATIONS:
             return self._result(
                 started,
                 "error",
@@ -172,126 +177,163 @@ class SessionContinuityTool(ToolFn):
                 granted=granted,
             )
 
-        if operation == "context_pack":
-            return self._context_pack(
+        dispatch_table = {
+            "context_pack": lambda: self._context_pack(
                 started, root, context_path, target_symbol, token_budget, granted
-            )
-        if operation == "context_retrieve":
-            return self._context_retrieve(started, root, context_handle, granted)
-        if operation == "coordination_check":
-            return self._coordination_check(
+            ),
+            "context_retrieve": lambda: self._context_retrieve(
+                started, root, context_handle, granted
+            ),
+            "coordination_check": lambda: self._coordination_check(
                 started,
                 root,
                 coordination_path,
                 agent_id,
                 coordination_max_age_s,
                 granted,
-            )
-        if operation == "coordination_merge_preview":
-            return self._coordination_merge_preview(
+            ),
+            "coordination_merge_preview": lambda: self._coordination_merge_preview(
                 started, base_code, ours_code, theirs_code, granted
-            )
-        if operation == "coordination_recovery":
-            return self._coordination_recovery(
+            ),
+            "coordination_recovery": lambda: self._coordination_recovery(
                 started,
                 root,
                 flight_session_id,
                 failure_fingerprint or (handoff or {}).get("failure_fingerprint"),
                 granted,
-            )
-        if operation == "provider_resume":
-            return self._provider_resume(started, root, name, provider_id, granted)
+            ),
+            "provider_resume": lambda: self._provider_resume(
+                started, root, name, provider_id, granted
+            ),
+            "save": lambda: self._run_save(
+                started, root, name, files, handoff, granted
+            ),
+            "list": lambda: self._run_list(started, root, granted),
+            "restore": lambda: self._run_restore(started, root, name, granted),
+        }
+        return dispatch_table[operation]()
 
-        if operation in {"save", "restore"} and not self._valid_name(name):
+    def _run_save(
+        self,
+        started: float,
+        root: Path,
+        name: str | None,
+        files: list[str] | None,
+        handoff: dict[str, Any] | None,
+        granted: ExecutionPermissions,
+    ) -> ToolResult | ToolResultV1:
+        if not self._valid_name(name):
             return self._result(
                 started,
                 "error",
                 "Session checkpoint names must be a single filename.",
-                operation=operation,
+                operation="save",
                 granted=granted,
             )
-
-        if operation == "save":
-            allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
-            if not allowed:
-                return self._result(
-                    started,
-                    "skipped",
-                    f"Session save requires {', '.join(missing)}.",
-                    operation=operation,
-                    granted=granted,
-                    requested=_WRITE_PERMISSION,
-                )
-            handoff_receipt = self._save_handoff_receipt(root, handoff or {})
-            journal = CheckpointJournal(root)
-            checkpoint = journal.save_checkpoint(
-                name or "",
-                {"cwd": str(root), "handoff": handoff_receipt},
-                list(files or []),
-            )
-            data = journal.restore_checkpoint(name or "")
+        allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
+        if not allowed:
             return self._result(
                 started,
-                "ok",
-                f"Saved session checkpoint '{name}'.",
-                operation=operation,
+                "skipped",
+                f"Session save requires {', '.join(missing)}.",
+                operation="save",
                 granted=granted,
                 requested=_WRITE_PERMISSION,
-                raw=data,
-                artifacts=[str(checkpoint)],
-                handoff=handoff_receipt,
             )
+        handoff_receipt = self._save_handoff_receipt(root, handoff or {})
+        journal = CheckpointJournal(root)
+        checkpoint = journal.save_checkpoint(
+            name or "",
+            {"cwd": str(root), "handoff": handoff_receipt},
+            list(files or []),
+        )
+        data = journal.restore_checkpoint(name or "")
+        return self._result(
+            started,
+            "ok",
+            f"Saved session checkpoint '{name}'.",
+            operation="save",
+            granted=granted,
+            requested=_WRITE_PERMISSION,
+            raw=data,
+            artifacts=[str(checkpoint)],
+            handoff=handoff_receipt,
+        )
 
+    def _run_list(
+        self,
+        started: float,
+        root: Path,
+        granted: ExecutionPermissions,
+    ) -> ToolResult | ToolResultV1:
         session_dir = root / ".rush" / "sessions"
-        if operation == "list":
-            sessions = (
-                CheckpointJournal(root).list_checkpoints()
-                if session_dir.exists()
-                else []
-            )
-            corrupt_count = sum(1 for s in sessions if s.get("status") == "corrupt")
-            findings: list[Finding] = []
-            for s in sessions:
-                if s.get("status") == "corrupt":
-                    cid = s.get("checkpoint_id") or s.get("name") or "unknown"
-                    digest = str(s.get("raw_bytes_digest") or "")
-                    findings.append(
-                        {
-                            "path": f".rush/sessions/{cid}.json",
-                            "line": 0,
-                            "column": 0,
-                            "rule": "corrupt_checkpoint_journal",
-                            "rule_id": "CORRUPT_CHECKPOINT_JOURNAL",
-                            "severity": "warn",
-                            "message": f"Corrupt checkpoint journal entry '{cid}': {s.get('error_message', 'invalid JSON')}",
-                            "fingerprint": digest
+        sessions = (
+            CheckpointJournal(root).list_checkpoints() if session_dir.exists() else []
+        )
+        corrupt_count = sum(1 for s in sessions if s.get("status") == "corrupt")
+        findings: list[Finding] = []
+        for s in sessions:
+            if s.get("status") == "corrupt":
+                cid = s.get("checkpoint_id") or s.get("name") or "unknown"
+                digest = str(s.get("raw_bytes_digest") or "")
+                findings.append(
+                    {
+                        "path": f".rush/sessions/{cid}.json",
+                        "line": 0,
+                        "column": 0,
+                        "rule": "corrupt_checkpoint_journal",
+                        "rule_id": "CORRUPT_CHECKPOINT_JOURNAL",
+                        "severity": "warn",
+                        "message": (
+                            f"Corrupt checkpoint journal entry '{cid}': "
+                            f"{s.get('error_message', 'invalid JSON')}"
+                        ),
+                        "fingerprint": (
+                            digest
                             if len(digest) == 64
-                            else hashlib.sha256(cid.encode("utf-8")).hexdigest(),
-                            "evidence": digest,
-                        }
-                    )
-            summary = (
-                f"Listed {len(sessions)} session checkpoint(s)."
-                if corrupt_count == 0
-                else f"Listed {len(sessions)} session checkpoint(s) ({corrupt_count} corrupt)."
-            )
-            list_status: Literal["ok", "warn"] = "warn" if corrupt_count > 0 else "ok"
+                            else hashlib.sha256(cid.encode("utf-8")).hexdigest()
+                        ),
+                        "evidence": digest,
+                    }
+                )
+        summary = (
+            f"Listed {len(sessions)} session checkpoint(s)."
+            if corrupt_count == 0
+            else f"Listed {len(sessions)} session checkpoint(s) ({corrupt_count} corrupt)."
+        )
+        list_status: Literal["ok", "warn"] = "warn" if corrupt_count > 0 else "ok"
+        return self._result(
+            started,
+            list_status,
+            summary,
+            operation="list",
+            granted=granted,
+            raw=sessions,
+            findings=findings,
+        )
+
+    def _run_restore(
+        self,
+        started: float,
+        root: Path,
+        name: str | None,
+        granted: ExecutionPermissions,
+    ) -> ToolResult | ToolResultV1:
+        if not self._valid_name(name):
             return self._result(
                 started,
-                list_status,
-                summary,
-                operation=operation,
+                "error",
+                "Session checkpoint names must be a single filename.",
+                operation="restore",
                 granted=granted,
-                raw=sessions,
-                findings=findings,
             )
-
+        session_dir = root / ".rush" / "sessions"
         if not session_dir.exists():
             return self._result(
                 started,
                 "skipped",
                 f"Session checkpoint '{name}' was not found.",
-                operation=operation,
+                operation="restore",
                 granted=granted,
             )
         session_file = session_dir / f"{name}.json"
@@ -300,7 +342,7 @@ class SessionContinuityTool(ToolFn):
                 started,
                 "skipped",
                 f"Session checkpoint '{name}' was not found.",
-                operation=operation,
+                operation="restore",
                 granted=granted,
             )
         data = CheckpointJournal(root).restore_checkpoint(name or "")
@@ -314,7 +356,7 @@ class SessionContinuityTool(ToolFn):
                 started,
                 "error",
                 f"Session checkpoint '{name}' is corrupt or unreadable.",
-                operation=operation,
+                operation="restore",
                 granted=granted,
                 findings=[
                     {
@@ -325,9 +367,13 @@ class SessionContinuityTool(ToolFn):
                         "rule_id": "CORRUPT_CHECKPOINT_JOURNAL",
                         "severity": "error",
                         "message": f"Corrupt checkpoint journal '{name}' cannot be restored",
-                        "fingerprint": digest
-                        if len(digest) == 64
-                        else hashlib.sha256((name or "").encode("utf-8")).hexdigest(),
+                        "fingerprint": (
+                            digest
+                            if len(digest) == 64
+                            else hashlib.sha256(
+                                (name or "").encode("utf-8")
+                            ).hexdigest()
+                        ),
                         "evidence": digest,
                     }
                 ],
@@ -337,7 +383,7 @@ class SessionContinuityTool(ToolFn):
             started,
             "ok",
             f"Restored session checkpoint '{name}'.",
-            operation=operation,
+            operation="restore",
             granted=granted,
             raw=data,
             handoff=handoff_receipt,
@@ -351,106 +397,15 @@ class SessionContinuityTool(ToolFn):
         target_symbol: str,
         token_budget: int,
         granted: ExecutionPermissions,
-    ) -> ToolResult:
-        if not context_path or token_budget < 1:
-            return self._result(
-                started,
-                "error",
-                "Context pack requires a repository-relative path and positive token budget.",
-                operation="context_pack",
-                granted=granted,
-            )
-        target = (project_root / context_path).resolve()
-        if project_root not in target.parents or not target.is_file():
-            return self._result(
-                started,
-                "skipped",
-                "Context target was not found inside the project.",
-                operation="context_pack",
-                granted=granted,
-            )
-        packed = ContextPacker(project_root).pack(
-            target, target_symbol=target_symbol, max_tokens=1_000_000
-        )
-        estimated = int(packed.get("tokens", 0))
-        selected_evidence = [{"path": context_path, "selection": "target_file"}]
-        if estimated > token_budget:
-            allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
-            if not allowed:
-                envelope = {
-                    "selected_evidence": selected_evidence,
-                    "tokens": {
-                        "estimated": estimated,
-                        "actual": None,
-                        "budget": token_budget,
-                    },
-                    "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
-                    "recovery": {
-                        "state": "not_created",
-                        "reason": "cache_write_required",
-                    },
-                    "telemetry": {
-                        "state": "not_recorded",
-                        "reason": "cache_write_required",
-                        "provider_cost": None,
-                    },
-                    "redaction_count": 0,
-                }
-                return self._result(
-                    started,
-                    "skipped",
-                    f"Context recovery requires {', '.join(missing)}.",
-                    operation="context_pack",
-                    granted=granted,
-                    requested=_WRITE_PERMISSION,
-                    context_envelope=envelope,
-                )
-            safe_packed, redactions = SecretRedactor.redact_value(packed)
-            tag = CCRStore(project_root).store_chunk(
-                json.dumps(safe_packed, sort_keys=True, default=str)
-            )
-            handle = tag.removeprefix("<!-- ccr:chunk:").removesuffix(" -->")
-            envelope = {
-                "selected_evidence": selected_evidence,
-                "tokens": {
-                    "estimated": estimated,
-                    "actual": None,
-                    "budget": token_budget,
-                },
-                "omissions": [{"reason": "insufficient_budget", "mandatory": True}],
-                "recovery": {"state": "available", "handle": handle},
-                "telemetry": {
-                    "state": "not_measured",
-                    "reason": "omitted_context_not_delivered",
-                    "provider_cost": None,
-                },
-                "redaction_count": redactions,
-            }
-            return self._result(
-                started,
-                "skipped",
-                "Context pack requires a larger token budget.",
-                operation="context_pack",
-                granted=granted,
-                requested=_WRITE_PERMISSION,
-                context_envelope=envelope,
-            )
-        safe_packed, redactions = SecretRedactor.redact_value(packed)
-        envelope = {
-            "selected_evidence": selected_evidence,
-            "tokens": {"estimated": estimated, "actual": None, "budget": token_budget},
-            "omissions": [],
-            "recovery": {"state": "not_needed"},
-            "redaction_count": redactions,
-        }
-        return self._result(
+    ) -> ToolResult | ToolResultV1:
+        return pack_context(
             started,
-            "ok",
-            "Packed bounded context evidence.",
-            operation="context_pack",
-            granted=granted,
-            raw=safe_packed,
-            context_envelope=envelope,
+            project_root,
+            context_path,
+            target_symbol,
+            token_budget,
+            granted,
+            as_v1=self._as_v1,
         )
 
     def _context_retrieve(
@@ -459,37 +414,8 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         handle: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult:
-        database = root / ".rush" / "cache" / "ccr.db"
-        content = (
-            CCRStore(root).retrieve_chunk(handle or "", touch=granted.cache_write)
-            if handle and database.is_file()
-            else None
-        )
-        safe_content, redactions = (
-            SecretRedactor.redact_value(content) if content is not None else (None, 0)
-        )
-        recovery = {
-            "state": "recovered" if content is not None else "not_found",
-            "handle": handle,
-        }
-        return self._result(
-            started,
-            "ok" if content is not None else "skipped",
-            "Recovered context handle."
-            if content is not None
-            else "Context handle was not found.",
-            operation="context_retrieve",
-            granted=granted,
-            raw={"content": safe_content} if safe_content is not None else None,
-            context_envelope={
-                "selected_evidence": [],
-                "tokens": {"estimated": None, "actual": None, "budget": None},
-                "omissions": [],
-                "recovery": recovery,
-                "redaction_count": redactions,
-            },
-        )
+    ) -> ToolResult | ToolResultV1:
+        return retrieve_context(started, root, handle, granted, as_v1=self._as_v1)
 
     def _coordination_check(
         self,
@@ -499,54 +425,15 @@ class SessionContinuityTool(ToolFn):
         agent_id: str | None,
         max_age_s: float,
         granted: ExecutionPermissions,
-    ) -> ToolResult:
-        target = (root / (coordination_path or "")).resolve()
-        if root not in target.parents or not target.is_file() or max_age_s < 0:
-            return self._result(
-                started,
-                "skipped",
-                "Coordination target was not found inside the project.",
-                operation="coordination_check",
-                granted=granted,
-                coordination={"state": "unavailable", "owner": None},
-            )
-        lock = MeshLockManager.inspect(root, target)
-        owner = lock.get("owner")
-        if lock["state"] == "held":
-            acquired_at = float(lock["acquired_at"])
-            if time.time() - acquired_at > max_age_s:
-                coordination = {
-                    "state": "stale",
-                    "owner": owner,
-                    "action": "manual_recovery_required",
-                }
-                return self._result(
-                    started,
-                    "skipped",
-                    "Stale local ownership evidence requires manual recovery.",
-                    operation="coordination_check",
-                    granted=granted,
-                    coordination=coordination,
-                )
-        coordination = {
-            "state": "conflict"
-            if lock["state"] == "held" and owner != agent_id
-            else lock["state"],
-            "owner": owner,
-        }
-        return self._result(
+    ) -> ToolResult | ToolResultV1:
+        return check_coordination(
             started,
-            "skipped" if coordination["state"] in {"conflict", "unavailable"} else "ok",
-            "Local ownership conflict; no change was made."
-            if coordination["state"] == "conflict"
-            else "No conflicting local owner."
-            if coordination["state"] == "available"
-            else "Local ownership is held by this agent."
-            if coordination["state"] == "held"
-            else "Local ownership evidence is unavailable.",
-            operation="coordination_check",
-            granted=granted,
-            coordination=coordination,
+            root,
+            coordination_path,
+            agent_id,
+            max_age_s,
+            granted,
+            as_v1=self._as_v1,
         )
 
     def _coordination_merge_preview(
@@ -556,42 +443,9 @@ class SessionContinuityTool(ToolFn):
         ours_code: str | None,
         theirs_code: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult:
-        from .swarm_merge import SwarmMergeSolver
-
-        if not all(
-            isinstance(code, str) for code in (base_code, ours_code, theirs_code)
-        ):
-            return self._result(
-                started,
-                "skipped",
-                "Merge preview requires all three source revisions.",
-                operation="coordination_merge_preview",
-                granted=granted,
-                coordination={"state": "unavailable", "owner": None},
-            )
-        preview = SwarmMergeSolver().merge_3way(base_code, ours_code, theirs_code)
-        conflicts = preview.get("conflicts", [])
-        if not preview.get("success"):
-            return self._result(
-                started,
-                "skipped",
-                "Merge conflict requires manual reconciliation.",
-                operation="coordination_merge_preview",
-                granted=granted,
-                coordination={
-                    "state": "merge_conflict",
-                    "action": "manual_reconciliation_required",
-                    "conflicts": conflicts,
-                },
-            )
-        return self._result(
-            started,
-            "ok",
-            "Merge preview found no overlapping edits.",
-            operation="coordination_merge_preview",
-            granted=granted,
-            coordination={"state": "merge_preview", "owner": None},
+    ) -> ToolResult | ToolResultV1:
+        return preview_merge(
+            started, base_code, ours_code, theirs_code, granted, as_v1=self._as_v1
         )
 
     def _coordination_recovery(
@@ -601,86 +455,14 @@ class SessionContinuityTool(ToolFn):
         session_id: str | None,
         failure_fingerprint: Any,
         granted: ExecutionPermissions,
-    ) -> ToolResult:
-        if session_id is not None and not self._valid_name(session_id):
-            return self._result(
-                started,
-                "skipped",
-                "Replay session was not found.",
-                operation="coordination_recovery",
-                granted=granted,
-                coordination={
-                    "state": "unavailable",
-                    "recovery": {
-                        "replay": {
-                            "state": "not_found",
-                            "session_id": None,
-                            "event_count": 0,
-                        },
-                        "failure": {"state": "not_requested"},
-                    },
-                },
-            )
-        replay_state = "not_found"
-        events: list[dict[str, Any]] = []
-        if session_id:
-            try:
-                events = FlightRecorder(root, create=False).replay_session(session_id)
-                replay_state = "recorded" if events else "not_found"
-            except (OSError, ValueError):
-                replay_state = "unavailable"
-        failure = None
-        failure_unavailable = False
-        if isinstance(failure_fingerprint, str):
-            try:
-                failure = FailureLedger(root).get_receipt(failure_fingerprint)
-            except (OSError, sqlite3.DatabaseError):
-                failure_unavailable = True
-        mined_mistakes, _ = SecretRedactor.redact_value(
-            MistakeMiner(root).mine_mistakes()
-        )
-        mistakes = [
-            {
-                "authority": "historical_evidence",
-                "reverted_subject": item.get("reverted_subject", "unknown"),
-                "rationale": item.get("rationale", "No explanation provided"),
-                "guard_status": item.get("guard_status", "unknown"),
-            }
-            for item in mined_mistakes[:3]
-            if isinstance(item, dict)
-        ]
-        recovery = {
-            "replay": {
-                "state": replay_state,
-                "session_id": session_id,
-                "event_count": len(events),
-                **({"last_event_type": events[-1].get("event_type")} if events else {}),
-            },
-            "failure": (
-                {"fingerprint": failure_fingerprint, "state": "unavailable"}
-                if failure_unavailable and isinstance(failure_fingerprint, str)
-                else failure
-                or (
-                    {"fingerprint": failure_fingerprint, "state": "tombstoned"}
-                    if isinstance(failure_fingerprint, str)
-                    else {"state": "not_requested"}
-                )
-            ),
-            "mistakes": mistakes,
-        }
-        available = bool(events or failure or mistakes)
-        return self._result(
+    ) -> ToolResult | ToolResultV1:
+        return recover_coordination(
             started,
-            "ok" if available else "skipped",
-            "Recovery evidence is available; no retry was performed."
-            if available
-            else "No replay, failure, or mistake evidence was found.",
-            operation="coordination_recovery",
-            granted=granted,
-            coordination={
-                "state": "recovery_evidence" if available else "unavailable",
-                "recovery": recovery,
-            },
+            root,
+            session_id,
+            failure_fingerprint,
+            granted,
+            as_v1=self._as_v1,
         )
 
     def _provider_resume(
@@ -690,197 +472,9 @@ class SessionContinuityTool(ToolFn):
         name: str | None,
         provider_id: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult:
-        provider = provider_id or ""
-        if provider == "zai":
-            return self._result(
-                started,
-                "skipped",
-                "Z.AI is deferred and was not invoked.",
-                operation="provider_resume",
-                granted=granted,
-                provider_route={
-                    "provider_id": "zai",
-                    "transport": "cli",
-                    "state": "deferred",
-                },
-            )
-        required = ExecutionPermissions(network=True)
-        allowed, missing = check_permissions(required, granted)
-        if not allowed:
-            return self._result(
-                started,
-                "skipped",
-                f"Provider resume requires {', '.join(missing)}.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={
-                    "provider_id": provider or "unknown",
-                    "transport": "cli",
-                    "state": "permission_denied",
-                },
-            )
-        if provider == "omniroute_api":
-            handoff = self._provider_handoff(root, name)
-            if handoff is None:
-                return self._result(
-                    started,
-                    "skipped",
-                    "Provider resume requires an existing session checkpoint.",
-                    operation="provider_resume",
-                    granted=granted,
-                    requested=required,
-                    provider_route={
-                        "provider_id": provider,
-                        "transport": "openai-compatible-api",
-                        "state": "handoff_not_found",
-                        "endpoint_class": "fixed-loopback",
-                    },
-                )
-            return self._omniroute_resume(started, handoff, granted, required)
-        nine_router = provider == "9router_cli"
-        nine_router_route = {
-            "provider_id": "9router_cli",
-            "transport": "codex-cli-via-9router",
-            "endpoint_class": "fixed-loopback",
-        }
-        if nine_router:
-            nine_router_key = os.environ.get("RUSH_9ROUTER_API_KEY")
-            if not nine_router_key:
-                return self._result(
-                    started,
-                    "skipped",
-                    "9Router credential is unavailable; no provider was invoked.",
-                    operation="provider_resume",
-                    granted=granted,
-                    requested=required,
-                    provider_route={
-                        **nine_router_route,
-                        "state": "credential_unavailable",
-                    },
-                )
-        else:
-            nine_router_key = None
-        if provider not in {
-            "claude_code",
-            "codex_cli",
-            "antigravity_cli",
-            "9router_cli",
-        }:
-            return self._result(
-                started,
-                "skipped",
-                "Provider route is not a direct coding CLI resume route.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={
-                    "provider_id": provider or "unknown",
-                    "transport": "api" if provider.endswith("_api") else "cli",
-                    "state": "unavailable",
-                },
-            )
-        handoff = self._provider_handoff(root, name)
-        if handoff is None:
-            return self._result(
-                started,
-                "skipped",
-                "Provider resume requires an existing session checkpoint.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={
-                    "provider_id": provider,
-                    "transport": "cli",
-                    "state": "handoff_not_found",
-                },
-            )
-        command_provider = "codex_cli" if nine_router else provider
-        binary, command = self._provider_command(command_provider, handoff)
-        route = (
-            nine_router_route
-            if nine_router
-            else {"provider_id": provider, "transport": "cli"}
-        )
-        executable = shutil.which(binary)
-        if not executable:
-            return self._result(
-                started,
-                "skipped",
-                f"{binary} is not available on PATH.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={
-                    **route,
-                    "state": "unavailable",
-                },
-            )
-        command[0] = executable
-        command_env = None
-        if nine_router:
-            command_env = {
-                key: value
-                for key, value in os.environ.items()
-                if key
-                not in {"RUSH_9ROUTER_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY"}
-            }
-            command_env.update(
-                {
-                    "OPENAI_BASE_URL": "http://127.0.0.1:20128",
-                    "OPENAI_API_KEY": nine_router_key or "",
-                }
-            )
-        if os.name == "nt" and executable.lower().endswith((".cmd", ".bat")):
-            command, command_env = self._windows_cmd_command(
-                executable,
-                command,
-                self._provider_prompt(handoff),
-                command_env,
-            )
-        try:
-            proc = subprocess.run(
-                command,
-                cwd=root,
-                shell=False,
-                # Provider output is deliberately not evidence for a handoff receipt.
-                # Discard it rather than retaining an unbounded buffer in this process.
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                env=command_env,
-                timeout=120.0,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return self._result(
-                started,
-                "skipped",
-                "Provider CLI was unavailable or timed out.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={
-                    **route,
-                    "state": "unavailable",
-                },
-            )
-        return self._result(
-            started,
-            "ok" if proc.returncode == 0 else "error",
-            "Provider CLI completed a bounded continuity resume."
-            if proc.returncode == 0
-            else "Provider CLI returned a nonzero status.",
-            operation="provider_resume",
-            granted=granted,
-            requested=required,
-            provider_route={
-                **route,
-                "state": "completed" if proc.returncode == 0 else "error",
-            },
-            raw=None,
-            artifacts=None,
+    ) -> ToolResult | ToolResultV1:
+        return resume_provider(
+            started, root, name, provider_id, granted, as_v1=self._as_v1
         )
 
     def _omniroute_resume(
@@ -889,97 +483,11 @@ class SessionContinuityTool(ToolFn):
         handoff: dict[str, Any],
         granted: ExecutionPermissions,
         required: ExecutionPermissions,
-    ) -> ToolResult:
-        """Send a single bounded receipt to OmniRoute's fixed loopback API."""
-        route = {
-            "provider_id": "omniroute_api",
-            "transport": "openai-compatible-api",
-            "endpoint_class": "fixed-loopback",
-        }
-        request = urllib.request.Request(
-            "http://127.0.0.1:20128/v1/chat/completions",
-            data=json.dumps(
-                {
-                    "model": "auto",
-                    "messages": [
-                        {"role": "user", "content": self._provider_prompt(handoff)}
-                    ],
-                    "stream": False,
-                }
-            ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30.0) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError:
-            return self._result(
-                started,
-                "error",
-                "OmniRoute rejected the bounded continuity request.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={**route, "state": "rejected"},
-            )
-        except (OSError, TimeoutError, urllib.error.URLError):
-            return self._result(
-                started,
-                "skipped",
-                "OmniRoute fixed-loopback API was unavailable or timed out.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={**route, "state": "unavailable"},
-            )
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return self._result(
-                started,
-                "error",
-                "OmniRoute returned an invalid response.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={**route, "state": "invalid_response"},
-            )
-        choices = payload.get("choices") if isinstance(payload, dict) else None
-        message = (
-            choices[0].get("message") if isinstance(choices, list) and choices else None
-        )
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip():
-            return self._result(
-                started,
-                "error",
-                "OmniRoute returned no completion content.",
-                operation="provider_resume",
-                granted=granted,
-                requested=required,
-                provider_route={**route, "state": "invalid_response"},
-            )
-        return self._result(
-            started,
-            "ok",
-            "OmniRoute completed a bounded continuity resume.",
-            operation="provider_resume",
-            granted=granted,
-            requested=required,
-            provider_route={**route, "state": "completed"},
-        )
+    ) -> ToolResult | ToolResultV1:
+        return resume_omniroute(started, handoff, granted, required, as_v1=self._as_v1)
 
     def _provider_handoff(self, root: Path, name: str | None) -> dict[str, Any] | None:
-        if not self._valid_name(name):
-            return None
-        checkpoint = CheckpointJournal(root).restore_checkpoint(name or "")
-        if not isinstance(checkpoint, dict):
-            return None
-        receipt = self._restore_handoff_receipt(root, checkpoint)
-        return {
-            "current_goal": receipt.get("current_goal"),
-            "open_work": receipt.get("open_work", []),
-            "freshness": receipt.get("freshness", "unknown"),
-        }
+        return provider_handoff(root, name)
 
     @staticmethod
     def _windows_cmd_command(
@@ -988,83 +496,33 @@ class SessionContinuityTool(ToolFn):
         prompt: str,
         environment: dict[str, str] | None = None,
     ) -> tuple[list[str], dict[str, str]]:
-        """Run a batch launcher without placing checkpoint-controlled text in cmd syntax."""
-        prompt_variable = "RUSH_CONTINUITY_PROMPT"
-        rendered_args = [
-            f'"!{prompt_variable}!"'
-            if argument == prompt
-            else f'"{argument.replace(chr(34), chr(34) * 2)}"'
-            for argument in command[1:]
-        ]
-        executable_text = executable.replace('"', '""')
-        command_text = f'""{executable_text}" {" ".join(rendered_args)}"'
-        return (
-            ["cmd.exe", "/d", "/v:on", "/s", "/c", command_text],
-            {**(environment or os.environ), prompt_variable: prompt},
-        )
+        return windows_cmd_command(executable, command, prompt, environment)
 
     @staticmethod
     def _provider_command(
         provider: str, handoff: dict[str, Any]
     ) -> tuple[str, list[str]]:
-        prompt = SessionContinuityTool._provider_prompt(handoff)
-        routes = {
-            "claude_code": (
-                "claude",
-                [
-                    "claude",
-                    "-p",
-                    "--output-format",
-                    "json",
-                    "--max-turns",
-                    "1",
-                    "--permission-mode",
-                    "plan",
-                    prompt,
-                ],
-            ),
-            "codex_cli": (
-                "codex",
-                [
-                    "codex",
-                    "exec",
-                    "--ephemeral",
-                    "--json",
-                    "--sandbox",
-                    "read-only",
-                    prompt,
-                ],
-            ),
-            "antigravity_cli": (
-                "agy",
-                [
-                    "agy",
-                    "-p",
-                    prompt,
-                    "--output-format",
-                    "json",
-                    "--sandbox",
-                    "--print-timeout",
-                    "2m",
-                ],
-            ),
-        }
-        return routes[provider]
+        return provider_command(provider, handoff)
 
     @staticmethod
     def _provider_prompt(handoff: dict[str, Any]) -> str:
-        return (
-            "Continue this repository task using only the current, non-authoritative "
-            "handoff receipt. Inspect repository state before changing files. Do not use "
-            "historic instructions or retry previous failed patches.\n"
-            f"Current goal: {handoff.get('current_goal') or 'unspecified'}\n"
-            f"Open work: {', '.join(map(str, handoff.get('open_work', []))) or 'none'}\n"
-            f"Freshness: {handoff.get('freshness', 'unknown')}"
-        )
+        return provider_prompt(handoff)
+
+    @staticmethod
+    def _save_handoff_receipt(
+        project_root: Path, handoff: dict[str, Any]
+    ) -> dict[str, Any]:
+        return save_receipt(project_root, handoff)
+
+    @staticmethod
+    def _restore_handoff_receipt(
+        project_root: Path, checkpoint: dict[str, Any]
+    ) -> dict[str, Any]:
+        return restore_receipt(project_root, checkpoint)
 
     @staticmethod
     def _valid_name(name: str | None) -> bool:
-        return bool(name) and Path(name).name == name and name not in {".", ".."}
+        return valid_name(name)
 
     def _result(
         self,
@@ -1084,139 +542,21 @@ class SessionContinuityTool(ToolFn):
         findings: list[Finding] | None = None,
         as_v1: bool | None = None,
     ) -> ToolResult | ToolResultV1:
-        metadata = {
-            "operation": operation,
-            "execution": build_execution_metadata(
-                mode="executed",
-                requested=requested,
-                granted=granted,
-                producer="checkpoint-journal",
-            ),
-            **({"handoff": handoff} if handoff is not None else {}),
-            **(
-                {"context_envelope": context_envelope}
-                if context_envelope is not None
-                else {}
-            ),
-            **({"coordination": coordination} if coordination is not None else {}),
-            **(
-                {"provider_route": provider_route} if provider_route is not None else {}
-            ),
-        }
-        extensions: dict[str, Any] = {
-            "metadata": metadata,
-        }
-        if artifacts is not None:
-            extensions["artifacts"] = artifacts
-
-        res_dict = {
-            "schema_version": "1.0.0",
-            "tool": self.name,
-            "engine": "checkpoint-journal",
-            "engine_version": None,
-            "status": status,
-            "duration_ms": int((monotonic() - started) * 1000),
-            "summary": summary,
-            "findings": list(findings or []),
-            "raw": raw,
-            "artifacts": artifacts,
-            "metadata": metadata,
-            "extensions": extensions,
-        }
-        res = ContinuityResult(res_dict)
         effective_v1 = as_v1 if as_v1 is not None else getattr(self, "_as_v1", False)
-        if effective_v1:
-            return res.to_tool_result_v1()
-        return res
-
-    @staticmethod
-    def _save_handoff_receipt(
-        project_root: Path, handoff: dict[str, Any]
-    ) -> dict[str, Any]:
-        dependencies = [
-            value for value in handoff.get("dependencies", []) if isinstance(value, str)
-        ]
-        historic_instruction = handoff.get("historic_instruction")
-        failure_fingerprint = handoff.get("failure_fingerprint")
-        failure_receipt = None
-        if isinstance(failure_fingerprint, str):
-            try:
-                failure_receipt = FailureLedger(project_root).get_receipt(
-                    failure_fingerprint
-                ) or {"fingerprint": failure_fingerprint, "state": "tombstoned"}
-            except (OSError, sqlite3.DatabaseError):
-                failure_receipt = {
-                    "fingerprint": failure_fingerprint,
-                    "state": "unavailable",
-                }
-        session_memory = {
-            "authority": "historical_evidence",
-            "state": "absent",
-            "count": 0,
-            "records": [],
-        }
-        try:
-            from ..session_memory import SessionMemoryManager
-
-            records = SessionMemoryManager(
-                memory_file=project_root / ".rush" / "session_memory.json"
-            ).load_records()
-            session_memory = {
-                "authority": "historical_evidence",
-                "state": "available" if records else "absent",
-                "count": len(records[-5:]),
-                "records": [
-                    {
-                        "timestamp": record.timestamp,
-                        "tool_name": record.tool_name,
-                        "finding_count": record.finding_count,
-                        "fixes_applied": record.fixes_applied,
-                        "summary": record.summary,
-                    }
-                    for record in records[-5:]
-                ],
-            }
-        except (OSError, ValueError, TypeError):
-            session_memory = {
-                "authority": "historical_evidence",
-                "state": "unavailable",
-                "count": 0,
-                "records": [],
-            }
-        receipt, redaction_count = SecretRedactor.redact_value(
-            {
-                "version": 1,
-                "current_goal": handoff.get("current_goal") or None,
-                "open_work": list(handoff.get("open_work") or []),
-                "historic_instruction": {
-                    "authority": "historical_evidence",
-                    "state": "quarantined",
-                    "present": bool(historic_instruction),
-                },
-                "dependencies": MerkleInvalidator.snapshot_paths(
-                    project_root, dependencies
-                ),
-                "freshness": "current",
-                "failure_receipt": failure_receipt,
-                "session_memory": session_memory,
-            }
+        return build_continuity_result(
+            started,
+            status,
+            summary,
+            operation=operation,
+            granted=granted,
+            requested=requested,
+            raw=raw,
+            artifacts=artifacts,
+            handoff=handoff,
+            context_envelope=context_envelope,
+            coordination=coordination,
+            provider_route=provider_route,
+            findings=findings,
+            as_v1=effective_v1,
+            tool_name=self.name,
         )
-        receipt["redaction_count"] = redaction_count
-        return receipt
-
-    @staticmethod
-    def _restore_handoff_receipt(
-        project_root: Path, checkpoint: dict[str, Any]
-    ) -> dict[str, Any]:
-        saved = checkpoint.get("metadata", {}).get("handoff")
-        if not isinstance(saved, dict):
-            return {
-                "version": 0,
-                "freshness": "unknown",
-                "state": "legacy_checkpoint",
-            }
-        dependencies = saved.get("dependencies", {})
-        paths = list(dependencies) if isinstance(dependencies, dict) else []
-        current = MerkleInvalidator.snapshot_paths(project_root, paths)
-        freshness = "current" if current == dependencies else "stale"
-        return {**saved, "freshness": freshness}
