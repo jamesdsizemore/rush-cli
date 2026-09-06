@@ -265,4 +265,24 @@ ENGINES: dict[str, Engine] = {
     "sentrux": SentruxEngine(),
 }
 
-__all__ = ["ENGINES", "Engine"]
+from .support_policy import (
+    AllSkippedViolationError,
+    AmbientPathPollutionError,
+    EngineConformanceError,
+    EngineSupportPolicy,
+    EngineTaxonomyRecord,
+    FixedPathEnvironment,
+    ReleaseGateFailureError,
+)
+
+__all__ = [
+    "ENGINES",
+    "AllSkippedViolationError",
+    "AmbientPathPollutionError",
+    "Engine",
+    "EngineConformanceError",
+    "EngineSupportPolicy",
+    "EngineTaxonomyRecord",
+    "FixedPathEnvironment",
+    "ReleaseGateFailureError",
+]

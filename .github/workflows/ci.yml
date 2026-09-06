@@ -39,6 +39,9 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -q
 
+      - name: Release gate typecheck (mypy)
+        run: uv run mypy src/rush
+
       - name: Verify documentation parity & links
         run: uv run python scripts/sync_docs.py --check
 
@@ -74,6 +77,10 @@ jobs:
 
       - name: Run representative real-engine contracts
         run: uv run pytest tests/test_tools.py -q
+
+      - name: Run provisioned engine clean/finding/malformed matrix
+        run: uv run pytest tests/test_phase59_engine_conformance.py tests/test_phase59_engines.py -q
+
 
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})

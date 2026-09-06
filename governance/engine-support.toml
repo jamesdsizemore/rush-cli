@@ -67,8 +67,9 @@ can_pass_all_skipped = false
 permitted_skip_reason = "ruff not installed on PATH"
 
 [engines.fixture_matrix]
-clean = "tests/fixtures/quality/clean_python.py"
-finding = "tests/fixtures/quality/failing_python.py"
+clean = "tests/test_ruff_reference.py"
+finding = "tests/test_ruff_reference.py"
+malformed = "tests/test_ruff_reference.py"
 
 [[engines]]
 family = "mypy"
@@ -81,6 +82,7 @@ permitted_skip_reason = "mypy not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_static_tools.py"
 finding = "tests/test_static_tools.py"
+malformed = "tests/test_mypy_reference.py"
 
 [[engines]]
 family = "pytest"
@@ -93,6 +95,7 @@ permitted_skip_reason = "pytest not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_tools.py::test_test_runs_pytest_on_python_repo"
 finding = "tests/test_tools.py::test_test_skipped_when_no_project_markers"
+malformed = "tests/test_pytest_reference.py"
 
 [[engines]]
 family = "cargo"
@@ -103,8 +106,9 @@ can_pass_all_skipped = false
 permitted_skip_reason = "cargo not installed on PATH"
 
 [engines.fixture_matrix]
-clean = "tests/test_cargo_distiller.py"
-finding = "tests/test_cargo_distiller.py"
+clean = "tests/test_phase41_router_distillers.py"
+finding = "tests/test_phase41_router_distillers.py"
+malformed = "tests/test_cargo_mutants_reference.py"
 
 [[engines]]
 family = "vitest"
@@ -117,6 +121,7 @@ permitted_skip_reason = "vitest not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_vitest_reference.py"
 finding = "tests/test_vitest_reference.py"
+malformed = "tests/test_vitest_reference.py"
 
 [[engines]]
 family = "eslint"
@@ -129,6 +134,7 @@ permitted_skip_reason = "eslint not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_eslint_reference.py"
 finding = "tests/test_eslint_reference.py"
+malformed = "tests/test_eslint_reference.py"
 
 [[engines]]
 family = "prettier"
@@ -141,6 +147,7 @@ permitted_skip_reason = "prettier not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_prettier_reference.py"
 finding = "tests/test_prettier_reference.py"
+malformed = "tests/test_prettier_reference.py"
 
 [[engines]]
 family = "pip-audit"
@@ -153,6 +160,7 @@ permitted_skip_reason = "pip-audit not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_pip_audit_reference.py"
 finding = "tests/test_pip_audit_reference.py"
+malformed = "tests/test_pip_audit_reference.py"
 
 [[engines]]
 family = "trivy"
@@ -165,6 +173,7 @@ permitted_skip_reason = "trivy not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_trivy_reference.py"
 finding = "tests/test_trivy_reference.py"
+malformed = "tests/test_trivy_reference.py"
 
 [[engines]]
 family = "semgrep"
@@ -177,6 +186,7 @@ permitted_skip_reason = "semgrep not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_semgrep_reference.py"
 finding = "tests/test_semgrep_reference.py"
+malformed = "tests/test_semgrep_reference.py"
 
 [[engines]]
 family = "gitleaks"
@@ -187,8 +197,9 @@ can_pass_all_skipped = false
 permitted_skip_reason = "gitleaks not installed on PATH"
 
 [engines.fixture_matrix]
-clean = "tests/test_supply_chain_tools.py"
-finding = "tests/test_supply_chain_tools.py"
+clean = "tests/test_gitleaks_reference.py"
+finding = "tests/test_gitleaks_reference.py"
+malformed = "tests/test_gitleaks_reference.py"
 
 [[engines]]
 family = "onnxruntime"
@@ -199,8 +210,9 @@ can_pass_all_skipped = true
 permitted_skip_reason = "onnxruntime not installed or model missing"
 
 [engines.fixture_matrix]
-clean = "tests/test_offline_review.py"
-finding = "tests/test_offline_review.py"
+clean = "tests/test_offline_runner.py"
+finding = "tests/test_offline_runner.py"
+malformed = "tests/test_offline_runner.py"
 
 [[engines]]
 family = "ollama"
@@ -213,6 +225,7 @@ permitted_skip_reason = "ollama not running or model unavailable"
 [engines.fixture_matrix]
 clean = "tests/test_tools.py::test_review_llm_with_env_key_returns_llm_kind"
 finding = "tests/test_tools.py::test_review_llm_requires_env_key"
+malformed = "tests/test_tools.py"
 
 [[engines]]
 family = "vulture"
@@ -225,6 +238,7 @@ permitted_skip_reason = "vulture not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_vulture_reference.py"
 finding = "tests/test_vulture_reference.py"
+malformed = "tests/test_vulture_reference.py"
 
 [[engines]]
 family = "radon"
@@ -237,3 +251,4 @@ permitted_skip_reason = "radon not installed on PATH"
 [engines.fixture_matrix]
 clean = "tests/test_static_tools.py"
 finding = "tests/test_static_tools.py"
+malformed = "tests/test_static_tools.py"
