@@ -305,3 +305,174 @@ def test_runtime_modules_meet_c901_threshold() -> None:
     assert "All checks passed!" in proc.stdout, (
         f"Expected clean pass, got:\n{proc.stdout}"
     )
+
+
+def test_blast_radius_meets_c901_threshold() -> None:
+    """T-60.22: Verify BlastRadiusAnalyzer facade and blast_radius_graph comply with McCabe C901 <= 10."""
+    import shutil
+    import subprocess
+    import sys
+
+    ruff_path = (
+        PROJECT_ROOT
+        / ".venv"
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / ("ruff.exe" if sys.platform == "win32" else "ruff")
+    )
+    ruff_cmd = str(ruff_path) if ruff_path.exists() else shutil.which("ruff")
+    assert ruff_cmd, "ruff executable not found"
+
+    cmd = [
+        ruff_cmd,
+        "check",
+        "--select",
+        "C901",
+        "--config",
+        "lint.mccabe.max-complexity = 10",
+        "--output-format",
+        "concise",
+        "src/rush/tools/blast_radius.py",
+        "src/rush/tools/blast_radius_graph.py",
+    ]
+    proc = subprocess.run(
+        cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"Ruff C901 check failed (returncode={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert "C901" not in proc.stdout, f"Expected 0 findings, got:\n{proc.stdout}"
+    assert "All checks passed!" in proc.stdout, (
+        f"Expected clean pass, got:\n{proc.stdout}"
+    )
+
+
+def test_workspace_discovery_meets_c901_threshold() -> None:
+    """T-60.23: Verify workspace discovery facade and workspace_graph comply with McCabe C901 <= 10."""
+    import shutil
+    import subprocess
+    import sys
+
+    ruff_path = (
+        PROJECT_ROOT
+        / ".venv"
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / ("ruff.exe" if sys.platform == "win32" else "ruff")
+    )
+    ruff_cmd = str(ruff_path) if ruff_path.exists() else shutil.which("ruff")
+    assert ruff_cmd, "ruff executable not found"
+
+    cmd = [
+        ruff_cmd,
+        "check",
+        "--select",
+        "C901",
+        "--config",
+        "lint.mccabe.max-complexity = 10",
+        "--output-format",
+        "concise",
+        "src/rush/discovery/workspace.py",
+        "src/rush/discovery/workspace_graph.py",
+    ]
+    proc = subprocess.run(
+        cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"Ruff C901 check failed (returncode={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert "C901" not in proc.stdout, f"Expected 0 findings, got:\n{proc.stdout}"
+    assert "All checks passed!" in proc.stdout, (
+        f"Expected clean pass, got:\n{proc.stdout}"
+    )
+
+
+def test_db_drift_meets_c901_threshold() -> None:
+    """T-60.24: Verify DbDriftAuditor facade and db_drift_rules comply with McCabe C901 <= 10."""
+    import shutil
+    import subprocess
+    import sys
+
+    ruff_path = (
+        PROJECT_ROOT
+        / ".venv"
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / ("ruff.exe" if sys.platform == "win32" else "ruff")
+    )
+    ruff_cmd = str(ruff_path) if ruff_path.exists() else shutil.which("ruff")
+    assert ruff_cmd, "ruff executable not found"
+
+    cmd = [
+        ruff_cmd,
+        "check",
+        "--select",
+        "C901",
+        "--config",
+        "lint.mccabe.max-complexity = 10",
+        "--output-format",
+        "concise",
+        "src/rush/tools/db_drift.py",
+        "src/rush/tools/db_drift_rules.py",
+    ]
+    proc = subprocess.run(
+        cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"Ruff C901 check failed (returncode={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert "C901" not in proc.stdout, f"Expected 0 findings, got:\n{proc.stdout}"
+    assert "All checks passed!" in proc.stdout, (
+        f"Expected clean pass, got:\n{proc.stdout}"
+    )
+
+
+def test_all_phase60_facades_and_extracted_symbols_meet_c901_threshold() -> None:
+    """T-60.25: Verify all Phase 60 facades and extracted modules comply with McCabe C901 <= 10."""
+    import shutil
+    import subprocess
+    import sys
+
+    ruff_path = (
+        PROJECT_ROOT
+        / ".venv"
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / ("ruff.exe" if sys.platform == "win32" else "ruff")
+    )
+    ruff_cmd = str(ruff_path) if ruff_path.exists() else shutil.which("ruff")
+    assert ruff_cmd, "ruff executable not found"
+
+    cmd = [
+        ruff_cmd,
+        "check",
+        "--select",
+        "C901",
+        "--config",
+        "lint.mccabe.max-complexity = 10",
+        "--output-format",
+        "concise",
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/tools/continuity.py",
+        "src/rush/tools/review.py",
+        "src/rush/tools/common.py",
+        "src/rush/tools/lint.py",
+        "src/rush/tools/blast_radius.py",
+        "src/rush/discovery/workspace.py",
+        "src/rush/tools/db_drift.py",
+        "src/rush/cli_support",
+        "src/rush/mcp_support",
+        "src/rush/continuity",
+        "src/rush/review",
+        "src/rush/runtime",
+        "src/rush/tools/blast_radius_graph.py",
+        "src/rush/discovery/workspace_graph.py",
+        "src/rush/tools/db_drift_rules.py",
+    ]
+    proc = subprocess.run(
+        cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"Ruff C901 check failed (returncode={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert "C901" not in proc.stdout, f"Expected 0 findings, got:\n{proc.stdout}"
+    assert "All checks passed!" in proc.stdout, (
+        f"Expected clean pass, got:\n{proc.stdout}"
+    )

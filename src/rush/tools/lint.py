@@ -15,6 +15,7 @@ findings. Sequential execution per architecture §13 Q2 (determinism > speed).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import (
@@ -24,6 +25,121 @@ from .common import (
     run_engine,
 )
 from .routing import collect_files, combine_status, detect_project_languages
+
+
+def _build_skipped_result(start: float, summary: str) -> ToolResult:
+    return ToolResult(
+        tool="lint",
+        engine=None,
+        engine_version=None,
+        status="skipped",
+        duration_ms=elapsed_ms(start),
+        summary=summary,
+        findings=[],
+        raw=None,
+    )
+
+
+def _select_engines(
+    path: Path, config: Any = None
+) -> tuple[list[Path], dict[str, list[Path]], list[str]]:
+    """Identify project languages and partition target files by engine."""
+    from ..engines import ENGINES
+
+    languages = detect_project_languages(path)
+    supported_extensions = {
+        extension for engine in ENGINES.values() for extension in engine.file_extensions
+    }
+    targets = collect_files(path, supported_extensions)
+    engine_files = {
+        name: [t for t in targets if t.suffix.lstrip(".") in engine.file_extensions]
+        for name, engine in ENGINES.items()
+        if name in ("ruff", "eslint")
+    }
+    return targets, engine_files, languages
+
+
+def _run_selected_engines(
+    engine_files: dict[str, list[Path]],
+    targets: list[Path],
+    path: Path,
+    engine_args: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], str, list[str]]:
+    """Execute each applicable engine sequentially and aggregate findings."""
+    from ..engines import ENGINES
+
+    findings_all: list[dict[str, Any]] = []
+    last_status = "ok"
+    engines_used: list[str] = []
+
+    for name in ("ruff", "eslint"):
+        files = engine_files.get(name, [])
+        if files:
+            args = [str(p) for p in files] + (engine_args or [])
+            r = run_engine(ENGINES[name], path, args, tool_name="lint")
+            findings_all.extend(r.get("findings", []))
+            engines_used.append(name)
+            last_status = combine_status(last_status, r.get("status", "ok"))
+
+    if engine_on_path("globstar"):
+        globstar_args = [str(p) for p in targets] + (engine_args or [])
+        r = run_engine(ENGINES["globstar"], path, globstar_args, tool_name="lint")
+        findings_all.extend(r.get("findings", []))
+        engines_used.append("globstar")
+        last_status = combine_status(last_status, r.get("status", "ok"))
+
+    return findings_all, last_status, engines_used
+
+
+def _check_missing_engines_result(
+    engine_files: dict[str, list[Path]], start: float
+) -> ToolResult:
+    """Return a skipped result when required engines are missing from PATH."""
+    ruff_files = engine_files.get("ruff", [])
+    eslint_files = engine_files.get("eslint", [])
+    engines_missing = []
+    if ruff_files and not engine_on_path("ruff"):
+        engines_missing.append("ruff")
+    if eslint_files and not engine_on_path("eslint"):
+        engines_missing.append("eslint")
+    summary = (
+        f"lint: engines not installed ({', '.join(engines_missing)})"
+        if engines_missing
+        else "lint: no engines could run on these files"
+    )
+    return _build_skipped_result(start, summary)
+
+
+def _assemble_lint_result(
+    findings_all: list[dict[str, Any]],
+    last_status: str,
+    engines_used: list[str],
+    start: float,
+) -> ToolResult:
+    """Assemble canonical ToolResult from aggregated engine findings and status."""
+    status = last_status
+    n_findings = len(findings_all)
+    if status == "ok" and n_findings > 0:
+        has_non_error = any(f.get("severity") != "error" for f in findings_all)
+        status = "warn" if has_non_error else "fail"
+
+    engine_str = "+".join(engines_used)
+    summary = (
+        f"lint [{engine_str}]: {n_findings} issue(s)"
+        if n_findings
+        else f"lint [{engine_str}]: clean"
+    )
+
+    return ToolResult(
+        tool="lint",
+        engine=engine_str,
+        engine_version=None,
+        status=status,
+        duration_ms=elapsed_ms(start),
+        summary=summary,
+        findings=findings_all,
+        raw=None,
+    )
 
 
 class LintTool(ToolFn):
@@ -42,135 +158,22 @@ class LintTool(ToolFn):
     def run(
         self, path: Path, *, engine_args: list[str] | None = None, config=None
     ) -> ToolResult:
-        from ..engines import ENGINES
-
         start = now_ms()
-        languages = detect_project_languages(path)
-        # Walk path: if it's a directory, find all supported files. If it's
-        # a file, dispatch on its extension directly.
-        targets = collect_files(
-            path,
-            {
-                extension
-                for engine in ENGINES.values()
-                for extension in engine.file_extensions
-            },
-        )
-
+        targets, engine_files, languages = _select_engines(path, config)
         if not targets:
-            return ToolResult(
-                tool="lint",
-                engine=None,
-                engine_version=None,
-                status="skipped",
-                duration_ms=elapsed_ms(start),
-                summary=(
-                    "lint: detected "
-                    + ", ".join(languages)
-                    + " project markers, but their adapters are feasibility-gated"
-                    if languages
-                    else f"lint: no Python/JS/TS files found under {path}"
-                ),
-                findings=[],
-                raw=None,
+            summary = (
+                "lint: detected "
+                + ", ".join(languages)
+                + " project markers, but their adapters are feasibility-gated"
+                if languages
+                else f"lint: no Python/JS/TS files found under {path}"
             )
+            return _build_skipped_result(start, summary)
 
-        # Dispatch: group by engine, run each engine once with its file list.
-        ruff_files = [
-            t
-            for t in targets
-            if t.suffix.lstrip(".") in ENGINES["ruff"].file_extensions
-        ]
-        eslint_files = [
-            t
-            for t in targets
-            if t.suffix.lstrip(".") in ENGINES["eslint"].file_extensions
-        ]
-
-        findings_all: list = []
-        last_status = "ok"
-        engines_used: list[str] = []
-        summaries: list[str] = []
-
-        if ruff_files:
-            ruff_args = [str(p) for p in ruff_files] + (engine_args or [])
-            r = run_engine(ENGINES["ruff"], path, ruff_args, tool_name="lint")
-            findings_all.extend(r.get("findings", []))
-            engines_used.append("ruff")
-            summaries.append(r.get("summary", ""))
-            last_status = combine_status(last_status, r.get("status", "ok"))
-
-        if eslint_files:
-            eslint_args = [str(p) for p in eslint_files] + (engine_args or [])
-            r = run_engine(ENGINES["eslint"], path, eslint_args, tool_name="lint")
-            findings_all.extend(r.get("findings", []))
-            engines_used.append("eslint")
-            summaries.append(r.get("summary", ""))
-            last_status = combine_status(last_status, r.get("status", "ok"))
-
-        if engine_on_path("globstar"):
-            globstar_args = [str(p) for p in targets] + (engine_args or [])
-            r = run_engine(ENGINES["globstar"], path, globstar_args, tool_name="lint")
-            findings_all.extend(r.get("findings", []))
-            engines_used.append("globstar")
-            summaries.append(r.get("summary", ""))
-            last_status = combine_status(last_status, r.get("status", "ok"))
-
-        # If neither engine is installed, return a single skipped result.
-        if not engines_used:
-            engines_missing = []
-            if ruff_files and not engine_on_path("ruff"):
-                engines_missing.append("ruff")
-            if eslint_files and not engine_on_path("eslint"):
-                engines_missing.append("eslint")
-            return ToolResult(
-                tool="lint",
-                engine=None,
-                engine_version=None,
-                status="skipped",
-                duration_ms=elapsed_ms(start),
-                summary=f"lint: engines not installed ({', '.join(engines_missing)})",
-                findings=[],
-                raw=None,
-            )
-
-        # If we found files but no engines could be used (because none of the
-        # files matched an installed engine), still return skipped.
-        if not engines_used and (ruff_files or eslint_files):
-            return ToolResult(
-                tool="lint",
-                engine=None,
-                engine_version=None,
-                status="skipped",
-                duration_ms=elapsed_ms(start),
-                summary="lint: no engines could run on these files",
-                findings=[],
-                raw=None,
-            )
-
-        n_findings = len(findings_all)
-        if last_status == "ok" and n_findings > 0:
-            last_status = (
-                "warn"
-                if any(f.get("severity") != "error" for f in findings_all)
-                else "fail"
-            )
-            if all(f.get("severity") == "error" for f in findings_all):
-                last_status = "fail"
-
-        engine_str = "+".join(engines_used)
-        if n_findings:
-            summary = f"lint [{engine_str}]: {n_findings} issue(s)"
-        else:
-            summary = f"lint [{engine_str}]: clean"
-
-        return ToolResult(
-            tool="lint",
-            engine=engine_str,
-            engine_version=None,
-            status=last_status,
-            duration_ms=elapsed_ms(start),
-            summary=summary,
-            findings=findings_all,
-            raw=None,
+        findings, last_status, engines_used = _run_selected_engines(
+            engine_files, targets, path, engine_args
         )
+        if not engines_used:
+            return _check_missing_engines_result(engine_files, start)
+
+        return _assemble_lint_result(findings, last_status, engines_used, start)

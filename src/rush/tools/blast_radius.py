@@ -1,9 +1,15 @@
 """Transitive blast radius analyzer determining downstream impact of changes."""
 
-import ast
+from __future__ import annotations
+
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from rush.tools.blast_radius_graph import (
+    build_reverse_import_graph,
+    walk_impacted_paths,
+)
 
 
 class BlastRadiusReport(BaseModel):
@@ -26,51 +32,14 @@ class BlastRadiusAnalyzer:
     def analyze(
         self, changed_files: list[Path], max_depth: int = 5
     ) -> BlastRadiusReport:
-        affected: set[str] = set()
-        tests: set[str] = set()
-        routes: set[str] = set()
+        target_stems = {p.stem for p in changed_files}
+        graph = build_reverse_import_graph(self.project_root, target_stems)
+        affected = walk_impacted_paths(graph, target_stems, max_depth)
 
-        target_module_names = {p.stem for p in changed_files}
+        tests = {p for p in affected if "test" in p}
+        routes = {p for p in affected if "route" in p or "api" in p or "cli" in p}
 
-        for py_file in self.project_root.glob("**/*.py"):
-            if (
-                ".venv" in str(py_file)
-                or ".git" in str(py_file)
-                or ".rush" in str(py_file)
-            ):
-                continue
-            try:
-                code = py_file.read_text(encoding="utf-8", errors="ignore")
-                tree = ast.parse(code)
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            if any(tm in alias.name for tm in target_module_names):
-                                rel = str(py_file.relative_to(self.project_root))
-                                affected.add(rel)
-                                if "test" in rel:
-                                    tests.add(rel)
-                                if "route" in rel or "api" in rel or "cli" in rel:
-                                    routes.add(rel)
-                    elif (
-                        isinstance(node, ast.ImportFrom)
-                        and node.module
-                        and any(tm in node.module for tm in target_module_names)
-                    ):
-                        rel = str(py_file.relative_to(self.project_root))
-                        affected.add(rel)
-                        if "test" in rel:
-                            tests.add(rel)
-                        if "route" in rel or "api" in rel or "cli" in rel:
-                            routes.add(rel)
-            except Exception:  # noqa: BLE001, S110
-                pass
-
-        risk = "LOW"
-        if len(affected) > 10 or len(routes) > 2:
-            risk = "HIGH"
-        elif len(affected) > 3 or len(routes) > 0:
-            risk = "MEDIUM"
+        risk = self._calculate_risk(len(affected), len(routes))
 
         return BlastRadiusReport(
             target_files=[str(p) for p in changed_files],
@@ -80,3 +49,11 @@ class BlastRadiusAnalyzer:
             recommended_tests=sorted(tests),
             risk_score=risk,
         )
+
+    @staticmethod
+    def _calculate_risk(affected_count: int, routes_count: int) -> str:
+        if affected_count > 10 or routes_count > 2:
+            return "HIGH"
+        if affected_count > 3 or routes_count > 0:
+            return "MEDIUM"
+        return "LOW"

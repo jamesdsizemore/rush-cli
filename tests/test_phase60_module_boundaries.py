@@ -302,3 +302,45 @@ def test_common_is_compatibility_reexport_without_duplicate_definitions() -> Non
     )
     assert rush.tools.common.error_result is rush.runtime.result_helpers.error_result
     assert rush.tools.common.exit_code_for is rush.runtime.result_helpers.exit_code_for
+
+
+def test_traversal_state_modules_own_exact_symbols() -> None:
+    """T-60.17: Traversal, state, and drift rule submodules own graph and rule implementations directly."""
+    from rush.discovery import workspace_graph
+    from rush.tools import blast_radius_graph, db_drift_rules
+
+    # blast_radius_graph owns build_reverse_import_graph and walk_impacted_paths
+    for sym in ("build_reverse_import_graph", "walk_impacted_paths"):
+        assert hasattr(blast_radius_graph, sym), (
+            f"{sym} missing from rush.tools.blast_radius_graph"
+        )
+        fn = getattr(blast_radius_graph, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.tools.blast_radius_graph", (
+            f"{sym} not defined in rush.tools.blast_radius_graph"
+        )
+
+    # workspace_graph owns discover_workspace_packages and topological_sort_workspace_packages
+    for sym in (
+        "discover_workspace_packages",
+        "topological_sort_workspace_packages",
+    ):
+        assert hasattr(workspace_graph, sym), (
+            f"{sym} missing from rush.discovery.workspace_graph"
+        )
+        fn = getattr(workspace_graph, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.discovery.workspace_graph", (
+            f"{sym} not defined in rush.discovery.workspace_graph"
+        )
+
+    # db_drift_rules owns collect_models, collect_migrations, and evaluate_drift
+    for sym in ("collect_models", "collect_migrations", "evaluate_drift"):
+        assert hasattr(db_drift_rules, sym), (
+            f"{sym} missing from rush.tools.db_drift_rules"
+        )
+        fn = getattr(db_drift_rules, sym)
+        assert callable(fn), f"{sym} is not callable"
+        assert fn.__module__ == "rush.tools.db_drift_rules", (
+            f"{sym} not defined in rush.tools.db_drift_rules"
+        )
