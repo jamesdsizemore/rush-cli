@@ -278,3 +278,31 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 ### Provenance & Engine Architecture (Phase 59)
 - `src/rush/release/provenance_policy.py`: In-toto Statement v1 models, StrictProvenanceParser, SignedProvenancePolicy, ProvenancePolicyVerifier.
 - `src/rush/engines/support_policy.py`: EngineSupportPolicy, EngineTaxonomyRecord, FixedPathEnvironment.
+
+### Maintainability Hotspot Reduction & Complexity Governance (Phase 60)
+
+Phase 60 completes the repository remediation program by resolving Finding R-015 ("Maintainability hotspots in central transport and orchestration modules") through architectural modularization and strict complexity governance:
+
+1. **McCabe C901 Complexity Invariant (<= 10)**:
+   - All production modules, facades, and extracted packages are governed by a strict McCabe cyclomatic complexity limit of C901 <= 10 enforced via Ruff 0.16.3 (`ruff check --select C901 --config "lint.mccabe.max-complexity = 10"`).
+   - Zero exemptions are allowed in production paths (`governance/maintainability-exemptions.toml` has strictly 0 entries). Any temporary exemption requires a 6-field schema (`symbol`, `value`, `owner`, `rationale`, `compensating_test`, `expires_at`).
+
+2. **Transport Layer Decomposition**:
+   - `src/rush/cli.py` (previously 3,300+ lines) delegates option extraction and decorators to `src/rush/cli_support/options.py`, catalog command generation to `src/rush/cli_support/catalog_commands.py`, and execution/rendering to `src/rush/cli_support/rendering.py`.
+   - `src/rush/mcp.py` delegates FastMCP tool registration and wrapper generation to `src/rush/mcp_support/tool_registry.py`. `_register_tools` complexity reduced from 16 to 1.
+   - All compatibility symbols are re-exported via identity matches (`is`), ensuring zero breakage for external callers.
+
+3. **Orchestration Tool Decomposition**:
+   - `src/rush/tools/continuity.py`: Core logic is decomposed into `src/rush/continuity/` (`context.py`, `coordination.py`, `providers.py`, `receipts.py`). `SessionContinuityTool.run` reduced from 18 to 2; `_provider_resume` reduced from 13 to 1.
+   - `src/rush/tools/review.py`: Decomposed into `src/rush/review/` (`collection.py`, `llm.py`, `results.py`). `ReviewTool.run` reduced from 16 to 4.
+   - `src/rush/tools/lint.py`: Decomposed into clean private orchestrators, reducing `LintTool.run` from 12 to 4.
+
+4. **Runtime Subsystem & Zero-Logic Facade**:
+   - `src/rush/tools/common.py` is transformed into a pure compatibility re-export facade with zero class or function definitions.
+   - All execution runtime logic lives in `src/rush/runtime/` (`binaries.py`, `subprocesses.py`, `result_helpers.py`).
+
+5. **Algorithmic Graph & Rule Separation**:
+   - Graph algorithms and AST rule evaluations are separated from tool orchestrators into standalone modules:
+     - `src/rush/tools/blast_radius_graph.py`: Graph creation and impact traversal (`analyze` reduced from 15 to 4).
+     - `src/rush/discovery/workspace_graph.py`: Manifest discovery and topological sorting (`discover_workspaces` reduced from 23 to 5).
+     - `src/rush/tools/db_drift_rules.py`: AST model/migration extractors and schema drift evaluation (`audit_drift` reduced from 21 to 5).

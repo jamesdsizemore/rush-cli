@@ -62,3 +62,20 @@ See [Contributor Onboarding](contributor-onboarding.md) and [Tool Development Gu
 - **Honest SLSA Claims (R-013)**: Local provenance generation must never claim SLSA Level 3 without external signing. Set `assurance: unsigned_draft`.
 - **Stdlib Statistics**: Compute statistical aggregations exclusively with `statistics` and `math`.
 - **Zero Heavy AI Bundling**: Never vendor large C++ inference runtimes. Gracefully skip when missing.
+
+---
+
+## 5. Maintainability & Complexity Standards (Phase 60)
+
+1. **McCabe Cyclomatic Complexity Limit (C901 <= 10)**:
+   - Every function, method, and callable in production code (`src/rush/`) must maintain a McCabe cyclomatic complexity C901 of 10 or less.
+   - Verified via Ruff:
+     ```bash
+     .venv/Scripts/ruff.exe check --select C901 --config "lint.mccabe.max-complexity = 10" src/
+     ```
+2. **Decomposition Invariant**:
+   - If a function approaches or exceeds C901 = 10, it must be decomposed into focused single-responsibility helpers, rule modules, or dedicated domain packages (e.g. `rush.continuity`, `rush.review`, `rush.runtime`).
+   - Transport entrypoints (`src/rush/cli.py`, `src/rush/mcp.py`) and central utilities (`src/rush/tools/common.py`) must serve strictly as facades, delegating operational logic to modular support packages (`rush.cli_support`, `rush.mcp_support`, `rush.runtime`).
+3. **Zero Exemption Policy**:
+   - Production code must maintain 0 exemptions in `governance/maintainability-exemptions.toml`.
+   - In the rare event an exemption is approved during refactoring transitions, it must supply the full 6-field schema: `symbol`, `value`, `owner`, `rationale`, `compensating_test`, and `expires_at`.

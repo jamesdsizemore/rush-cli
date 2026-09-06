@@ -154,3 +154,24 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 ### Generating Provenance in Tools (Phase 59)
 Tools generating build artifacts must bind physical file digests and emit `ProvenanceDraft` with `assurance='unsigned_draft'` unless cryptographically signed.
+
+## Tool Decomposition & Runtime Standards (Phase 60)
+
+When developing or refactoring quality tools in `src/rush/tools/`, follow these maintainability guidelines:
+
+1. **Using `rush.runtime` for Subprocesses and Results**:
+   - Do not invoke low-level `subprocess.run()` directly or implement ad-hoc result helpers.
+   - Import standard runtime utilities from `rush.runtime`:
+     ```python
+     from rush.runtime.binaries import resolve_binary
+     from rush.runtime.result_helpers import error_result, exit_code_for, skipped_result
+     from rush.runtime.subprocesses import run_engine, run_subprocess
+     ```
+   - Legacy `src/rush/tools/common.py` is maintained exclusively as a re-export facade for backwards compatibility; all new code should import directly from `rush.runtime`.
+
+2. **Decomposing Complex Tools into Graph & Rule Modules**:
+   - Tools that involve complex algorithmic graph traversal, AST analysis, or rule evaluation must separate the domain algorithm from the `ToolFn` orchestration facade:
+     - **Graph Algorithms**: Place topological sorting, reachability analysis, and dependency traversal into a dedicated graph module (e.g. `src/rush/tools/blast_radius_graph.py`, `src/rush/discovery/workspace_graph.py`).
+     - **Rule Engines**: Place AST inspections, heuristic rules, and schema checks into dedicated rule modules (e.g. `src/rush/tools/db_drift_rules.py`).
+     - **Domain Packages**: If a tool coordinates multiple distinct phases (e.g. collection, AI review, result assembly), decompose the tool into a dedicated subpackage (e.g. `src/rush/review/`, `src/rush/continuity/`).
+   - The `ToolFn.run` method should remain a clean coordinator with McCabe cyclomatic complexity C901 <= 10.

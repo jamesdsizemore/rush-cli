@@ -275,3 +275,41 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 ## Truthful Provenance & Engine Conformance (Phase 59)
 Rush produces explicit unsigned build provenance drafts (`in-toto Statement v1` + `SLSA Provenance v1` predicate) bound to physical artifact digests. Optional signed policy verification verifies DSSE Ed25519 signatures and pins signer, builder, and source constraints. Engine discovery is governed by `EngineSupportPolicy` and isolated via `FixedPathEnvironment` to prevent ambient PATH pollution.
+
+## Modular Package Architecture & Maintainability Hotspots (Phase 60)
+
+Phase 60 decomposes central transport, orchestration, and graph traversal hotspots into focused, single-responsibility submodules while maintaining strict backwards compatibility and reducing McCabe cyclomatic complexity to C901 <= 10 across all targets:
+
+1. **CLI Support Subsystem (`src/rush/cli_support/`)**:
+   - `options.py`: Defines CLI option decorators (`permission_options`) and permission extraction logic (`_extract_permissions`).
+   - `catalog_commands.py`: Builds dynamic Click commands for catalog tools (`build_catalog_path_command`).
+   - `rendering.py`: Manages tool invocation execution (`_run_tool`) and session result rendering (`_render_session_result`).
+   - `src/rush/cli.py` retains pure backwards-compatible re-exports matching extracted objects by identity.
+
+2. **MCP Support Subsystem (`src/rush/mcp_support/`)**:
+   - `tool_registry.py`: Owns FastMCP tool registration (`register_all_tools`, `register_custom_tools`) and adapter wrappers (`make_tool_wrapper`, `make_custom_wrapper`).
+   - Reduces `_register_tools` complexity from 16 to 1.
+
+3. **Session Continuity Subsystem (`src/rush/continuity/`)**:
+   - `context.py`: Owns Context Chunk Retrieval (CCR) packing and retrieval operations (`pack_context`, `retrieve_context`).
+   - `coordination.py`: Handles multi-agent lock inspection, merge preview, and coordination recovery (`check_coordination`, `preview_merge`, `recover_coordination`).
+   - `providers.py`: Implements provider resume projections, OmniRoute routing, and command/prompt assembly (`resume_provider`, `resume_omniroute`, `provider_handoff`, `windows_cmd_command`, `provider_command`, `provider_prompt`).
+   - `receipts.py`: Manages handoff receipt persistence and restoration (`save_receipt`, `restore_receipt`).
+   - Reduces `SessionContinuityTool.run` from 18 to 2 and `_provider_resume` from 13 to 1.
+
+4. **Review Subsystem (`src/rush/review/`)**:
+   - `collection.py`: Scans reviewable files, performs safe chunked file reading, and applies heuristic filters (large file, todo density, docstrings, naming, scaffold markers, source policy exclusions).
+   - `llm.py`: Handles LLM review egress, model client communication, and review kind labelling (`maybe_call_llm`).
+   - `results.py`: Assembles structured review findings and computes summary verdicts (`assemble_review_result`).
+   - Reduces `ReviewTool.run` from 16 to 4.
+
+5. **Runtime Subsystem (`src/rush/runtime/`)**:
+   - `binaries.py`: Resolves virtualenv and host binaries with in-memory caching (`resolve_binary`, `_resolve_binary_cached`, `clear_binary_cache`, `engine_on_path`).
+   - `subprocesses.py`: Bounded subprocess execution with stdin isolation, timeout management, output redaction, and install hints (`run_subprocess`, `run_engine`).
+   - `result_helpers.py`: Canonical result construction, exit code mappings, timestamp utilities, finding fingerprints, and redactions (`skipped_result`, `error_result`, `exit_code_for`, `finding_fingerprint`, `normalize_findings`).
+   - `src/rush/tools/common.py` is a zero-definition re-export facade preserving backwards compatibility.
+
+6. **Graph Traversal, Discovery & Rule Modules**:
+   - `src/rush/tools/blast_radius_graph.py`: Owns reverse import graph construction (`build_reverse_import_graph`) and impact traversal (`walk_impacted_paths`), reducing `BlastRadiusAnalyzer.analyze` from 15 to 4.
+   - `src/rush/discovery/workspace_graph.py`: Owns polyglot package discovery (`discover_workspace_packages`) and topological dependency sorting (`topological_sort_workspace_packages`), reducing `discover_workspaces` from 23 to 5.
+   - `src/rush/tools/db_drift_rules.py`: Owns ORM model AST collection (`collect_models`), migration history parsing (`collect_migrations`), and drift rule evaluation (`evaluate_drift`), reducing `DbDriftAuditor.audit_drift` from 21 to 5.

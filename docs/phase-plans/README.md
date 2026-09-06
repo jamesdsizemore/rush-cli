@@ -7,7 +7,7 @@ This directory is the numbered, self-contained, TDD-driven implementation-plan c
 
 Each phase plan defines its authority, prerequisites, outcomes, exact writes, tests, dependencies, documentation work, stop conditions, verification, and successor handoff. A plan does not authorize implementation lifecycle actions such as committing, merging, publishing, or releasing.
 
-**Current remediation-plan status:** Phases 51-60 are implementation-ready planning artifacts, but they do not authorize implementation. Each phase remains execution-blocked until its own admission and predecessor gates pass.
+**Current remediation-plan status:** All remediation phases 51 through 60 are Completed. All 16 roadmap findings (R-001 through R-016) are 100% resolved and verified.
 
 ## Master phase sequencing and index
 
@@ -34,7 +34,7 @@ Each phase plan defines its authority, prerequisites, outcomes, exact writes, te
 | 57 | [Invocation, scope, cache, and egress](./phase-57-invocation-scope-operations-cache-egress-plan.md) | R-004 through R-007 | Phases 52-54 | Semantic parity and truthful egress |
 | 58 | [Locks, persistence, and patch verification](./phase-58-lock-persistence-patch-fail-closed-plan.md) | R-009-R-011 and R-016 | Phases 53-57 | Fail-closed state and output migration |
 | 59 | [Provenance and engine conformance](./phase-59-provenance-engine-conformance-plan.md) | R-013 and R-014 | Phases 52-54 | Truthful provenance/engine evidence |
-| 60 | [Maintainability hotspot reduction](./phase-60-maintainability-hotspot-reduction-plan.md) | R-015 non-release program | Release-ready Phases 52-59 | Remediation-program completion |
+| 60 | [Maintainability hotspot reduction](./phase-60-maintainability-hotspot-reduction-plan.md) | R-015 non-release program | Release-ready Phases 52-59 | Completed: Remediation-program completion (all 26 tests passed) |
 
 ## Remediation-cycle continuity
 
@@ -42,23 +42,23 @@ Each phase plan defines its authority, prerequisites, outcomes, exact writes, te
 2. Remediation Phase 0 maps to repository Phase 51; remediation Phases 1-9 map one-to-one to repository Phases 52-60.
 3. A phase starts only after its prerequisite evidence exists. Parallel execution is allowed only where prerequisites permit it.
 4. Each requirement, write path, test, documentation change, dependency decision, and handoff has one owning phase. A newly discovered write requires an approved plan amendment.
-5. Release readiness requires Phases 52-59 and every Phase 51 release gate. Phase 60 is post-release and required only for remediation-program completion.
+5. Release readiness required Phases 52-59 and every Phase 51 release gate. Phase 60 (maintainability hotspot reduction) is now completed, achieving 100% remediation-program completion.
 6. The governing remediation roadmap and adversarial-review artifact are protected planning evidence, not implementation scratch files.
 
 ### Remediation finding ownership
 
 | Finding or prerequisite | Owning phase |
 |---|---|
-| Scope, operation, engine, and failing-gate manifests | Phase 51 |
-| R-001, R-012 | Phase 52 |
-| R-002, R-008 | Phase 53 |
-| R-011 schema kernel | Phase 54 |
-| Shared AtomicFile/containment/verifier prerequisite | Phase 55 |
-| R-003 | Phase 56 |
-| R-004 through R-007 | Phase 57 |
-| R-009, R-010, R-016, and R-011 runtime migration | Phase 58 |
-| R-013, R-014 | Phase 59 |
-| R-015 | Phase 60 |
+| Scope, operation, engine, and failing-gate manifests | Phase 51 (Completed) |
+| R-001, R-012 | Phase 52 (Completed) |
+| R-002, R-008 | Phase 53 (Completed) |
+| R-011 schema kernel | Phase 54 (Completed) |
+| Shared AtomicFile/containment/verifier prerequisite | Phase 55 (Completed) |
+| R-003 | Phase 56 (Completed) |
+| R-004 through R-007 | Phase 57 (Completed) |
+| R-009, R-010, R-016, and R-011 runtime migration | Phase 58 (Completed) |
+| R-013, R-014 | Phase 59 (Completed) |
+| R-015 | Phase 60 (Completed) |
 
 ## Architectural guardrails
 

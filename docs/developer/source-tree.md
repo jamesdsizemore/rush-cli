@@ -3,14 +3,22 @@
 | Path | Responsibility |
 |---|---|
 | `src/rush/catalog.py` | declarative tool/engine metadata, maturity, parser-fixture ownership |
-| `src/rush/cli.py` | Click options, catalog command generation, output/exit mapping |
-| `src/rush/mcp.py` | stdio server construction and registration |
+| `src/rush/cli.py` | Click options, commands, and compatibility facade (delegating to `rush.cli_support`) |
+| `src/rush/cli_support/` | CLI options decorators, catalog command builders, and result rendering |
+| `src/rush/mcp.py` | stdio FastMCP server construction and compatibility facade |
+| `src/rush/mcp_support/` | FastMCP tool registration, tool wrappers, and custom handler adapters |
 | `src/rush/config.py` | discovery and typed TOML parse |
 | `src/rush/theme.py` | Rich CLI rendering |
 | `src/rush/logging.py` | NDJSON stderr logging/redaction |
+| `src/rush/continuity/` | Context Chunk Retrieval (CCR), coordination, providers, and receipts |
+| `src/rush/review/` | Review file collection, safe reading, heuristics, LLM egress, results assembly |
+| `src/rush/runtime/` | Runtime binaries resolution/caching, subprocess execution, result helpers |
 | `src/rush/tools/base.py` | ToolFn, ToolResult, Finding contracts |
-| `src/rush/tools/common.py` | subprocess, normalization, error/skip helpers, exit mapping |
+| `src/rush/tools/common.py` | Zero-definition compatibility re-export facade for `rush.runtime` |
 | `src/rush/tools/routing.py` | language detection and deterministic aggregation |
+| `src/rush/tools/blast_radius_graph.py` | Reverse import graph construction and impact traversal |
+| `src/rush/discovery/workspace_graph.py` | Workspace package discovery and topological sorting |
+| `src/rush/tools/db_drift_rules.py` | Model and migration AST extraction and schema drift evaluation |
 | `src/rush/tools/*.py` | one intent-focused tool implementation each |
 | `src/rush/engines/base.py` | adapter contract |
 | `src/rush/engines/*.py` | executable argv and parser normalization |
@@ -206,3 +214,38 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 - `src/rush/release/provenance_policy.py`: In-toto Statement v1 models and strict parser (Phase 59).
 - `src/rush/engines/support_policy.py`: Engine support policy and fixed-PATH harness (Phase 59).
+
+## Maintainability & Modular Subsystems Layout (Phase 60)
+
+```
+src/rush/
+├── cli_support/
+│   ├── __init__.py
+│   ├── options.py           # Option decorators and permission extraction
+│   ├── catalog_commands.py  # Click catalog command factory
+│   └── rendering.py         # Subprocess execution and session result rendering
+├── mcp_support/
+│   ├── __init__.py
+│   └── tool_registry.py     # FastMCP registration and tool wrapper factories
+├── continuity/
+│   ├── __init__.py
+│   ├── context.py           # CCR packing and retrieval
+│   ├── coordination.py      # Lock checks, merge preview, coordination recovery
+│   ├── providers.py         # Provider resume, OmniRoute, command/prompt assembly
+│   └── receipts.py          # Handoff receipt persistence and restoration
+├── review/
+│   ├── __init__.py
+│   ├── collection.py        # File collection, safe reading, heuristic filters
+│   ├── llm.py               # LLM review egress and review kind labelling
+│   └── results.py           # Review findings assembly and verdict computation
+├── runtime/
+│   ├── __init__.py
+│   ├── binaries.py          # Binary resolution and @lru_cache path caching
+│   ├── subprocesses.py      # Bounded redacted subprocess runner and engine executor
+│   └── result_helpers.py    # Canonical skipped/error results, fingerprinting, timing
+├── discovery/
+│   └── workspace_graph.py   # Workspace package discovery and topological sorting
+└── tools/
+    ├── blast_radius_graph.py # Reverse import graph builder and impact traversal
+    └── db_drift_rules.py     # Model/migration AST extractors and drift rules
+```

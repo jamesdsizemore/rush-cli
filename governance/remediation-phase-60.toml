@@ -1,0 +1,88 @@
+# Phase 60 Remediation Manifest: Non-Release Maintainability Hotspot Reduction and Remediation Program Completion
+[phase]
+id = 60
+name = "maintainability-hotspot-reduction"
+title = "Non-Release Maintainability Hotspot Reduction and Remediation Program Completion"
+status = "completed"
+completed_at = "2026-09-06T00:00:00Z"
+test_count = 26
+full_suite_test_count = 1215
+
+[requirements]
+closed = ["R-015"]
+release_blockers_remaining = 0
+all_release_blockers_closed = true
+non_release_deferred = []
+all_non_release_findings_closed = true
+remediation_program_complete = true
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = ["R-015"]
+findings_completed = ["R-015"]
+
+[contract_tests]
+total_contract_tests = 26
+all_contract_tests_passed = true
+test_files = [
+    "tests/test_phase60_characterization.py",
+    "tests/test_phase60_module_boundaries.py",
+    "tests/test_phase60_complexity_thresholds.py",
+    "tests/test_phase60_refactor.py",
+]
+tests = [
+    "T-60.01",
+    "T-60.02",
+    "T-60.03",
+    "T-60.04",
+    "T-60.05",
+    "T-60.06",
+    "T-60.07",
+    "T-60.08",
+    "T-60.09",
+    "T-60.10",
+    "T-60.11",
+    "T-60.12",
+    "T-60.13",
+    "T-60.14",
+    "T-60.15",
+    "T-60.16",
+    "T-60.17",
+    "T-60.18",
+    "T-60.19",
+    "T-60.20",
+    "T-60.21",
+    "T-60.22",
+    "T-60.23",
+    "T-60.24",
+    "T-60.25",
+    "T-60.26",
+]
+
+[contract_inventory]
+t_60_01 = "Freeze CLI command generation, options parsing, and rendering"
+t_60_02 = "Freeze MCP tool registration, listing, and invocation"
+t_60_03 = "Freeze SessionContinuityTool dispatch and provider receipt workflows"
+t_60_04 = "Freeze ReviewTool collection, heuristics, provider invocation, and result assembly"
+t_60_05 = "Freeze common subprocess execution, error, skipped, and exit code helpers"
+t_60_06 = "Freeze LintTool multi-engine execution and workspace discovery traversal"
+t_60_07 = "Maintainability baseline pins Ruff 0.16.3, command, and exact targets"
+t_60_08 = "Exemption schema strictly enforces 6 required fields with zero extra keys"
+t_60_09 = "Phase 60 starts with zero exemptions"
+t_60_10 = "CLI support modules own the extracted implementations directly"
+t_60_11 = "cli.py maintains backwards-compatible re-exports matching extracted objects via identity"
+t_60_12 = "mcp_support.tool_registry defines registration and wrapper helpers"
+t_60_13 = "Continuity submodules own context, coordination, providers, and receipts operations directly"
+t_60_14 = "Review submodules own collection, heuristics, llm egress, and results directly"
+t_60_15 = "Runtime modules own binaries, subprocesses, and result_helpers directly"
+t_60_16 = "common.py is a pure compatibility re-export facade with zero duplicate definitions"
+t_60_17 = "Traversal, state, and drift rule submodules own graph and rule implementations directly"
+t_60_18 = "Verify CLI and MCP boundaries comply with McCabe C901 <= 10"
+t_60_19 = "Verify SessionContinuityTool facade and rush.continuity comply with McCabe C901 <= 10"
+t_60_20 = "Verify ReviewTool facade and rush.review comply with McCabe C901 <= 10"
+t_60_21 = "Verify runtime modules and common.py facade comply with McCabe C901 <= 10"
+t_60_22 = "Verify BlastRadiusAnalyzer facade and blast_radius_graph comply with McCabe C901 <= 10"
+t_60_23 = "Verify workspace discovery facade and workspace_graph comply with McCabe C901 <= 10"
+t_60_24 = "Verify DbDriftAuditor facade and db_drift_rules comply with McCabe C901 <= 10"
+t_60_25 = "Verify all Phase 60 facades and extracted modules comply with McCabe C901 <= 10"
+t_60_26 = "Maintainability hotspot complexity and modularity reduction contract verification (R-015)"
