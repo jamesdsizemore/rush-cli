@@ -130,3 +130,91 @@ def test_continuity_modules_own_exact_symbols() -> None:
         assert fn.__module__ == "rush.continuity.receipts", (
             f"{sym} not defined in rush.continuity.receipts"
         )
+
+
+def test_review_modules_own_exact_symbols() -> None:
+    """T-60.14: Review submodules own collection, heuristics, llm egress, and results directly."""
+    from rush.review import collection, llm, results
+
+    # File collection
+    found_collect = None
+    for sym in ("collect_reviewable_files", "_collect_reviewable_files"):
+        if hasattr(collection, sym):
+            found_collect = getattr(collection, sym)
+            break
+    assert found_collect is not None, (
+        "Neither collect_reviewable_files nor _collect_reviewable_files found in rush.review.collection"
+    )
+    assert callable(found_collect), f"{found_collect} is not callable"
+    assert found_collect.__module__ == "rush.review.collection", (
+        f"{found_collect} not defined in rush.review.collection"
+    )
+
+    # Safe reading
+    found_read = None
+    for sym in ("read_file_safely", "_read_file_safely"):
+        if hasattr(collection, sym):
+            found_read = getattr(collection, sym)
+            break
+    assert found_read is not None, (
+        "Neither read_file_safely nor _read_file_safely found in rush.review.collection"
+    )
+    assert callable(found_read), f"{found_read} is not callable"
+    assert found_read.__module__ == "rush.review.collection", (
+        f"{found_read} not defined in rush.review.collection"
+    )
+
+    # Heuristic checks / filters
+    for sym_options in (
+        ("file_size_heuristic", "_file_size_heuristic", "_check_large_file_heuristic"),
+        ("todo_density_heuristic", "_todo_density_heuristic", "_check_todo_heuristic"),
+        ("missing_docstrings_heuristic", "_missing_docstrings_heuristic"),
+        ("naming_heuristic", "_naming_heuristic"),
+        (
+            "scaffold_marker_heuristic",
+            "_scaffold_marker_heuristic",
+            "_check_scaffold_heuristic",
+        ),
+        (
+            "is_source_policy_excluded",
+            "_is_source_policy_excluded",
+            "_check_source_policy_exclusions",
+        ),
+    ):
+        found_fn = None
+        for sym in sym_options:
+            if hasattr(collection, sym):
+                found_fn = getattr(collection, sym)
+                break
+        assert found_fn is not None, (
+            f"None of {', '.join(sym_options)} found in rush.review.collection"
+        )
+        assert callable(found_fn), f"{found_fn} is not callable"
+        assert found_fn.__module__ == "rush.review.collection", (
+            f"{found_fn} not defined in rush.review.collection"
+        )
+
+    # LLM egress
+    found_llm = None
+    for sym in ("maybe_call_llm", "_maybe_call_llm"):
+        if hasattr(llm, sym):
+            found_llm = getattr(llm, sym)
+            break
+    assert found_llm is not None, (
+        "Neither maybe_call_llm nor _maybe_call_llm found in rush.review.llm"
+    )
+    assert callable(found_llm), f"{found_llm} is not callable"
+    assert found_llm.__module__ == "rush.review.llm", (
+        f"{found_llm} not defined in rush.review.llm"
+    )
+
+    # Results assembly
+    assert hasattr(results, "assemble_review_result"), (
+        "assemble_review_result missing from rush.review.results"
+    )
+    assert callable(results.assemble_review_result), (
+        "assemble_review_result is not callable"
+    )
+    assert results.assemble_review_result.__module__ == "rush.review.results", (
+        "assemble_review_result not defined in rush.review.results"
+    )

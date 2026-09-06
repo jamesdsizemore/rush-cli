@@ -15,18 +15,105 @@ Heuristics only — no LLM call unless --llm=True AND env key set.
 
 from __future__ import annotations
 
-import ast
-import re
-import urllib.error
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, finding_fingerprint, now_ms
+from rush.review.collection import (
+    MAX_AST_DEPTH,
+    MAX_FILE_BYTES,
+    TODO_PATTERN,
+    _collect_reviewable_files,
+    _file_size_heuristic,
+    _is_source_policy_excluded,
+    _missing_docstrings_heuristic,
+    _naming_heuristic,
+    _read_file_safely,
+    _scaffold_marker_heuristic,
+    _todo_density_heuristic,
+    check_file_heuristics,
+    collect_reviewable_files,
+    is_source_policy_excluded,
+    missing_docstrings_heuristic,
+    naming_heuristic,
+    read_file_safely,
+    scaffold_marker_heuristic,
+    todo_density_heuristic,
+)
+from rush.review.llm import (
+    _maybe_call_llm,
+    apply_llm_review,
+    format_review_prompt,
+    maybe_call_llm,
+    parse_llm_findings,
+)
+from rush.review.results import (
+    assemble_review_result,
+    build_empty_review_result,
+    build_error_review_result,
+)
 
-TODO_PATTERN = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
-MAX_FILE_BYTES = 1_000_000  # 1 MB cap — heuristics don't run on huge files
-MAX_AST_DEPTH = 50  # safety against malicious files
+from .base import Finding, ToolFn, ToolName, ToolResult
+from .common import now_ms
+
+
+def _extract_review_config(
+    config: Any, use_graft: bool
+) -> tuple[int, bool, list[str], list[str]]:
+    """Extract review thresholds, flags, markers, and exclusions from configuration."""
+    max_lines = 400
+    effective_use_graft = use_graft
+    scaffold_markers: list[str] = []
+    source_policy_exclude: list[str] = []
+
+    if config is not None and hasattr(config, "review"):
+        review_cfg = config.review
+        max_lines = getattr(review_cfg, "max_file_lines", 400)
+        effective_use_graft = use_graft or getattr(review_cfg, "use_graft", False)
+        scaffold_markers = list(getattr(review_cfg, "scaffold_markers", []))
+        source_policy_exclude = list(getattr(review_cfg, "source_policy_exclude", []))
+
+    return max_lines, effective_use_graft, scaffold_markers, source_policy_exclude
+
+
+def _resolve_graft_findings(
+    path: Path, use_graft: bool, graft_provider: Any = None
+) -> tuple[list[Finding], str]:
+    """Retrieve graft context findings if requested and available."""
+    if not use_graft:
+        return [], "not-requested"
+
+    provider = graft_provider
+    if provider is None:
+        from ..integrations import LocalGraftContext
+
+        provider = LocalGraftContext()
+
+    project_root = path if path.is_dir() else path.parent
+    if provider.available(project_root):
+        return list(provider.context_for(path)), "used"
+    return [], "skipped-unavailable"
+
+
+def _evaluate_target_heuristics(
+    targets: list[Path],
+    root: Path,
+    max_lines: int,
+    scaffold_markers: list[str],
+    source_policy_exclude: list[str],
+) -> list[Finding]:
+    """Evaluate all heuristic checks across discovered reviewable targets."""
+    findings: list[Finding] = []
+    for target_path in targets:
+        findings.extend(
+            check_file_heuristics(
+                target_path,
+                root=root,
+                max_lines=max_lines,
+                scaffold_markers=scaffold_markers,
+                source_policy_exclude=source_policy_exclude,
+            )
+        )
+    return findings
 
 
 class ReviewTool(ToolFn):
@@ -64,456 +151,65 @@ class ReviewTool(ToolFn):
         graft_provider=None,
         config=None,
     ) -> ToolResult:
-        max_lines = 400
-        if config is not None and hasattr(config, "review"):
-            max_lines = getattr(config.review, "max_file_lines", 400)
-            use_graft = use_graft or getattr(config.review, "use_graft", False)
-        scaffold_markers = (
-            list(getattr(config.review, "scaffold_markers", []))
-            if config is not None and hasattr(config, "review")
-            else []
+        max_lines, use_graft, markers, exclude = _extract_review_config(
+            config, use_graft
         )
-        source_policy_exclude = (
-            list(getattr(config.review, "source_policy_exclude", []))
-            if config is not None and hasattr(config, "review")
-            else []
-        )
-
         start = now_ms()
         root = path if path.is_dir() else path.parent
+
         try:
-            targets, scope = _collect_reviewable_files(
-                path, changed_files=changed_files
-            )
+            targets, scope = collect_reviewable_files(path, changed_files=changed_files)
         except ValueError as error:
-            return ToolResult(
-                tool="review",
-                engine="heuristic-v1",
-                engine_version=None,
-                status="error",
-                duration_ms=elapsed_ms(start),
-                summary=f"review: {error}",
-                findings=[],
-                raw=None,
-                metadata={"graft": "not-requested"},
-                review_kind="heuristic",
-                review_provider=None,
-            )
+            return build_error_review_result(str(error), start)
+
         if not targets:
-            return ToolResult(
-                tool="review",
-                engine="heuristic-v1",
-                engine_version=None,
-                status="ok",
-                duration_ms=elapsed_ms(start),
-                summary=f"review: no Python files found under {path}",
-                findings=[],
-                raw=None,
-                metadata={"graft": "not-requested", "scope": scope},
-                review_kind="heuristic",
-                review_provider=None,
-            )
+            return build_empty_review_result(path, scope, start)
 
-        findings: list[Finding] = []
-        for f in targets:
-            findings.extend(_file_size_heuristic(f, max_lines))
-            findings.extend(_todo_density_heuristic(f))
-            findings.extend(_missing_docstrings_heuristic(f))
-            findings.extend(_naming_heuristic(f))
-            if not _is_source_policy_excluded(f, root, source_policy_exclude):
-                findings.extend(_scaffold_marker_heuristic(f, scaffold_markers))
+        findings = _evaluate_target_heuristics(
+            targets, root, max_lines, markers, exclude
+        )
 
-        graft_state = "not-requested"
-        if use_graft:
-            if graft_provider is None:
-                from ..integrations import LocalGraftContext
+        graft_findings, graft_state = _resolve_graft_findings(
+            path, use_graft, graft_provider
+        )
+        findings.extend(graft_findings)
 
-                graft_provider = LocalGraftContext()
-            project_root = path if path.is_dir() else path.parent
-            if graft_provider.available(project_root):
-                findings.extend(graft_provider.context_for(path))
-                graft_state = "used"
-            else:
-                graft_state = "skipped-unavailable"
+        review_kind, review_provider, llm_findings = apply_llm_review(findings, use_llm)
+        findings.extend(llm_findings)
 
-        # LLM augmentation (opt-in)
-        review_kind = "heuristic"
-        review_provider: str | None = None
-        if use_llm:
-            llm_summary = _maybe_call_llm(findings, allow_network=True)
-            if llm_summary and llm_summary.get("review_kind") == "llm":
-                review_kind = "llm"
-                review_provider = llm_summary.get("provider")
-                findings.append(
-                    {
-                        "path": "",
-                        "line": 0,
-                        "rule": "llm-summary",
-                        "severity": "info",
-                        "message": llm_summary.get("summary", ""),
-                    }
-                )
-            else:
-                review_kind = "heuristic"
-                review_provider = None
-
-        for finding in findings:
-            if "evidence" not in finding and finding.get("path"):
-                finding["evidence"] = {
-                    "kind": "source-location",
-                    "path": finding["path"],
-                    "line": finding.get("line", 0),
-                }
-            finding["fingerprint"] = finding_fingerprint(
-                str(finding.get("path", "")),
-                finding.get("line", 0) or 0,
-                finding.get("column", 0) or 0,
-                str(finding.get("rule_id") or finding.get("rule") or ""),
-                str(finding.get("severity", "")),
-                str(finding.get("message", "")),
-            )
-            finding["freshness"] = "unknown"
-
-        n = len(findings)
-        # Determine status — any heuristic finding → warn (heuristics are advisory).
-        # LLM info-only findings don't change status.
-        if any(f.get("severity") == "error" for f in findings):
-            status = "fail"
-        elif any(f.get("severity") == "warn" for f in findings):
-            status = "warn"
-        else:
-            status = "ok"
-
-        if n:
-            summary = f"review: {n} heuristic finding(s)" + (
-                " (+LLM)" if review_kind == "llm" else ""
-            )
-        else:
-            summary = "review: clean" + (" (+LLM)" if review_kind == "llm" else "")
-
-        return ToolResult(
-            tool="review",
-            engine="heuristic-v1"
-            + (f"+llm/{review_provider}" if review_provider else ""),
-            engine_version=None,
-            status=status,
-            duration_ms=elapsed_ms(start),
-            summary=summary,
-            findings=findings,
-            raw={
-                "heuristic_count": len(findings)
-                - sum(1 for f in findings if f.get("rule") == "llm-summary")
-            },
-            metadata={"graft": graft_state, "scope": scope},
-            review_kind=review_kind,  # type: ignore[typeddict-item]
+        return assemble_review_result(
+            findings,
+            start_ms=start,
+            scope=scope,
+            graft_state=graft_state,
+            review_kind=review_kind,
             review_provider=review_provider,
         )
 
 
-# --- File collection -------------------------------------------------------
-
-
-def _collect_reviewable_files(
-    path: Path, *, changed_files: list[str] | None = None
-) -> tuple[list[Path], dict[str, object]]:
-    """Walk `path` and return Python files (heuristics only target Python)."""
-    root = path if path.is_dir() else path.parent
-    if changed_files is not None:
-        root_resolved = root.resolve()
-        targets: list[Path] = []
-        scope_files: list[str] = []
-        for changed_file in changed_files:
-            candidate = Path(changed_file)
-            candidate = candidate if candidate.is_absolute() else root / candidate
-            candidate = candidate.resolve()
-            try:
-                relative = candidate.relative_to(root_resolved)
-            except ValueError as error:
-                raise ValueError(
-                    "explicit changed file is outside review target"
-                ) from error
-            if candidate.is_file() and candidate.suffix == ".py":
-                targets.append(candidate)
-                scope_files.append(str(relative))
-        return sorted(set(targets)), {
-            "mode": "explicit-files",
-            "files": sorted(scope_files),
-        }
-
-    if path.is_file():
-        return ([path] if path.suffix == ".py" else []), {"mode": "target"}
-
-    if path.is_dir():
-        skip_dirs = {
-            ".venv",
-            "venv",
-            "node_modules",
-            "__pycache__",
-            ".git",
-            "dist",
-            "build",
-            ".next",
-        }
-        return (
-            [
-                p
-                for p in path.rglob("*.py")
-                if not any(part in skip_dirs for part in p.parts)
-            ],
-            {"mode": "target"},
-        )
-    return [], {"mode": "target"}
-
-
-# --- Heuristics ------------------------------------------------------------
-
-
-def _read_file_safely(path: Path) -> str | None:
-    try:
-        if path.stat().st_size > MAX_FILE_BYTES:
-            return None
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-
-
-def _file_size_heuristic(path: Path, max_lines: int) -> list[Finding]:
-    src = _read_file_safely(path)
-    if src is None:
-        return []
-    n = src.count("\n") + 1
-    if n <= max_lines:
-        return []
-    return [
-        Finding(
-            path=str(path),
-            line=max_lines + 1,
-            rule="file-size",
-            severity="warn",
-            message=f"file has {n} lines (threshold {max_lines}) — consider splitting",
-        )
-    ]
-
-
-def _todo_density_heuristic(path: Path) -> list[Finding]:
-    src = _read_file_safely(path)
-    if src is None:
-        return []
-    lines = src.splitlines()
-    if not lines:
-        return []
-    n_lines = len(lines)
-    matches = []
-    for i, line in enumerate(lines, start=1):
-        if TODO_PATTERN.search(line):
-            matches.append(i)
-    density = len(matches) / n_lines
-    if density < 0.02 or not matches:
-        return []
-    # One finding per file with the count and density, plus per-line findings
-    # capped at 5 to avoid spamming.
-    out = [
-        Finding(
-            path=str(path),
-            line=matches[0],
-            rule="todo-density",
-            severity="warn",
-            message=f"{len(matches)} TODO/FIXME/XXX markers in {n_lines} lines ({density:.1%}) — resolve or track",
-        )
-    ]
-    for ln in matches[1:5]:
-        out.append(
-            Finding(
-                path=str(path),
-                line=ln,
-                rule="todo-density",
-                severity="info",
-                message=f"TODO/FIXME marker at line {ln}",
-            )
-        )
-    return out
-
-
-def _missing_docstrings_heuristic(path: Path) -> list[Finding]:
-    """Flag Python def/class without a docstring immediately above."""
-    src = _read_file_safely(path)
-    if src is None:
-        return []
-    try:
-        tree = ast.parse(src, filename=str(path))
-    except SyntaxError:
-        return []
-
-    out: list[Finding] = []
-    lines = src.splitlines()
-
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            # Check if node has a docstring
-            docstring = ast.get_docstring(node, clean=False)
-            if docstring is not None:
-                continue
-            # Skip private/dunder methods to reduce noise
-            if node.name.startswith("__") and node.name.endswith("__"):
-                continue
-            if node.name.startswith("_"):
-                continue
-            # Flag it
-            kind = (
-                "function"
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                else "class"
-            )
-            # First line of the def
-            line = getattr(node, "lineno", 0)
-            # Check the line above for a comment or docstring-like content
-            prev = lines[line - 2].strip() if line >= 2 else ""
-            if prev.startswith("#"):
-                # Has a comment above — skip to reduce noise
-                continue
-            out.append(
-                Finding(
-                    path=str(path),
-                    line=line,
-                    rule="missing-docstring",
-                    severity="info",
-                    message=f"{kind} '{node.name}' has no docstring",
-                )
-            )
-    return out
-
-
-def _naming_heuristic(path: Path) -> list[Finding]:
-    """Flag SCREAMING_CASE identifiers at module level that aren't being
-    assigned a literal (heuristic for accidentally-named variables)."""
-    src = _read_file_safely(path)
-    if src is None:
-        return []
-    try:
-        tree = ast.parse(src, filename=str(path))
-    except SyntaxError:
-        return []
-
-    out: list[Finding] = []
-    # Walk top-level statements only (not nested)
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Name):
-                    name = tgt.id
-                    # Skip real constants (assigned a literal value)
-                    if isinstance(node.value, (ast.Constant,)):
-                        continue
-                    # Flag if it looks like a constant name but isn't
-                    if name.isupper() and "_" in name and len(name) > 2:
-                        out.append(
-                            Finding(
-                                path=str(path),
-                                line=getattr(node, "lineno", 0),
-                                rule="naming",
-                                severity="info",
-                                message=f"identifier '{name}' is SCREAMING_CASE but assigned a non-literal — is it really a constant?",
-                            )
-                        )
-    return out
-
-
-def _is_source_policy_excluded(path: Path, root: Path, patterns: list[str]) -> bool:
-    """Return whether a configured source-policy glob excludes ``path``."""
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        return True
-    return any(relative.match(pattern) for pattern in patterns)
-
-
-def _scaffold_marker_heuristic(path: Path, markers: list[str]) -> list[Finding]:
-    """Find configured unfinished-scaffold markers without inferring authorship."""
-    if not markers:
-        return []
-    source = _read_file_safely(path)
-    if source is None:
-        return []
-
-    findings: list[Finding] = []
-    for line_number, line in enumerate(source.splitlines(), start=1):
-        marker = next((value for value in markers if value and value in line), None)
-        if marker is not None:
-            findings.append(
-                Finding(
-                    path=str(path),
-                    line=line_number,
-                    rule="scaffold-marker",
-                    severity="warn",
-                    message=(
-                        f"configured scaffold marker {marker!r} — replace it or add "
-                        "the path to review.source_policy_exclude"
-                    ),
-                )
-            )
-    return findings
-
-
-# --- LLM opt-in -------------------------------------------------------------
-
-
-def _maybe_call_llm(
-    findings: list[Finding] | list[dict],
-    *,
-    provider: Any | None = None,
-    allow_network: bool = True,
-    allowed_origins: frozenset[str] | None = None,
-) -> dict | None:
-    """Call configured LLM provider if credentials exist.
-
-    Phase 57 / Architecture §10.1:
-      - Validates provider outcome, non-empty completion, and approved effective HTTPS origin.
-      - Sets review_kind="llm" ONLY when outcome=="completed", content is non-empty, and effective origin is approved.
-      - Falls back to heuristic review (or error) otherwise.
-    """
-    from ..providers import (
-        APPROVED_PROVIDER_ORIGINS,
-        ProviderOutcome,
-        get_configured_provider,
-    )
-
-    if allowed_origins is None:
-        allowed_origins = APPROVED_PROVIDER_ORIGINS
-
-    if provider is None:
-        provider = get_configured_provider()
-    if provider is None:
-        return None
-
-    raw_findings = [f if isinstance(f, dict) else f.to_dict() for f in findings]
-    try:
-        response = provider.summarize_findings(
-            raw_findings, allow_network=allow_network
-        )
-    except (OSError, TimeoutError, urllib.error.URLError, ValueError, KeyError):
-        return None
-
-    if response is None:
-        return None
-
-    outcome = getattr(response, "outcome", "")
-    content = getattr(response, "content", "")
-    effective_origin = getattr(response, "effective_origin", "")
-    model = getattr(response, "model", "")
-    provider_name = getattr(response, "provider", getattr(provider, "name", "unknown"))
-
-    if (
-        outcome == ProviderOutcome.COMPLETED.value
-        and content.strip()
-        and effective_origin in allowed_origins
-    ):
-        return {
-            "provider": provider_name,
-            "summary": content,
-            "model": model,
-            "review_kind": "llm",
-            "outcome": outcome,
-            "effective_origin": effective_origin,
-        }
-
-    return None
+__all__ = [
+    "MAX_AST_DEPTH",
+    "MAX_FILE_BYTES",
+    "TODO_PATTERN",
+    "ReviewTool",
+    "_collect_reviewable_files",
+    "_file_size_heuristic",
+    "_is_source_policy_excluded",
+    "_maybe_call_llm",
+    "_missing_docstrings_heuristic",
+    "_naming_heuristic",
+    "_read_file_safely",
+    "_scaffold_marker_heuristic",
+    "_todo_density_heuristic",
+    "assemble_review_result",
+    "collect_reviewable_files",
+    "format_review_prompt",
+    "is_source_policy_excluded",
+    "maybe_call_llm",
+    "missing_docstrings_heuristic",
+    "naming_heuristic",
+    "parse_llm_findings",
+    "read_file_safely",
+    "scaffold_marker_heuristic",
+    "todo_density_heuristic",
+]
