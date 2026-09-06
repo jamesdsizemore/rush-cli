@@ -1,0 +1,54 @@
+[metadata]
+tool = "ruff"
+version = "0.16.3"
+command = '.venv/Scripts/ruff.exe check --select C901 --config "lint.mccabe.max-complexity = 10" --output-format concise'
+threshold = 10
+captured_at = "2026-09-05T23:03:00Z"
+
+[[targets]]
+file = "src/rush/discovery/workspace.py"
+symbol = "discover_workspaces"
+baseline_c901 = 23
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/tools/blast_radius.py"
+symbol = "BlastRadiusAnalyzer.analyze"
+baseline_c901 = 15
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/tools/continuity.py"
+symbol = "SessionContinuityTool.run"
+baseline_c901 = 18
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/tools/continuity.py"
+symbol = "SessionContinuityTool._provider_resume"
+baseline_c901 = 13
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/tools/db_drift.py"
+symbol = "DbDriftAuditor.audit_drift"
+baseline_c901 = 21
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/tools/lint.py"
+symbol = "LintTool.run"
+baseline_c901 = 12
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/tools/review.py"
+symbol = "ReviewTool.run"
+baseline_c901 = 16
+target_c901 = 10
+
+[[targets]]
+file = "src/rush/mcp.py"
+symbol = "_register_tools"
+baseline_c901 = 16
+target_c901 = 10
