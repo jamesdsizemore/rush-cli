@@ -242,3 +242,5 @@ Rush governs engine discovery and conformance through `governance/engine-support
 3. **Best-Effort (`support_class = "best-effort"`)**:
    - `onnxruntime`, `ollama`, `vulture`, `radon`.
    - Experimental or advisory tools with permissive skip semantics (`can_pass_all_skipped = true`).
+## Deterministic Engine Conformance (Phase 59)
+All 19 engine families are classified into `mandatory`, `supported-optional`, and `best-effort`. Supported families cannot pass when all tests are skipped (`can_pass_all_skipped = false`). Tests execute with fixed-PATH isolation to prevent ambient host tools from masking gaps.

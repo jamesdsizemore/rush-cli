@@ -125,3 +125,9 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### Provenance & Engine Troubleshooting (Phase 59)
+- `DuplicateKeyError`: Duplicate key detected in provenance JSON.
+- `AmbiguousKeyError`: Unicode NFKC collision detected.
+- `UntrustedSignerError`: Signer key not in allowlist.
+- `AllSkippedViolationError`: Supported engine returned all-skipped results.
+- `ReleaseGateFailureError`: Release-gate engine (mypy) unavailable or failing.

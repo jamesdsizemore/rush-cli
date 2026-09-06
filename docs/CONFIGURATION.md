@@ -190,3 +190,5 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### `[release.provenance]` & `[engines]` (Phase 59)
+Configure provenance builder URI, default output paths, and engine taxonomy support classes in `rush.toml`.

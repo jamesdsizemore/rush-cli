@@ -210,3 +210,5 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 ```
 
 Install only if that check is part of your project policy. Then launch Rush from the same environment and verify the binary directly. Desktop MCP clients often have a different `PATH` from an interactive shell; use absolute paths or environment configuration when needed.
+### Engine Support Classes (Phase 59)
+Directory of 19 engine families with mandatory, supported-optional, and best-effort classifications from `governance/engine-support.toml`.

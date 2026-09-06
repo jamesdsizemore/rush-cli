@@ -199,6 +199,7 @@ test_file = "tests/test_phase59_provenance.py"
 test_function = "test_slsa_provenance_cryptographic_verification"
 predecessor = "Phase 52 single packaging artifact source"
 docs_owner = "docs/specs/slsa-attestation-spec.md"
+status = "completed"
 
 [[findings]]
 id = "R-014"
@@ -213,6 +214,7 @@ test_file = "tests/test_phase59_engines.py"
 test_function = "test_engine_discovery_and_capability_matrix"
 predecessor = "Phase 51 engine taxonomy"
 docs_owner = "docs/ENGINES.md"
+status = "completed"
 
 [[findings]]
 id = "R-015"

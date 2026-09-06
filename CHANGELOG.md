@@ -2,7 +2,16 @@
 
 All notable changes to Rush are documented here.
 
-## [0.3.0] - 2026-09-03
+## [0.3.0]
+
+### Phase 59: Truthful Build Provenance, Cryptographic Attestation, and Engine Conformance
+- **Truthful Build Provenance Drafts (R-013):** Default output of `rush attest` produces explicit unsigned drafts (`provenance_draft` with `assurance: "unsigned_draft"`). Prohibits unverified claims of SLSA Level 3, verified builders, or signatures.
+- **Physical Artifact Subject Binding (R-013):** Subjects bound to physical distribution package files (wheel/sdist) with real SHA-256 digests; forbids commit hashes as primary subjects.
+- **Strict JSON Parser with Unicode Normalization (R-013):** `StrictProvenanceParser` rejects duplicate keys and Unicode NFKC normalization collisions at envelope, Statement, predicate, and extension levels before policy evaluation.
+- **Signed Provenance Policy Verification (R-013):** `SignedProvenancePolicy` and `ProvenancePolicyVerifier` enforce exact Ed25519 DSSE envelope verification against allowlisted signers, builders, roots, artifact digests, and source URIs.
+- **Deterministic Engine Support Policy & Fixed-PATH Isolation (R-014):** `EngineSupportPolicy` enforces 19 engine families in `governance/engine-support.toml`. `FixedPathEnvironment` prevents ambient host binary pollution. Supported engines cannot pass all-skipped.
+- **Release-Gate Mypy Verification (R-014):** Mandatory non-skipped `mypy` release gate enforced across pre-release checks and CI workflows.
+ - 2026-09-03
 
 ### Fixed
 - **ToolResult Schema Kernel & Vocabulary Reconciliation (Finding R-011)**: Implemented canonical `ToolResultV1` and `FindingV1` contracts in `src/rush/contracts/results.py`. Reconciled finding severity vocabulary to canonical `info`, `warning`, `error` with deterministic legacy mapping (`warn`->`warning`, `fail`->`error`), and strictly rejected unmappable values with structured `ValidationErrorV1(code="INVALID_SEVERITY")` to eliminate silent default coercion. Unknown top-level keys are rejected with `UNKNOWN_TOP_LEVEL_KEY` while non-core properties are namespaced within `extensions`. Output serialization is byte-deterministic with compact separators and sorted keys, preceded by Phase 53 sanitization.

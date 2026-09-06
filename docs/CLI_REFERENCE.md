@@ -473,3 +473,9 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### `rush attest`
+Generate in-toto Statement v1 SLSA provenance unsigned draft for build artifacts.
+- `--artifact-path PATH`: Explicit path to built distribution package (.whl, .tar.gz).
+- `--output PATH`: Destination path for attestation JSON draft.
+- `--builder-id URI`: Builder identity URI (default: `https://rush-cli.org/builder/v1`).
+- `--verify`: Cryptographically verify signed DSSE envelope against policy.

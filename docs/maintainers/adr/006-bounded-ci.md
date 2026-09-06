@@ -13,3 +13,6 @@ Run core Python quality/package gates plus a small representative engine set; co
 ## Consequences
 
 Promotion requires fixture evidence and at least appropriate representative contracts, not universal executable provisioning.
+
+### Amendments (Phase 59)
+Bounded CI incorporates provisioned success, failure, and malformed jobs for supported engines and enforces the non-skipped mypy release gate.

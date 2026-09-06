@@ -65,3 +65,5 @@ Emits canonical `ToolResult` with `raw` containing an in-toto Statement v1 paylo
 - Read-only execution by default.
 - Exporting provenance statements via `--out` / `output_path` requires explicit `--allow-artifact-write` permission.
 - Output paths are strictly confined to the workspace root; path traversal escapes (`..`) and symlink attacks are rejected.
+### Truthful Unsigned Drafts (Phase 59)
+`rush attest` produces honest unsigned drafts by default with physical artifact digests from `dist/`.

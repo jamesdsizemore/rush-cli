@@ -49,3 +49,5 @@ Synthesize structured pull request release markdown cards from Git diff and test
 ```bash
 rush pr-synthesize . --base-ref main --export-card reports/release-card.md --allow-artifact-write
 ```
+### Flagship Release & Provenance Workflow (Phase 59)
+End-to-end workflow executing package build, checksum manifest, unsigned draft attestation, and mandatory mypy release gate.

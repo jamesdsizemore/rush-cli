@@ -165,3 +165,5 @@ Browser runtime operations (`semantic-drift`, `e2e`, `visual`) strictly respect 
 - Explicit `--allow-browser` consent flag is required to launch browser runners.
 - Long-running executions require `--allow-slow`.
 - Baseline updates (e.g. `snapshot`, `visual` with `--accept`) require `--allow-artifact-write`.
+## Pinned Versions & Conformance Policy (Phase 59)
+Engine compatibility is validated through `EngineSupportPolicy`. Pinned CI jobs execute clean, finding, and malformed fixtures for every supported engine family.

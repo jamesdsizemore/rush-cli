@@ -83,3 +83,5 @@ rush pr-synthesize . --export-path .rush/PR_CARD.md --allow-artifact-write
   }
 }
 ```
+### Provenance Integration (Phase 59)
+PR synthesizer includes truthful build provenance status and checksums in generated PR cards.

@@ -273,3 +273,5 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+## Truthful Provenance & Engine Conformance (Phase 59)
+Rush produces explicit unsigned build provenance drafts (`in-toto Statement v1` + `SLSA Provenance v1` predicate) bound to physical artifact digests. Optional signed policy verification verifies DSSE Ed25519 signatures and pins signer, builder, and source constraints. Engine discovery is governed by `EngineSupportPolicy` and isolated via `FixedPathEnvironment` to prevent ambient PATH pollution.

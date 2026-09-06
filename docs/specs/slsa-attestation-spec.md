@@ -9,3 +9,5 @@
 
 ## Remediation & Honest Provenance (R-013)
 Local executions produce unsigned provenance drafts with `assurance: "unsigned_draft"`. Artifact digests are computed directly from files in `dist/` or target files, avoiding fraudulent Level 3 claims.
+### Truthful Provenance & In-Toto Specification (Phase 59)
+Defines Statement v1 and SLSA Provenance v1 predicate schemas, unsigned draft semantics, strict duplicate-key rejection, and optional DSSE Ed25519 verification policy.

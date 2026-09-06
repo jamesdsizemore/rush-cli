@@ -59,7 +59,7 @@ class FixedPathEnvironment:
     def __init__(self, fixed_path: Path | str | None = None) -> None:
         self.fixed_path = Path(fixed_path) if fixed_path is not None else None
         self._prev_path: str | None = None
-        self._prev_venv_scripts = None
+        self._prev_venv_scripts: Any = None
 
     def __enter__(self) -> Self:
         clear_binary_cache()

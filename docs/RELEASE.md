@@ -53,3 +53,5 @@ See [Release Process Guide](developer/release-process.md) and [Versioning Policy
 4. Run `rush ship semver` to ensure no accidental breaking public API changes.
 5. Run `rush ship pack` to ensure zero secret leaks in distributions.
 6. Run `rush ship gate` for final 7-vector release readiness authorization.
+### Pre-Release Verification (Phase 59)
+Release readiness requires passing all 1,189 tests, zero ruff errors, clean wheel/sdist probes, non-skipped `mypy` release gate, and truthful provenance draft generation.

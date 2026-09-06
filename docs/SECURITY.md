@@ -142,3 +142,8 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### Supply Chain Provenance & Engine Verification (Phase 59)
+- Default provenance statements are explicitly unsigned drafts and never claim SLSA Level 3 without cryptographic attestation.
+- `StrictProvenanceParser` enforces JSON object pair uniqueness and Unicode NFKC normalization to prevent parser differential attacks.
+- `ProvenancePolicyVerifier` enforces allowlisted DSSE signatures, builder IDs, and artifact hashes.
+- External engine discovery enforces pinned versions and forbids ambient PATH pollution.

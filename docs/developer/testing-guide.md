@@ -157,3 +157,5 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### Phase 59 Contract Tests (`tests/test_phase59_*.py`)
+Covers unsigned provenance drafts, pinned statement structures, strict JSON parsing, signed DSSE verification, and deterministic engine conformance.

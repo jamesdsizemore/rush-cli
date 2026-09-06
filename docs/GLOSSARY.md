@@ -145,3 +145,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+- **Provenance Draft:** An explicitly unsigned build statement capturing artifact identity and build parameters without claiming cryptographic accreditation.
+- **Strict Provenance Parser:** A parser that enforces key uniqueness and Unicode NFKC normalization to block parser differential attacks.
+- **Engine Support Policy:** The single source of truth (`engine-support.toml`) governing engine classification and skip policies.
+- **Fixed-PATH Isolation:** Execution context isolating binary lookup from host developer environments.

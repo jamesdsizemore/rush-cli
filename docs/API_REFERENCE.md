@@ -403,3 +403,11 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### Module `rush.release.provenance_policy`
+- `StatementV1`, `SLSAPredicateV1`, `ProvenanceDraft`: Immutable AST models for in-toto Statement v1.
+- `StrictProvenanceParser`: Strict JSON parser rejecting duplicate and ambiguous keys.
+- `SignedProvenancePolicy`, `ProvenancePolicyVerifier`: DSSE cryptographic envelope verification.
+
+### Module `rush.engines.support_policy`
+- `EngineSupportPolicy`: Taxonomy loader and conformance validator.
+- `FixedPathEnvironment`: Context manager for isolated PATH execution.

@@ -123,3 +123,8 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+### Release Verification Gates (Phase 59)
+1. Run `python scripts/probe_installed_artifacts.py` on wheel and sdist.
+2. Verify `mypy --version` and `mypy src/rush` execute with exit code 0 (mandatory non-skipped release gate).
+3. Generate and verify unsigned provenance draft with real artifact digests.
+4. Run full test suite (1,189+ tests passing with 0 warnings).

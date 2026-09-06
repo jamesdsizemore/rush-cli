@@ -1,0 +1,89 @@
+# Phase 59 Remediation Manifest: Truthful Build Provenance, SLSA In-Toto Cryptographic Verification, and Deterministic Engine Conformance
+[phase]
+id = 59
+name = "provenance-engine-conformance"
+title = "Truthful Build Provenance, SLSA In-Toto Cryptographic Verification, and Deterministic Engine Conformance"
+status = "completed"
+completed_at = "2026-09-05T22:30:00Z"
+test_count = 26
+full_suite_test_count = 1189
+
+[requirements]
+closed = ["R-013", "R-014"]
+release_blockers_remaining = 0
+all_release_blockers_closed = true
+non_release_deferred = ["R-015"]
+
+[remediation_cycle]
+governing_document = "docs/developer/repository-remediation-plan.md"
+findings_owned = ["R-013", "R-014"]
+findings_completed = ["R-013", "R-014"]
+
+[contract_tests]
+total_contract_tests = 26
+all_contract_tests_passed = true
+test_files = [
+    "tests/test_phase59_provenance_draft.py",
+    "tests/test_phase59_provenance.py",
+    "tests/test_phase59_provenance_structure.py",
+    "tests/test_phase59_provenance_parser.py",
+    "tests/test_phase59_provenance_policy.py",
+    "tests/test_phase59_engine_conformance.py",
+    "tests/test_phase59_engines.py",
+]
+tests = [
+    "T-59.01",
+    "T-59.02",
+    "T-59.03",
+    "T-59.04",
+    "T-59.05",
+    "T-59.06",
+    "T-59.07",
+    "T-59.08",
+    "T-59.09",
+    "T-59.10",
+    "T-59.11",
+    "T-59.12",
+    "T-59.13",
+    "T-59.14",
+    "T-59.15",
+    "T-59.16",
+    "T-59.17",
+    "T-59.18",
+    "T-59.19",
+    "T-59.20",
+    "T-59.21",
+    "T-59.22",
+    "T-59.23",
+    "T-59.24",
+    "T-59.25",
+    "T-59.26",
+]
+
+[contract_inventory]
+t_59_01 = "Default output is explicit unsigned draft with assurance='unsigned_draft'"
+t_59_02 = "Subject is actual artifact filename and physical SHA-256 digest, never commit hash"
+t_59_03 = "Missing evidence returns skipped status and never fabricates claims"
+t_59_04 = "Draft envelope and statement conform to sanitizer contract"
+t_59_05 = "SLSA provenance attestation cryptographic verification requirement (R-013)"
+t_59_06 = "Statement and predicate types strictly equal in-toto v1 and SLSA provenance v1"
+t_59_07 = "buildDefinition, externalParameters, internalParameters, and runDetails are pinned"
+t_59_08 = "Unknown or malformed fields fail schema validation fail-closed"
+t_59_09 = "Provenance draft and statement dataclasses are frozen, immutable, and serializable"
+t_59_10 = "Duplicate keys at raw envelope level raise DuplicateKeyError"
+t_59_11 = "Duplicate keys at decoded statement and predicate level raise DuplicateKeyError"
+t_59_12 = "Unicode NFKC normalization collisions reject with AmbiguousKeyError"
+t_59_13 = "Malformed or truncated JSON raises ProvenanceError fail-closed"
+t_59_14 = "Valid synthetic signed envelope passes exact policy"
+t_59_15 = "Mismatches in signer, builder, root, subject, type, parameters, or source reject"
+t_59_16 = "Empty signer or root allowlist fails closed with UntrustedSignerError"
+t_59_17 = "Tampered payload or signature byte fails verification"
+t_59_18 = "Synthetic fixtures contain zero live operational keys or secrets"
+t_59_19 = "Every engine has exactly one valid taxonomy entry in engine-support.toml"
+t_59_20 = "Supported-optional families have clean, finding, and malformed fixture entries"
+t_59_21 = "Supported families returning all skipped fail with AllSkippedViolationError"
+t_59_22 = "FixedPathEnvironment ignores ambient host tools on developer PATH"
+t_59_23 = "Release gate engine mypy is provisioned, non-skipped, and verifies clean"
+t_59_24 = "Deterministic engine discovery and capability matrix (R-014)"
+t_59_25 = "Remediation Phase 59 manifest integrity and engine governance verification"
+t_59_26 = "Attest tool --verify parameter enforces signed policy verification"
