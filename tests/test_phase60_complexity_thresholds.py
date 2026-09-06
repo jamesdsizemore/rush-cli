@@ -143,3 +143,44 @@ def test_phase60_starts_with_no_exemptions() -> None:
     assert exemptions is not None, "Exemptions list must be present"
     assert exemptions == [], "Phase 60 requires strictly zero exemptions"
     assert len(exemptions) == 0
+
+
+def test_cli_and_mcp_meet_c901_threshold() -> None:
+    """T-60.18: Verify CLI and MCP boundaries comply with McCabe C901 <= 10."""
+    import shutil
+    import subprocess
+    import sys
+
+    ruff_path = (
+        PROJECT_ROOT
+        / ".venv"
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / ("ruff.exe" if sys.platform == "win32" else "ruff")
+    )
+    ruff_cmd = str(ruff_path) if ruff_path.exists() else shutil.which("ruff")
+    assert ruff_cmd, "ruff executable not found"
+
+    cmd = [
+        ruff_cmd,
+        "check",
+        "--select",
+        "C901",
+        "--config",
+        "lint.mccabe.max-complexity = 10",
+        "--output-format",
+        "concise",
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/cli_support",
+        "src/rush/mcp_support",
+    ]
+    proc = subprocess.run(
+        cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, (
+        f"Ruff C901 check failed (returncode={proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert "C901" not in proc.stdout, f"Expected 0 findings, got:\n{proc.stdout}"
+    assert "All checks passed!" in proc.stdout, (
+        f"Expected clean pass, got:\n{proc.stdout}"
+    )

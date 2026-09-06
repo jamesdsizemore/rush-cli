@@ -317,47 +317,14 @@ rush_attest_generate = _attest_tool.__call__ if _attest_tool else None
 
 def _register_tools(server) -> None:
     """Register each tool function as an MCP tool, routing via resolve_invocation and InvocationExecutor."""
-    import functools
-    import inspect
-
-    from rush.invocation import InvocationExecutor, resolve_invocation
-    from rush.invocation.executor import _parse_ordered_args
+    from rush.invocation import InvocationExecutor
+    from rush.mcp_support.tool_registry import (
+        register_all_tools,
+        register_custom_tools,
+    )
 
     executor = InvocationExecutor()
-
-    # 1. Register ALL_TOOLS
-    for tool in ALL_TOOLS:
-        executor.register(tool.name, tool.__call__)
-
-        def _make_tool_wrapper(t):
-            @functools.wraps(t.__call__)
-            def tool_mcp_wrapper(*args, **kwargs):
-                bound = inspect.signature(t.__call__).bind(*args, **kwargs)
-                bound.apply_defaults()
-                call_args = bound.arguments
-                path_val = call_args.get("path", ".")
-                p = Path(path_val).resolve()
-                root = p if p.is_dir() else p.parent
-                req = {
-                    "operation_id": t.name,
-                    "path": str(p),
-                    **{
-                        k: v
-                        for k, v in call_args.items()
-                        if k != "path" and v is not None
-                    },
-                }
-                context = resolve_invocation(req, transport="mcp", workspace_root=root)
-                return executor.execute(context)
-
-            tool_mcp_wrapper.__self__ = t
-            return tool_mcp_wrapper
-
-        server.add_tool(
-            fn=_make_tool_wrapper(tool),
-            name=f"rush_{tool.name.replace('-', '_')}",
-            description=tool.mcp_description,
-        )
+    register_all_tools(server, executor, ALL_TOOLS)
 
     # 2. Register custom phase tools
     custom_tools = [
@@ -463,71 +430,7 @@ def _register_tools(server) -> None:
         ),
     ]
 
-    for fn, name, desc in custom_tools:
-
-        def _make_handler(target_fn):
-            def handler(context):
-                kwargs = _parse_ordered_args(context.ordered_args)
-                sig = inspect.signature(target_fn)
-                for p_name in ("path", "file", "target"):
-                    if p_name in sig.parameters and p_name not in kwargs:
-                        target_p = (
-                            context.workspace_root / context.targets[0].relative_path
-                            if context.targets
-                            else context.workspace_root
-                        )
-                        param_type = sig.parameters[p_name].annotation
-                        kwargs[p_name] = (
-                            target_p if param_type is Path else str(target_p)
-                        )
-                for p_name in sig.parameters:
-                    if p_name.startswith("allow_") and p_name not in kwargs:
-                        perm_name = p_name[6:]
-                        kwargs[p_name] = perm_name in context.permissions
-                return target_fn(**kwargs)
-
-            return handler
-
-        executor.register(name, _make_handler(fn))
-
-        def _make_custom_wrapper(f, tool_id):
-            @functools.wraps(f)
-            def custom_mcp_wrapper(*args, **kwargs):
-                bound = inspect.signature(f).bind(*args, **kwargs)
-                bound.apply_defaults()
-                call_args = bound.arguments
-                path_val = call_args.get(
-                    "path", call_args.get("file", call_args.get("target", "."))
-                )
-                try:
-                    p = Path(path_val).resolve()
-                    root = p if p.is_dir() else p.parent
-                except Exception:  # noqa: BLE001
-                    root = Path.cwd().resolve()
-                req = {
-                    "operation_id": tool_id,
-                    **call_args,
-                }
-                context = resolve_invocation(req, transport="mcp", workspace_root=root)
-                return executor.execute(context)
-
-            return custom_mcp_wrapper
-
-        server.add_tool(
-            fn=_make_custom_wrapper(fn, name),
-            name=name,
-            description=desc,
-        )
-
-    # Backward compatibility alias for rush_attest
-    for tool in ALL_TOOLS:
-        if tool.name == "attest":
-            server.add_tool(
-                fn=_make_tool_wrapper(tool),
-                name="rush_attest_generate",
-                description="Deprecated alias for rush_attest",
-            )
-            break
+    register_custom_tools(server, executor, custom_tools)
 
 
 mcp_server = build_server()

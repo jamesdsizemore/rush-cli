@@ -15,328 +15,29 @@ from typing import Any
 import click
 
 from . import __version__
-from .catalog import TOOL_SPECS
+from .cli_support.catalog_commands import build_catalog_path_command
+from .cli_support.options import _extract_permissions, permission_options
+from .cli_support.rendering import (
+    _render_session_result,
+    _run_tool,
+    exit_code_for,
+    exit_with_result,
+)
 from .config import RushConfigError, load_config
 from .logging import setup_logging
 from .permissions import ExecutionPermissions
-from .theme import render_result
 from .tools import ALL_TOOLS
-from .tools.base import ToolFn
 
-
-def _extract_permissions(
-    allow_network: bool = False,
-    allow_download: bool = False,
-    allow_cache_write: bool = False,
-    allow_build: bool = False,
-    allow_slow: bool = False,
-    allow_artifact_write: bool = False,
-    allow_browser: bool = False,
-) -> ExecutionPermissions:
-    return ExecutionPermissions(
-        network=allow_network,
-        download=allow_download,
-        cache_write=allow_cache_write,
-        build=allow_build,
-        slow=allow_slow,
-        artifact_write=allow_artifact_write,
-        browser=allow_browser,
-    )
-
-
-def permission_options(fn):
-    """Add standard explicit execution permission flags to a Click command."""
-    fn = click.option(
-        "--allow-network",
-        is_flag=True,
-        help="Explicitly authorize external network access.",
-    )(fn)
-    fn = click.option(
-        "--allow-download",
-        is_flag=True,
-        help="Explicitly authorize external downloads.",
-    )(fn)
-    fn = click.option(
-        "--allow-cache-write",
-        is_flag=True,
-        help="Explicitly authorize local cache modification.",
-    )(fn)
-    fn = click.option(
-        "--allow-build",
-        is_flag=True,
-        help="Explicitly authorize local build execution.",
-    )(fn)
-    fn = click.option(
-        "--allow-slow",
-        is_flag=True,
-        help="Explicitly authorize long-running execution.",
-    )(fn)
-    fn = click.option(
-        "--allow-artifact-write",
-        is_flag=True,
-        help="Explicitly authorize writing contained artifacts.",
-    )(fn)
-    fn = click.option(
-        "--allow-browser",
-        is_flag=True,
-        help="Explicitly authorize browser runtime execution.",
-    )(fn)
-    return fn
-
-
-def exit_code_for(result: Any) -> int:
-    """Map canonical statuses or admin return values to CLI process exit codes."""
-    if isinstance(result, int) and not isinstance(result, bool):
-        return result
-    if hasattr(result, "status"):
-        status = result.status
-    elif isinstance(result, dict) and "status" in result:
-        status = result.get("status")
-    elif isinstance(result, str):
-        status = result
-    else:
-        status = None
-
-    if status in ("ok", "skipped"):
-        return 0
-    if status in ("warn", "fail"):
-        return 1
-    if status in ("error", "fatal"):
-        return 2
-    return 0
-
-
-def exit_with_result(
-    result: Any,
-    as_json: bool = False,
-    tool_name: str | None = None,
-    export_sarif: Path | None = None,
-    export_html: Path | None = None,
-) -> None:
-    """Sanitize output via sanitize_value, export SARIF/HTML if requested, print output, and exit."""
-    from .safety.redactor import sanitize_value
-
-    if export_sarif is not None and tool_name:
-        from .sarif import export_to_sarif
-
-        sarif_doc = export_to_sarif(result, tool_name=tool_name)
-        export_sarif.write_text(json.dumps(sarif_doc, indent=2), encoding="utf-8")
-
-    if export_html is not None:
-        from .html_export import export_to_html
-
-        title = f"Rush {tool_name} Report" if tool_name else "Rush Report"
-        html_doc = export_to_html(result, title=title)
-        export_html.write_text(html_doc, encoding="utf-8")
-
-    clean_result = sanitize_value(result).value
-    if as_json:
-        click.echo(json.dumps(clean_result, indent=2, default=str))
-    elif (
-        isinstance(clean_result, dict)
-        and "tool" in clean_result
-        and "status" in clean_result
-    ):
-        render_result(clean_result)
-    elif clean_result is not None and not isinstance(clean_result, int):
-        click.echo(str(clean_result))
-
-    sys.exit(exit_code_for(result))
-
-
-def _run_tool(
-    tool_name: str,
-    path: Path,
-    *,
-    as_json: bool,
-    extra_kwargs: dict | None = None,
-    permissions: ExecutionPermissions | None = None,
-    export_sarif: Path | None = None,
-    export_html: Path | None = None,
-) -> None:
-    """Shared helper: find the tool, call it via InvocationExecutor, sanitize, render, exit."""
-    from rush.invocation import InvocationExecutor, resolve_invocation
-
-    tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
-    if tool is None:
-        click.echo(f"unknown tool: {tool_name}", err=True)
-        sys.exit(2)
-    try:
-        config = load_config(start=path)
-    except RushConfigError as e:
-        click.echo(str(e), err=True)
-        sys.exit(2)
-    kwargs = dict(extra_kwargs or {})
-
-    executor = InvocationExecutor()
-
-    def tool_invocation_handler(ctx: Any) -> Any:
-        try:
-            return tool.run(path, config=config, permissions=permissions, **kwargs)
-        except TypeError:
-            return tool.run(path, config=config, **kwargs)
-
-    executor.register(tool_name, tool_invocation_handler)
-    target_p = path.resolve()
-    workspace_root = target_p if target_p.is_dir() else target_p.parent
-    req = {
-        "operation_id": tool_name,
-        "path": str(path),
-        "permissions": permissions,
-        **kwargs,
-    }
-    context = resolve_invocation(
-        req,
-        transport="cli",
-        workspace_root=workspace_root,
-        config=config,
-        permissions=permissions,
-    )
-    result = executor.execute(context)
-
-    exit_with_result(
-        result,
-        as_json=as_json,
-        tool_name=tool_name,
-        export_sarif=export_sarif,
-        export_html=export_html,
-    )
-
-
-def build_catalog_path_command(tool: ToolFn) -> click.Command:
-    """Build the standard ``PATH --json`` CLI surface for a catalog tool."""
-
-    @click.command(
-        name=tool.name,
-        help=(
-            f"{tool.mcp_description} Maturity: "
-            f"{TOOL_SPECS[tool.name].maturity.replace('_', ' ')}."
-        ),
-    )
-    @click.argument("path", type=click.Path(exists=True, path_type=Path))
-    @click.option(
-        "--report-path",
-        type=click.Path(path_type=Path),
-        default=None,
-        help="Optional explicit report path for import mode.",
-    )
-    @click.option(
-        "--export-sarif",
-        type=click.Path(path_type=Path),
-        default=None,
-        help="Optional destination path to export SARIF 2.1.0 JSON report.",
-    )
-    @click.option(
-        "--export-html",
-        type=click.Path(path_type=Path),
-        default=None,
-        help="Optional destination path to export standalone HTML report artifact.",
-    )
-    @click.option(
-        "--no-cache", is_flag=True, help="Bypass and do not write to result cache."
-    )
-    @click.option("--staged", is_flag=True, help="Scan only files staged in git index.")
-    @click.option(
-        "--changed", is_flag=True, help="Scan only modified uncommitted files."
-    )
-    @click.option(
-        "--since", type=str, default=None, help="Scan files changed since git ref."
-    )
-    @click.option(
-        "--workspace",
-        "-w",
-        "workspace_name",
-        type=str,
-        default=None,
-        help="Scope execution to a specific monorepo workspace package.",
-    )
-    @click.option(
-        "--all-workspaces",
-        is_flag=True,
-        help="Execute tool across all discovered monorepo workspaces.",
-    )
-    @permission_options
-    @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-    def command(
-        path: Path,
-        report_path: Path | None,
-        export_sarif: Path | None,
-        export_html: Path | None,
-        no_cache: bool,
-        staged: bool,
-        changed: bool,
-        since: str | None,
-        workspace_name: str | None,
-        all_workspaces: bool,
-        allow_network: bool,
-        allow_download: bool,
-        allow_cache_write: bool,
-        allow_build: bool,
-        allow_slow: bool,
-        allow_artifact_write: bool,
-        allow_browser: bool,
-        as_json: bool,
-    ) -> None:
-        perms = _extract_permissions(
-            allow_network=allow_network,
-            allow_download=allow_download,
-            allow_cache_write=allow_cache_write,
-            allow_build=allow_build,
-            allow_slow=allow_slow,
-            allow_artifact_write=allow_artifact_write,
-            allow_browser=allow_browser,
-        )
-        target_path = path
-
-        if workspace_name:
-            from .discovery.workspace import discover_workspaces
-
-            ws_pkgs = discover_workspaces(path if path.is_dir() else path.parent)
-            matched = next((w for w in ws_pkgs if w.name == workspace_name), None)
-            if not matched:
-                click.echo(f"Workspace package '{workspace_name}' not found.", err=True)
-                sys.exit(1)
-            target_path = matched.path
-
-        if staged:
-            from .discovery.git import get_staged_files
-
-            staged_files = get_staged_files(
-                target_path if target_path.is_dir() else target_path.parent
-            )
-            if not staged_files:
-                click.echo("No staged files found to scan.")
-                sys.exit(0)
-        elif changed:
-            from .discovery.git import get_changed_files
-
-            changed_files = get_changed_files(
-                target_path if target_path.is_dir() else target_path.parent
-            )
-            if not changed_files:
-                click.echo("No changed files found to scan.")
-                sys.exit(0)
-        elif since:
-            from .discovery.git import get_files_since
-
-            since_files = get_files_since(
-                target_path if target_path.is_dir() else target_path.parent, since
-            )
-            if not since_files:
-                click.echo(f"No files changed since {since}.")
-                sys.exit(0)
-
-        _run_tool(
-            tool.name,
-            target_path,
-            as_json=as_json,
-            permissions=perms,
-            export_sarif=export_sarif,
-            export_html=export_html,
-            extra_kwargs={"report_path": report_path} if report_path else None,
-        )
-
-    return command
+__all__ = [
+    "_extract_permissions",
+    "_render_session_result",
+    "_run_tool",
+    "build_catalog_path_command",
+    "cli",
+    "exit_code_for",
+    "exit_with_result",
+    "permission_options",
+]
 
 
 class RushGroup(click.Group):
@@ -980,7 +681,6 @@ def _run_suite_cli(
     allow_artifact_write: bool,
     allow_browser: bool,
 ) -> None:
-    from .tools.common import exit_code_for
     from .workflows.suites import (
         AUDIT_SUITE,
         CHECK_SUITE,
@@ -1423,7 +1123,6 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
     from .plugins.loader import PluginSpec, discover_plugins
     from .plugins.snapshot_store import PluginSnapshotStore
     from .plugins.trust_store import PluginTrustStore
-    from .tools.common import exit_code_for
 
     root = path.resolve()
     repo_root = root if root.is_dir() else root.parent
@@ -2325,16 +2024,6 @@ def session_resume_cmd(
         ),
     )
     _render_session_result(result, as_json)
-
-
-def _render_session_result(result: dict, as_json: bool) -> None:
-    if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
-    else:
-        render_result(result)
-    from .tools.common import exit_code_for
-
-    raise click.exceptions.Exit(exit_code_for(result))
 
 
 @cli.group(name="ship")
