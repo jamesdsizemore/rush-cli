@@ -1,0 +1,425 @@
+# Phase 62 Implementation Plan: Memory Integration Layer (Cache Front-End, Review/Dev Hooks, Attribution, Expiry, Decision Schema)
+
+## 1. Purpose and Status
+
+- **Operation:** Comprehensive implementation plan for Phase 62 — the memory-system integration layer built on top of Phase 61's `TypedArtifactStore`.
+- **Planning Status:** Implementation-ready for 7 of the 8 items scoped below (P62.1-P62.6, P62.8). **P62.7 (per-type expiry) has one genuinely open sub-decision, not yet ready:** §6.3 states the `DERIVED`/`EXTERNAL_WRITE`/`IMPORTED` TTL durations have no cited source anywhere; P62.7.1 requires that decision be resolved (user input or a documented rush-own rationale) before its RED task can be authored. Not implementation-ready for anything beyond these 8 — this document covers exactly the 8 candidates from `docs/phase-plans/phase-61-cross-llm-memory-typed-artifact-schema-plan.md` §3.2.3 ("builds directly on this phase's primitives"), not the other 16 unranked candidates in that plan's §3.2.4, which are still just names with no task-card plan and are explicitly **not** in this document.
+- **Implementation Status:** Not started. Authorized for strict TDD execution once accepted. Hard-blocked on Phase 61 being complete (every task card below reads or writes through `TypedArtifactStore`, `MemoryArtifact`, or `MemoryTool` — none of which exist until Phase 61 ships).
+- **Authority:** `docs/reports/cross-llm-memory-system-synthesis-2026-09-06.md` (source of all 8 ideas, "Enhancement ideas beyond the core 7-subject design" section) and `docs/phase-plans/phase-61-cross-llm-memory-typed-artifact-schema-plan.md` (the foundation this phase integrates with — every file:line citation below that references `TypedArtifactStore`/`MemoryArtifact`/`trust.py`/`MemoryTool` is to Phase 61's own §6 design, not independently re-verified against running code, since Phase 61 hasn't been implemented yet as of this writing).
+- **Predecessors:** Phase 61 (`TypedArtifactStore`, `MemoryArtifact`, trust tiers, `MemoryTool`) — hard prerequisite for all 8 workstreams.
+- **Successor:** none scoped yet. The 16 items in Phase 61's §3.2.4 remain unranked backlog beyond this phase.
+- **Security Boundary:** Every new read of memory content goes through `TypedArtifactStore.recall()`, inheriting Phase 61's Trojan Source scan and staleness/signature checks (§6.3 of the Phase 61 plan) — this phase adds no new read path that bypasses those checks.
+- **Protected Boundaries:** `governance/remediation-contracts.toml` (unchanged — this phase closes no `R-xxx` finding), Phase 61's own schema (`memory_artifacts` table) is extended via new nullable columns only, never a breaking migration of existing Phase 61 rows.
+- **Zero-Downscope Invariant:** Same as Phase 61 — a task card's Binary Outcome must be met exactly.
+- **Lifecycle Boundary:** No commit, push, merge, tag, publish, or release without explicit user instruction.
+
+---
+
+## 2. Authority and Concrete Evidence
+
+### 2.1 Verified Current API Surfaces (re-read this session, cited exactly)
+
+- `src/rush/token_economy/ccr_store.py`, `cache_aligner.py`, `stale_sweeper.py` — real, cited in the synthesis doc's original enhancement-idea bullet 3 ("Memory as a token-savings layer"). `CacheAligner.align_prompt()` confirmed this session (`src/rush/token_economy/cache_aligner.py:8-58`).
+- `src/rush/tools/api_diff.py` — `ApiDiffer.diff_file(self, file_path: Path, base_ref: str = "main") -> list[dict[str, Any]]` (line 36) and `ApiDiffer.diff_public_api(base_ref="main")`, returns `{"base_ref", "passed", "breaking_changes_count", "breaking_changes"}`.
+- `src/rush/tools/provenance_ai.py` — `GitTrailerParser.parse_commit_records(raw_log)` (lines 32-82, confirmed this session), classifies `is_ai_generated`/`is_ai_assisted`/`is_fix`; `ProvenanceAiTool` (lines 155-350) computes code-survival correlation.
+- `src/rush/mcp_mesh/lock_manager.py` — `MeshLockManager`, confirmed this session (Phase 61 plan §2.1 Drift 5).
+- `src/rush/continuity/receipts.py`, `providers.py` — files confirmed to exist this session; their **current** (pre-Phase-61) behavior is `receipts.py` reading/writing `.rush/session_memory.json` with `historical_evidence`/`quarantined` fields. The `TypedArtifactStore`/`family="handoff"` shape is Phase 61's own target design (its plan §6.1/P61.4), not yet built or independently confirmed — this phase's P62.4 work depends on Phase 61 actually landing that shape first (§4 admission gate).
+- `governance/remediation-contracts.toml` — confirmed uniform schema this session: `id, title, owner_phase, severity, release_blocker, red_task, green_task, target_seam, test_file, test_function, predecessor, docs_owner, status`.
+- `rush.review` package exists (confirmed via this repo's own git history: commit `febc09a feat(phase60): extract review pipeline into rush.review`) — the review pipeline's exact entry-point function is **not** independently re-verified this session; P62.2's RED task must grep it directly before writing tests against it (do not assume a function name).
+- **Not independently verified this session, assumed from the Phase 61 plan only (flagged, not silently trusted as if re-checked):** `TypedArtifactStore`, `MemoryArtifact`, `trust.py`'s `evaluate_promotion`/`evaluate_conflict`, `MemoryTool` — none of these exist yet. Every task below that imports from `rush.memory.store`/`rush.memory.trust`/`rush.tools.memory` is trusting Phase 61's plan document, not running code. Each task's RED step must re-confirm the actual signature against Phase 61's real implementation (which may drift slightly from its own plan during implementation) before writing assertions against it.
+
+### 2.2 Codebase Integration Points Requiring Confirmation Before RED (not guessed here)
+
+1. The AST-pack insertion point is confirmed (§6.1): `pack_context()` in `src/rush/continuity/context.py:68-158`, the sole caller of `ContextPacker.pack()` (`context.py:97`) — no separate grep needed at P62.1.1.
+2. `rush.review`'s exact finding-reporting entry point (P62.2's insertion point) — grep at P62.2.1.
+3. `session_memory.py`'s post-Phase-61 write signature for episodic records (P62.5's linkage point) — re-confirm at P62.5.1, since Phase 61's P61.5.2 modifies this file.
+
+---
+
+## 3. Goals, Non-Goals
+
+### 3.1 Primary Goals (the 8 items from Phase 61 §3.2.3, one workstream each)
+
+1. **P62.1 — Token-savings cache front-end.** A durable-memory check ("do we already have an answer for this") runs before an expensive AST-pack, querying `TypedArtifactStore` first.
+2. **P62.2 — Review/development reading memory.** A review finding checks failure/mistake memory before reporting ("this pattern already caused a fix in commit X"); a planning step checks architectural-decision memory.
+3. **P62.3 — Maintenance sub-agent.** Uses `MeshLockManager` to own the write-promotion rule's periodic re-evaluation, the skill-candidate admission gate, and staleness sweeps as bounded, reversible background work.
+4. **P62.4 — Handoff diffs, not blobs.** Cross-provider handoff sends a diff against the *last* handoff to that same tool instead of a full snapshot.
+5. **P62.5 — AI-attribution trail.** Links a git commit/diff hunk back to the specific decision-memory and failure-memory records that informed it, using `GitTrailerParser`'s existing `is_fix`/`is_ai_generated` classification.
+6. **P62.6 — API-diff staleness.** A memory record citing a specific public API signature is flagged stale by `ApiDiffer.diff_public_api()` when that exact signature breaks — narrower than Phase 61's merkle content-hash staleness (Invariant 6), which doesn't distinguish public-API breaks from internal edits.
+7. **P62.7 — Per-type expiry/TTL policy.** `STATED` defaults to never-expire; `DERIVED`/`EXTERNAL_WRITE`/`IMPORTED` get a real, per-subject TTL, auditable (`expired_at`/`expired_by` stamped on an explicit sweep, never silently recomputed on read).
+8. **P62.8 — Remediation-contract-schema reuse.** Architectural-decision and failure/mistake `MemoryArtifact.content` gain the same shape as `remediation-contracts.toml`'s findings: `red_task`/`green_task`/`target_seam`/`test_file`/`test_function`/`predecessor`/`status`.
+
+### 3.2 Non-Goals
+
+1. The 16 unranked items in Phase 61's §3.2.4 are not in this plan.
+2. No new third-party dependencies (same discipline as every predecessor phase).
+3. No change to Phase 61's `memory_artifacts` table shape beyond additive nullable columns (P62.7 adds `expires_at`, `expired_at`, `expired_by`; P62.6 adds no new column, reuses `stale`/`content_hash`; P62.8 stores its schema inside the existing `content` JSON blob, no new column).
+
+---
+
+## 4. Admission Gate
+
+1. Phase 61's exit checklist is 100% checked (`docs/phase-plans/phase-61-cross-llm-memory-typed-artifact-schema-plan.md` §11) — `TypedArtifactStore`, trust tiers, `MemoryTool` all exist and pass their own 36 contract tests.
+2. Run `python -m pytest tests/ -q`, record baseline (Phase 61's final count) in `docs/phase-plans/phase-62-implementation-evidence.md`.
+3. Confirm the 3 integration points in §2.2 via grep before any RED task authors an assertion against them.
+
+---
+
+## 5. Workstream-Ownership Ledger
+
+| Workstream | Depends On (Phase 61) | New/Modified Files |
+|---|---|---|
+| P62.1 Cache front-end | `TypedArtifactStore.search()` (P61.7.2) | `src/rush/token_economy/memory_cache_gate.py` (new), `src/rush/continuity/context.py` (`pack_context()`, confirmed §6.1) |
+| P62.2 Review/dev reads memory | `TypedArtifactStore.recall()` (P61.1.2) | `rush.review`'s entry point (confirmed at P62.2.1) |
+| P62.3 Maintenance sub-agent | `TypedArtifactStore`, `trust.evaluate_promotion`, `MeshLockManager` | `src/rush/memory/maintenance.py` (new) |
+| P62.4 Handoff diffs | `continuity/receipts.py` (post-Phase-61 shape) | `src/rush/continuity/receipts.py`, `providers.py` |
+| P62.5 Attribution trail | `session_memory.py` (post-Phase-61 shape), `GitTrailerParser` | `src/rush/tools/provenance_ai.py`, `src/rush/session_memory.py` |
+| P62.6 API-diff staleness | `TypedArtifactStore` staleness fields | `src/rush/memory/store.py` (additive), `src/rush/tools/api_diff.py` |
+| P62.7 Per-type expiry | `TypedArtifactStore` schema | `src/rush/memory/store.py`, `src/rush/memory/expiry.py` (new) |
+| P62.8 Decision-record schema | `MemoryArtifact.content` shape | `src/rush/memory/decision_schema.py` (new) |
+
+---
+
+## 6. Shared Architecture and Data Structures
+
+### 6.1 Cache Gate (`src/rush/token_economy/memory_cache_gate.py`)
+
+The only real call site for an AST-pack today is `pack_context()` in `src/rush/continuity/context.py:68-158`, the sole caller of `ContextPacker.pack()` (verified: `grep -rn '\.pack(' src/rush` returns exactly one hit, `context.py:97`). `ContextPacker.pack(self, target_file: Path, target_symbol: str = "", max_tokens: int = 4000) -> dict[str, Any]` (`src/rush/codegraph/context_packer.py:29-32`) takes a file path and a symbol name, never a free-text query — `pack_context()` resolves its own `context_path: str` argument to an absolute `Path` and calls `ContextPacker(project_root).pack(target, target_symbol=target_symbol, max_tokens=1_000_000)` at `context.py:97-99`. The cache gate wraps exactly that call.
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass(frozen=True)
+class CacheGateResult:
+    hit: bool
+    artifact_id: str | None
+    content: dict[str, Any] | None
+```
+
+`check_memory_before_pack(context_path: str, target_symbol: str, subject: str = "domain_knowledge") -> CacheGateResult` — the cache key is `f"{context_path}:{target_symbol}"`, built from the exact two arguments `pack_context()` already holds (no free-text query, no separate normalization step); passed as `query` to `TypedArtifactStore.search(subject=subject, query=cache_key)`. On a hit (FTS5's own BM25 rank, no new scoring), `content` is shaped identically to `ContextPacker.pack()`'s real return value — `{"target_file": str, "target_symbol": str, "max_tokens": int, "tokens": int, "packed_text": str}` — so `pack_context()`'s downstream code (`estimated = int(packed.get("tokens", 0))` at `context.py:100`, the redaction/envelope logic after) runs unmodified on a cache hit vs. a real `pack()` call. On a miss, `pack_context()` calls `ContextPacker(project_root).pack(...)` exactly as today, then writes the result back into `TypedArtifactStore` under the same `subject`/key so the next call for that `(context_path, target_symbol)` pair hits.
+
+### 6.2 Maintenance Sub-Agent (`src/rush/memory/maintenance.py`)
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+
+MaintenanceTask = Literal["promotion_sweep", "staleness_sweep", "skill_admission_check", "expiry_sweep"]
+
+@dataclass(frozen=True)
+class MaintenanceRunResult:
+    task: MaintenanceTask
+    processed: int
+    changed: int
+    errors: tuple[str, ...] = ()  # row `id` values whose per-row mutation raised; that row is skipped, cycle continues
+```
+
+`run_maintenance_cycle(task: MaintenanceTask, *, batch_size: int = 500) -> MaintenanceRunResult` acquires a `MeshLockManager` lease via `MeshLockManager().acquire(Path(".rush/memory-maintenance.lock"), agent_id="memory-maintenance", timeout_s=5.0, ttl_s=60.0)` before running. `agent_id` is `acquire()`'s own mandatory parameter (`src/rush/mcp_mesh/lock_manager.py`) — passed as a fixed literal string, not a real ownership concept: the lease's file-existence/expiry check already makes concurrent cycles mutually exclusive on its own, so no caller identity is needed beyond satisfying the signature; the lease's `owner_agent_id` field exists only for `inspect()`/`owner()` diagnostics, never consulted for authorization. Releases in a `finally` block (never held across an exception, Invariant 2), bounded per call by `batch_size` (default 500, keyword parameter, rush's own arbitrary safety bound — not sourced from anywhere — same category as Phase 29's `RemediationCircuitBreaker(max_attempts=3)`, a plainly-stated design default, not a claimed fact). Each row-level mutation runs in its own `try/except`; a row that raises has its `id` appended to `errors` and is skipped — it does not abort the cycle and is not counted in `changed`. A failure that prevents the cycle itself from running (lock not acquired, DB connection error) is not caught at this level — it propagates as a raised exception out of `run_maintenance_cycle()`, with the lock's `finally` still releasing.
+
+All four task types read `memory_artifacts` through `TypedArtifactStore`'s existing SQLite connection (`.rush/memory.db`; columns per Phase 61 §6.1: `id, family, subject, trust_tier, content, source, created_at, symbol_ref, content_hash, corroboration_count, promoted_at, stale, signature`):
+
+**`"promotion_sweep"`** — re-evaluates already-written non-`STATED` rows (corroboration may have increased since they were written).
+- Select: `SELECT id, family, subject, trust_tier, content, source, created_at, symbol_ref, content_hash, corroboration_count, promoted_at, stale, signature FROM memory_artifacts WHERE trust_tier != 'STATED' AND promoted_at IS NULL ORDER BY created_at ASC LIMIT :batch_size`.
+- Mutation: reconstruct each row as a `MemoryArtifact`, call `trust.py`'s `evaluate_promotion(artifact, user_stated=False)` — a maintenance sweep is never itself the user, so `user_stated` is always `False` here (the `user_stated=True` immediate-promotion path is for direct user-facing writes only). If `PromotionResult.promoted` is `True`: `UPDATE memory_artifacts SET trust_tier = :new_tier, promoted_at = :now, signature = :signature WHERE id = :id`; counts toward `changed`. Otherwise no mutation — row is `processed` but not `changed`.
+
+**`"staleness_sweep"`** — periodically re-checks symbol-anchored rows against the current merkle hash, catching drift between writes (distinct from Phase 61's per-`recall()` merkle check, which only fires on read).
+- Select: `SELECT id, symbol_ref, content_hash FROM memory_artifacts WHERE symbol_ref IS NOT NULL AND stale = 0 ORDER BY created_at ASC LIMIT :batch_size`.
+- Mutation: recompute the current merkle AST hash of `symbol_ref` via `merkle_invalidator.py`'s `MerkleInvalidator.hash_content()` — the same pure hashing function Phase 61's recall-time check uses (§6.3 Invariant 6 there), no new hashing added. If it no longer matches the stored `content_hash`: `UPDATE memory_artifacts SET stale = 1 WHERE id = :id`; counts toward `changed`. Otherwise no mutation.
+
+**`"skill_admission_check"`** — checks whether a pending `skill_pattern` candidate has since been explicitly trust-granted by a human (Phase 61 T-61.27: a generated SKILL.md stays non-executable until `PluginTrustStore.grant_trust()` is explicitly called; this task never calls `grant_trust()` itself — granting trust is human-gated, not automated by a sweep).
+- Select: `SELECT id, family, subject, trust_tier, content, source, created_at, symbol_ref, content_hash, corroboration_count, promoted_at, stale, signature FROM memory_artifacts WHERE subject = 'skill_pattern' AND trust_tier != 'STATED' AND promoted_at IS NULL ORDER BY created_at ASC LIMIT :batch_size`.
+- Mutation: for each row, call `PluginTrustStore().is_trusted(plugin_name, closure_digest)` (`src/rush/plugins/trust_store.py:158`) using the plugin identity recorded in the row's `content`. If trust was granted since the row was written: run the same `evaluate_promotion(artifact, user_stated=False)` path as `"promotion_sweep"` and apply the same `UPDATE` on success; counts toward `changed`. If still untrusted: no mutation — the row stays a pending candidate.
+
+**`"expiry_sweep"`** — dispatches to `expiry.py`'s `sweep_expired()` (§6.3), wired once P62.7.2 lands (§8.2b ordering already covers this).
+
+For all four: `processed` is the row count the `SELECT` returned (bounded by `batch_size`); `changed` is the count actually mutated; `errors` is the `id`s whose per-row `try/except` caught an exception (counted in `processed`, not in `changed`).
+
+Note: T-62.05/T-62.06 (§7) verify lock lifecycle and the `batch_size` bound only — neither asserts per-task-type mutation correctness (no test seeds a corroboration-eligible row and asserts `promotion_sweep` actually promotes it, for example). That gap is separate from this section's ask (task-card detail sufficient for implementation, not test coverage) and is flagged here rather than left silently implicit.
+
+### 6.3 Expiry Policy (`src/rush/memory/expiry.py`)
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ExpiryPolicy:
+    subject: str
+    trust_tier: str
+    ttl_seconds: int | None  # None = never expires
+
+DEFAULT_POLICIES: tuple[ExpiryPolicy, ...] = (
+    ExpiryPolicy(subject="*", trust_tier="STATED", ttl_seconds=None),
+    # DERIVED/EXTERNAL_WRITE/IMPORTED TTL durations are NOT specified anywhere —
+    # the synthesis doc (line 208) says only "STATED defaults to never, DERIVED/
+    # EXTERNAL_WRITE get a real TTL," naming no duration. There is no source to
+    # cite for a specific number of days; rush has to pick one. This is a real
+    # open decision, not a filled-in fact — see P62.7.1's RED task, which must
+    # get an explicit answer (from the user, or a documented rush-own rationale)
+    # before any duration is hardcoded, rather than the plan inventing one here.
+)
+```
+
+First-match-wins against `(subject, trust_tier)`, `"*"` as wildcard — same first-match-wins shape the synthesis doc cited from `moorcheh-ai/memanto`'s `MemoryPolicyService` (idea only, no literal source copied). `sweep_expired() -> int` runs as a `MaintenanceTask`, stamps `expired_at`/`expired_by="expiry_sweep"` on an explicit pass — never silently recomputed on read (matches Phase 61's own Invariant-writing style: no silent state changes on a read path).
+
+### 6.4 Decision-Record Schema Extension (`src/rush/memory/decision_schema.py`)
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class DecisionRecordFields:
+    """Embedded inside MemoryArtifact.content for subject in {"architectural_decision", "failure"}."""
+    red_task: str | None = None
+    green_task: str | None = None
+    target_seam: str | None = None
+    test_file: str | None = None
+    test_function: str | None = None
+    predecessor: str | None = None
+    status: str = "in_progress"  # rush's own choice, not borrowed from remediation-contracts.toml — that file's vocabulary is a closed, finished ledger (verified: all 16 of 16 entries use "completed", grepped directly, zero other value has ever appeared there) with no in-progress state to reuse, since its program is done. A live decision-record store needs a real default for a record that's just been written and not yet validated; "completed" would be actively false for that case, and the earlier "open" default was invented with no source at all. "completed" itself remains a valid non-default value this field can be set to once a decision's red/green tasks both land.
+```
+
+Wiring is scoped to the one real forward-write call site that exists for either subject by the time this phase runs: `src/rush/memory/mistake_miner.py`'s `TypedArtifactStore.write(subject="failure", trust_tier="DERIVED", ...)` call, added by Phase 61's P61.6.2 (`docs/phase-plans/phase-61-cross-llm-memory-typed-artifact-schema-plan.md`, §9 P61.6.2 task card). P62.8.2 extends that call's `content` dict to include a `DecisionRecordFields` instance (serialized via `dataclasses.asdict`), populated from what `mine_mistakes()` already returns (`src/rush/memory/mistake_miner.py`): `reverted_subject` → `target_seam`; `rationale` folded into `content` alongside the typed fields; `red_task`/`green_task`/`test_file`/`test_function`/`predecessor` stay at their declared `None` defaults — `mine_mistakes()`'s git-revert-log source has no such data to populate them with, so nothing is invented to fill them.
+
+**`architectural_decision` is schema-only in this phase, not wired.** Phase 61 explicitly scoped `architectural_decision` to migration-only (`phase-61-cross-llm-memory-typed-artifact-schema-plan.md`, §9 P61.6.2's preceding note: "Architectural-decision is fully covered by P61.3's generic migration... no new forward-write behavior") and this plan adds none either — there is no call site anywhere in Phase 61 or Phase 62 that writes a new `subject="architectural_decision"` record going forward, only the one-time migration of old `invariant_graph.py` rows. `DecisionRecordFields` remains usable for that subject (the dataclass doesn't gate on `subject`), but nothing in either phase produces a live `architectural_decision` write to wire it into; a future phase that adds one can reuse this schema unchanged.
+
+### 6.5 State Invariants
+
+1. **Cache-gate invariant:** `check_memory_before_pack()` never mutates state — read-only, calls `TypedArtifactStore.search()` only, never `write()`.
+2. **Maintenance-lock invariant:** every `run_maintenance_cycle()` call acquires and releases a `MeshLockManager` lease; a crash mid-cycle must not leave a stale held lock (verify `MeshLockManager`'s own expiry semantics, don't reinvent one).
+3. **Diff-not-blob invariant:** a handoff to a tool that already received a prior handoff sends only the delta (fields changed since the last handoff to that same tool), computed via a plain dict-diff — no new diff library. Enabled by a new `target_provider: str | None` field threaded through the existing handoff path: `SessionContinuityTool.__call__()` (`src/rush/tools/continuity.py:84`) already takes a `provider_id: str | None = None` parameter (line 107) but its `handoff={...}` dict literal (lines 115-120: `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, `dependencies`) never includes it; `save_receipt()` (`src/rush/continuity/receipts.py:62-90`) never receives or stores it either. "Last handoff to the same tool" is answered from `CheckpointJournal.list_checkpoints()` (`src/rush/memory/checkpoint_journal.py:61-91`, already returns every saved checkpoint sorted newest-first by `created_at`), filtering on `metadata["handoff"]["target_provider"] == target_provider` and taking the first match — no new storage or `TypedArtifactStore` dependency required for this lookup.
+4. **Attribution-trail invariant:** a linked commit reference stores the commit SHA, never the full commit content — the trail is a pointer, not a duplicate copy of git history.
+5. **API-diff-staleness invariant:** distinct from Invariant 6 (merkle content-hash) in Phase 61, not because the two checks can disagree about whether a file's bytes changed (identical bytes always produce an identical AST-derived signature and an identical sha256 hash — they read the same file content, so "signature broke, hash didn't" cannot happen from a real edit) but because they compare against different baselines. `ApiDiffer.diff_file()` (`src/rush/tools/api_diff.py:36-63`) always diffs the current working-tree file against `git show {base_ref}:{rel_path}` with `base_ref` defaulting to `"main"` (line 38) — a fixed, git-ref-relative baseline. `MerkleInvalidator.check_and_update(symbol_key, content)` (`src/rush/memory/merkle_invalidator.py:59-75`) compares against whatever content was last hashed under that `symbol_key` — an arbitrary, caller-controlled baseline with no relationship to `main`, typically "the content this `MemoryArtifact` was last checked against." A `MemoryArtifact` citing a signature that already differed from `main` before the record was ever written (e.g., written against an uncommitted local edit) has a merkle baseline that already reflects the broken signature — `check_and_update()` reports no drift on every subsequent call — while `ApiDiffer.diff_file()` against `main` reports a real breaking change on every call, since `main` never had it. `stale=True` fires from the `ApiDiffer` path in that case even though the merkle path reports no change; the reverse (merkle-only staleness with no cited signature broken) is the ordinary case Invariant 6 already covers.
+6. **Expiry-is-explicit invariant:** `stale`≠`expired`. Staleness (Phase 61) means "the code changed, this may be wrong now." Expiry (P62.7) means "this record's TTL ran out, regardless of whether the code changed." A record can be stale-but-not-expired or expired-but-not-stale; these are independent booleans, never conflated into one field.
+
+---
+
+## 7. Contract Test Inventory (T-62.01 through T-62.17)
+
+| Test ID | Test File | Test Function | Target Contract |
+|---|---|---|---|
+| T-62.01 | `tests/test_phase62_cache_gate.py` | `test_cache_hit_returns_stored_content_without_new_pack` | Seeds a `domain_knowledge` record under cache key `f"{context_path}:{target_symbol}"` for a given `(context_path, target_symbol)` pair; calls `pack_context()` with that same pair; asserts `check_memory_before_pack()` returns `hit=True`, the result matches the seeded content, and `ContextPacker.pack()` (spied at `context.py:97`'s call site) is never invoked. |
+| T-62.02 | `tests/test_phase62_cache_gate.py` | `test_cache_miss_falls_through_to_pack` | No record exists for the `(context_path, target_symbol)` key; asserts `hit=False` and `pack_context()` proceeds to call `ContextPacker.pack()` normally (spy shows exactly one call). |
+| T-62.03 | `tests/test_phase62_review_memory.py` | `test_review_finding_cites_prior_failure_memory` | Seeds a `STATED` failure record matching a new review finding's pattern; asserts the review's reported output references it ("this pattern already caused a fix in commit X"). |
+| T-62.04 | `tests/test_phase62_review_memory.py` | `test_planning_step_cites_architectural_decision` | Seeds a `STATED` architectural-decision record; asserts a planning-step check surfaces it. |
+| T-62.05 | `tests/test_phase62_maintenance.py` | `test_maintenance_cycle_acquires_and_releases_lock` | Asserts `run_maintenance_cycle()` calls `MeshLockManager.acquire`/`release` (spy), releases even when the cycle body raises. |
+| T-62.06 | `tests/test_phase62_maintenance.py` | `test_maintenance_cycle_respects_batch_size_parameter` | Seeds 600 candidate rows, calls `run_maintenance_cycle(task, batch_size=500)` explicitly (not relying on the default); asserts exactly 500 processed in this cycle, remainder left for the next; a second test in the same function calls with `batch_size=50` and asserts exactly 50 processed, proving the bound is a real parameter, not a hardcoded constant. |
+| T-62.07 | `tests/test_phase62_handoff_diff.py` | `test_second_handoff_to_same_tool_sends_delta_only` | Saves a checkpoint via `SessionContinuityTool.__call__(operation="save", provider_id="codex_cli", ...)`, then a second with the same `provider_id="codex_cli"` and one changed field; asserts the second saved receipt's diff (against the prior checkpoint found via `CheckpointJournal.list_checkpoints()` filtered on `metadata["handoff"]["target_provider"] == "codex_cli"`) contains only the changed field, not the full snapshot. |
+| T-62.08 | `tests/test_phase62_handoff_diff.py` | `test_first_handoff_to_a_tool_sends_full_snapshot` | No prior saved checkpoint has `metadata["handoff"]["target_provider"] == "codex_cli"`; asserts the full snapshot is sent (no delta base to diff against). |
+| T-62.09 | `tests/test_phase62_attribution.py` | `test_fix_commit_links_to_originating_failure_record` | Seeds a failure record, a matching `is_fix=True` commit from `GitTrailerParser`; asserts a queryable link exists from the commit SHA back to the failure record's id. |
+| T-62.10 | `tests/test_phase62_attribution.py` | `test_attribution_stores_sha_not_full_commit_content` | Asserts the stored link contains a commit SHA string, not the full diff/commit body (Invariant 4). |
+| T-62.11 | `tests/test_phase62_api_staleness.py` | `test_signature_break_flags_stale_via_main_diff_when_merkle_baseline_predates_it` | Seeds a `MemoryArtifact` citing a function signature and merkle-hashes it (via `MerkleInvalidator.check_and_update`) against its *current* on-disk content, so the merkle baseline matches with zero drift going forward. Sets up a real git repo where `main`'s committed version of that file has the pre-break signature and the working-tree version (already merkle-hashed) has the post-break signature — no mocked hash output. Calls `ApiDiffer.diff_file(path, base_ref="main")`; asserts it reports the symbol broken. Asserts `TypedArtifactStore.recall()` flags `stale=True` via the `ApiDiffer` path, and separately asserts `MerkleInvalidator.check_and_update()` for that symbol returns `False` (no drift) — proving the two checks fire independently off different baselines, not off a rigged hash. |
+| T-62.12 | `tests/test_phase62_expiry.py` | `test_stated_records_never_expire` | A `STATED` record, TTL sweep run repeatedly; asserts never expired. |
+| T-62.13 | `tests/test_phase62_expiry.py` | `test_derived_record_expires_after_configured_ttl` | A `DERIVED` record older than whatever TTL is actually configured for its `(subject, trust_tier)` at P62.7.1 (the specific duration is a real open decision — §6.3 — resolved before this test is authored, not invented here); asserts `sweep_expired()` stamps `expired_at`/`expired_by` once that TTL elapses. |
+| T-62.14 | `tests/test_phase62_expiry.py` | `test_expiry_and_staleness_are_independent` | A record that is stale but not expired, and one that is expired but not stale; asserts both booleans independently correct (Invariant 6). |
+| T-62.15 | `tests/test_phase62_decision_schema.py` | `test_architectural_decision_record_carries_remediation_shaped_fields` | Writes an `architectural_decision` record with `DecisionRecordFields`; asserts round-trip through `content` JSON preserves all 7 fields. |
+| T-62.16 | `tests/test_phase62_decision_schema.py` | `test_status_defaults_in_progress_and_accepts_completed` | Asserts a new `DecisionRecordFields` defaults `status="in_progress"`, and that setting `status="completed"` round-trips correctly. `remediation-contracts.toml`'s own vocabulary (verified: `"completed"` only, all 16 of 16 entries, no other value ever observed) does not define an in-progress state to match against — this test is against rush's own default, not a borrowed vocabulary. |
+| T-62.17 | `tests/test_phase62_decision_schema.py` | `test_mistake_miner_failure_write_carries_decision_schema_round_trip` | Runs `mine_mistakes()` against a seeded revert commit; asserts the resulting `TypedArtifactStore.write(subject="failure", ...)` call's stored row recalls with a `DecisionRecordFields`-shaped `content` — an end-to-end write-then-recall, not dataclass serialization in isolation. |
+
+Coverage: 17 of 17 contract tests specified above are the complete set for this phase; §10 re-runs all 17 by name.
+
+---
+
+## 8. File, Dependency, and Documentation Governance
+
+### 8.1 File Write Inventory
+
+**New:** `src/rush/token_economy/memory_cache_gate.py`, `src/rush/memory/maintenance.py`, `src/rush/memory/expiry.py`, `src/rush/memory/decision_schema.py`, `tests/test_phase62_cache_gate.py`, `tests/test_phase62_review_memory.py`, `tests/test_phase62_maintenance.py`, `tests/test_phase62_handoff_diff.py`, `tests/test_phase62_attribution.py`, `tests/test_phase62_api_staleness.py`, `tests/test_phase62_expiry.py`, `tests/test_phase62_decision_schema.py`, `docs/phase-plans/phase-62-implementation-evidence.md`, `governance/remediation-phase-62.toml`.
+
+**Modified:** `src/rush/memory/store.py` (additive columns for P62.7: `expires_at`, `expired_at`, `expired_by`), `src/rush/continuity/context.py` (`pack_context()`, confirmed §6.1), `rush.review`'s entry point (confirmed at P62.2.1), `src/rush/tools/continuity.py` + `src/rush/continuity/receipts.py` + `providers.py` (diff-not-blob, `target_provider` threading), `src/rush/tools/provenance_ai.py` + `src/rush/session_memory.py` (attribution linkage), `src/rush/tools/api_diff.py` (emits a staleness signal `TypedArtifactStore` consumes), `src/rush/memory/mistake_miner.py` (extended by P62.8.2 to embed `DecisionRecordFields`).
+
+### 8.2 Documentation Synchronization
+
+This phase reuses Phase 61's doc-inventory methodology (full grep sweep, not a guess). At P62-implementation time, re-run a grep sweep for all 19 of these terms — the 14 base terms from Phase 61's §8.2 (`session_memory`, `preference_store`, `invariant_graph`, `failure_ledger`, `mistake_miner`, `checkpoint_journal`, `continuity/receipts`, `continuity/coordination`, `continuity/providers`, `ADR-0030`, `quarantined`, `typed-artifact`, `agent memory`, `memory subsystem`, `epistemic memory`) plus 5 more specific to this phase's own new surface: `memory_cache_gate`, `run_maintenance_cycle`, `ExpiryPolicy`, `DecisionRecordFields`, `attribution trail`. **This document does not pre-enumerate the resulting file list** — unlike Phase 61, where the sweep was actually run this session (71 of 353 files confirmed needing updates, after correction — see Phase 61's own §8.2 coverage statement for the full history of that number). Running that sweep now, before Phase 61 even exists, would classify files against code that doesn't exist yet and go stale the moment Phase 61 lands. P62.9 (below) runs the real sweep at P62's own implementation time, against the real post-Phase-61-and-P62 codebase — named as a task, not skipped.
+
+#### P62.9 — VERIFY/DOCS: Run the Real Doc Sweep and Synchronize
+- **Task ID:** P62.9.1
+- **Binary Outcome:** Full grep sweep run against the actual post-implementation `/docs` tree (not guessed here); every hit individually classified and fixed, same rigor as Phase 61's §8.2.
+- **Prerequisites:** P62.1 through P62.8 all GREEN.
+- **Allowed Writes:** every file the sweep identifies (enumerated in this task's own evidence note, not pre-listed in this plan), plus `docs/phase-plans/README.md` (add Phase 62 row), `docs/developer/backlog.md` (add Phase 62 row), `governance/remediation-phase-62.toml`.
+- **Actions:**
+  1. Run the grep sweep (§8.2's term list) against the real `/docs` tree at this point in time.
+  2. Classify every hit; fix every one; record the file list and count in `docs/phase-plans/phase-62-implementation-evidence.md`.
+  3. Add the Phase 62 row to `docs/phase-plans/README.md` and `docs/developer/backlog.md`.
+  4. Create `governance/remediation-phase-62.toml` documenting all 17 contract tests.
+
+### 8.2b File Conflict Ordering
+
+`src/rush/memory/store.py` is touched by two tasks: P62.6.2 (additive staleness check in `recall()`) and P62.7.2 (additive `expires_at`/`expired_at`/`expired_by` columns). Both are purely additive with no overlapping fields, but ordering is fixed to avoid a merge surprise: **P62.6.2 before P62.7.2** (staleness logic lands first since P62.6 has no dependency on expiry fields; P62.7's migration runs against the already-updated file).
+
+`docs/phase-plans/phase-62-implementation-evidence.md` is touched by three tasks: P62.0.1 (create, baseline), P62.7.1 (record the resolved TTL durations before authoring T-62.13), P62.9.1 (final synchronization note). Order: **P62.0.1 → P62.7.1 → P62.9.1**, already enforced by each task's own Prerequisites chain (P62.7.1 depends on P62.0.1; P62.9.1 depends on P62.1 through P62.8 all being GREEN, which is downstream of P62.7.1) — restated here explicitly per plan-review Pass 2, same as Phase 61's §8.4 convention.
+
+`src/rush/memory/maintenance.py` is touched by two tasks: P62.3.2 (create, implements `run_maintenance_cycle` and the base `MaintenanceTask` Literal) and P62.7.2 (add the `"expiry_sweep"` value and its dispatch case). Order: **P62.3.2 → P62.7.2**, already enforced by P62.7.2's own Prerequisites (P62.3.2) — restated here per plan-review Pass 2.
+
+### 8.3 Dependency Constraints
+
+Zero third-party dependencies. Python 3.12 standard library only.
+
+---
+
+## 9. Ordered Workstreams and Atomic Task Cards
+
+### P62.0 — Admission Gate & Baseline
+
+#### P62.0.1 — EVIDENCE: Confirm Phase 61 Complete, Confirm 3 Integration Points
+- **Task ID:** P62.0.1
+- **Binary Outcome:** `docs/phase-plans/phase-62-implementation-evidence.md` created; Phase 61's exit checklist confirmed 100%; the 3 integration points in §2.2 confirmed via grep, exact paths recorded.
+- **Prerequisites:** §4 admission gate.
+- **Allowed Writes:** `docs/phase-plans/phase-62-implementation-evidence.md`.
+- **Actions:** Run `pytest tests/ -q`, record baseline. Grep for the context-pack entry point, `rush.review`'s finding-report entry point, and `session_memory.py`'s post-Phase-61 episodic write signature; record all 3 exact locations.
+
+### P62.1 — Token-Savings Cache Front-End
+
+#### P62.1.1 — RED
+- **Binary Outcome:** `tests/test_phase62_cache_gate.py` with T-62.01, T-62.02; both fail.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_cache_gate.py`.
+- **Actions:** Author both tests against `pack_context()` in `src/rush/continuity/context.py:68-158` (the confirmed, sole caller of `ContextPacker.pack()` — `context.py:97`, per §6.1); run, confirm RED.
+
+#### P62.1.2 — GREEN
+- **Binary Outcome:** `src/rush/token_economy/memory_cache_gate.py` implements `check_memory_before_pack(context_path, target_symbol, subject="domain_knowledge")` per §6.1; both tests pass; `pack_context()` calls it before line 97's `ContextPacker(project_root).pack(...)`, reusing its `(context_path, target_symbol)` arguments unchanged as the cache key inputs, and on a miss writes `pack()`'s result back to `TypedArtifactStore`.
+- **Prerequisites:** P62.1.1 RED.
+- **Allowed Writes:** `src/rush/token_economy/memory_cache_gate.py`, `src/rush/continuity/context.py`.
+- **Actions:** Implement `check_memory_before_pack()`; wire it into `pack_context()` immediately before the `ContextPacker(...).pack(...)` call at `context.py:97-99`, short-circuiting to the cached `content` dict on a hit and writing the real `pack()` result back on a miss; run, confirm GREEN.
+
+### P62.2 — Review/Development Reading Memory
+
+#### P62.2.1 — RED
+- **Binary Outcome:** `tests/test_phase62_review_memory.py` with T-62.03, T-62.04; both fail.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_review_memory.py`.
+- **Actions:** Confirm `rush.review`'s entry point from P62.0.1's evidence; author both tests; run, confirm RED.
+
+#### P62.2.2 — GREEN
+- **Binary Outcome:** The confirmed `rush.review` entry point queries `TypedArtifactStore.recall()` for matching failure/architectural-decision records before finalizing its report; both tests pass.
+- **Prerequisites:** P62.2.1 RED.
+- **Allowed Writes:** the confirmed `rush.review` entry-point file.
+- **Actions:** Wire the recall call; format the citation into the report output; run, confirm GREEN.
+
+### P62.3 — Maintenance Sub-Agent
+
+#### P62.3.1 — RED
+- **Binary Outcome:** `tests/test_phase62_maintenance.py` with T-62.05, T-62.06; both fail.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_maintenance.py`.
+- **Actions:** Author both; run; confirm RED.
+
+#### P62.3.2 — GREEN
+- **Binary Outcome:** `src/rush/memory/maintenance.py` implements `run_maintenance_cycle()` per §6.2 — all 4 `MaintenanceTask` variants' select/mutation/failure-handling as specified there; both tests pass.
+- **Prerequisites:** P62.3.1 RED.
+- **Allowed Writes:** `src/rush/memory/maintenance.py`.
+- **Actions:** Implement with `MeshLockManager` lease acquire/release (try/finally, fixed `agent_id="memory-maintenance"` per §6.2), `batch_size` keyword parameter (default 500, not hardcoded), per-row `try/except` isolating row failures into `MaintenanceRunResult.errors` without aborting the cycle, and the four per-task select/mutation bodies specified in §6.2 (`"expiry_sweep"` is a valid `Literal` value with no dispatch case until P62.7.2 adds `expiry.py`, per that task's own Prerequisites); run, confirm GREEN.
+
+### P62.4 — Handoff Diffs
+
+#### P62.4.1 — RED
+- **Binary Outcome:** `tests/test_phase62_handoff_diff.py` with T-62.07, T-62.08; both fail.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_handoff_diff.py`.
+- **Actions:** Author both; run; confirm RED.
+
+#### P62.4.2 — GREEN
+- **Binary Outcome:** `continuity/receipts.py` sends a delta on the second-and-later handoff to the same tool; both tests pass.
+- **Prerequisites:** P62.4.1 RED.
+- **Allowed Writes:** `src/rush/tools/continuity.py` (thread `provider_id` into the `handoff={...}` dict literal at lines 115-120 as `target_provider`), `src/rush/continuity/receipts.py` (`save_receipt()` persists `target_provider`; add a `last_handoff_for_provider(project_root, target_provider)` lookup over `CheckpointJournal.list_checkpoints()`), `src/rush/continuity/providers.py` (`provider_handoff()` propagates `target_provider` through instead of dropping it).
+- **Actions:** Add `target_provider` to the handoff dict and receipt schema; implement `last_handoff_for_provider()` as a filter over `CheckpointJournal.list_checkpoints()` (already sorted newest-first) on `metadata["handoff"]["target_provider"]`; compute a plain dict-diff between the new handoff and that prior handoff's fields; run, confirm GREEN.
+
+### P62.5 — AI-Attribution Trail
+
+#### P62.5.1 — RED
+- **Binary Outcome:** `tests/test_phase62_attribution.py` with T-62.09, T-62.10; both fail.
+- **Prerequisites:** P62.0.1 (confirms `session_memory.py`'s post-Phase-61 signature).
+- **Allowed Writes:** `tests/test_phase62_attribution.py`.
+- **Actions:** Author both against the confirmed signature; run; confirm RED.
+
+#### P62.5.2 — GREEN
+- **Binary Outcome:** A commit classified `is_fix=True` by `GitTrailerParser` links to the failure record it fixed; both tests pass.
+- **Prerequisites:** P62.5.1 RED.
+- **Allowed Writes:** `src/rush/tools/provenance_ai.py`, `src/rush/session_memory.py`.
+- **Actions:** Implement the link (commit SHA stored, per Invariant 4); run, confirm GREEN.
+
+### P62.6 — API-Diff Staleness
+
+#### P62.6.1 — RED
+- **Binary Outcome:** `tests/test_phase62_api_staleness.py` with T-62.11; fails.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_api_staleness.py`.
+- **Actions:** Author; run; confirm RED.
+
+#### P62.6.2 — GREEN
+- **Binary Outcome:** `TypedArtifactStore.recall()` additionally flags `stale=True` when `ApiDiffer.diff_file()` (`src/rush/tools/api_diff.py:36-63`, diffing the cited file against `base_ref="main"`) reports the cited symbol broken, evaluated independently of `MerkleInvalidator.check_and_update()` (`src/rush/memory/merkle_invalidator.py:59-75`) — the two checks compare against different baselines (git `main` vs. last-hashed content, per Invariant 5) and either can fire without the other; test passes.
+- **Prerequisites:** P62.6.1 RED.
+- **Allowed Writes:** `src/rush/memory/store.py` (additive check in `recall()`), `src/rush/tools/api_diff.py` (expose a query-by-symbol helper if one doesn't already exist — confirm at this task's start, don't assume).
+- **Actions:** Wire `ApiDiffer.diff_public_api()`'s (or a new per-symbol `diff_file()`-based) output against cited symbols in `recall()`, evaluated as its own check alongside — not gated by — the existing merkle check; run, confirm GREEN.
+
+### P62.7 — Per-Type Expiry
+
+#### P62.7.1 — RED
+- **Binary Outcome:** `tests/test_phase62_expiry.py` with T-62.12, T-62.13, T-62.14; all 3 fail. TTL durations for `DERIVED`/`EXTERNAL_WRITE`/`IMPORTED` are resolved (from the user, or a documented rush-own rationale recorded in this task's evidence note) before T-62.13 is authored — this task does not invent a number.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_expiry.py`, `docs/phase-plans/phase-62-implementation-evidence.md` (record the resolved TTL durations and their source).
+- **Actions:** Resolve the TTL durations first (§6.3 — no source specifies a number; ask if not already answered). Author all 3 tests against the resolved values; run; confirm RED.
+
+#### P62.7.2 — GREEN
+- **Binary Outcome:** `src/rush/memory/expiry.py` implements `ExpiryPolicy`/`DEFAULT_POLICIES`/`sweep_expired()` per §6.3; `store.py` gains `expires_at`/`expired_at`/`expired_by` columns; `maintenance.py` dispatches the new `"expiry_sweep"` `MaintenanceTask` value to `sweep_expired()`; all 3 tests pass.
+- **Prerequisites:** P62.3.2 (needs `run_maintenance_cycle` and the `MaintenanceTask` Literal to already exist before this task can add a value to it and wire a dispatch case), P62.7.1 RED.
+- **Allowed Writes:** `src/rush/memory/expiry.py`, `src/rush/memory/store.py` (additive columns, migration for existing Phase 61 rows to default `expires_at=NULL`), `src/rush/memory/maintenance.py` (add the `"expiry_sweep"` dispatch case).
+- **Actions:** Implement `expiry.py`; add `"expiry_sweep"` to `MaintenanceTask` and wire `run_maintenance_cycle()`'s dispatch to call `sweep_expired()` for it; run, confirm GREEN.
+
+### P62.8 — Decision-Record Schema Reuse
+
+#### P62.8.1 — RED
+- **Binary Outcome:** `tests/test_phase62_decision_schema.py` with T-62.15, T-62.16, T-62.17; all 3 fail.
+- **Prerequisites:** P62.0.1.
+- **Allowed Writes:** `tests/test_phase62_decision_schema.py`.
+- **Actions:** Author all 3 tests per §7's corrected T-62.15/T-62.16/T-62.17 (status defaults `"in_progress"`, is rush's own default, not borrowed from `remediation-contracts.toml`'s closed `"completed"`-only vocabulary); run; confirm RED.
+
+#### P62.8.2 — GREEN
+- **Binary Outcome:** `src/rush/memory/decision_schema.py` implements `DecisionRecordFields` per §6.4; `src/rush/memory/mistake_miner.py`'s `TypedArtifactStore.write(subject="failure", ...)` call (added by Phase 61's P61.6.2) includes a populated `DecisionRecordFields` in its `content`; all 3 tests pass.
+- **Prerequisites:** P62.8.1 RED, Phase 61's P61.6.2 (the write call this task extends must already exist).
+- **Allowed Writes:** `src/rush/memory/decision_schema.py`, `src/rush/memory/mistake_miner.py`.
+- **Actions:** Implement `DecisionRecordFields`; extend `mistake_miner.py`'s existing `TypedArtifactStore.write(subject="failure", ...)` call (P61.6.2) to populate `content` with a serialized `DecisionRecordFields` per §6.4's field mapping; add no `architectural_decision` wiring — no forward-write call site for that subject exists in either phase (§6.4); run, confirm GREEN.
+
+---
+
+## 10. Final Verification and Delivery Gate
+
+```bash
+# 1. All 17 focused Phase 62 contract tests
+python -m pytest tests/test_phase62_cache_gate.py tests/test_phase62_review_memory.py \
+  tests/test_phase62_maintenance.py tests/test_phase62_handoff_diff.py \
+  tests/test_phase62_attribution.py tests/test_phase62_api_staleness.py \
+  tests/test_phase62_expiry.py tests/test_phase62_decision_schema.py -v
+
+# 2. Regression: full Phase 61 suite still green
+python -m pytest tests/test_phase61_*.py -q
+
+# 3. Full suite — baseline (Phase 61's final count) + 17
+python -m pytest tests/ -q
+
+# 4. Lint/format
+ruff check src/rush/token_economy/memory_cache_gate.py src/rush/memory/ src/rush/tools/api_diff.py \
+  src/rush/tools/provenance_ai.py src/rush/continuity/ tests/test_phase62_*.py
+ruff format --check src/rush/memory/ tests/test_phase62_*.py
+
+# 5. Git hygiene
+git diff --check
+git status --short --branch
+```
+
+---
+
+## 11. Exit Checklist
+
+- [ ] Every RED task's test failed for the stated reason before its GREEN task began.
+- [ ] Cache gate never mutates state (Invariant 1).
+- [ ] Every maintenance cycle acquires and releases its lock, even on exception (Invariant 2).
+- [ ] Handoff diffs send deltas only after a first full snapshot per tool (Invariant 3).
+- [ ] Attribution links store a commit SHA, never full commit content (Invariant 4).
+- [ ] API-diff staleness is independently checked from merkle staleness (Invariant 5).
+- [ ] `stale` and `expired` are independent booleans, never conflated (Invariant 6).
+- [ ] All 17 contract tests pass; full suite at Phase-61-baseline + 17.
+- [ ] Zero third-party dependencies introduced.
+- [ ] P62.9's real doc sweep run and every hit fixed (not the placeholder term-list in §8.2 — the actual post-implementation sweep).
+- [ ] `docs/phase-plans/README.md` and `docs/developer/backlog.md` both have a Phase 62 row.
+- [ ] The 16 unranked items from Phase 61's §3.2.4 remain explicitly unplanned — this phase does not silently claim to cover them.
