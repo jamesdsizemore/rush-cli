@@ -1,3 +1,5 @@
+Current status: historical decision; The sensor-integration decision remains accepted; tool registration and test-file existence checks do not guarantee regression prevention or installed-engine execution. [Engine compatibility](../ENGINE_COMPATIBILITY.md) distinguishes engine support, and [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) defines the complete scan/repair journey still required.
+
 # ADR 0013: TDD Guard & Continuous Architectural Sensors
 
 ## Context

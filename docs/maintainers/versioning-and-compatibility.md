@@ -6,9 +6,9 @@ Guidelines for maintaining backward compatibility across CLI commands, FastMCP r
 
 ## 1. Stable Compatibility Contracts
 
-1. **CLI Commands and Arguments**: Command names (`rush lint`, `rush security`, `rush ai-eval`), options (`--json`, `--check`, `--allow-*`), and POSIX exit codes (0, 1, 2).
+1. **CLI Commands and Arguments**: Registered command names, each command's own options and required arguments, and exit codes. Flags such as `--check` and `--allow-*` are not universal; compare the specific command's help and runtime contract.
 2. **FastMCP Registration Contracts**: Tool names (`rush_<name>`), parameter types, and docstrings.
-3. **Canonical ToolResult**: The 8 required fields (`tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, `raw`).
+3. **Canonical ToolResult**: Preserve the quality-tool result contract, including `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary` and `findings`, with `raw` where supplied. Administrative operations and service transports have separate contracts; do not wrap JSON-RPC service messages as quality-tool results.
 4. **Configuration Syntax**: `rush.toml` schema and table names.
 
 ---
@@ -58,7 +58,7 @@ Changes to `InvocationContext` fields must preserve backwards compatibility with
 
 ## Unified Memory Store Compatibility (Phase 61)
 
-`MemoryArtifact`'s field set (`docs/ARCHITECTURE.md`'s "Phase 61 Architecture" section) is the schema contract for `.rush/memory.db`'s `memory_artifacts` table; adding a column must not change the meaning of an existing one. `preference_store.py`/`invariant_graph.py`/`merkle_invalidator.py`/`checkpoint_journal.py`/`failure_ledger.py`'s public function signatures are unchanged by their Phase 61 migration to thin compatibility views — existing callers (including `continuity/coordination.py`'s direct `FailureLedger`/`FlightRecorder` imports) keep working unmodified. `.rush/preferences.json`/`.rush/memory/invariants.json`/`.rush/memory/failures.db`/`.rush/hook_signatures.json`/`.rush/session_memory.json` are retained read-only with a `.migrated` suffix, never deleted, for one release cycle at minimum.
+`MemoryArtifact`'s field set ([Architecture](../ARCHITECTURE.md), "Phase 61 Architecture") defines the `.rush/memory.db` `memory_artifacts` table contract; adding a column must preserve existing meanings. Preserve compatibility entrypoints in `preference_store.py`, `invariant_graph.py`, `merkle_invalidator.py`, `checkpoint_journal.py` and `failure_ledger.py`. Migration behavior differs by satellite: migrated JSON inputs may retain a `.migrated` copy, but `FailureLedger` continues reading and writing `.rush/memory/failures.db`; its migration copies rows into the unified store and does not rename that database. Do not assume every satellite is read-only or automatically synchronized after migration. The [Phase 63 plan](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) retains the connected-memory requirements.
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
@@ -83,9 +83,9 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Failed promotion can invoke destructive Git cleanup; exact working-tree restoration is not a verified compatibility guarantee. The [application review](../reports/phase-64-66-application-review.md) records unresolved rollback and dry-run defects assigned to Phase 64.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
-   - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+   - Verify live operation coverage and boundary adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) against the candidate. A saved manifest does not establish full runtime enforcement; preserve native JSON-RPC service protocol messages.
 ### Engine Support Taxonomy (Phase 59)
 Engine support classes (`mandatory`, `supported-optional`, `best-effort`) are versioned in `governance/engine-support.toml`.

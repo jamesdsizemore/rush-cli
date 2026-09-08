@@ -4,7 +4,7 @@
 
 `provider_resume` requires explicit network permission (`--allow-network`) before Rush invokes a supported user-owned CLI or fixed-loopback provider route. `9router_cli` may read `RUSH_9ROUTER_API_KEY` only to set `OPENAI_API_KEY` in its single Codex child process; it does not grant OAuth/browser access, automatic fallback, automatic retry, or direct `9router_api` use.
 
-Rush distinguishes ordinary local inspection from work that can be expensive, mutating, browser-driven, or networked.
+Rush distinguishes ordinary local inspection from expensive or mutating work. The table describes intended gate semantics, not universally enforced behavior: AI eval can launch without required grants (F08), `ship clean` defaults to deletion (F02), and `fix --dry-run` can destroy work (F01). See [Known issues](../KNOWN_ISSUES.md).
 
 | Boundary | CLI flag | Intended effect | Default |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Rush distinguishes ordinary local inspection from work that can be expensive, mu
 
 ## Execution Metadata
 
-Every tool returns canonical execution metadata:
+Gated routes may return execution metadata. The following shape is illustrative; version-only mutation/fuzz/load/contract paths can currently report simulated execution (F11), so inspect actual child evidence:
 
 ```json
 {
@@ -54,7 +54,7 @@ Consent is specific to each invocation and target. Rush never encodes blanket br
 
 ## Physical Containment on Artifact Writes (Phase 55)
 
-Artifact writes granted via `--allow-artifact-write` are strictly confined to the repository root via `rush.io.PhysicalRoot`. Attempts to write artifacts through symlinks or parent directory escapes (`..`) raise `ContainmentError` and write zero bytes to disk.
+Writers that use `PhysicalRoot` enforce a containment boundary. Current checkpoint/governance paths bypass required physical checks (F03/F04), pending P64-03. Attempts to write artifacts through symlinks or parent directory escapes (`..`) raise `ContainmentError` and write zero bytes to disk.
 
 ### Plugin Execution Permissions (Phase 56)
 Subprocesses spawned for plugin execution inherit user permissions. They execute strictly from byte-copied snapshot directories under `rush.io.PhysicalRoot` and receive secrets via protected pipes or stdin.
@@ -65,7 +65,7 @@ Permissions granted via `PermissionManager` are captured as an immutable tuple w
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+The following component contracts are not whole-application guarantees. Checkpoint/governance symlink escapes, sandbox fallback, destructive cleanup and custom-output redaction defects remain open; see [Known issues](../KNOWN_ISSUES.md).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -86,7 +86,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

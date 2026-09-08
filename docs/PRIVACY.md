@@ -12,11 +12,11 @@ Session handoff state is also local: secret-shaped values are redacted before se
 
 ## 1. Core Privacy Invariants
 
-1. **Local-Only Execution**: All 34 Rush tools and 77 engine adapters execute locally on your machine. No source code, filenames, or metrics are transmitted to any remote Rush server.
+1. **Local-Only Execution**: Rush runs locally, but explicitly requested provider review and external engines can make network calls. There is no Rush-hosted telemetry service; this does not mean every engine is offline.
 2. **Zero Telemetry**: Rush does not phone home, track usage statistics, or log user behavior.
 3. **Automated Secret Redaction**: Any secret, password, private key, or credential identified in scanner findings or error logs is masked as `[REDACTED]` prior to emission.
-4. **Offline Default Posture**: External engines operate offline by default. Remote queries (e.g. live URL checks with Lychee or load tests with k6) require explicit `--allow-network` permission flags.
-5. **No Stealth Model Invocations**: The `rush review --llm` option is a development stub that makes zero external API or LLM provider calls. Default review uses deterministic local heuristics.
+4. **Offline Default Posture**: Engine network behavior depends on the selected route. AI eval lacks required grants (F08); `review --llm` can send findings to a configured provider. Do not infer offline execution from a generic tool label.
+5. **No Stealth Model Invocations**: The `rush review --llm` option can call a configured provider and send findings. Default review uses deterministic local heuristics.
 
 ---
 
@@ -33,7 +33,7 @@ See [Privacy and Data Handling Guide](safety/privacy-and-data-handling.md) and [
 
 ## 3. Serialization & Persistent Storage Privacy (Phase 53)
 
-Rush enforces end-to-end recursive sanitization across all data boundaries:
+The shared sanitizer provides the following mechanisms. Pattern-based redaction is not proof that no secret can escape; custom token-outline MCP output still bypasses the boundary (F07), pending P64-05:
 1. **Recursive Sanitizer Kernel**: `sanitize_value` redacts credentials, bearer tokens, API keys, and sensitive URL credentials from both dictionary keys and values.
 2. **Immutable Input Isolation**: Data passed to execution operations is never modified in-place; sanitization occurs strictly on detached serialization copies.
 3. **Loss-Visible Key Collisions**: Colliding redacted dictionary keys are preserved deterministically via suffixing rather than discarded, preventing silent state corruption while logging collision metadata.
@@ -66,7 +66,7 @@ Rush enforces end-to-end recursive sanitization across all data boundaries:
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -87,7 +87,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

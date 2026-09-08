@@ -1,3 +1,5 @@
+Current status: historical decision; The typed store and trust taxonomy describe implemented Phase 61 structures. Trust labels, regex screening, and stored digests do not guarantee immunity from injection or malicious database rewrites; checkpoint containment also remains defective ([application review F03](../reports/phase-64-66-application-review.md)). [Security model](../safety/security-model.md), [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md), and [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) define current limits and remaining capability work.
+
 # ADR-0049: Typed-Artifact Memory Schema and Trust Tiers
 
 ## Status

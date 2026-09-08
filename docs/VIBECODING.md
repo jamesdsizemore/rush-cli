@@ -18,6 +18,8 @@ Vibecoding is the most exhilarating way to build software in human history. You 
 
 ## The Vibecoding Loop with Rush
 
+Status: planned — this autonomous product journey remains required in [Phase 65](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md). Diagram below describes intended workflow, not current silent background repair. Current `fix --dry-run` can discard work; `ui` is one-shot; setup does not install engines. See [Known issues](KNOWN_ISSUES.md).
+
 ```mermaid
 flowchart LR
     A["💡 1. The Idea (Your Prompt)"] --> B["⚡ 2. AI Generates Code"]
@@ -30,7 +32,7 @@ flowchart LR
 With Rush running in the background:
 1. You prompt your AI naturally: *"Add stripe billing with a tier picker modal."*
 2. The AI writes the code.
-3. Rush instantly runs in the background (<200ms), catching syntax errors, verifying that tests exist, stripping AI slop, and auto-formatting files.
+3. Current `rush watch` must be started explicitly and runs selected checks. It does not guarantee latency, full test coverage, or automatic repair.
 4. If an issue is found, Rush hands your AI the exact error trace and line number so the AI self-corrects immediately.
 5. You stay in an uninterrupted, high-energy **flow state**—shipping production-grade software that is clean, tested, and secure.
 
@@ -80,7 +82,7 @@ Rush will quietly watch your files, auto-format on save, alert your AI to any br
 
 
 ## Test Healing for Vibecoders (Phase 47)
-When AI code generates flaky async tests, run `rush test-heal` to let Rush isolate the timing bug and suggest the fix automatically.
+Current `rush test-heal` does not isolate timing causes or produce verified repair (F12). Perturbation/repair remains planned in P64-12.
 
 
 
@@ -90,7 +92,7 @@ When AI generates massive functions or adds model fields without migrations, `ru
 
 
 ## Multi-Agent Swarms for Vibecoders (Phase 49)
-Run multiple subagents without fear of corrupted files: Rush manages file locks and uses `rush swarm-merge` to combine their changes automatically.
+Callers must explicitly manage lock ownership and inspect merge results. Rush does not automatically merge agent work; collision-safe workflows remain planned in Phase 65.
 
 
 

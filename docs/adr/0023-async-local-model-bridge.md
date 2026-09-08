@@ -1,3 +1,5 @@
+Current status: historical decision; The asynchronous transport requirement remains accepted. Current `rush consensus reconcile` reconciles supplied finding files; it does not itself dispatch multiple models. [Multi-model consensus and scoring](../agentic-rush/multi-model-consensus-and-scoring.md) describes current behavior; the bridge performance and transport-wide nonblocking consequences below are design requirements, not demonstrated by that command.
+
 # ADR-0023: Async Local Model Bridge via httpx
 
 ## Status

@@ -27,17 +27,17 @@ Project files and engine output are untrusted input. Engine binaries are environ
 
 ## The 7 Defensive Controls
 
-Rush enforces seven architectural defensive controls across all operations:
+The seven intended controls below have current exceptions documented in [Known issues](../KNOWN_ISSUES.md). Whole-application enforcement remains incomplete:
 
 1. **Control 1 (Flag-Salted Cryptographic Caching)**: Caches results using SHA-256 digests salted with all active tool flags, engine parameters, and path hashes (`src/rush/cache.py`).
 2. **Control 2 (Path Boundary Confinement & Monorepo Isolation)**: Rejects directory traversal escapes (`..`) across workspace packages and target paths (`assert_safe_workspace_path`, `src/rush/discovery/workspace.py`).
 3. **Control 3 (Shell Injection Prevention & Typed Package Installer)**: Restricts package names via regex `^[a-zA-Z0-9@_./-]+$` and executes installations using typed argv arrays (`src/rush/tools/setup_wizard.py`).
 4. **Control 4 (Binary Integrity & Anti-Shadowing)**: Environment doctor audits PATH precedence and alerts on binary shadowing vulnerabilities in current working directories (`src/rush/tools/doctor.py`).
-5. **Control 5 (Dashboard Auth, Loopback Binding, DNS Rebinding & CSRF Protection)**: The local web dashboard binds strictly to `127.0.0.1`, enforces ephemeral 64-hex token auth (`X-Rush-Auth`), validates `Host` headers to defeat DNS rebinding, and rejects cross-origin requests (`src/rush/dashboard.py`).
+5. **Control 5 (Dashboard Auth, Loopback Binding, DNS Rebinding & CSRF Protection)**: The stdlib server uses loopback and a URL-safe token (`src/rush/dashboard/server.py`), but browser/server API mismatch, shared class state and prefix-based authority checks remain open (F37/F39/F40). Phase 66 owns repair.
 6. **Control 6 (Repository Trust Gating)**: Custom script plugins and hooks are blocked in untrusted repository directories by default until explicitly authorized via `rush trust` (`src/rush/plugins/trust.py`).
 7. **Control 7 (Patch Confinement & XML Session Memory Framing)**: Automated patches shield sensitive paths (`.git/`, `.env`, `.rush/cache.db`), and multi-turn session history is framed in strict XML boundary tags (`<rush_session_memory>`) with XML escaping (`src/rush/session_memory.py`).
 
-## Core Invariants
+## Required core invariants (current exceptions above)
 
 - Existing path validation and target containment;
 - Git-root-bounded configuration discovery;
@@ -71,7 +71,7 @@ Remote AI provider calls enforce strict outbound network containment:
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+The following component contracts are not whole-application guarantees. Checkpoint/governance symlink escapes, sandbox fallback, destructive cleanup and custom-output redaction defects remain open; see [Known issues](../KNOWN_ISSUES.md).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -92,7 +92,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

@@ -1,3 +1,5 @@
+Current status: historical decision; The hybrid architecture decision remains accepted. The machine-local `file:///C:/...` citations below are historical; portable decision links are [ADR-0019](0019-native-graft-semantic-slicing-and-tree-sitter.md), [ADR-0032](0032-code-property-graph-pruned-context-packing-and-token-budgeting.md), and [ADR-0038](0038-context-intelligence-engine-and-ccr-architecture.md). [Codegraph and semantic slicing](../agentic-rush/codegraph-and-semantic-slicing.md) documents current integration routes; the latency, cache-location, and zero-degradation consequences are not universal runtime guarantees.
+
 # ADR-0048: Hybrid Dual-Engine Architecture (Graft Semantic Graph + CodeGraph AST Engine)
 
 ## Status

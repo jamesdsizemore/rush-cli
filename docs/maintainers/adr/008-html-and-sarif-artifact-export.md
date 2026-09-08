@@ -1,3 +1,5 @@
+Current status: historical decision; HTML and SARIF serializers exist, but export flags are command-specific; the dedicated review route does not expose both flags. Use [CLI reference](../../CLI_REFERENCE.md) and [MCP reference](../../MCP_REFERENCE.md) for current signatures and artifact-write grants. The broad export outcome below remains an accepted requirement.
+
 # ADR-008: Standalone HTML & SARIF 2.1.0 Artifact Export
 
 ## Status

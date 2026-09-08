@@ -14,13 +14,13 @@ Rush automatically discovers workspace topologies across **pnpm, npm, yarn, Carg
 
 ```bash
 # List all discovered workspace packages in topological order
-rush workspace list
+uv run rush workspace list
 
 # Find only the packages affected by your recent Git changes
-rush workspace affected
+uv run rush workspace affected
 
 # Run checks on a specific package
-rush check . -w packages/shared-ui
+uv run rush check . -w packages/shared-ui
 ```
 
 ---
@@ -31,10 +31,10 @@ Rush includes an embedded, high-performance SQLite result cache (`.rush/cache.db
 
 ```bash
 # Inspect the local result cache
-rush cache inspect
+uv run rush cache stats
 
 # Clear cached results before a fresh run
-rush cache clear
+uv run rush cache clean
 ```
 
 The cache uses cryptographic SHA-256 content hashing combined with command-line flags to guarantee you never receive stale or incorrect results.
@@ -48,7 +48,7 @@ Where are bugs most likely to hide in your repository?
 Research across software engineering shows that defects concentrate where **high commit churn** (files that are constantly being edited) intersects with **high cyclomatic complexity** (files with deeply nested `if/else` logic).
 
 ```bash
-rush hotspots analyze
+uv run rush hotspots analyze
 ```
 
 ### What Rush Computes:
@@ -63,7 +63,7 @@ rush hotspots analyze
 If you build frontend web applications, shipping massive JavaScript bundles to users slows down page load times and harms SEO rankings.
 
 ```bash
-rush bundle analyze dist/
+uv run rush bundle analyze dist/
 ```
 
 - Calculates raw, Gzip, and Brotli chunk transfer sizes.
@@ -117,14 +117,14 @@ rush bundle analyze dist/
 ## 5. Pull Request Evidence Cards (`rush pr-synthesize`)
 Generate a production-ready PR card with diff stats, risk tiering, and CODEOWNERS routing:
 ```bash
-rush pr-synthesize . --export-path reports/PR_CARD.md --allow-artifact-write
+uv run rush pr-synthesize . --json
 ```
 
 ## 6. Cold-Start Profiling & Benchmark Baselines
 Detect slow top-level imports and enforce performance regression gates:
 ```bash
-rush cold-start .
-rush benchmark check .
+uv run rush cold-start .
+uv run rush benchmark check .
 ```
 
 ### Custom Plugin Execution (Phase 56)
@@ -160,11 +160,11 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
    - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
-4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
+4. **Contained Patch Verification (`rush.patch`) — current safety repair pending**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current failure cleanup can run broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not use this as safe rollback evidence. Invocation-owned restoration is required by [Phase 64, P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43).
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

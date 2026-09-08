@@ -14,7 +14,7 @@ Rush unites all four layers under simple, cohesive commands.
 ## 1. Quick Code Review Heuristics (`rush review`)
 
 ```bash
-rush review .
+uv run rush review .
 ```
 
 `rush review` is Rush’s built-in, lightning-fast heuristic engine. It requires zero configuration and zero external installations. It looks for:
@@ -24,7 +24,7 @@ rush review .
 
 ```bash
 # Focus review on only the files you just changed:
-rush review . --changed-file src/auth/login.py
+uv run rush review . --changed-file src/auth/login.py
 ```
 
 ---
@@ -32,7 +32,7 @@ rush review . --changed-file src/auth/login.py
 ## 2. Source Code Linting (`rush lint`)
 
 ```bash
-rush lint .
+uv run rush lint .
 ```
 
 When you run `rush lint`, Rush automatically detects the programming languages used in your project and runs the appropriate linters:
@@ -48,10 +48,10 @@ If a linter spots an issue (like an undefined variable or an unhandled Promise),
 
 ```bash
 # Check if any files need formatting (without modifying them):
-rush format . --check
+uv run rush format . --check
 
 # Automatically format all files in place:
-rush format .
+uv run rush format .
 ```
 
 Rush coordinates `Ruff format`, `Prettier`, and `Biome` to ensure your entire team shares identical formatting styles.
@@ -61,7 +61,7 @@ Rush coordinates `Ruff format`, `Prettier`, and `Biome` to ensure your entire te
 ## 4. Static Type Checking (`rush typecheck`)
 
 ```bash
-rush typecheck .
+uv run rush typecheck .
 ```
 
 Type errors are some of the most common causes of runtime crashes in production (like trying to access `.name` on a variable that is actually `None` or `undefined`).
@@ -75,7 +75,7 @@ Rush coordinates:
 ## 5. Hunting Down AI Slop (`rush slop`)
 
 ```bash
-rush slop .
+uv run rush slop .
 ```
 
 When pairing with AI coding assistants, models often generate repetitive filler comments like:
@@ -95,7 +95,7 @@ def calculate_discount(age: int) -> float:
 ## 6. Finding Dead Code & Unused Exports (`rush dead`)
 
 ```bash
-rush dead .
+uv run rush dead .
 ```
 
 Over time, projects accumulate helper functions, classes, and dependencies that are no longer used anywhere. `rush dead` runs tools like `Vulture` (for Python) and `Knip` (for TypeScript) to help you prune dead weight and keep your repository lean.

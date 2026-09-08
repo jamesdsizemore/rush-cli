@@ -84,11 +84,11 @@ Start with [Contributor onboarding](developer/contributor-onboarding.md), then u
 
 ## Capability note
 
-Rush's default review is deterministic and local. Optional Graft context is explicit. `review --llm` is not a working model integration; it is a development stub and does not call a provider.
+Rush's default review is deterministic and local. Optional Graft context is explicit. `review --llm` can send findings to a configured Anthropic/OpenAI provider; it falls back to heuristic results when no valid completion is available.
 
 ## Context Intelligence, Token Diet & Ship Gates (v0.2.0 / Phases 41–43)
 
-Rush provides zero-overhead, high-signal context optimization and pre-flight release gates for AI coding agents:
+Rush provides local context transformations and release-check components. Percentages below are historical design claims; no universal token reduction, provider billing, latency or cache-hit guarantee is established. [Known issues](KNOWN_ISSUES.md) records current false-success, unsafe cleanup and analytical defects.
 
 * **Command Distillers**: Real-time output compression for `pytest`, `cargo`, `ruff`, and `vitest` stripping noise while preserving exact failure blocks (50–90% token reduction).
 * **Compact Wire Serialization (TOON v4.1)**: Pipe-delimited tabular format (`--format toon`) cutting tool response payload size by 40–65%.
@@ -102,14 +102,14 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * **Graph-Pruned Context Packing (`rush context pack`)**: Packs verbatim focus symbols and depth-1 caller/callee signatures under strict token limits (e.g. `--budget 4000`).
 * **Prompt Cache Prefix Aligner (`rush context align-prompt`)**: Structures prompt prefixes ($\ge 1024$ tokens) and adds ephemeral cache-control headers for $\ge 85\%$ KV cache hit rates.
 * **Multi-Turn Stale Read Sweeper**: Automatically collapses older turns' verbose file reads into 1-line signatures (`<!-- stale_read: collapsed N lines -->`).
-* **Context Gain Terminal HUD (`rush context gain`)**: Interactive Rich TUI displaying gross vs. compressed tokens, compression ratios, and estimated dollar savings.
+* **Context Gain Terminal HUD (`rush context gain`)**: One-shot Rich summary of local compression estimates; persistent interaction remains planned in Phase 66.
 * **Terse Persona Output Shaper (`rush context persona --set terse`)**: Strips conversational preamble and fluff words, cutting agent output tokens by 40–60%.
 * **Transitive Blast Radius Analyzer (`rush blast-radius --path <FILE>`)**: Calculates downstream reachability depth, affected API routes, and recommended test suites before making edits.
 * **Declarative Architecture Layer Guard (`rush arch-guard`)**: Enforces clean architecture directional layer matrices (e.g. Domain -> Application -> Infrastructure).
 
 
 ## Test Healing & API Contract Differ (Phase 47)
-* `rush test-heal`: Autonomous flaky test stress diagnosis in isolated worktree sandboxes.
+* `rush test-heal`: Current repeated pytest runs with guessed diagnosis/comment-only patch; verified repair remains planned in P64-12.
 * `rush api-diff`: Zero-server public API breaking change detection against base Git branches.
 
 
@@ -145,7 +145,7 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 * `rush attest`: Honest in-toto Statement v1 / SLSA v1.0 unsigned draft generator binding distribution artifacts ([guide](tools/attest.md)).
 * `rush mem-profile`: Static AST unclosed resource auditor and dynamic RSS memory sampling under `--allow-slow` ([guide](tools/mem_profile.md)).
 * `rush cold-start`: Static heavy import detector and dynamic `-X importtime` waterfall analyzer under `--allow-slow` ([guide](tools/cold_start.md)).
-* `rush offline-review`: Air-gapped local ONNX review runner and external local engine discovery ([guide](tools/offline_runner.md)).
+* `rush offline-review`: Local model/runner discovery; hidden-parent scan defect remains open (F20) ([guide](tools/offline_runner.md)).
 * `rush benchmark`: Repeated performance sample comparator with stdlib `statistics` against `.rush/baselines.json` ([guide](tools/benchmark.md)).
 
 
@@ -158,7 +158,7 @@ Rush provides zero-overhead, high-signal context optimization and pre-flight rel
 
 ## Remediation Program & Release Probes (Phase 51)
 * First-party coverage boundary over 1,085 paths (`governance/first-party-coverage.toml`).
-* Reconciled inventory across 129 Click commands and 73 FastMCP routes (`governance/public-operations.toml`).
+* Historical Phase 51 inventory: 129 Click commands and 73 FastMCP routes. Current collector observes 161 CLI paths (135 leaves), 74 MCP names and 53 catalog tools.
 * Isolated wheel and sdist installation probe harness reproducing R-001 (`scripts/probe_installed_artifacts.py`).
 * Deterministic engine support taxonomy across 19 families (`governance/engine-support.toml`).
 * Cross-phase ownership ledger mapping R-001–R-016 to Phases 52–60 (`governance/remediation-contracts.toml`).

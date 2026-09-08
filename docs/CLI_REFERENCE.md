@@ -20,10 +20,10 @@ Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Gl
 
 ## Operations Reconciliation & Inventory (Phase 51 & Phase 54)
 
-All 146 public operations (129 Click command leaves/subcommands and FastMCP routes) are formally inventoried in `governance/public-operations.toml` and bound to runtime adapters in `rush.contracts.operations`:
-- **Tool Operations (`kind = "tool"`)**: Exactly 67 operations. When invoked with `--json`, return canonical `ToolResultV1` JSON (`schema_version: "1.0.0"`), validated through `ToolOperationAdapter`.
-- **Admin Operations (`kind = "admin"`)**: Exactly 62 operations (e.g. `version`, `doctor`, `capabilities`). Return exit codes (`ClickExitCode`) or specialized admin data, validated through `AdminOperationAdapter`, and are not wrapped in `ToolResultV1`.
-- **Service Operations (`kind = "service"`)**: Exactly 17 operations (e.g. `rush mcp serve`). Handle stdio and protocol streams, validated through `ServiceOperationAdapter`.
+Historical Phase 51/54 inventory below is not the current registration count. Current `collect_runtime_contracts()` observes 161 CLI paths including groups (135 leaves), 74 MCP tools and 53 catalog tools. Full parameter/type/default tuples are checked in the [current generated CLI reference](reference/cli-reference.md).
+- **Historical Tool Operations (`kind = "tool"`)**: The old inventory counted 67 operations. When invoked with `--json`, return canonical `ToolResultV1` JSON (`schema_version: "1.0.0"`), validated through `ToolOperationAdapter`.
+- **Historical Admin Operations (`kind = "admin"`)**: The old inventory counted 62 operations (e.g. `version`, `doctor`, `capabilities`). Return exit codes (`ClickExitCode`) or specialized admin data, validated through `AdminOperationAdapter`, and are not wrapped in `ToolResultV1`.
+- **Historical Service Operations (`kind = "service"`)**: The old inventory counted 17 operations (e.g. `rush mcp serve`). Handle stdio and protocol streams, validated through `ServiceOperationAdapter`.
 - **Effect Classification**: `read-only`, `idempotent-write`, or `stateful-mutation`.
 - **Safe Probe**: Non-live, non-destructive probe command (`rush <cmd> --help`).
 
@@ -56,7 +56,7 @@ rush mcp serve
 
 | Command | Purpose / when | Optional helpers | Results and modification |
 |---|---|---|---|
-| `review PATH` | Deterministic Python heuristics before review or after edits. | PR-Agent, local Graft with `--use-graft`; `--llm` is a no-call stub; repeat `--changed-file` for target-contained scope only. | `ok`/`warn`; read-only; no Git-diff inference. |
+| `review PATH` | Deterministic Python heuristics before review or after edits. | PR-Agent, local Graft with `--use-graft`; `--llm` can call a configured provider; repeat `--changed-file` for target-contained scope only. | `ok`/`warn`; read-only; no Git-diff inference. |
 | `lint PATH` | Source linting. | Ruff, ESLint, Stylelint, ast-grep, Flake8-Bugbear, MegaLinter, Comby, Prisma-lint, Vale, CSpell, Alex, RedPen, No-Jargon, Markdown-Unfluff, Buf, wasm-tools, Git-Guard. | May `fail` on findings; read-only. |
 | `format PATH --check` | Verify formatter conformance. | Ruff format, Prettier, Squoosh, Critical, Font-Spider, PyClean. | Check-only with `--check`; omit only when you intentionally allow formatting. |
 | `test PATH` | Run applicable project tests. | pytest, Vitest, Newman. | `fail` on test failures; test code may have project-defined side effects. |
@@ -65,7 +65,7 @@ rush mcp serve
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
-| `fix PATH` | Safely auto-remediate formatting and linter issues. | Ruff, Biome, ESLint, Prettier, ast-grep. | Applies safe fixes across files; supports `--dry-run` and `--force`. |
+| `fix PATH` | Attempts formatting/lint remediation. | Ruff, Biome, ESLint, Prettier, ast-grep. | Unsafe cleanup can discard unrelated staged/unstaged work, including with `--dry-run`; bounded restoration planned in P64-01. |
 
 ## AI, LLM & Agent Safety (Phase 09)
 
@@ -138,8 +138,8 @@ The following explicit permission flags are available across tools:
 | `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
-| `fix PATH` | Confined automated remediation for formatting and linter errors. | `--dry-run`, `--force` | Modifies code within workspace |
-| `setup PATH` | Polyglot technology stack auto-discovery and toolchain installer. | `--non-interactive` | Installs local engines via package managers |
+| `fix PATH` | Attempts formatting/lint remediation; current rollback can destroy unrelated work. | `--dry-run`, `--force` | `--dry-run` is not safe preview; P64-01 remains planned |
+| `setup PATH` | Reports detected stacks and recommended engines. | `--non-interactive` (default true; no false CLI spelling) | Current CLI cannot enter installation branch; installer planned in P65-02 |
 | `init PATH` | Generate tailored `rush.toml` for detected project stacks. | `--overwrite` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
@@ -154,7 +154,7 @@ The following explicit permission flags are available across tools:
 
 | Command | Purpose | Key Flags & Arguments | Modification |
 |---|---|---|---|
-| `patch apply PATH` | Apply AI-generated remediation patches in isolated Git worktree sandbox. | `--dry-run`, `--circuit-breaker` | Applies patch in isolated worktree |
+| `patch apply PATH` | Status: planned — P64-04 in [Phase 64](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). This command is not registered. | Accepted future options: `--dry-run`, `--circuit-breaker` | Current `patch` group exposes only `memory` and `test`; unsafe sandbox/cleanup prerequisites remain open (F05/F43) |
 | `guard check-cmd CMD` | Intercept destructive/harmful shell commands before execution. | none | none |
 | `guard check-path PATH` | Enforce repository boundary path confinement. | none | none |
 | `token count PATH` | Fast byte-pair encoding (BPE) token counting for LLM context windows. | none | none |
@@ -173,23 +173,23 @@ The following explicit permission flags are available across tools:
 
 ## Advanced Scoping, Caching & Monorepo Options
 
-The following flags are supported across evaluation commands:
+Flags vary by registered command. Generic catalog commands expose `--workspace`, `--all-workspaces`, `--no-cache`, `--staged`, `--changed` and `--since`; dedicated review/lint/test commands have different surfaces. Use that command's `--help`. The following historical proposed shared flags are not universally implemented:
 - `--workspace`, `-w <NAME>`: Scope execution to a specific monorepo workspace package.
 - `--all-workspaces`: Execute evaluation across all discovered monorepo packages in topological order.
-- `--cache / --no-cache`: Enable or disable flag-salted SQLite result caching (`.rush/cache.db`).
-- `--cache-dir <PATH>`: Custom cache directory location.
-- `--clear-cache`: Purge cached tool results before execution.
+- `--no-cache` exists on generic catalog commands; `--cache` is not registered.
+- `--cache-dir` is not a shared CLI option; `[cache].dir` is configuration.
+- `--clear-cache` is not a shared CLI option; inspect `rush cache --help`.
 - `--staged`: Restrict analysis scope to git staged files.
 - `--since <REF>`: Restrict analysis scope to files modified since the specified git revision.
-- `--branch <NAME>`: Restrict analysis scope to files modified on the given git branch.
+- `--branch` is not a shared CLI option. Generic commands expose `--since REF`.
 
 ## Workflow commands
 
 | Command | Current behavior |
 |---|---|
 | `commit-msg PATH [-m MESSAGE]` | Validates Conventional Commit message passed via `-m/--message` or read from file. commitlint reference test suite. Never rewrites history. |
-| `ci PATH` | Inspects local workflow files and checks OpenSSF Scorecard supply chain posture. |
-| `release PATH` | Creates a dry-run inventory/plan and verifies signatures and SLSA build attestations via Cosign, Cejel, and SLSA Verifier. |
+| `ci` | Registered group exposes `ci init`; legacy `ci PATH` is not registered. Inspect help before generating workflow files. |
+| `release` | Registered group exposes `release check` for version parity; legacy `release PATH` is not registered. Signed-envelope verification belongs to `attest --verify PATH`. |
 | `tdd PATH` | Verifies Test-Driven Development (TDD) compliance and test existence for modified modules. |
 | `doctor PATH` | Diagnoses environment health, installed quality engines, PATH precedence, and virtual environment status. |
 
@@ -222,7 +222,7 @@ Query and write the unified `TypedArtifactStore` (`.rush/memory.db`) — the sam
 * `maintain`: requires `--task promotion_sweep|staleness_sweep|skill_admission_check|expiry_sweep` and `--allow-cache-write`. Runs a bounded sweep in the selected repository; defaults to 500 rows via `--batch-size`.
 
 ### `rush ship clean`
-Purge temporary scratch directories, caches, and build artifacts.
+Deletes scratch directories, caches, and build artifacts by default. Ownership checks and permission-gated apply remain planned in P64-02; default CLI/MCP execution can delete user files (F02). Use only `--dry-run` for inspection.
 * `--dry-run`: Preview files to be removed without deleting.
 
 ### `rush ship env`
@@ -266,7 +266,7 @@ Align prompt prefix above provider cache boundary (>=1024 tokens).
 * `--system, -s`: System prompt string to align.
 
 ### `rush context gain`
-Launch the interactive Rich terminal HUD displaying token compression and dollar savings.
+Print one Rich summary of local compression estimates, then exit. Persistent interaction is planned in P66-03; these are not measured provider bills or cache-hit rates.
 
 ### `rush context persona`
 View or configure agent terse response persona style.
@@ -320,123 +320,189 @@ Emulate local GitHub Actions CI workflow execution.
 
 ### `rush attest`
 Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifact.
-* `PATH`: Project root directory.
-* `--target-artifact, -t`: Path to target artifact file to hash (SHA-256).
-* `--export-path, -o`: Contained output file path for Statement JSON (requires `--allow-artifact-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c62120>): Target path. Default: `"."`.
+* `--artifact-path, -a` (<click.types.Path object at 0x107c62090>): Target artifact path to attest. Default: `null`.
+* `--out, -o` (<click.types.Path object at 0x107c62c60>): Contained output path for in-toto provenance JSON. Default: `null`.
+* `--builder-id` (STRING): Builder ID URI. Default: `"https://rush-cli.org/builder/v1"`.
+* `--verify` (<click.types.Path object at 0x107c62e40>): Verify signed provenance envelope against policy. Default: `null`.
+* `--trusted-root` (STRING): Trusted root public key for verification. Default: `"Sentinel.UNSET"`.
+* `--allowed-signer` (STRING): Allowed signer ID for verification. Default: `"Sentinel.UNSET"`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush attest --help`.
 
 ### `rush license-matrix`
 Audit project dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` for copyleft and license risks.
-* `PATH`: Project root directory.
-* `--project-license`: Declared project license string.
-* `--allowed-licenses`: Comma-separated list of approved SPDX licenses.
-* `--export-path, -o`: Export summary matrix to JSON (requires `--allow-artifact-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c39760>): Target path. Default: `"."`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush license-matrix --help`.
 
 ### `rush iam-audit`
 Audit multi-cloud SDK (AWS boto3, GCP, Azure) and Terraform wildcard usage and synthesize least-privilege cloud IAM JSON policy.
-* `PATH`: Project root directory.
-* `--export-path, -o`: Contained output path for policy JSON (requires `--allow-artifact-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c39ac0>): Target path. Default: `"."`.
+* `--output, -o` (<click.types.Path object at 0x107c39400>): Contained output path for synthesized IAM policy JSON. Default: `null`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush iam-audit --help`.
 
 ### `rush dead-asset`
 Scan for unreferenced media, font, and static files in the repository (strictly read-only).
-* `PATH`: Project root directory.
-* `--export-manifest`: Output path for JSON manifest (requires `--allow-artifact-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c46270>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c46600>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c46a20>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c46ab0>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush dead-asset --help`.
 
 ### `rush pr-synthesize`
 Synthesize structured semantic pull request markdown card from Git diff and tool results.
-* `PATH`: Project root directory.
-* `--base-ref`: Base branch or ref to diff against (default: `main`).
-* `--export-path`: Output path for PR markdown file (requires `--allow-artifact-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c46a50>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c471a0>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c471d0>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c47230>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush pr-synthesize --help`.
 
 ### `rush prompt-eval`
 Evaluate recorded golden coding prompt execution runs against deterministic acceptance criteria.
-* `PATH`: Project root directory.
-* `--pass-rate-threshold`: Minimum acceptable pass rate float (default: `1.0`).
-* `--max-tokens`: Maximum token budget integer threshold.
-* `--max-cost`: Maximum dollar cost threshold.
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c3a300>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c3ae10>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c3ae40>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c3aea0>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush prompt-eval --help`.
 
 ### `rush error-catalog`
 Extract Python, TypeScript, and Rust exceptions and generate RFC 7807 problem details and markdown catalog.
-* `PATH`: Project root directory.
-* `--operation`: Operation mode (`audit` | `generate`, default: `audit`).
-* `--export-docs, -o`: Path for generated Markdown documentation (requires `--allow-artifact-write`).
-* `--output-module`: Path for generated Python problem details helper module (requires `--allow-artifact-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c45040>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c45b50>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c45b80>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c45be0>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush error-catalog --help`.
 
 ### `rush provenance-ai`
 Analyze Git commit trailers for AI co-authorship, calculate 30/60/90-day line survival rates, and correlate defects.
-* `PATH`: Project root directory.
-* `--max-commits`: Maximum number of commits to audit (default: 500).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c45c10>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c45e80>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c46390>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c46570>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush provenance-ai --help`.
 
 ### `rush mem-profile`
 Scan for unclosed resource leaks and execute dynamic memory profiling probes.
-* `PATH`: Project root directory.
-* `--mode`: Profiling mode (`static` | `dynamic`, default: `static`). `dynamic` requires `--allow-slow`.
-* `--probe-cmd`: Command string for dynamic memory profiling.
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c3aa80>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c3b590>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c3b5c0>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c3b620>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush mem-profile --help`.
 
 ### `rush cold-start`
 Analyze import latency and cold-start overhead for modules and dependencies.
-* `PATH`: Project root directory.
-* `--mode`: Analysis mode (`static` | `dynamic`, default: `static`). `dynamic` requires `--allow-slow`.
-* `--entry-point`: Entry-point file for dynamic import profiling.
-* `--threshold-ms`: Threshold in milliseconds for flagging slow imports (default: `50.0`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c3b200>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c3bd10>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c3bd40>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c444a0>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush cold-start --help`.
 
 ### `rush media-opt`
 Audit, sanitize SVG files, and optimize raster media assets.
-* `PATH`: Project root directory.
-* `--operation`: Operation mode (`audit` | `sanitize` | `optimize`, default: `audit`). Modifying operations require `--allow-artifact-write`.
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c3b980>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c44140>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c44500>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c44560>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush media-opt --help`.
 
 ### `rush offline-review`
 Execute air-gapped local LLM review using Ollama or llama-cli discovered on PATH (skips if absent).
-* `PATH`: Project root directory.
-* `--runner-path`: Explicit path to local runner executable.
-* `--model`: Local model name (default: `llama3:latest`).
-* `--model-path`: Local GGUF model file for `llama-cli`.
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c44590>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c44c50>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c44c80>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c44ce0>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush offline-review --help`.
 
 ### `rush tui-diff`
 Compute Git finding deltas and render Rich comparison tables between commits.
-* `PATH`: Project root directory.
-* `--base-ref, -b`: Base Git commit reference to compare against.
-* `--target-ref, -t`: Target Git commit reference (default: `HEAD`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x107c448c0>): Target path. Default: `"Sentinel.UNSET"`.
+* `--report-path` (<click.types.Path object at 0x107c453d0>): Optional explicit report path for import mode. Default: `null`.
+* `--export-sarif` (<click.types.Path object at 0x107c45400>): Optional destination path to export SARIF 2.1.0 JSON report. Default: `null`.
+* `--export-html` (<click.types.Path object at 0x107c45460>): Optional destination path to export standalone HTML report artifact. Default: `null`.
+* `--no-cache` (BOOL): Bypass and do not write to result cache. Default: `false`.
+* `--staged` (BOOL): Scan only files staged in git index. Default: `false`.
+* `--changed` (BOOL): Scan only modified uncommitted files. Default: `false`.
+* `--since` (STRING): Scan files changed since git ref. Default: `null`.
+* `--workspace, -w` (STRING): Scope execution to a specific monorepo workspace package. Default: `null`.
+* `--all-workspaces` (BOOL): Execute tool across all discovered monorepo workspaces. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush tui-diff --help`.
 
 ### `rush benchmark check`
 Compare performance metrics against `.rush/baselines.json` regression thresholds.
-* `PATH`: Project root directory.
-* `--metric`: Metric name to benchmark (`duration_ms` | `throughput` | `memory_mb`).
-* `--value`: Observed numeric sample value.
-* `--threshold-pct`: Maximum allowable regression percentage (default: `10.0`).
-* `--record`: Record the current sample as the baseline (requires `--allow-cache-write`).
-* `--json`: Emit raw canonical `ToolResult` JSON payload.
+* `path` (<click.types.Path object at 0x1076d8230>): Target path. Default: `"."`.
+* `--threshold` (FLOAT): Percentage threshold for regression. Default: `5`.
+* `--record` (BOOL): Record current samples as baseline in .rush/baselines.json. Default: `false`.
+* `--json`: Emit canonical result JSON. Permission flags are listed by `rush benchmark check --help`.
 
 
 
-### `rush toon-inspect`
-Inspect Token-Optimized Object Notation (TOON) v4.1 wire serialization for AST nodes.
+### Historical `rush toon-inspect` name
+Not registered. TOON is an internal serialization component, not this CLI command.
 
-### `rush skeletonize`
-Extract compressed Abstract Syntax Tree outline skeletons stripping internal function bodies.
-* `--path, -p`: Path to Python source file.
+### Historical `rush skeletonize` name
+Not registered. Current outline entrypoint: `rush token outline FILE_PATH`.
 
-### `rush context-cache`
-Inspect and manage Content-Addressable Merkle DAG CCR cache blocks.
+### Historical `rush context-cache` name
+Not registered. Current context commands are listed by `rush context --help`.
 
-### `rush ccr-retrieve`
-Retrieve relevant codebase chunks using multi-vector embeddings and semantic CCR store.
-* `--query, -q`: Natural language or symbol query.
+### Historical `rush ccr-retrieve` name
+Not registered. Current retrieval uses `rush context retrieve CHUNK_HASH`; it does not expose a semantic `--query` option.
 
-### `rush context-mistakes`
-Query and record past codebase anti-patterns in Mistake Memory.
+### Historical `rush context-mistakes` name
+Not registered. Current entrypoint: `rush context mistakes`.
 
 ## Output File Write Safety & Containment (Phase 55)
 
@@ -456,7 +522,7 @@ All CLI commands resolve through `rush.invocation`:
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -477,13 +543,13 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 ### `rush attest`
 Generate in-toto Statement v1 SLSA provenance unsigned draft for build artifacts.
 - `--artifact-path PATH`: Explicit path to built distribution package (.whl, .tar.gz).
-- `--output PATH`: Destination path for attestation JSON draft.
+- `--out PATH`, `-o PATH`: Contained destination for attestation JSON draft; requires `--allow-artifact-write`.
 - `--builder-id URI`: Builder identity URI (default: `https://rush-cli.org/builder/v1`).
-- `--verify`: Cryptographically verify signed DSSE envelope against policy.
+- `--verify PATH`: Verify a signed envelope against `--trusted-root` and `--allowed-signer` policy.

@@ -1,3 +1,5 @@
+Current status: historical decision; The body is superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md): current storage uses `TypedArtifactStore` with seven subjects and four trust tiers. The old engine/taxonomy and elimination-of-amnesia claims are not current guarantees. [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) preserves remaining memory capability and measurement requirements.
+
 # ADR-0030: Unified Dual-Layer Agent Context Memory Subsystem
 
 ## Status

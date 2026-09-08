@@ -11,8 +11,8 @@
 ## 3. Shallow History Handling
 If `.git/shallow` exists or `git rev-parse --is-shallow-repository` returns true, the scanner sets `is_shallow = True` and emits rule `shallow-history` with severity `warn`, signaling that historical provenance is truncated.
 
-## 4. Deterministic Survival & Defect States
-Per D50-12 / PR50.0.5, survival states (`30d`, `60d`, `90d`) and defect correlation are reported as `unknown` to ensure zero ungrounded causal claims without longitudinal blame tracking:
+## 4. Survival & Defect Computation Requirement
+Current limitation: survival states (`30d`, `60d`, `90d`) and defect correlation return the legacy placeholder below. This is an implementation defect, not an accepted completed computation. [Phase 64 P64-13](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) implements longitudinal line survival and grounded defect correlation; insufficient history must remain distinguishable from measured zero survival. The [application review](../reports/phase-64-66-application-review.md) records the missing behavior.
 ```json
 "survival_states": {
   "30d": "unknown",
@@ -23,5 +23,5 @@ Per D50-12 / PR50.0.5, survival states (`30d`, `60d`, `90d`) and defect correlat
 ```
 
 ## 5. CLI & FastMCP Contracts
-- **CLI**: `rush provenance-ai [PATH] [--json]`
-- **FastMCP**: `rush_provenance_ai(path=".", max_commits=500)`
+- **CLI**: `rush provenance-ai . --json`
+- **FastMCP**: `rush_provenance_ai(path=".")`; `path` is required and `max_commits` is not registered.

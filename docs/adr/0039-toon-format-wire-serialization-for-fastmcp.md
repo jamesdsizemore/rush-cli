@@ -1,3 +1,5 @@
+Current status: planned; current contract: [Phase 63 memory capabilities and token benchmarks](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md); evidence: [current TOON specification](../specs/toon-serialization-spec.md). Historical percentages below are not Rush benchmark results. Current local serialization utilities do not replace MCP JSON-RPC framing, and no universal `--format toon` option is registered. Preserve lossless compact-result requirements while measuring actual token effects.
+
 # ADR-0039: TOON Format Wire Serialization for FastMCP
 
 ## Status

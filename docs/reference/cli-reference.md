@@ -1,5 +1,7 @@
 # CLI reference
 
+Current authority: generated Click metadata from `uv run rush --help` and `uv run rush COMMAND --help` at source baseline `997b56e`. Examples assume the editable source checkout and therefore use `uv run rush`. Phase 65 owns standalone installation and the integrated beginner workflow; Phase 66 owns the persistent TUI and complete web workflow.
+
 ## `session resume`
 
 `rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli|9router_cli|omniroute_api} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI or fixed loopback provider route. `9router_cli` starts Codex with fixed local 9Router environment variables and no model argument; it requires `RUSH_9ROUTER_API_KEY` but never retains it. Z.AI is intentionally deferred; `9router_api` returns canonical `skipped`.
@@ -27,14 +29,14 @@ Need workflow inspection?          -> commit-msg / ci / release
 
 ## Common syntax and options
 
-Every catalog path command takes `PATH` and `--json`. `review` also takes `--llm`, `--use-graft`, and repeatable `--changed-file`; `format` also takes `--check`.
+Command parameters are command-specific. Check generated help before invocation. `review` takes required `PATH`, `--llm`, `--use-graft`, repeatable `--changed-file`, permission flags, and `--json`; `format` also exposes `--check`.
 
 ```bash
-rush COMMAND PATH [--json]
-rush review PATH [--llm] [--use-graft] [--changed-file RELATIVE_PATH]... [--json]
-rush format PATH [--check] [--json]
-rush ai-eval PATH [--json]
-rush mcp serve
+uv run rush COMMAND --help
+uv run rush review PATH [--llm] [--use-graft] [--changed-file RELATIVE_PATH]... [--json]
+uv run rush format PATH [--check] [--json]
+uv run rush ai-eval PATH [--json]
+uv run rush mcp serve
 ```
 
 `PATH` must exist. Human output is the default; `--json` returns the canonical result. Most commands do not modify files. The exception is `format` without `--check`, which can invoke formatter write modes; use version control and inspect the diff.
@@ -52,7 +54,7 @@ rush mcp serve
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
-| `fix PATH` | Safely auto-remediate formatting and linter issues. | Ruff, Biome, ESLint, Prettier, ast-grep. | Applies safe fixes across files; supports `--dry-run` and `--force`. |
+| `fix [PATH]` | Current remediation command; checkout/index preservation repair remains pending. | Ruff, Biome, ESLint, Prettier, ast-grep. | Do not run on valued work until [P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01) is implemented and verified. Current options include `--dry-run` and `--force`. |
 
 ## AI, LLM & Agent Safety (Phase 09)
 
@@ -95,7 +97,7 @@ rush mcp serve
 
 ## Permission Flags
 
-The following explicit permission flags are available across tools:
+Evaluation commands expose permission flags according to their own generated help. Common flags are:
 - `--allow-network`: Permit network requests.
 - `--allow-download`: Permit downloading vulnerability feeds or schemas.
 - `--allow-cache-write`: Permit writing local caches.
@@ -112,13 +114,13 @@ The following explicit permission flags are available across tools:
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
 | `fix PATH` | Confined automated remediation for formatting and linter errors. | `--dry-run`, `--force` | Modifies code within workspace |
-| `setup PATH` | Polyglot technology stack auto-discovery and toolchain installer. | `--non-interactive` | Installs local engines via package managers |
-| `init PATH` | Generate tailored `rush.toml` for detected project stacks. | `--overwrite` | Writes `rush.toml` |
+| `setup [PATH]` | Current stack inspection/setup prototype. Integrated, verified installation remains planned in [P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--real-setup-and-canonical-package-installation-f30-f31). | `--non-interactive`, `--json` | Current package-manager identities and execution branches are not accepted installation evidence |
+| `init [PATH]` | Generate starter `rush.toml` for detected project stacks. | `--force` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
-| `ui PATH` | Launch interactive terminal UI (TUI) for finding exploration. | Permissions | none |
-| `dashboard PATH` | Authenticated, CSRF-hardened local web dashboard on 127.0.0.1. | `--port`, Permissions | none |
+| `ui [PATH]` | Current one-shot Rich terminal summary. Persistent navigation remains planned in [P66-03](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md#p66-03--persistent-animated-and-navigable-tui-f36). | Permissions | none |
+| `dashboard [PATH]` | Current local web prototype. Its browser/server API is broken at this baseline; repair and complete workflow remain planned in [P66-01 through P66-07](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md). | `--port`, Permissions | starts local server only after synchronous checks |
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
@@ -144,9 +146,9 @@ The following explicit permission flags are available across tools:
 | `score compute` | Calculate deterministic 0–100% 6-pillar repository health score and letter grade. | `--type-safety`, `--test-coverage`, `--code-health`, `--security`, `--token-economy`, `--governance` | none |
 | `consensus reconcile` | Reconcile multi-model AI code review findings with weighted agreement voting. | none | none |
 
-## Advanced Scoping, Caching & Monorepo Options
+## Command-specific scoping, caching, and monorepo options
 
-The following flags are supported across evaluation commands:
+These flags exist on selected commands only. `uv run rush COMMAND --help` is authoritative for each command:
 - `--workspace`, `-w <NAME>`: Scope execution to a specific monorepo workspace package.
 - `--all-workspaces`: Execute evaluation across all discovered monorepo packages in topological order.
 - `--cache / --no-cache`: Enable or disable flag-salted SQLite result caching (`.rush/cache.db`).
@@ -160,9 +162,9 @@ The following flags are supported across evaluation commands:
 
 | Command | Purpose | Key Flags & Arguments | Modification |
 |---|---|---|---|
-| `error-catalog PATH` | Extract exceptions across Python AST, TypeScript, and Rust, mapping to RFC 7807 problem details. | `--operation audit|generate`, `--export-docs <PATH>`, `--output-module <PATH>` | Writes markdown/code with `--allow-artifact-write` |
-| `license-matrix PATH` | Audit dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` for copyleft risk. | `--project-license <SPDX>`, `--allowed-licenses <LIST>`, `--export-path <PATH>` | Writes JSON matrix with `--allow-artifact-write` |
-| `iam-audit PATH` | Statically inspect multi-cloud SDKs (AWS/GCP/Azure) and Terraform wildcard permissions to synthesize minimal IAM policy. | `--export-path <PATH>` | Writes policy JSON with `--allow-artifact-write` |
+| `error-catalog PATH` | Extract exceptions across Python AST, TypeScript, and Rust, mapping to RFC 7807 problem details. | Shared evaluation/import/report flags shown by generated help; no `--export-docs`, `--output-module`, or `--operation` CLI option. | Current CLI returns result data; its help text still mentions an unavailable markdown export. |
+| `license-matrix [PATH]` | Audit dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` for copyleft risk. | Permissions and `--json`; no `--allowed-licenses` or `--export-path` CLI option. | Current CLI returns result data. |
+| `iam-audit [PATH]` | Statically inspect cloud SDKs and Terraform wildcard permissions to synthesize minimal IAM policy. | `-o/--output PATH`, permissions, `--json`. | Output requires `--allow-artifact-write`. |
 
 ## Workflow commands
 
@@ -176,7 +178,7 @@ The following flags are supported across evaluation commands:
 
 ## MCP
 
-`rush mcp serve` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. See [MCP overview](../integrations/mcp-overview.md).
+`uv run rush mcp serve` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. See [MCP overview](../integrations/mcp-overview.md).
 
 ## Result and exit behavior
 
@@ -236,13 +238,13 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
    - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
-4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
+4. **Contained Patch Verification (`rush.patch`) — current safety repair pending**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current promotion cleanup contains broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not promote this as safe public behavior. Invocation-owned restoration is required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43).
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 ### `rush attest` CLI Reference (Phase 59)
-Command options: `--artifact-path`, `--output`, `--builder-id`, `--verify`.
+Command options: `-a/--artifact-path`, `-o/--out`, `--builder-id`, `--verify`, `--trusted-root`, `--allowed-signer`, permissions, and `--json`.

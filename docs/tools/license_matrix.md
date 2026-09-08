@@ -3,18 +3,23 @@
 ## Overview
 `rush license-matrix` audits project dependencies across `pyproject.toml`, `package.json`, `Cargo.toml`, and installed package metadata for copyleft risks and open-source license compliance. It compares extracted licenses against an exact allowlist, flags copyleft licenses as high-risk errors, and flags unknown or compound licenses for manual review.
 
+**Status: planned correction — implementation [Phase 64, P64-16](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-16--spdx-expressions-and-decoded-svg-safety-f18-f19).** Current grouped SPDX expression handling can understate copyleft risk. Do not use current classification as compliance evidence.
+
 ## Usage
 
 ### CLI
 ```bash
-rush license-matrix [PATH] [--json]
+uv run rush license-matrix [PATH] [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_license_matrix`
 - **Parameters:**
   - `path` (str): Target directory containing project manifests.
-  - `allowed_licenses` (tuple[str, ...], optional): Tuple of allowed SPDX license identifiers.
+  - `package_licenses` (object or null; default null): Optional supplied package-license mapping.
+  - `allowed_licenses` (array, optional): SPDX allowlist. Default is `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicense`, `CC0-1.0`, `0BSD`, `PSF-2.0`, `Python-2.0`, and `Zlib`.
+
+Current CLI exposes neither `--allowed-licenses` nor `--export-path`; those are not valid CLI examples.
 
 ## Classification Policy
 - **Permissive / Allowed:** Matches canonical allowlist (`MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicense`, `CC0-1.0`, `0BSD`, `PSF-2.0`, `Python-2.0`).

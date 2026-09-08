@@ -14,7 +14,7 @@ Rush gives you dedicated, automated tools to bust AI slop and keep your codebase
 ## 1. Catching AI Boilerplate with `rush slop`
 
 ```bash
-rush slop .
+uv run rush slop .
 ```
 
 `rush slop` runs deterministic AST heuristics that scan for patterns characteristic of low-quality or hallucinated AI outputs:
@@ -28,7 +28,7 @@ rush slop .
 ## 2. Enforcing Test Existence with `rush tdd`
 
 ```bash
-rush tdd .
+uv run rush tdd .
 ```
 
 When you are vibecoding fast, it is easy to forget to ask the model for tests.
@@ -42,8 +42,8 @@ When you are vibecoding fast, it is easy to forget to ask the model for tests.
 ## 3. Detecting Phantom Imports with `rush dead` & `rush check`
 
 ```bash
-rush dead .
-rush check .
+uv run rush dead .
+uv run rush check .
 ```
 
 - Catches imports of packages not declared in your package manager lockfiles.

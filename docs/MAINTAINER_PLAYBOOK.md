@@ -24,14 +24,14 @@ Maintainers must ensure all automated gates pass before cutting a release:
 unset VIRTUAL_ENV PYTHONPATH
 
 # 2. Run entire test suite (100% pass rate required)
-.venv/Scripts/python.exe -m pytest tests/ -q
+uv run --python 3.12 --extra dev python -m pytest tests/ -q
 
 # 3. Verify documentation parity & internal links
-.venv/Scripts/python.exe scripts/sync_docs.py --check
+uv run --python 3.12 --extra dev python scripts/sync_docs.py --check
 
 # 4. Enforce strict linting and formatting
-.venv/Scripts/ruff.exe check src tests scripts
-.venv/Scripts/ruff.exe format --check src tests scripts
+uv run --python 3.12 --extra dev ruff check src tests scripts
+uv run --python 3.12 --extra dev ruff format --check src tests scripts
 
 # 5. Verify Graft code graph
 graft --dir .hermes/graft check .

@@ -1,3 +1,5 @@
+Current status: historical decision; Current context packing is documented in [context packing and budgeting](../workflows/context_packing_and_budgeting.md). Its local graph and token-budget mechanisms do not establish the 80% savings or elimination of overflow claims below. [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) supplies the capability and benchmark contract; preserve exact target code and report measured budget effects.
+
 # ADR-0032: Code Property Graph Pruned Context Packing and Token Budgeting
 
 ## Status

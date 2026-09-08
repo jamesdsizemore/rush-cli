@@ -8,9 +8,7 @@
 [![SLSA Level 3](https://img.shields.io/badge/SLSA-Unsigned%20Draft%20Provenance-22c55e.svg?style=flat-square&logo=security&logoColor=white)](docs/specs/slsa-attestation-spec.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square)](https://github.com/astral-sh/ruff)
-[![Tests Passing](https://img.shields.io/badge/tests-1163%20passed-22c55e.svg?style=flat-square)](tests/)
-[![Engine Adapters](https://img.shields.io/badge/engines-124%20adapters-blueviolet.svg?style=flat-square)](src/rush/engines/)
-[![Docs Synchronized](https://img.shields.io/badge/docs-295%20files%20synchronized-blue.svg?style=flat-square)](docs/)
+[Tests and current verification](docs/reports/phase-64-66-application-review.md) · [Engine catalog](docs/ENGINES.md) · [Documentation](docs/README.md)
 
 <p align="center">
   <img src="https://skillicons.dev/icons?i=py,rust,ts,go,docker,githubactions,sqlite,git,postgres,html,css,tailwind,graphql&theme=dark" alt="Supported Tech Ecosystem" />
@@ -24,7 +22,9 @@
 
 **Rush** is the unified context intelligence, persistent dual-layer memory, and pre-flight ship-readiness platform built from the ground up for **Vibecoders** and **Autonomous AI Coding Agents** (Cursor, Claude Code, Cline, Windsurf, Roo Code, GitHub Copilot).
 
-Rush wraps **124 quality engines**, **49 Architectural Decision Records (ADRs)**, and **19 formal specifications** into a deterministic command-line interface and a stdio-only Model Context Protocol (FastMCP) server. It compresses AST prompt tokens by **75–90%**, eliminates agent context amnesia via **dual-layer persistent memory**, sandboxes AI code mutations in isolated Git worktrees, enforces clean architecture boundaries, synchronizes multi-IDE rules, and generates cryptographic SLSA Level 3 build provenance.
+Rush provides a Python 3.12 command-line application and a stdio Model Context Protocol (FastMCP) server for code checks, agent tools and scoped memory. Its catalog describes external engines; installed compatibility, target inputs and permissions determine which checks can execute. Token reduction depends on the actual input and measurement. Generating an attestation does not establish SLSA Level 3 compliance.
+
+**Current implementation status:** the [whole-application review](docs/reports/phase-64-66-application-review.md) records unresolved runtime and integration defects at baseline `997b56e`. [Phase 64](docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) repairs those paths, [Phase 63](docs/phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) extends memory, [Phase 65](docs/phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) connects installation/scanning/agents, and [Phase 66](docs/phase-plans/phase-66-interactive-tui-and-local-web-plan.md) delivers the persistent TUI and local web application. Their requirements remain in scope; planned routes are not current installation or usage instructions.
 
 ```bash
 # 30-second quickstart: initialize, sync multi-IDE rules, and review codebase
@@ -46,7 +46,7 @@ Vibe-coding with AI models unlocks unprecedented developer velocity: you prompt 
 4. **Destructive Shell Invocations**: Unsupervised agents run dangerous shell commands (`git reset --hard`, `rm -rf`, uncontrolled Git mutations) or leak secrets.
 5. **Multi-Agent Collision Chaos**: Concurrent subagents overwrite each other's files, producing corrupted AST states and merge conflicts.
 
-**Rush solves this entirely offline.** It acts as an invisible, sub-second quality engine, token diet compressor, dual-layer persistent memory, and safety harness wrapping your ecosystem's **124 quality engines** into a deterministic CLI and stdio FastMCP server.
+Rush exposes local analysis, memory and token-processing functions through CLI and stdio MCP. Network scanners, provider evaluation and dependency retrieval require their own inputs and permissions. Latency, coverage and token savings must be measured for the selected workload.
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
 
@@ -99,7 +99,7 @@ sequenceDiagram
     else Verification 100% Green
         Rush->>Repo: Atomically promote verified patch to main workspace
         Rush->>Rush: Record event in Flight Recorder (.rush/sessions/flights/)
-        Rush-->>Dev: Feature complete with 0 lint errors and 100% passing tests
+        Rush-->>Dev: Return observed findings, test outcomes and unresolved gaps
     end
 ```
 
@@ -132,7 +132,7 @@ flowchart TD
     end
 
     subgraph QualityLayer["4. Quality & Ship Cockpit"]
-        Engines["⚙️ 124 Quality Engine Adapters"]
+        Engines["⚙️ External Quality Engine Adapters"]
         Ship["🚀 7-Vector Ship Gate Cockpit"]
         Score["🏆 6-Pillar Quality Scorecard"]
         Attest["📜 SLSA Level 3 Attestation"]
@@ -145,50 +145,50 @@ flowchart TD
 
 ---
 
-### Pillar 1: Dual-Layer Persistent Agent Memory (ADR-0030)
-* **Layer 1 (Traditional Persistence)**: Developer Preference Store (`preferences.json`), point-in-time Session Checkpoints (`rush session save/restore`), 4-tier taxonomy (Working, Policy, World, Skills), and append-only event stream (`.rush/events.jsonl`).
+### Pillar 1: Persistent Agent Memory (ADR-0049)
+* **Current storage**: Phase 61's typed-artifact store uses `.rush/memory.db`, with compatibility readers and writers for earlier satellites. `rush session save` and `rush session restore` expose checkpoints. The older four-tier taxonomy is historical design, not the current artifact schema.
 * **Layer 2 (Cognitive Innovation)**:
   * **Negative Knowledge Failure Ledger (`FailureLedger`)**: Records failed patch AST hashes and anti-patterns to intercept repeated mistakes across prompt turns.
   * **Bi-Temporal Git Revert Mistake Pre-Mortem (`rush context mistakes`, `MistakeMiner`)**: Extracts historical Git reverts into structured triplets:
     $$	ext{Believed (Intent)} \longrightarrow 	ext{Found False (Regression)} \longrightarrow 	ext{Truth Now (Guardrail)}$$
-  * **AST-Merkle Reactive Invalidator (`MerkleInvalidator`)**: Binds memories and context caches to AST node hashes; the microsecond a file is edited, invalid memories are automatically marked stale.
+  * **AST-Merkle Invalidator (`MerkleInvalidator`)**: Tracks content dependencies when callers invoke it. Installation alone does not activate an edit watcher; connected invalidation and agent lifecycle delivery are Phase 63/65 requirements.
   * **Causal Architectural Invariant Graph (`InvariantGraph`)**: Tracks cross-module dependency invariants before code edits.
 
 ---
 
 ### Pillar 2: Token Economy, Context Packing & TOON v4.1 (ADRs 0022, 0032, 0038, 0039)
-* **Graph Context Packing (`rush context pack`)**: PageRank-pruned context packing combining verbatim symbols and surrounding AST outline skeletons under strict budget caps.
-* **Prompt Cache Prefix Aligner (`rush context align-prompt`)**: Structures static prompt prefixes ($\ge 1024$ tokens) to guarantee provider KV cache hit rates $\ge 85\%$.
-* **TOON v4.1 Serializer**: Low-overhead Token-Optimized Object Notation wire encoding reducing AST payload size by 40–60% vs. JSON.
-* **Subprocess Command Distillers**: Stream distillers in `src/rush/token_economy/distillers/` compressing massive raw test/linter stderr traces by 95% before LLM ingestion.
-* **Stale Tool Deduplication (ADR-0043)**: Emits HTTP-style 304 `Not Modified` token hashes when tool outputs haven't changed, saving thousands of redundant tokens.
-* **Terminal Gain HUD (`rush context gain`)**: Real-time Rich TUI dashboard tracking gross vs. compressed tokens and dollar savings in `.rush/telemetry/tokens.db`.
+* **Context Packing (`rush context pack --path PATH`)**: Packs selected file evidence and AST outlines under a local token budget. Graph-ranked retrieval remains a Phase 63 requirement; current packing does not establish PageRank ranking.
+* **Prompt Cache Prefix Aligner (`rush context align-prompt`)**: Locally aligns prompt prefixes. It does not observe provider cache hits or guarantee a cache-hit rate.
+* **Compact Serialization**: Local serialization utilities retain the compact-result requirement. MCP remains JSON-RPC; percentage reductions require measured comparison, and no universal `--format toon` flag is registered.
+* **Subprocess Command Distillers**: Distillers in `src/rush/token_economy/distillers/` summarize supported command output. Savings depend on input; Phase 63 benchmarks measure retained evidence and token effects.
+* **Stale Tool Deduplication (ADR-0043)**: Content signatures support identifying repeated output. They do not establish automatic HTTP 304 delivery or a fixed token saving across every MCP call.
+* **Terminal Gain (`rush context gain`)**: Displays recorded local token estimates. Phase 66 implements the persistent animated interface; estimated dollars are not provider billing measurements.
 
 ---
 
 ### Pillar 3: Agent Safety, Sandboxing & Circuit Breakers (ADRs 0004, 0020, 0021, 0024)
 * **Dangerous Command Interceptor (`rush guard check-cmd`)**: Evaluates shell commands against a deterministic safety policy, blocking destructive operations (`rm -rf`, `git reset --hard`, unauthorized network calls).
-* **Path Confinement Guard (`rush guard check-path`)**: Validates that all file system modifications remain strictly within repository bounds.
-* **Ephemeral Git Worktree Sandboxes (`.rush/worktrees/sandbox-*`)**: Runs agent diff tests, migrations, and flaky test diagnostics in detached worktree sandboxes with automatic lifecycle cleanup.
+* **Path Guard (`rush guard check-path`)**: Checks a requested path against policy. This command alone does not enforce every write; Phase 64 closes identified containment gaps.
+* **Ephemeral Git Worktree Sandboxes (`.rush/worktrees/sandbox-*`)**: Existing primitives support isolation. Phase 64 completes ownership-bound cleanup, real isolated patch application and the test-healing execution contract.
 * **Patch Circuit Breaker (`src/rush/patch/circuit_breaker.py`)**: Intercepts runaway agent loops, aborting automated patch cycles after exceeding configurable error thresholds.
-* **Shannon Entropy Secret Redaction**: Replaces exposed API keys, tokens, and credentials with `[REDACTED]` across all logs and CLI/MCP outputs.
+* **Secret Redaction**: Sanitizers replace detected secrets with `[REDACTED]`. Phase 64 P64-05 repairs identified custom-result boundaries; a passing scanner result does not establish complete secret detection.
 
 ---
 
 ### Pillar 4: Multi-Agent FastMCP Concurrency Mesh (ADRs 0035, 0047)
-* **FastMCP Multi-Agent Lock Daemon (`rush_mesh_acquire_lock`, `rush_mesh_release_lock`)**: Non-blocking file mutex locks allowing concurrent subagents to work on different files without race conditions.
+* **FastMCP Multi-Agent Locks (`rush_mesh_acquire_lock`, `rush_mesh_release_lock`)**: Provide cooperative ownership controls through the live MCP schema. A lease does not prevent unrelated processes from writing the same files.
 * **Swarm 3-Way AST Merge (`rush swarm-merge`)**: Merges non-overlapping methods, classes, and imports from concurrent agent branches at the AST node level without conflict markers.
 
 ---
 
 ### Pillar 5: Architecture Enforcement & Blast Radius (ADRs 0013, 0046)
 * **Declarative Clean Architecture Guard (`rush arch-guard`)**: Enforces directional dependency rules between domain, application, infrastructure, and presentation layers.
-* **Transitive Blast Radius Analyzer (`rush blast-radius`)**: Calculates downstream affected files, public API routes, and unit tests in $<25	ext{ ms}$.
+* **Transitive Blast Radius Analyzer (`rush blast-radius`)**: Reports affected files, routes and suggested tests from static import evidence. Runtime depends on repository size; no universal latency bound is established.
 
 ---
 
 ### Pillar 6: Autonomous Reliability, Flaky Test Healing & API Safety (ADR-0034)
-* **Flaky Test Healer (`rush test-heal`)**: Spawns isolated ephemeral Git worktrees, perturbs execution timing, diagnoses race conditions, and synthesizes stabilization fixtures.
+* **Flaky Test Healer (`rush test-heal`)**: Current repeated-run heuristics do not meet the accepted isolation, perturbation and verified-repair contract. Phase 64 P64-12 implements that complete behavior.
 * **Public API Contract Differ (`rush api-diff`)**: Detects breaking function/class signature alterations and parameter removals against base Git branches.
 * **ORM Schema Drift Auditor (`rush db-drift`)**: Cross-references ORM data models against SQL/Alembic migrations to catch unmigrated columns.
 * **Cognitive Complexity Decomposer (`rush simplify`)**: Scans AST branches for functions with complexity $>10$ and outlines modular helper extractions.
@@ -203,12 +203,12 @@ flowchart TD
 ---
 
 ### Pillar 8: Git Hook Intelligence & Conventional Commits (ADR-0027)
-* **Pre-Commit Hook Guard (`rush hook run / install / verify`)**: Sub-second staged file AST scanning, branch naming validation, conventional commit enforcement, and SHA-256 hook tamper detection.
+* **Pre-Commit Intelligence (`rush hook run`)**: Runs the registered inspection command. `rush hook install` and `rush hook verify` are not registered. Phase 64 P64-19 repairs staged-byte scanning; ordinary setup does not install hooks.
 
 ---
 
-### Pillar 9: Supply Chain Security & SLSA Level 3 Attestation (ADR-0036)
-* **SLSA Level 3 Provenance (`rush attest`)**: Cryptographic in-toto JSON build provenance generator recording source hashes, environment metadata, and tool versions.
+### Pillar 9: Supply Chain Security & Build Provenance (ADR-0036)
+* **Build Provenance (`rush attest`)**: Generates unsigned in-toto provenance drafts with artifact digests. Verification requires the configured trust policy; generation alone is not SLSA Level 3 certification.
 * **Copyleft License Matrix (`rush license-matrix`)**: Dependency scanner blocking viral GPL/AGPL compliance risks.
 * **Least-Privilege IAM Policy Synthesizer (`rush iam-audit`)**: Generates minimal cloud IAM JSON policies from static SDK usage.
 * **Spec-to-Code Traceability (`rush trace`)**: Audits requirement tags (`[REQ-001]`) across specs, source code, and unit tests.
@@ -217,7 +217,7 @@ flowchart TD
 
 ### Pillar 10: Asset & Frontend Bundle Diet
 * **Frontend Bundle Chunk Calculator (`rush bundle analyze`)**: Inspects chunk sizes, code-splitting points, and CSS duplication.
-* **Dead Asset Pruner (`rush dead-asset`, `rush bundle dead-assets`)**: Scans AST imports and template tags to find unreferenced fonts, images, and media assets.
+* **Dead Asset Analysis (`rush dead-asset`, `rush bundle dead-assets`)**: Reports candidate unreferenced assets. Analysis is not permission to delete files; no `rush dead-asset --prune` flag is registered.
 * **Barrel File Import Auditor**: Detects bloated barrel file exports that break tree-shaking.
 
 ---
@@ -231,14 +231,14 @@ flowchart TD
 
 ### Pillar 12: 7-Vector Pre-Flight Ship Cockpit & Dashboards (ADRs 0016, 0031)
 * **7-Vector Ship Gate Cockpit (`rush ship gate`)**: Verifies 7 strict pre-flight invariants (clean Git tree, zero linter errors, 100% passing tests, zero DB drift, zero API breaks, clean docs, SLSA attestation).
-* **Local ASGI Web Dashboard & Rich TUI (`rush dashboard`, `rush ui`)**: Starlette ASGI in-memory real-time web dashboard with CSPRNG bearer authentication and keymap navigation.
+* **Local dashboard and terminal output (`rush dashboard`, `rush ui`)**: Current code uses stdlib HTTP and one-shot Rich output. Authentication/API and interaction defects remain open in review F36–F40. The persistent animated TUI and per-project web application are required Phase 66 work.
 * **Composite Quality Scorecard (`rush score`)**: Computes 6-pillar quality scores, generates SVG badges, and builds interactive HTML reports.
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
 
-## 🤖 4. Complete FastMCP AI Assistant Setup (22 Tools)
+## 🤖 4. Stdio MCP setup
 
-Rush communicates with coding assistants over **stdio JSON-RPC**. All diagnostics, logs, and telemetry route exclusively to `stderr` with `stdin=DEVNULL`, ensuring **zero stdout corruption**.
+Rush communicates with coding assistants over **stdio JSON-RPC**: the server reads protocol messages from stdin and writes protocol responses to stdout. Diagnostics belong on stderr. Child-process stdin handling is separate from the MCP transport.
 
 ### Claude Desktop Configuration
 Add to `claude_desktop_config.json`:
@@ -260,28 +260,29 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Cursor, Windsurf & OpenCode Configuration
-Add to `.cursor/mcp.json` or `.opencode/mcp.json`:
+### Cursor and Windsurf configuration
+For Cursor, merge this entry into `~/.cursor/mcp.json`; for Windsurf, use `~/.codeium/windsurf/mcp_config.json`. Set `command` to the installed Rush executable's absolute path when the client cannot resolve `rush` from PATH. Client configuration formats are not interchangeable; use the [client setup guide](docs/integrations/mcp-client-setup.md) for other clients.
 ```json
 {
   "mcpServers": {
     "rush": {
       "command": "rush",
-      "args": ["mcp", "serve"],
-      "transport": "stdio"
+      "args": ["mcp", "serve"]
     }
   }
 }
 ```
 
-### Full FastMCP Tool Catalog
+### Selected MCP capabilities
+
+Use the connected server's `tools/list` response and [MCP reference](docs/MCP_REFERENCE.md) for current input schemas. This table is a capability overview, not a complete registration inventory. The baseline server registers 74 tools; saved manifests may lag the live registration.
 
 | Tool Name | Parameters | Purpose |
 |---|---|---|
 | `rush_context_pack` | `path, symbol, budget` | PageRank-pruned verbatim symbol and AST skeleton packing. |
 | `rush_context_gain_stats` | None | Real-time session token compression ratio and dollar savings metrics. |
-| `rush_context_skeletonize` | `path` | AST outline skeleton extraction stripping function bodies. |
-| `rush_context_cache_manifest` | None | Merkle DAG content-addressable cache block manifests. |
+| AST skeleton extraction | Internal utility; no `rush_context_skeletonize` MCP registration | AST outline extraction is an internal capability, not an available MCP call under this name. |
+| Cache manifests | No `rush_context_cache_manifest` MCP registration | Do not send this historical proposed tool name to the current server. |
 | `rush_context_retrieve` | `query, top_k` | Semantic CCR chunk retrieval using multi-vector embeddings. |
 | `rush_hallu_guard` | `proposed_code` | Validates that proposed imports exist in the codebase. |
 | `rush_context_mistakes_check` | `pattern` | Queries historical anti-patterns in Mistake Memory. |
@@ -296,7 +297,7 @@ Add to `.cursor/mcp.json` or `.opencode/mcp.json`:
 | `rush_mesh_acquire_lock` | `path, agent_id` | Acquires non-blocking multi-agent file mutex lock. |
 | `rush_mesh_release_lock` | `path, agent_id` | Releases multi-agent file mutex lock. |
 | `rush_swarm_merge` | `base_code, ours_code, theirs_code` | Resolves concurrent agent edits via 3-way AST merge. |
-| `rush_attest_generate` | `artifact_path` | Generates in-toto SLSA Level 3 cryptographic build provenance. |
+| `rush_attest_generate` | See live input schema | Generates an in-toto provenance artifact; the artifact alone does not prove SLSA Level 3 compliance. |
 | `rush_error_catalog` | `path, export_path` | Extracts exceptions into RFC 7807 problem details catalog. |
 | `rush_license_matrix` | None | Audits open-source dependencies for copyleft compliance risks. |
 | `rush_iam_audit` | None | Synthesizes least-privilege cloud IAM JSON policies from SDK usage. |
@@ -306,7 +307,7 @@ Add to `.cursor/mcp.json` or `.opencode/mcp.json`:
 
 ## ⚡ 5. The Canonical `ToolResult` Contract
 
-Every single CLI command and FastMCP call in Rush returns the exact same deterministic dictionary shape:
+Catalog quality tools use the canonical `ToolResult` shape. Administrative commands and service operations have separate contracts; do not assume that every CLI/MCP response is a quality-tool result. This illustrative result explains the fields and is not a recorded scan:
 
 ```json
 {
@@ -347,8 +348,8 @@ Every single CLI command and FastMCP call in Rush returns the exact same determi
 ### 1. Code Quality & Auto-Remediation
 * **`rush review`**: Deterministic heuristic AST and quality review.
 * **`rush lint`**: Dispatches across Ruff, ESLint, Biome, or Clippy.
-* **`rush format`**: Formatting checks (`--check` default, never silently mutates).
-* **`rush fix`**: Multi-engine auto-remediation with dry-run diff preview and rollback journals.
+* **`rush format`**: Pass `--check` explicitly for checking; it is not the CLI default. Result and engine-invocation defects remain open under P64-07.
+* **`rush fix`**: Fix execution with `--dry-run` as an explicit option; the known F01 rollback defect makes current dry-run unsafe for valuable worktrees until P64-01 is verified.
 * **`rush typecheck`**: Polyglot static type checking (MyPy, Pyright, TSC).
 * **`rush dead`**: Unused code detection (Vulture, ts-prune, knip).
 * **`rush complexity`**: Cyclomatic and cognitive complexity scoring.
@@ -451,7 +452,7 @@ Every single CLI command and FastMCP call in Rush returns the exact same determi
 * **`rush bundle analyze` / `dead-assets`**: Frontend bundle chunk calculator and barrel file auditor.
 * **`rush hotspots analyze` / `bus-factor`**: Git code velocity, churn, and temporal coupling analyzer.
 * **`rush trust` / `rush plugin`**: Trust-gated plugin store with SHA-256 hash validation and `SKILL.md` exporter.
-* **`rush dashboard` / `rush ui`**: Starlette ASGI in-memory real-time web dashboard with CSPRNG bearer authentication and Textual TUI.
+* **`rush dashboard` / `rush ui`**: Current stdlib HTTP dashboard and one-shot Rich output; the full interactive interfaces are planned in Phase 66, with current defects recorded as F36–F40.
 * **`rush score compute` / `consensus reconcile`**: Multi-model consensus reconciler, HTML quality report generator, SVG badge generator, and 6-pillar scorecard.
 * **`rush doctor`**: Toolchain health diagnostics and virtualenv binary shadowing prevention.
 * **`rush hook run` / `hook install` / `hook verify`**: Pre-commit intelligence and SHA-256 hook tamper detection.
@@ -535,15 +536,15 @@ rush ship gate
 ```
 📦 rush-cli
 ├── 📂 src/rush/
-│   ├── 📄 cli.py               # Click CLI routing (125 commands & subcommands)
-│   ├── 📄 mcp.py               # Stdio FastMCP server (22 tool registrations)
+│   ├── 📄 cli.py               # Click CLI routing; use current --help
+│   ├── 📄 mcp.py               # Stdio FastMCP server; tools/list is authoritative
 │   ├── 📄 catalog.py           # Canonical tool catalog specifications (37 specs)
 │   ├── 📂 memory/              # Dual-layer memory engine, mistake miner & failure ledger
 │   ├── 📂 bundle/              # Frontend bundle chunk calculator & barrel file auditor
 │   ├── 📂 codegraph/           # Polyglot AST CodeGraph & ContextPacker
-│   ├── 📂 dashboard/           # Starlette ASGI in-memory web dashboard & Textual TUI
+│   ├── 📂 dashboard/           # Stdlib HTTP dashboard; terminal entry is tui.py
 │   ├── 📂 discovery/           # 10+ Tech stack auto-detection heuristics
-│   ├── 📂 engines/             # 124 Quality & security engine adapters
+│   ├── 📂 engines/             # External quality and security engine adapters
 │   ├── 📂 governance/          # Multi-IDE rule compiler & subagent hierarchy guard
 │   ├── 📂 hook/                # Git hook security, branch guards & tamper detection
 │   ├── 📂 hotspots/            # Git code velocity, churn & bus factor analyzer
@@ -567,76 +568,60 @@ rush ship gate
 │   ├── 📂 developer/           # Architecture, master backlog, and issue logs
 │   ├── 📂 user-guide/          # Everyday user and agent guides
 │   └── 📂 maintainers/         # Release, versioning, and governance playbooks
-├── 📂 tests/                   # 221 Test modules / 750 Test cases (100% passing)
+├── 📂 tests/                   # Executable tests; current results require a run
 ├── 📄 pyproject.toml           # Python 3.12 package definition & dependencies
 └── 📄 rush.toml                # Project architecture and governance configuration
 ```
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
 
-## 📊 9. Comprehensive Repo Health Scorecard
+## 📊 9. Verification status
 
-| Health Category | Metric & Verification Status | Score |
-|:----------------|:----------------------------|------:|
-| **Test Suite Coverage** | **750 / 750 Tests Passing** across 221 test modules | **100%** |
-| **Engine Adapter Matrix** | **124 Engine Adapters** active in `src/rush/engines/` | **100%** |
-| **Memory Engine Integrity** | **Dual-Layer Architecture (ADR-0030)** active in `src/rush/memory/` | **100%** |
-| **Architectural Decision Records** | **49 ADRs** documented and implemented | **100%** |
-| **Formal Specifications** | **19 Specifications** active in `docs/specs/` | **100%** |
-| **Code Formatting** | **598 Files Clean** via Ruff (`ruff format --check`) | **100%** |
-| **Linter Invariants** | **0 Errors, 0 Warnings** across `src/` and `tests/` | **100%** |
-| **Documentation Sync** | **295 Markdown Docs** synchronized with 0 drift | **100%** |
-| **Supply Chain Attestation** | **SLSA Level 3 in-toto Provenance** verified | **100%** |
-| **Security Redaction** | **Zero Secret Exposure** with entropy redaction | **100%** |
+The [baseline review receipt](docs/reports/phase-64-66-application-review.md) records **1,303 passed, 16 failed and 20 skipped tests**, plus lint/format failures, for its stated source and environment. This is a historical run, not a live badge or a release-readiness claim. Missing or skipped engines are not verified checks. ADRs and specifications describe requirements; their presence does not prove implementation.
 
-> **Overall Repository Health: 100%** — Enterprise & Flagship Ready (v0.3.0)
+Use the phase implementation evidence and current test commands to assess each completed change. Installed cross-platform execution, safe mutation behavior, redaction, engine workloads and the connected user journey each require their own passing evidence.
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
 
 ## ⚙️ 10. Configuration Reference (`rush.toml`)
 
 ```toml
-[rush]
-version = "0.3.0"
-default_format = "toon"
+log_level = "warn"
 
-[token_economy]
-budget_cap = 4000
-cache_alignment_threshold = 1024
-stale_sweep_enabled = true
-persona_style = "terse"
+[project]
+src = ["src"]
+test = ["tests"]
+exclude = ["**/.venv/**", "**/node_modules/**"]
 
-[architecture.layers]
-domain = []
-application = ["domain"]
-infrastructure = ["application", "domain"]
-presentation = ["application", "domain"]
+[review]
+max_file_lines = 400
+use_graft = false
+scaffold_markers = ["TODO", "FIXME", "HACK"]
 
-[ship.gate]
-require_clean_git = true
-require_tests = true
-require_slsa_attestation = true
-max_cognitive_complexity = 15
+[tools.lint]
+check = true
 ```
+
+This example uses current `RushConfig` fields. Tool-specific keys must match the catalog. See the [configuration reference](docs/CONFIGURATION.md) for supported values; an invented table does not enable an unimplemented subsystem.
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
 
 ## 🔒 11. Scope, Safety & Non-Goals
 
 Rush is engineered with strict safety invariants:
-* **No Unprompted Mutations**: `rush format` and `rush fix` run in check/dry-run mode unless explicitly commanded.
+* **Mutation safety requirement**: `rush fix` has a known destructive dry-run/rollback defect (F01). Do not run it against a checkout containing work to preserve until P64-01 passes. Formatter result correctness is tracked by P64-07.
 * **No Silent Dependency Downloads**: Engines are discovered from PATH; Rush never installs packages in the background.
 * **No Uncontrolled Git Mutations**: Workflow tools never rewrite history, tag, or publish releases without explicit user flags.
 * **Offline-First & Air-Gapped Safe**: All AST parsing, CodeGraph analysis, memory storage, and provenance generation run 100% locally.
 * **Zero stdout Pollution**: Stdio MCP server reserves `stdout` exclusively for JSON-RPC; all logs route to `stderr`.
 * **Canonical Package Identity**: The public Python package exposes the root `rush` namespace exclusively; internal modules never use `src.rush` imports, and `__version__` is anchored to distribution metadata.
-* **Isolated Installed Artifacts**: Wheels and sdists are verified under scrubbed virtualenvs from empty working directories to guarantee standalone runtime integrity outside the development checkout.
+* **Installed artifact acceptance**: Wheels, sdists and native distributions must pass isolated installation checks. Current packaging and artifact-test gaps are tracked in P64-20 and P65-01; source-tree tests do not establish standalone installation readiness.
 
 ---
 
 ## 🤝 12. Contributing & Quality Standards
 
-1. All code changes must pass `.venv/Scripts/ruff.exe check src tests` and `format --check`.
+1. From the checkout, run `uv run --python 3.12 --extra dev ruff check src tests scripts` and `uv run --python 3.12 --extra dev ruff format --check src tests scripts` on macOS, Linux or Windows.
 2. Unit tests must be written for every new engine under `tests/test_<name>.py`.
 3. Every new capability must be reflected across the 5-tier documentation matrix in `docs/`.
 

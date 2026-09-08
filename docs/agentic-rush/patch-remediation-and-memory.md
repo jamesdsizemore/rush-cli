@@ -16,7 +16,9 @@ Coordination recovery is equally narrow: a replay is an event-count receipt, and
 
 ## 1. Closed-Loop Patch Remediation
 
-Rush treats every AI-generated patch as an unverified proposal. The patch is tested, linted, and verified before touching your repository.
+Status: planned — full isolated apply/verify/promotion in [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Diagram below retains the accepted design. Current public `patch` commands are `memory` and `test`; sandbox fallback and cleanup remain unsafe (F05/F43).
+
+The required design treats every patch as unverified. Current code does not establish this whole-route guarantee.
 
 ```mermaid
 sequenceDiagram
@@ -42,9 +44,9 @@ sequenceDiagram
     end
 ```
 
-### Applying a Patch Safely
+### Accepted future patch commands — not registered
 
-```bash
+```text
 # Preview what a patch will modify without making changes
 rush patch apply candidate.diff --dry-run
 
@@ -78,7 +80,7 @@ rush memory list episodic authentication --session session_memory:record_turn
 
 ### Cryptographic Context Boundary Framing
 
-To prevent prompt injection attacks where untrusted code comments attempt to hijack agent memory, Rush encapsulates all memory records within cryptographically signed XML boundaries (`format_for_mcp()`'s `<rush_session_memory>` shape is unchanged by the Phase 61 storage migration — it now reads from `TypedArtifactStore` instead of the old JSON file, same output):
+To prevent prompt injection attacks where untrusted code comments attempt to hijack agent memory, Rush encapsulates all memory records within XML boundaries (escaping is formatting, not cryptographic authentication) (`format_for_mcp()`'s `<rush_session_memory>` shape is unchanged by the Phase 61 storage migration — it now reads from `TypedArtifactStore` instead of the old JSON file, same output):
 
 ```xml
 <rush_session_memory turn="4" timestamp="2026-08-21T17:40:00Z">
@@ -92,9 +94,9 @@ To prevent prompt injection attacks where untrusted code comments attempt to hij
 
 ## Benefits for Humans & Agents
 
-1. **Zero-Pollution Guarantee**: If an agent generates broken code, your working tree remains pristine.
+1. **Required isolation**: No user-work loss remains the acceptance contract for P64-04; current implementation fails it.
 2. **Instant Feedback for Self-Correction**: When a patch fails verification, Rush returns exact line numbers, compiler messages, and linter rules so the agent can self-correct on the next turn.
-3. **Continuous Context**: Memory ledgers prevent agents from repeating mistakes or asking the user the same questions across multi-turn sessions.
+3. **Continuous Context**: Memory ledgers expose evidence when recalled; they do not guarantee agent behavior or automatic recall.
 
 ---
 

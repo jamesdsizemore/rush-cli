@@ -7,7 +7,7 @@ Welcome to the **Agentic Rush** knowledge base. This section details the complet
 ## Guides in This Section
 
 1. [AI Safety & Worktree Sandboxing](ai-safety-and-sandboxing.md)
-   - How `rush safety` intercepts dangerous shell commands and confines agent file modifications within repository boundaries.
+   - How `rush guard` intercepts dangerous shell commands and confines agent file modifications within repository boundaries.
 2. [Patch Remediation & Session Memory](patch-remediation-and-memory.md)
    - How `rush patch` tests diffs in isolated worktree environments with automated rollbacks, and how `rush memory` preserves multi-turn context.
 3. [Token Economy & Context Optimization](token-economy-and-context.md)
@@ -23,11 +23,13 @@ Welcome to the **Agentic Rush** knowledge base. This section details the complet
 8. [Multi-Model Consensus & Quality Scorecards](multi-model-consensus-and-scoring.md)
    - How `rush consensus` reconciles findings across multiple AI models and `rush score` grades repository health.
 9. [Plugins & Agent Skills](plugins-and-agent-skills.md)
-   - How `rush plugins` and `rush skills` provide trust-gated execution of custom tools and automated skill generation for agents.
+   - How `rush plugin` exposes trust-gated execution; `rush skills` is not registered. Skill export is internal/planned integration.
 
 ---
 
 ## Common Agent Workflows
+
+Current gaps: unsafe patch cleanup, worktree fallback, staged-byte scanning and non-interactive interfaces remain open. See [Known issues](../KNOWN_ISSUES.md). Examples describe explicit caller actions, not automatic agent supervision.
 
 - **Inner-Loop Quality Verification**: Run `rush check` and `rush tdd` after each agent code generation step.
 - **Context Injection**: Use `rush codegraph slice <symbol>` or `rush token outline <file>` to provide concise, verbatim context to your model.

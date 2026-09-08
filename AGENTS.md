@@ -12,15 +12,36 @@
 
 ## Development
 
-Hermes can expose another Python environment on PATH. Always verify with the
-project interpreter:
+Hermes can expose another Python environment on PATH. From the repository root,
+use uv's project environment and explicit Python 3.12 selection on macOS, Linux,
+and Windows:
 
-```bash
-unset VIRTUAL_ENV PYTHONPATH
-.venv/Scripts/python.exe -m pytest tests/ -q
-.venv/Scripts/ruff.exe check src tests scripts
-.venv/Scripts/ruff.exe format --check src tests scripts
+```text
+uv run --python 3.12 --extra dev python --version
+uv run --python 3.12 --extra dev python -m pytest tests/ -q
+uv run --python 3.12 --extra dev ruff check src tests scripts
+uv run --python 3.12 --extra dev ruff format --check src tests scripts
 ```
+
+The version check must report Python 3.12. Clear inherited `PYTHONPATH` before
+running tests so imports resolve to this checkout's `src/` tree.
+
+## Karpathy coding guidelines
+
+1. **Think before coding.** State material assumptions explicitly. Resolve
+   ambiguity before implementation; never silently choose a different scope.
+   Surface simpler approaches and relevant tradeoffs.
+2. **Simplicity first.** Write the minimum code that solves the requested problem.
+   No speculative features, single-use abstractions, unrequested configurability,
+   or error handling for impossible scenarios.
+3. **Surgical changes.** Every changed line must trace directly to the user's
+   request. Match existing style. Do not improve adjacent code, comments, or
+   formatting. Remove only imports, variables, and functions made unused by the
+   current change; preserve unrelated pre-existing code.
+4. **Verifiable outcomes.** Define concrete success criteria before editing.
+   Reproduce bugs with failing tests, make the minimum fix, and verify the
+   required behavior. For multi-step work, pair each bounded step with its check.
+   Do not claim completion from unexecuted or insufficient verification.
 
 ## Scope and safety
 
@@ -71,9 +92,9 @@ adding a tool.
 - **Zero recycling of pre-remediation prototypes**: Never wrap legacy or pre-remediation stubs with new interfaces to simulate compliance. Build the required engine directly.
 
 ### Scope boundaries
-- **No UI/Frontend design**: Rush is strictly a local CLI, FastMCP server, and
-  backend/systems quality substrate. Never propose or build UI design tools,
-  visual mockups, color/theme pickers, or Figma-style visual canvases.
+- **Product interfaces**: Rush includes CLI, stdio MCP, an interactive TUI,
+  and a local web interface. Interface work is in scope when requested; all
+  interfaces must use shared Rush implementations and permission boundaries.
 - **No unprompted Git hooks**: Never install, propose, or configure Git hooks.
 
 ## Agent skills

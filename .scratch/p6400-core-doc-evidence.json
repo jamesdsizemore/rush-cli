@@ -1,0 +1,3961 @@
+{
+  "task": "P64-00",
+  "scope": [
+    "docs/*.md",
+    "docs/agentic-rush/*.md",
+    "docs/safety/*.md"
+  ],
+  "worktree": "/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-61-62-review-fixes",
+  "status": "owned documentation corrected; integration checker pending root",
+  "files": [
+    {
+      "path": "docs/AGENTIC_RUSH.md",
+      "sha256": "d609c9a3943f30c3436cea686d45093d23dcaa56027cbf09e41402db85d9aa76",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 146,
+      "changed_sections": [
+        {
+          "section": "Visual Overview: The Agentic Workflow Loop",
+          "lines": [
+            35,
+            36
+          ]
+        },
+        {
+          "section": "Visual Overview: The Agentic Workflow Loop",
+          "lines": [
+            48,
+            49
+          ]
+        },
+        {
+          "section": "Quick Start for AI Agents",
+          "lines": [
+            106,
+            106
+          ]
+        },
+        {
+          "section": "Agent Protocols for Security & Release (Phase 50)",
+          "lines": [
+            143,
+            143
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/ALTERNATIVES.md",
+      "sha256": "4d9b63e4b309fd7e3502c6f9b57ebafe790705eca8894fd8f395428b61447bca",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 34,
+      "changed_sections": [
+        {
+          "section": "Alternatives, Comparisons, and Complements",
+          "lines": [
+            3,
+            3
+          ]
+        },
+        {
+          "section": "1. Rush vs. Adjacent Tool Categories",
+          "lines": [
+            13,
+            13
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/API_REFERENCE.md",
+      "sha256": "515425b05f52c7a6b536b194c74c94574bbe993133d5860ec2c97b86f6c5d1a0",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 449,
+      "changed_sections": [
+        {
+          "section": "`ToolFn`",
+          "lines": [
+            22,
+            22
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            381,
+            381
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            402,
+            402
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "7aba6d50ad8c3eb94731dcaeb99091752695e96ff74a3d7a9f69fb6715821093",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 341,
+      "changed_sections": [
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            252,
+            252
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            273,
+            273
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/BUNDLE_DIAGRAMS.md",
+      "sha256": "cf8b867c92f5831060ee8b6100b44b0e3e642c1f33e57925bf4aa1f6bec30d18",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 416,
+      "changed_sections": [
+        {
+          "section": "Rush Subsystem & Bundle Architecture Diagrams",
+          "lines": [
+            7,
+            8
+          ]
+        },
+        {
+          "section": "1. Core Code Quality & Automated Remediation Bundle",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "1. Core Code Quality & Automated Remediation Bundle",
+          "lines": [
+            43,
+            43
+          ]
+        },
+        {
+          "section": "6. Workspace, Caching & Performance Bundle",
+          "lines": [
+            271,
+            271
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/CI_INTEGRATION.md",
+      "sha256": "bf1344ccd97c2e8dde7be33d750f679103f1b3708854a7bc39b7a8ef36099593",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 155,
+      "changed_sections": [
+        {
+          "section": "Continuous Integration (CI) Integration Guide",
+          "lines": [
+            2,
+            3
+          ]
+        },
+        {
+          "section": "2. GitHub Actions Integration",
+          "lines": [
+            52,
+            52
+          ]
+        },
+        {
+          "section": "3. GitLab CI Integration",
+          "lines": [
+            94,
+            94
+          ]
+        },
+        {
+          "section": "SLSA Attestation CI Gate",
+          "lines": [
+            154,
+            154
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/CLI_COOKBOOK.md",
+      "sha256": "02d4423f1e694bcbc3944ebec73bc6ae86db6a14cdd6295a3dfc4e2f33b3fa13",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 488,
+      "changed_sections": [
+        {
+          "section": "CLI Cookbook & Command Recipes",
+          "lines": [
+            2,
+            3
+          ]
+        },
+        {
+          "section": "Export Standalone HTML & SARIF 2.1.0 Reports",
+          "lines": [
+            51,
+            52
+          ]
+        },
+        {
+          "section": "Dry-Run Release Planning & Attestation",
+          "lines": [
+            174,
+            174
+          ]
+        },
+        {
+          "section": "Automated Code Remediation — currently unsafe",
+          "lines": [
+            198,
+            202
+          ]
+        },
+        {
+          "section": "Attempts fixes; cleanup can discard unrelated changes",
+          "lines": [
+            205,
+            205
+          ]
+        },
+        {
+          "section": "Terminal snapshot & currently broken web dashboard",
+          "lines": [
+            218,
+            222
+          ]
+        },
+        {
+          "section": "Apply AI Remediation Patches in Isolated Git Worktrees",
+          "lines": [
+            268,
+            271
+          ]
+        },
+        {
+          "section": "Save active session snapshot",
+          "lines": [
+            364,
+            364
+          ]
+        },
+        {
+          "section": "Compress module to AST skeleton",
+          "lines": [
+            393,
+            393
+          ]
+        },
+        {
+          "section": "Generating Cryptographic Build Provenance",
+          "lines": [
+            477,
+            477
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/CLI_REFERENCE.md",
+      "sha256": "7eb66f2e0adff60a0a4f3ed5faf6a6f53d031f26363ca929d0ac0e0991dd8e9a",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 555,
+      "changed_sections": [
+        {
+          "section": "Operations Reconciliation & Inventory (Phase 51 & Phase 54)",
+          "lines": [
+            23,
+            26
+          ]
+        },
+        {
+          "section": "Core code-quality commands",
+          "lines": [
+            59,
+            59
+          ]
+        },
+        {
+          "section": "Core code-quality commands",
+          "lines": [
+            68,
+            68
+          ]
+        },
+        {
+          "section": "Workflow suites and developer commands",
+          "lines": [
+            141,
+            142
+          ]
+        },
+        {
+          "section": "Advanced Autonomous Agent, Hygiene & Governance Commands (Phases 29–40)",
+          "lines": [
+            157,
+            157
+          ]
+        },
+        {
+          "section": "Advanced Scoping, Caching & Monorepo Options",
+          "lines": [
+            176,
+            176
+          ]
+        },
+        {
+          "section": "Advanced Scoping, Caching & Monorepo Options",
+          "lines": [
+            179,
+            181
+          ]
+        },
+        {
+          "section": "Advanced Scoping, Caching & Monorepo Options",
+          "lines": [
+            184,
+            184
+          ]
+        },
+        {
+          "section": "Workflow commands",
+          "lines": [
+            191,
+            192
+          ]
+        },
+        {
+          "section": "`rush ship clean`",
+          "lines": [
+            225,
+            225
+          ]
+        },
+        {
+          "section": "`rush context gain`",
+          "lines": [
+            269,
+            269
+          ]
+        },
+        {
+          "section": "`rush attest`",
+          "lines": [
+            323,
+            330
+          ]
+        },
+        {
+          "section": "`rush license-matrix`",
+          "lines": [
+            334,
+            335
+          ]
+        },
+        {
+          "section": "`rush iam-audit`",
+          "lines": [
+            339,
+            341
+          ]
+        },
+        {
+          "section": "`rush dead-asset`",
+          "lines": [
+            345,
+            355
+          ]
+        },
+        {
+          "section": "`rush pr-synthesize`",
+          "lines": [
+            359,
+            369
+          ]
+        },
+        {
+          "section": "`rush prompt-eval`",
+          "lines": [
+            373,
+            383
+          ]
+        },
+        {
+          "section": "`rush error-catalog`",
+          "lines": [
+            387,
+            397
+          ]
+        },
+        {
+          "section": "`rush provenance-ai`",
+          "lines": [
+            401,
+            411
+          ]
+        },
+        {
+          "section": "`rush mem-profile`",
+          "lines": [
+            415,
+            425
+          ]
+        },
+        {
+          "section": "`rush cold-start`",
+          "lines": [
+            429,
+            439
+          ]
+        },
+        {
+          "section": "`rush media-opt`",
+          "lines": [
+            443,
+            453
+          ]
+        },
+        {
+          "section": "`rush offline-review`",
+          "lines": [
+            457,
+            467
+          ]
+        },
+        {
+          "section": "`rush tui-diff`",
+          "lines": [
+            471,
+            481
+          ]
+        },
+        {
+          "section": "`rush benchmark check`",
+          "lines": [
+            485,
+            505
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            525,
+            525
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            546,
+            546
+          ]
+        },
+        {
+          "section": "`rush attest`",
+          "lines": [
+            553,
+            553
+          ]
+        },
+        {
+          "section": "`rush attest`",
+          "lines": [
+            555,
+            555
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/COMPATIBILITY.md",
+      "sha256": "8a4acbbf7b577169fbc3481c3a65dde28e2fba3e891f1cbc72b843887bfadd04",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 51,
+      "changed_sections": [
+        {
+          "section": "1. Rush Core Runtime",
+          "lines": [
+            15,
+            15
+          ]
+        },
+        {
+          "section": "1. Rush Core Runtime",
+          "lines": [
+            17,
+            17
+          ]
+        },
+        {
+          "section": "3. Engine Version Compatibility Matrix",
+          "lines": [
+            43,
+            43
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/CONFIGURATION.md",
+      "sha256": "07db74eaaabc2dcdc13fe1c148425dc0a6f111e6ec544ed1e9f181ea96b47590",
+      "audience": "user/contributor",
+      "authority": "current configuration schema and runtime choices; unsupported sketches marked historical/planned",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 194,
+      "changed_sections": [
+        {
+          "section": "Session continuity permissions",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "2. Configuration Features",
+          "lines": [
+            43,
+            43
+          ]
+        },
+        {
+          "section": "Context Intelligence & Preferences Configuration (Phases 41–43)",
+          "lines": [
+            58,
+            59
+          ]
+        },
+        {
+          "section": "read-only with a `.migrated` suffix, never deleted (Invariant 5).",
+          "lines": [
+            83,
+            83
+          ]
+        },
+        {
+          "section": "Phase 50a Quality & Security Suite Tool Configuration",
+          "lines": [
+            89,
+            89
+          ]
+        },
+        {
+          "section": "Phase 50a Quality & Security Suite Tool Configuration",
+          "lines": [
+            92,
+            92
+          ]
+        },
+        {
+          "section": "Phase 50a Quality & Security Suite Tool Configuration",
+          "lines": [
+            93,
+            93
+          ]
+        },
+        {
+          "section": "Phase 50a Quality & Security Suite Tool Configuration",
+          "lines": [
+            95,
+            95
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            102,
+            103
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            106,
+            106
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            107,
+            107
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            109,
+            109
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            112,
+            112
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            116,
+            116
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            120,
+            121
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            124,
+            124
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            127,
+            127
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            130,
+            130
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            133,
+            134
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            140,
+            140
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            143,
+            143
+          ]
+        },
+        {
+          "section": "Phase 50b/50c Flagship Tool Configuration",
+          "lines": [
+            145,
+            146
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            168,
+            168
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            189,
+            189
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Full config source read; TOOL_SPECS option names/defaults inspected; CONFIGURATION and CONFIG_SCHEMA TOML fences parsed through _parse. Provider credentials described as invocation environment only."
+      ],
+      "source_paths": [
+        "src/rush/config.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_config.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/CONFIG_SCHEMA.md",
+      "sha256": "fda223d31f2443fafd81061eb9257886e448d28f35fef7f6a36475103e14f1d5",
+      "audience": "user/contributor",
+      "authority": "current configuration schema and runtime choices; unsupported sketches marked historical/planned",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 141,
+      "changed_sections": [
+        {
+          "section": "Memory database path (Phase 61)",
+          "lines": [
+            13,
+            13
+          ]
+        },
+        {
+          "section": "Memory database path (Phase 61)",
+          "lines": [
+            15,
+            15
+          ]
+        },
+        {
+          "section": "Historical/planned consumer settings below are not parsed by RushConfig.",
+          "lines": [
+            56,
+            56
+          ]
+        },
+        {
+          "section": "2. Table Validation & Precedence Rules",
+          "lines": [
+            83,
+            83
+          ]
+        },
+        {
+          "section": "Invocation and Cache Schema Attributes (Phase 57)",
+          "lines": [
+            104,
+            105
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            109,
+            109
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            130,
+            130
+          ]
+        },
+        {
+          "section": "`[release.provenance]`",
+          "lines": [
+            135,
+            135
+          ]
+        },
+        {
+          "section": "`[engines]`",
+          "lines": [
+            140,
+            140
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Full config source read; TOOL_SPECS option names/defaults inspected; CONFIGURATION and CONFIG_SCHEMA TOML fences parsed through _parse. Provider credentials described as invocation environment only."
+      ],
+      "source_paths": [
+        "src/rush/config.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_config.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/DECISIONS.md",
+      "sha256": "6af0d5eb977602f3a2cf1fa11ac457187c8d50cbba749e0053a00540e617cf47",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 26,
+      "changed_sections": [
+        {
+          "section": "1. Core Architectural Decision Records (ADR 0001–0010)",
+          "lines": [
+            19,
+            20
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/DEPENDENCY_POLICY.md",
+      "sha256": "44dabe906a09f069aa509b7c76ace3a92737bdc8849cb0c274db9496de73d0ad",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 44,
+      "changed_sections": [
+        {
+          "section": "1. Direct Python Dependencies",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "1. Direct Python Dependencies",
+          "lines": [
+            15,
+            16
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/DESIGN_PRINCIPLES.md",
+      "sha256": "73a753e6cfa1c4d62d8da74b49bec996d82127c4fdaab089498f9083ed107129",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 35,
+      "changed_sections": [
+        {
+          "section": "2. Safe, Local & Non-Mutating Defaults",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "7. Dual-Mode Operation (Import vs. Execute)",
+          "lines": [
+            26,
+            26
+          ]
+        },
+        {
+          "section": "9. Fixture-First Testing & Zero-Drift Documentation",
+          "lines": [
+            32,
+            32
+          ]
+        },
+        {
+          "section": "10. Honest Model & Privacy Boundaries",
+          "lines": [
+            35,
+            35
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/DEVELOPER_GUIDE.md",
+      "sha256": "66b14ee2839e8710a476a9e4b356118f9a0b99bc83695248f61e52d3216a3ba5",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 72,
+      "changed_sections": [
+        {
+          "section": "Local verification loop",
+          "lines": [
+            14,
+            16
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/DISTRIBUTION.md",
+      "sha256": "142565d2b1b1da2bbc839d1adda5cb618fd2c78ad9d58436c6aeec47d3d87854",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 64,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/DOCUMENTATION_BRIEF.md",
+      "sha256": "3d275d1e011290d1af0af140cff5e37f787fedbe2cf0fd7efdcad12f3720c68f",
+      "audience": "documentation author",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 333,
+      "changed_sections": [
+        {
+          "section": "Implemented-model capability boundary",
+          "lines": [
+            30,
+            30
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/EDITOR_INTEGRATION.md",
+      "sha256": "59d2bbb56dacda20a3a1cf5163654c148bae790ca9bd31272cd68570419021a5",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 111,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/ENGINES.md",
+      "sha256": "7645ac2c4d78005d24e977efc78cbcb4cf717e726efd3876d1fcb8d0ffecbd8b",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 248,
+      "changed_sections": [
+        {
+          "section": "Engine directory",
+          "lines": [
+            2,
+            3
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/ENGINE_COMPATIBILITY.md",
+      "sha256": "b7da7cfe2b411790b71739b3a77fbbea6fb82aae9898ea7f5cc340775be67ac7",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 171,
+      "changed_sections": [
+        {
+          "section": "Engine compatibility and integration contract",
+          "lines": [
+            2,
+            3
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/ENVIRONMENT_VARIABLES.md",
+      "sha256": "6aa9009946c8e7af7331740a3103655f12984cc8db0dbdb3d1eaf5740703fd61",
+      "audience": "user/contributor",
+      "authority": "current configuration schema and runtime choices; unsupported sketches marked historical/planned",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 62,
+      "changed_sections": [
+        {
+          "section": "1. Supported Environment Variables",
+          "lines": [
+            15,
+            16
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            38,
+            38
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            59,
+            59
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Full config source read; TOOL_SPECS option names/defaults inspected; CONFIGURATION and CONFIG_SCHEMA TOML fences parsed through _parse. Provider credentials described as invocation environment only."
+      ],
+      "source_paths": [
+        "src/rush/config.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_config.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/EXAMPLES.md",
+      "sha256": "15bdd90ee89ab8464c02d29b848160d81b01a3a10cfc0fef3d9c3790270ae1d0",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 154,
+      "changed_sections": [
+        {
+          "section": "Practical Examples & Common Workflows",
+          "lines": [
+            2,
+            3
+          ]
+        },
+        {
+          "section": "3. Check version parity; signed-envelope verification uses rush attest",
+          "lines": [
+            95,
+            96
+          ]
+        },
+        {
+          "section": "1. Export interactive dark-mode HTML inspection dashboard",
+          "lines": [
+            105,
+            105
+          ]
+        },
+        {
+          "section": "2. Export SARIF 2.1.0 for GitHub Code Scanning",
+          "lines": [
+            108,
+            108
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/FAQ.md",
+      "sha256": "ed8091a09d1e518f9662c4d134a796807abd37aa2ed4aa7a630240b70f982619",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 108,
+      "changed_sections": [
+        {
+          "section": "What is Rush?",
+          "lines": [
+            8,
+            8
+          ]
+        },
+        {
+          "section": "Does `rush review --llm` send code to external AI providers?",
+          "lines": [
+            33,
+            33
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/GLOSSARY.md",
+      "sha256": "4e177540b90e85f98e619cb2ea9b60e6a92d67a7b743698913fb00956c8e8629",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 160,
+      "changed_sections": [
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            132,
+            132
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            153,
+            153
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/INTEGRATIONS.md",
+      "sha256": "9e95ed0f8880fb2c32340233126f2a18482364c404662ec840c1a6f118a066f9",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 54,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/JSON_SCHEMA.md",
+      "sha256": "d90a7fcdcc4e3759b23a00b76c74d0260a3e572143c3b972d14cc721e377a599",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 255,
+      "changed_sections": [
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            229,
+            229
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            250,
+            250
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/KNOWN_ISSUES.md",
+      "sha256": "cac228ce4b5792078a7f8107cfdda293401c24759809df9770cb01d9968d9fec",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 27,
+      "changed_sections": [
+        {
+          "section": "Known issues",
+          "lines": [
+            3,
+            12
+          ]
+        },
+        {
+          "section": "Known issues",
+          "lines": [
+            21,
+            21
+          ]
+        },
+        {
+          "section": "Known issues",
+          "lines": [
+            27,
+            27
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/LIMITATIONS.md",
+      "sha256": "8f36d279ad09d5b98979e66f00d712600df8b641f634c8e33384464088f862ab",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 11,
+      "changed_sections": [
+        {
+          "section": "Limitations",
+          "lines": [
+            3,
+            4
+          ]
+        },
+        {
+          "section": "Limitations",
+          "lines": [
+            9,
+            9
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/MAINTAINER_PLAYBOOK.md",
+      "sha256": "fc35abb430e84cfd4fa5b09b41ecff471a316a7c14239267a59e2599a1c41f8a",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 54,
+      "changed_sections": [
+        {
+          "section": "2. Run entire test suite (100% pass rate required)",
+          "lines": [
+            27,
+            27
+          ]
+        },
+        {
+          "section": "3. Verify documentation parity & internal links",
+          "lines": [
+            30,
+            30
+          ]
+        },
+        {
+          "section": "4. Enforce strict linting and formatting",
+          "lines": [
+            33,
+            34
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/MCP.md",
+      "sha256": "a6929a39ef578f5850f28c8b6a908a9c66b8a1554747d085c3e9c03fc9773486",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 90,
+      "changed_sections": [
+        {
+          "section": "Memory (Phase 61)",
+          "lines": [
+            31,
+            31
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            63,
+            63
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            84,
+            84
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/MCP_REFERENCE.md",
+      "sha256": "70ddae7759a7193fbbbf75958bc054b6bb7a92520ec6db115ca1b119036464c0",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 169,
+      "changed_sections": [
+        {
+          "section": "`rush_continuity`",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "Common result",
+          "lines": [
+            25,
+            25
+          ]
+        },
+        {
+          "section": "Inputs",
+          "lines": [
+            46,
+            46
+          ]
+        },
+        {
+          "section": "Inputs",
+          "lines": [
+            48,
+            48
+          ]
+        },
+        {
+          "section": "Inputs",
+          "lines": [
+            51,
+            51
+          ]
+        },
+        {
+          "section": "Complete tool names",
+          "lines": [
+            55,
+            56
+          ]
+        },
+        {
+          "section": "Complete tool names",
+          "lines": [
+            58,
+            58
+          ]
+        },
+        {
+          "section": "Phase 41–43 FastMCP Tool Additions",
+          "lines": [
+            74,
+            75
+          ]
+        },
+        {
+          "section": "Phase 41–43 FastMCP Tool Additions",
+          "lines": [
+            78,
+            78
+          ]
+        },
+        {
+          "section": "Phase 41–43 FastMCP Tool Additions",
+          "lines": [
+            85,
+            85
+          ]
+        },
+        {
+          "section": "Phase 41–43 FastMCP Tool Additions",
+          "lines": [
+            90,
+            90
+          ]
+        },
+        {
+          "section": "FastMCP Route Reconciliation & Governance (Phase 51 & Phase 54)",
+          "lines": [
+            129,
+            129
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            141,
+            141
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            162,
+            162
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/MIGRATION_GUIDE.md",
+      "sha256": "b1420c41d688bf09cb90d94e0516548a1f7a87d7d2f285f1088d284a786c611a",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 41,
+      "changed_sections": [
+        {
+          "section": "2. Upgrading from Rush v0.1 to v0.2+",
+          "lines": [
+            39,
+            39
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/PRE_COMMIT.md",
+      "sha256": "8bad17ac77bcfcf6ad82d94a4b0ee5a3f973f044769677e9cfadde2d053ef473",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 114,
+      "changed_sections": [
+        {
+          "section": "Configure git to use the repository hooks directory",
+          "lines": [
+            17,
+            17
+          ]
+        },
+        {
+          "section": "4. Built-in Pre-Commit Intelligence & Tamper Guard (`rush hook run`)",
+          "lines": [
+            67,
+            68
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/PRIVACY.md",
+      "sha256": "19431a9e56ac52f130a6b5ef4fa420d44ae5b039badc8cfa19ff3e52edb58ac8",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 95,
+      "changed_sections": [
+        {
+          "section": "1. Core Privacy Invariants",
+          "lines": [
+            15,
+            15
+          ]
+        },
+        {
+          "section": "1. Core Privacy Invariants",
+          "lines": [
+            18,
+            19
+          ]
+        },
+        {
+          "section": "3. Serialization & Persistent Storage Privacy (Phase 53)",
+          "lines": [
+            36,
+            36
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            69,
+            69
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            90,
+            90
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/README.md",
+      "sha256": "b5102a3c334c1e4cdb21d62dca3d67877ce3760c7d8bdc4ef08e5f0ff1226192",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 165,
+      "changed_sections": [
+        {
+          "section": "Capability note",
+          "lines": [
+            87,
+            87
+          ]
+        },
+        {
+          "section": "Context Intelligence, Token Diet & Ship Gates (v0.2.0 / Phases 41–43)",
+          "lines": [
+            91,
+            91
+          ]
+        },
+        {
+          "section": "Context Packing, Telemetry HUD & Blast Radius (Phases 44–46)",
+          "lines": [
+            105,
+            105
+          ]
+        },
+        {
+          "section": "Test Healing & API Contract Differ (Phase 47)",
+          "lines": [
+            112,
+            112
+          ]
+        },
+        {
+          "section": "Phase 50c: Performance Profiling, Offline Review & Provenance",
+          "lines": [
+            148,
+            148
+          ]
+        },
+        {
+          "section": "Remediation Program & Release Probes (Phase 51)",
+          "lines": [
+            161,
+            161
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/RECIPE_BOOK.md",
+      "sha256": "29aea20743049d47a424590df8319a780104cfc7f11c760d56854dcb9f10dc88",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 107,
+      "changed_sections": [
+        {
+          "section": "Recipe Book & Advanced Engineering Scenarios",
+          "lines": [
+            2,
+            3
+          ]
+        },
+        {
+          "section": "4. Inspect current CI command surface; legacy ci PATH --json is not registered",
+          "lines": [
+            45,
+            46
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/RELEASE.md",
+      "sha256": "09a8306d75d58b6f9fda96131719d94e96613b674530cb0adc8ae5ee7c0ecc5f",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 57,
+      "changed_sections": [
+        {
+          "section": "1. Safety Boundary for Releases",
+          "lines": [
+            10,
+            10
+          ]
+        },
+        {
+          "section": "2. Release Steps",
+          "lines": [
+            20,
+            23
+          ]
+        },
+        {
+          "section": "Release Checklist with Ship Cockpit (Phases 41–43)",
+          "lines": [
+            50,
+            50
+          ]
+        },
+        {
+          "section": "Release Checklist with Ship Cockpit (Phases 41–43)",
+          "lines": [
+            53,
+            53
+          ]
+        },
+        {
+          "section": "Pre-Release Verification (Phase 59)",
+          "lines": [
+            57,
+            57
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/SAFETY.md",
+      "sha256": "46a4166333079d7436c785aa436ee45866ef8b31a54f7aa8736b7c683a1a5ef4",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 99,
+      "changed_sections": [
+        {
+          "section": "Bounded provider handoff",
+          "lines": [
+            7,
+            7
+          ]
+        },
+        {
+          "section": "Bounded provider handoff",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "Bounded provider handoff",
+          "lines": [
+            13,
+            15
+          ]
+        },
+        {
+          "section": "Bounded provider handoff",
+          "lines": [
+            20,
+            20
+          ]
+        },
+        {
+          "section": "Context Safety, Grounding & Secret Redaction (Phases 41–43)",
+          "lines": [
+            40,
+            40
+          ]
+        },
+        {
+          "section": "Single Execution Boundary and Fail-Closed Egress (Phase 57)",
+          "lines": [
+            68,
+            68
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            73,
+            73
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            94,
+            94
+          ]
+        },
+        {
+          "section": "Build Claim Truthfulness & Engine Safety (Phase 59)",
+          "lines": [
+            99,
+            99
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/SCOPE.md",
+      "sha256": "4997457997efc6b598c443bd8e5721390fd8f7c87117769c97d0b4e10ad00d39",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 60,
+      "changed_sections": [
+        {
+          "section": "1. Explicitly In-Scope",
+          "lines": [
+            9,
+            10
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            34,
+            34
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            55,
+            55
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/SECURITY.md",
+      "sha256": "ea6eb187498e73c3f90688dd3fffef76331f77fb3e165a563f7cc3baaab887cf",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 150,
+      "changed_sections": [
+        {
+          "section": "1. The 7 Defensive Controls",
+          "lines": [
+            17,
+            17
+          ]
+        },
+        {
+          "section": "1. The 7 Defensive Controls",
+          "lines": [
+            23,
+            23
+          ]
+        },
+        {
+          "section": "Safe Ephemeral Sandboxing (Phase 47)",
+          "lines": [
+            59,
+            59
+          ]
+        },
+        {
+          "section": "Schema Integrity & Type Safety (Phase 48)",
+          "lines": [
+            64,
+            64
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            121,
+            121
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            142,
+            142
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/SEMANTIC_DRIFT.md",
+      "sha256": "b635370e7ccb438f804abeb586e02087560fffaeae4d2dfe86edf275f75a737e",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 62,
+      "changed_sections": [
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            27,
+            27
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            48,
+            48
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/SUPPORT.md",
+      "sha256": "2283aa9ff73d888bbdb8a2bb71466ee445f0b9aeb59132a5efde84763f5ab867",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 26,
+      "changed_sections": [
+        {
+          "section": "1. Before Requesting Support",
+          "lines": [
+            13,
+            13
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/TESTING.md",
+      "sha256": "5364947526676ffcb0d7ca1dc5c250cf5d26284d75e1f0f2113e67664663bf29",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 79,
+      "changed_sections": [
+        {
+          "section": "1. Test Suite Architecture",
+          "lines": [
+            17,
+            17
+          ]
+        },
+        {
+          "section": "Run all tests (deterministic, mock-isolated, fast)",
+          "lines": [
+            31,
+            31
+          ]
+        },
+        {
+          "section": "Run specific engine reference test suite",
+          "lines": [
+            34,
+            34
+          ]
+        },
+        {
+          "section": "Verify documentation parity",
+          "lines": [
+            37,
+            37
+          ]
+        },
+        {
+          "section": "3. Contributor Test Contracts",
+          "lines": [
+            44,
+            44
+          ]
+        },
+        {
+          "section": "Run all benchmark test suites (contracts, runner, providers, privacy, context, coordination, local)",
+          "lines": [
+            66,
+            66
+          ]
+        },
+        {
+          "section": "Verify the detached-worker boundary without launching a live model or provider",
+          "lines": [
+            69,
+            69
+          ]
+        },
+        {
+          "section": "Run all 40 declared scenarios and output atomic results to research/benchmark/B1/",
+          "lines": [
+            72,
+            72
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/TOOL_CATALOG.md",
+      "sha256": "df03c9654af5ffe2948fee18a361fce840460a6865369bd9f0131c3a4661dac3",
+      "audience": "user/contributor",
+      "authority": "current reference/component descriptions; historical inventories and planned capabilities explicitly qualified",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 130,
+      "changed_sections": [
+        {
+          "section": "`memory` — workflow, real adapter (Phase 61)",
+          "lines": [
+            11,
+            13
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            101,
+            101
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            122,
+            122
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Compared CLI command names/options to live Click command tree and collector. MCP names checked from live collector. Catalog metadata supplies candidate names, not proof of complete execution; F09-F23 exceptions cross-referenced."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "src/rush/catalog.py",
+        "scripts/sync_docs.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/TROUBLESHOOTING.md",
+      "sha256": "580780d005a733a1646d8e27dc2e246f1f11a1553b1765bc1a1b6666b0f4972d",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 61,
+      "changed_sections": [
+        {
+          "section": "Troubleshooting Guide & Common Resolutions",
+          "lines": [
+            3,
+            3
+          ]
+        },
+        {
+          "section": "Run command with verbose logging to stderr",
+          "lines": [
+            47,
+            47
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/TROUBLESHOOTING_MATRIX.md",
+      "sha256": "3f5cc93595d5422355d2b6a2117c3eba649888281c6e9e5f39a85ef6ecf539a9",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 16,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/TUTORIALS.md",
+      "sha256": "d475d8b883c38244b39524a72c43f0a6417065f1bad6d19cf9f2ef964e68e883",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 14,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/USER_GUIDE.md",
+      "sha256": "a906959dc3dab824e67db6395bd9ab18373c510221e11e88e214e8113b109d80",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 169,
+      "changed_sections": [
+        {
+          "section": "The 4 Routine Commands:",
+          "lines": [
+            57,
+            57
+          ]
+        },
+        {
+          "section": "The 4 Routine Commands:",
+          "lines": [
+            59,
+            59
+          ]
+        },
+        {
+          "section": "4. Coding with AI Assistants (Cursor, Claude, Cline & Friends)",
+          "lines": [
+            86,
+            86
+          ]
+        },
+        {
+          "section": "5. Visual Dashboards & Terminal UI",
+          "lines": [
+            102,
+            102
+          ]
+        },
+        {
+          "section": "5. Visual Dashboards & Terminal UI",
+          "lines": [
+            108,
+            108
+          ]
+        },
+        {
+          "section": "SLSA Attestation & Security Suite (Phase 50)",
+          "lines": [
+            165,
+            165
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/V0_2_SCOPE.md",
+      "sha256": "4cc908b7caf42bffd9167c6621f47358f14da2a405f8a54de66315fda9177614",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 83,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/VERSIONING.md",
+      "sha256": "528bf5e3bd13e868b3985883213e6585a4d63cf3173c88ce4bfd5dc298a487ac",
+      "audience": "contributor/maintainer",
+      "authority": "current requirements and guidance; historical evidence distinguished from current acceptance",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 41,
+      "changed_sections": [],
+      "semantic_evidence": [
+        "Package pins/Python range checked against pyproject.toml. Current CLI help checked; CI/install/staged-byte defects linked to F26-F29/F42 instead of being declared repaired. Referenced test names are evidence locations, not newly executed suites."
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "src/rush/cli.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": "Retained current policy/navigation statements; local linked targets exist and applicable source/registration evidence above supports scope.",
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/VIBECODING.md",
+      "sha256": "5a9e5751cdc5442904a480f03d08156ea50a312cb422ee6cf86fe7cf708c821f",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 100,
+      "changed_sections": [
+        {
+          "section": "The Vibecoding Loop with Rush",
+          "lines": [
+            21,
+            22
+          ]
+        },
+        {
+          "section": "The Vibecoding Loop with Rush",
+          "lines": [
+            35,
+            35
+          ]
+        },
+        {
+          "section": "Test Healing for Vibecoders (Phase 47)",
+          "lines": [
+            85,
+            85
+          ]
+        },
+        {
+          "section": "Multi-Agent Swarms for Vibecoders (Phase 49)",
+          "lines": [
+            95,
+            95
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/README.md",
+      "sha256": "4d2787a9c1a53b3fa72a9c32e62f88679585da8f6123d04e09d53e0db49e766a",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 36,
+      "changed_sections": [
+        {
+          "section": "Guides in This Section",
+          "lines": [
+            10,
+            10
+          ]
+        },
+        {
+          "section": "Guides in This Section",
+          "lines": [
+            26,
+            26
+          ]
+        },
+        {
+          "section": "Common Agent Workflows",
+          "lines": [
+            32,
+            33
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/ai-safety-and-sandboxing.md",
+      "sha256": "0f23acd69cf0ad54405722e66711158188b30b1da2652d905b2fef0f9697e15d",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 91,
+      "changed_sections": [
+        {
+          "section": "Recovery does not execute history",
+          "lines": [
+            9,
+            9
+          ]
+        },
+        {
+          "section": "1. Destructive Command Interception",
+          "lines": [
+            17,
+            17
+          ]
+        },
+        {
+          "section": "Verify a proposed command before execution",
+          "lines": [
+            21,
+            22
+          ]
+        },
+        {
+          "section": "Inspect the returned decision; this only checks the supplied string.",
+          "lines": [
+            24,
+            24
+          ]
+        },
+        {
+          "section": "2. Filesystem Boundary Confinement",
+          "lines": [
+            39,
+            39
+          ]
+        },
+        {
+          "section": "Verify path confinement",
+          "lines": [
+            43,
+            43
+          ]
+        },
+        {
+          "section": "Output: [BLOCKED] Path traversal attempt outside workspace boundary.",
+          "lines": [
+            46,
+            46
+          ]
+        },
+        {
+          "section": "Output: [ALLOWED] Path is contained within project root.",
+          "lines": [
+            52,
+            52
+          ]
+        },
+        {
+          "section": "Planned isolated apply route",
+          "lines": [
+            69,
+            69
+          ]
+        },
+        {
+          "section": "Planned isolated apply route",
+          "lines": [
+            71,
+            73
+          ]
+        },
+        {
+          "section": "Apply a candidate AI patch inside an isolated sandbox",
+          "lines": [
+            78,
+            78
+          ]
+        },
+        {
+          "section": "4. Secret & Credential Redaction",
+          "lines": [
+            84,
+            84
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/anti-hallucination.md",
+      "sha256": "0da9ce1f33de1f2eeec770baf15932566fad280475ce6d0d38cd1aa1e9a5e10f",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 7,
+      "changed_sections": [
+        {
+          "section": "Anti-Hallucination Guardrails (Phase 43)",
+          "lines": [
+            6,
+            6
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/codebase-hygiene-and-ast-merging.md",
+      "sha256": "9ca9e2581992900d4d8668587f4428d4628b49147b86cc6336be625396e4da6a",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 60,
+      "changed_sections": [
+        {
+          "section": "Inspect registered hygiene commands; clean-imports is not registered",
+          "lines": [
+            19,
+            20
+          ]
+        },
+        {
+          "section": "2. Semantic 3-Way AST Merge Resolution",
+          "lines": [
+            34,
+            34
+          ]
+        },
+        {
+          "section": "Resolve merge conflicts between two conflicting source branches",
+          "lines": [
+            47,
+            47
+          ]
+        },
+        {
+          "section": "Why AST Merges Succeed Where Text Merges Fail:",
+          "lines": [
+            53,
+            53
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/codegraph-and-semantic-slicing.md",
+      "sha256": "c29c9ef8aad5b09298d0cb253ecb3fd945674d0d01e99b1585fed502d397f33a",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 70,
+      "changed_sections": [
+        {
+          "section": "CodeGraph & Semantic Slicing",
+          "lines": [
+            5,
+            5
+          ]
+        },
+        {
+          "section": "Illustrative output shape (not captured runtime evidence):",
+          "lines": [
+            18,
+            18
+          ]
+        },
+        {
+          "section": "Explore symbol definitions across the workspace",
+          "lines": [
+            43,
+            43
+          ]
+        },
+        {
+          "section": "Illustrative caller tree (not captured runtime evidence):",
+          "lines": [
+            46,
+            46
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/governance-and-multi-ide-rules.md",
+      "sha256": "0c777c4a38f61b8fa637689126eea322eb543eadf51b9604cbf96ebb586254e4",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 62,
+      "changed_sections": [
+        {
+          "section": "2. Compiling Rules Across All IDEs",
+          "lines": [
+            21,
+            21
+          ]
+        },
+        {
+          "section": "3. Subagent Boundary Guard",
+          "lines": [
+            39,
+            39
+          ]
+        },
+        {
+          "section": "Scaffold canonical AGENTS.md and rush.toml templates",
+          "lines": [
+            54,
+            54
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/multi-model-consensus-and-scoring.md",
+      "sha256": "c00b9e5a5ecd0517aab6b2c267a178e9f9d03f5792866672ac1e140830578894",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 67,
+      "changed_sections": [
+        {
+          "section": "1. Multi-Model Consensus Reconciliation",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "Reconcile multi-model AI findings from JSON reports",
+          "lines": [
+            23,
+            23
+          ]
+        },
+        {
+          "section": "Reconcile multi-model AI findings from JSON reports",
+          "lines": [
+            26,
+            27
+          ]
+        },
+        {
+          "section": "2. The 6-Pillar Repository Health Scorecard",
+          "lines": [
+            33,
+            33
+          ]
+        },
+        {
+          "section": "Combine supplied pillar values; defaults are not measured repository health",
+          "lines": [
+            36,
+            36
+          ]
+        },
+        {
+          "section": "Generate SVG badge for README",
+          "lines": [
+            56,
+            56
+          ]
+        },
+        {
+          "section": "score pr-card is not registered; inspect current output options",
+          "lines": [
+            58,
+            59
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/patch-remediation-and-memory.md",
+      "sha256": "e2423d54414edd11af96fb4ae400f102dabf735746be9b7fce6bf95292483ef0",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 106,
+      "changed_sections": [
+        {
+          "section": "1. Closed-Loop Patch Remediation",
+          "lines": [
+            19,
+            21
+          ]
+        },
+        {
+          "section": "Accepted future patch commands — not registered",
+          "lines": [
+            47,
+            47
+          ]
+        },
+        {
+          "section": "Accepted future patch commands — not registered",
+          "lines": [
+            49,
+            49
+          ]
+        },
+        {
+          "section": "Cryptographic Context Boundary Framing",
+          "lines": [
+            83,
+            83
+          ]
+        },
+        {
+          "section": "Benefits for Humans & Agents",
+          "lines": [
+            97,
+            97
+          ]
+        },
+        {
+          "section": "Benefits for Humans & Agents",
+          "lines": [
+            99,
+            99
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/plugins-and-agent-skills.md",
+      "sha256": "af2c4c2a52525980243070f5b4de07da4ce13d8ed54c0712f0e32c8b592e0adf",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 115,
+      "changed_sections": [
+        {
+          "section": "Plugins & Agent Skills",
+          "lines": [
+            5,
+            5
+          ]
+        },
+        {
+          "section": "2. Declaring a Custom Plugin",
+          "lines": [
+            40,
+            41
+          ]
+        },
+        {
+          "section": "List all configured plugins",
+          "lines": [
+            47,
+            47
+          ]
+        },
+        {
+          "section": "Execute a specific plugin",
+          "lines": [
+            50,
+            50
+          ]
+        },
+        {
+          "section": "3. Exporting Agent Skills",
+          "lines": [
+            59,
+            59
+          ]
+        },
+        {
+          "section": "3. Exporting Agent Skills",
+          "lines": [
+            61,
+            61
+          ]
+        },
+        {
+          "section": "Agent Invocation & Cache Integration (Phase 57)",
+          "lines": [
+            86,
+            87
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            91,
+            91
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            112,
+            112
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/pre-commit-intelligence.md",
+      "sha256": "3995124e798657d6cc0712e2ac8b97bdb4767768479367e834b4246a78f8044f",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 49,
+      "changed_sections": [
+        {
+          "section": "Pre-Commit Intelligence & Hook Guard",
+          "lines": [
+            5,
+            5
+          ]
+        },
+        {
+          "section": "Existing checks (not a latency guarantee):",
+          "lines": [
+            18,
+            18
+          ]
+        },
+        {
+          "section": "2. Trojan Source & Invisible Unicode Detection",
+          "lines": [
+            29,
+            29
+          ]
+        },
+        {
+          "section": "Scan for Trojan Source Unicode exploits",
+          "lines": [
+            33,
+            33
+          ]
+        },
+        {
+          "section": "3. Cryptographic Hook Tamper Guard",
+          "lines": [
+            42,
+            42
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/token-economy-and-context.md",
+      "sha256": "95a4c47a922f9b39d70f7798130241eba4e32e70f7749daf6b25dca7175c06d0",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 86,
+      "changed_sections": [
+        {
+          "section": "Compare token density across your workspace",
+          "lines": [
+            28,
+            28
+          ]
+        },
+        {
+          "section": "Illustrative compression comparison (not a current benchmark)",
+          "lines": [
+            46,
+            46
+          ]
+        },
+        {
+          "section": "3. Prompt Diet & Context Advisor",
+          "lines": [
+            70,
+            70
+          ]
+        },
+        {
+          "section": "Inspect currently registered prompt operations",
+          "lines": [
+            73,
+            74
+          ]
+        },
+        {
+          "section": "Inspect currently registered prompt operations",
+          "lines": [
+            79,
+            79
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/agentic-rush/token-efficiency.md",
+      "sha256": "69cb5735f0ce8295b8a40cbd2a912def1a59f5b649dda37bcc0a4f136ca37968",
+      "audience": "user",
+      "authority": "current guidance/navigation with planned requirements labelled",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 34,
+      "changed_sections": [
+        {
+          "section": "Test Healing Efficiency",
+          "lines": [
+            19,
+            19
+          ]
+        },
+        {
+          "section": "Complete Token Economy Architecture",
+          "lines": [
+            34,
+            34
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Entire text reviewed via context-mode; current runnable shell examples checked against Click registration/help. Navigation links checked for local target existence; accepted unavailable routes labelled planned or historical, and current safety caveats reference F01-F43."
+      ],
+      "source_paths": [
+        "src/rush/cli.py",
+        "src/rush/catalog.py",
+        "src/rush/review/llm.py",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [
+        "tests/test_sync_docs.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/benchmarking-report.md",
+      "sha256": "24c10aef58a83d7d83e86d19ff48ec258845717ef711ca758f2a49615051dba7",
+      "audience": "maintainer/research",
+      "authority": "historical body retained; current-status preface links planned implementation",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 204,
+      "changed_sections": [
+        {
+          "section": "Current-status preface",
+          "lines": [
+            1,
+            2
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Original body compared byte-for-byte with HEAD; SHA256 preserved. Current status is not completion evidence."
+      ],
+      "source_paths": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": "4a68f1a1020418239079f7e952ed6dae49056737f491e8d306dcd8293928af60"
+    },
+    {
+      "path": "docs/innovation-enhancement-funcionality-report.md",
+      "sha256": "4f536be8872304b38a1fd94b78bd6c27cd10ea0de6737893585899a45aa75612",
+      "audience": "maintainer/research",
+      "authority": "historical body retained; current-status preface links planned implementation",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 1165,
+      "changed_sections": [
+        {
+          "section": "Current-status preface",
+          "lines": [
+            1,
+            2
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Original body compared byte-for-byte with HEAD; SHA256 preserved. Current status is not completion evidence."
+      ],
+      "source_paths": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": "886b774ca0d086b041cf6439ebe0991ae78ebea1da5ec9057c84d010559e403a"
+    },
+    {
+      "path": "docs/innovation-enhancement-report.md",
+      "sha256": "05c526d67f279a39e15c76024fca78052b55201d35cd832e0f4dd761ec1c44d1",
+      "audience": "maintainer/research",
+      "authority": "historical body retained; current-status preface links planned implementation",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 1015,
+      "changed_sections": [
+        {
+          "section": "Current-status preface",
+          "lines": [
+            1,
+            2
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Original body compared byte-for-byte with HEAD; SHA256 preserved. Current status is not completion evidence."
+      ],
+      "source_paths": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": "e697ff24918a0849de010053f3786310e6706b39207645b0726a9620c2b5065a"
+    },
+    {
+      "path": "docs/rush-token-innovation-enhancement-report-plan.md",
+      "sha256": "39b0956d0e10257dee44d4b065f1f7c69e4539676358bebd7e676bde707d5afc",
+      "audience": "maintainer/research",
+      "authority": "historical body retained; current-status preface links planned implementation",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 3020,
+      "changed_sections": [
+        {
+          "section": "Current-status preface",
+          "lines": [
+            1,
+            2
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Original body compared byte-for-byte with HEAD; SHA256 preserved. Current status is not completion evidence."
+      ],
+      "source_paths": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": "0739a1ea31a5fd59e5789282fd766fbd4d55686d3b532df001db7e50f8c2c3d7"
+    },
+    {
+      "path": "docs/safety/permissions.md",
+      "sha256": "5e8c39baae70ca82ab77bbb11f23e311fcea3753e6f6f94017c1b0f9c3c58e39",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 92,
+      "changed_sections": [
+        {
+          "section": "Provider continuation permission",
+          "lines": [
+            7,
+            7
+          ]
+        },
+        {
+          "section": "Execution Metadata",
+          "lines": [
+            21,
+            21
+          ]
+        },
+        {
+          "section": "Physical Containment on Artifact Writes (Phase 55)",
+          "lines": [
+            57,
+            57
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            68,
+            68
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            89,
+            89
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/safety/privacy-and-data-handling.md",
+      "sha256": "58fcc448e9f5b0a37ff69027ed7b8f69b7e0db2b7930ebfe6280d6a065f3474f",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 83,
+      "changed_sections": [
+        {
+          "section": "Local behavior",
+          "lines": [
+            13,
+            13
+          ]
+        },
+        {
+          "section": "Model behavior",
+          "lines": [
+            23,
+            23
+          ]
+        },
+        {
+          "section": "End-to-End Recursive Sanitization (Phase 53)",
+          "lines": [
+            40,
+            40
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            59,
+            59
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            80,
+            80
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/safety/safety-overview.md",
+      "sha256": "21bd8a6bb7bf16e8452c9205d20b80022421f5e060fcd1b8cb31790340631c40",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 66,
+      "changed_sections": [
+        {
+          "section": "Historical recovery evidence",
+          "lines": [
+            7,
+            7
+          ]
+        },
+        {
+          "section": "Historical recovery evidence",
+          "lines": [
+            11,
+            11
+          ]
+        },
+        {
+          "section": "Historical recovery evidence",
+          "lines": [
+            14,
+            14
+          ]
+        },
+        {
+          "section": "Invocation & Parity Safety Summary (Phase 57)",
+          "lines": [
+            38,
+            38
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            42,
+            42
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            63,
+            63
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/safety/security-model.md",
+      "sha256": "494ff5c8eb9e45d5b36e492c7fc361d43cc1f51aee476e6fee3ce7fcf3e15c75",
+      "audience": "user/security reviewer",
+      "authority": "current component contracts with explicit open defects and planned repair",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 98,
+      "changed_sections": [
+        {
+          "section": "The 7 Defensive Controls",
+          "lines": [
+            30,
+            30
+          ]
+        },
+        {
+          "section": "The 7 Defensive Controls",
+          "lines": [
+            36,
+            36
+          ]
+        },
+        {
+          "section": "Required core invariants (current exceptions above)",
+          "lines": [
+            40,
+            40
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            74,
+            74
+          ]
+        },
+        {
+          "section": "Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification",
+          "lines": [
+            95,
+            95
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Current boundary exceptions matched against F01-F08/F43 and source-referenced runtime findings; provider behavior checked against review/llm.py and registered help."
+      ],
+      "source_paths": [
+        "src/rush/tools/fix.py",
+        "src/rush/patch/sandbox.py",
+        "src/rush/memory/checkpoint_journal.py",
+        "src/rush/dashboard/server.py",
+        "src/rush/review/llm.py"
+      ],
+      "test_paths": [
+        "tests/test_permissions.py"
+      ],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": null
+    },
+    {
+      "path": "docs/token-reduction-innovation-report.md",
+      "sha256": "261e27aa8d5f0a084ad59a701fa8da1c973391a0b7fac2e57a8b214535b69898",
+      "audience": "maintainer/research",
+      "authority": "historical body retained; current-status preface links planned implementation",
+      "full_read": true,
+      "read_method": "context-mode full text indexed plus targeted section review",
+      "read_lines": 1013,
+      "changed_sections": [
+        {
+          "section": "Current-status preface",
+          "lines": [
+            1,
+            2
+          ]
+        }
+      ],
+      "semantic_evidence": [
+        "Original body compared byte-for-byte with HEAD; SHA256 preserved. Current status is not completion evidence."
+      ],
+      "source_paths": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "test_paths": [],
+      "unchanged_evidence": null,
+      "asset_owner": "P64-00 core-doc worker",
+      "historical_body_sha256": "eb840619bcb9f987d5901b70e7bd2914dec12fd129f818ad57359ab028c50f5f"
+    }
+  ],
+  "validation": {
+    "current_shell_example_commands_checked": 187,
+    "current_shell_unknown_command_or_long_option": 0,
+    "relative_link_targets_checked": 410,
+    "missing_relative_link_targets": 0,
+    "toml_fences_parsed": 6,
+    "historical_bodies_preserved": 5,
+    "git_diff_check": "passed",
+    "runtime_registration": {
+      "cli_paths_including_groups": 161,
+      "cli_leaves": 135,
+      "mcp_names": 74,
+      "catalog_tools": 53
+    },
+    "limits": [
+      "CLI lexical check covers runnable shell fences, not every inline prose tuple or argument value.",
+      "Relative-link check covers local path existence; root integration checker owns heading anchors and recursive coverage.",
+      "No engine workload, unsafe fix/cleanup, real provider, browser, platform installation or release run was executed for this documentation correction.",
+      "Semantic receipts reference existing source/test locations; referenced test suites were not executed by this worker.",
+      "Source_state will be supplied by root when generating integrated coverage report."
+    ]
+  }
+}

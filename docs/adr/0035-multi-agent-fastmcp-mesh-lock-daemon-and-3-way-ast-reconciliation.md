@@ -1,3 +1,5 @@
+Current status: historical decision; The daemon and semantic-reconciliation outcomes remain accepted design requirements. Current public routes and lock/merge limits are documented in [multi-agent mesh and traceability](../workflows/multi_agent_mesh_and_traceability.md); this ADR does not establish a registered `rush mcp mesh` command or the claimed 3x–5x velocity and collision-free execution.
+
 # ADR-0035: Multi-Agent FastMCP Mesh Lock Daemon and 3-Way AST Reconciliation
 
 ## Status

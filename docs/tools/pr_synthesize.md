@@ -1,7 +1,7 @@
 # Semantic PR Card Synthesizer (`rush pr-synthesize`)
 
 ## Overview
-`rush pr-synthesize` aggregates Git diff statistics, changed file classifications, and quality/security verification evidence into a structured, production-ready GitHub Pull Request description card. Exporting the card to a file is permission-gated under `--allow-artifact-write`.
+`rush pr-synthesize` aggregates Git diff statistics, changed file classifications, and quality/security evidence into a PR description card. MCP exposes `base_ref` and permission-gated `export_path`; current CLI exposes neither flag.
 
 ## Classification
 - **Category**: `workflow`
@@ -24,23 +24,21 @@
 
 ### Basic Synthesis (Against main)
 ```bash
-rush pr-synthesize .
+uv run rush pr-synthesize .
 ```
 
-### Synthesis Against Specific Base Branch
-```bash
-rush pr-synthesize . --base-ref origin/main
-```
+### Synthesis against a specific base
+
+Use MCP `base_ref`. Current CLI has no `--base-ref` option.
 
 ### JSON Wire Format
 ```bash
-rush pr-synthesize . --json
+uv run rush pr-synthesize . --json
 ```
 
-### Export PR Card to File
-```bash
-rush pr-synthesize . --export-path .rush/PR_CARD.md --allow-artifact-write
-```
+### Export PR card
+
+Use MCP `export_path` with `allow_artifact_write=true`. Current CLI has no `--export-path` option.
 
 ## FastMCP Usage
 ```json
@@ -49,6 +47,7 @@ rush pr-synthesize . --export-path .rush/PR_CARD.md --allow-artifact-write
   "arguments": {
     "path": ".",
     "base_ref": "main",
+    "export_path": null,
     "allow_artifact_write": false
   }
 }

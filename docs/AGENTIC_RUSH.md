@@ -32,6 +32,8 @@ Agentic Rush provides a complete, local, zero-network-dependency suite of tools 
 
 ## Visual Overview: The Agentic Workflow Loop
 
+Status: planned — this complete autonomous patch/agent journey remains required in [P64-04](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) and [Phase 65](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md). Current sandbox fallback and rollback are unsafe (F05/F43); the sequence below is design intent, not a working end-to-end route.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -43,8 +45,8 @@ sequenceDiagram
     Human->>Agent: Prompt: "Refactor auth and add rate limiting"
     Agent->>Rush: rush codegraph slice "AuthService"
     Rush-->>Agent: Returns 40-line verbatim symbol slice (saving 95% tokens)
-    Agent->>Rush: rush safety check-cmd "git clean -fdx"
-    Rush-->>Agent: [ALLOWED] Command validated against safety policy
+    Agent->>Rush: rush guard check-cmd "git clean -fdx"
+    Rush-->>Agent: Inspect returned guard decision; do not assume permission
     Agent->>Rush: Propose diff patch
     Rush->>Rush: Apply in isolated git worktree sandbox
     Rush->>Rush: Run syntax checks, linters & tests
@@ -101,7 +103,7 @@ Give your AI agent superpowers in two minutes:
    }
    ```
 3. **Prompt your agent**:
-   > *"Before writing code, use `rush_codegraph_slice` to inspect the target function. After editing, verify your changes with `rush_check` and `rush_tdd`."*
+   > *"Before writing code, use CLI `rush codegraph slice` to inspect the target function. After editing, verify your changes with `rush_check` and `rush_tdd`."*
 
 ## Context Diet & Grounding Protocols for Agents (Phases 41–43)
 1. **Token Diet**: Use `rush_token_outline` to read AST signatures before loading full files.
@@ -138,7 +140,7 @@ Give your AI agent superpowers in two minutes:
 
 
 ## Agent Protocols for Security & Release (Phase 50)
-1. **Provenance**: Call `rush_attest_generate()` to produce SLSA build provenance.
+1. **Provenance**: Call `rush_attest` to produce SLSA build provenance.
 2. **Compliance**: Call `rush_license_matrix()` to ensure no viral licenses are added.
 3. **IAM Safety**: Call `rush_iam_audit()` to synthesize minimal cloud permissions.
 4. **PR Cards**: Call `rush_pr_synthesize()` to generate release notes.

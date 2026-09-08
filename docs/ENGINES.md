@@ -1,5 +1,7 @@
 # Engine directory
 
+Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).
+
 An **engine** is an optional helper executable Rush knows how to call. Rush does not install engines. Applicability is based on file extensions and project markers; an absent engine produces `skipped` with an install hint.
 
 Python install commands work on Windows, macOS, and Linux inside an appropriate Python environment. npm commands are cross-platform when Node/npm is installed. For standalone binaries, use the upstream project's release instructions for your platform; Rush's catalog intentionally says `install ...` rather than inventing an unverified package-manager command.

@@ -24,7 +24,7 @@ flowchart LR
 Before you prompt your AI model to modify a complex feature, don't dump the whole 3,000-line repository into the chat. Instead, use Rush's CodeGraph to slice out just the target function:
 
 ```bash
-rush codegraph slice "PaymentService.process_checkout"
+uv run rush codegraph slice "PaymentService.process_checkout"
 ```
 
 Rush returns a clean, 25-line verbatim snippet with line numbers.
@@ -79,10 +79,10 @@ Your AI sees the exact file, line number, and compiler message, immediately apol
 When you finish your session:
 ```bash
 # Verify the entire gate suite before committing
-rush gate .
+uv run rush gate .
 
 # Generate a PR quality scorecard
-rush score pr-card
+uv run rush score compute
 ```
 
 You just built and tested a complete, production-ready feature in 10 minutes flat!
@@ -99,16 +99,16 @@ You just built and tested a complete, production-ready feature in 10 minutes fla
 Before opening a PR or tagging a release:
 ```bash
 # 1. Purge scratch debris
-rush ship clean
+uv run rush ship clean
 
 # 2. Check environment variable parity
-rush ship env
+uv run rush ship env
 
 # 3. Verify documentation links
-rush ship docs
+uv run rush ship docs
 
 # 4. Run the full 7-vector Ship Gate Cockpit
-rush ship gate
+uv run rush ship gate
 ```
 
 ## Blast Radius in Vibecoding Workflow (Phase 46)

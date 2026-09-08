@@ -38,7 +38,7 @@ jobs:
       - name: Run Rush Checks
         run: |
           uv run rush review . --json
-          uv run rush lint . --check --json
+          uv run rush lint . --json
           uv run rush format . --check --json
           uv run rush security . --json
           uv run rush test . --json

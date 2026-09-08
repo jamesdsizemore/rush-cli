@@ -6,6 +6,8 @@ The catalogued `SessionContinuityTool` owns local checkpoint behavior. `cli.py` 
 
 Rush is a Python 3.12 package with two transports and one implementation layer. Click CLI commands and FastMCP tools invoke the same objects from `src/rush/tools/`; external programs are isolated behind adapters in `src/rush/engines/`.
 
+Current status: this is a component inventory. Runtime correctness repairs in [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) remain planned until their named tests and live checks pass; presence of a component below is not completion evidence for those repairs.
+
 ```mermaid
 flowchart TB
   Catalog[src/rush/catalog.py] --> CLI[Click command generation]
@@ -14,7 +16,7 @@ flowchart TB
   MCP --> Tools
   Config[rush.toml discovery] --> Tools
   Tools --> Routing[language/applicability + aggregation]
-  Routing --> Adapters[engine adapters - 86 total]
+  Routing --> Adapters[121 registered engine adapters]
   Adapters --> Proc[bounded subprocess; stdin DEVNULL]
   Proc --> Normalize[canonical ToolResult]
   Normalize --> SARIF[src/rush/sarif.py SARIF 2.1.0]
@@ -26,7 +28,7 @@ flowchart TB
 
 ## Core contracts
 
-- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Tests enforce parity across all 52 tools and 124 engines.
+- `TOOL_SPECS` and `ENGINE_SPECS` are declarative metadata; `ALL_TOOLS` and `ENGINES` are executable registries. Current registries contain 53 tools and 121 engines; `scripts/sync_docs.py --check` records CLI, MCP and catalog contracts from live registrations.
 - `ToolFn.run(path, *, config, ...)` is the internal execution surface. `ToolFn.__call__` is MCP-facing and must expose only JSON-schema-safe parameters.
 - ToolResult required keys are `tool`, `engine`, `engine_version`, `status`, `duration_ms`, `summary`, `findings`, and `raw`; optional extensions include metrics, artifacts, metadata, and review fields.
 - A missing optional executable returns `skipped`; it must not raise or install anything.
@@ -45,7 +47,7 @@ flowchart TB
 - **Polyglot Monorepo Scoping (Phase 26)**:
   - Deterministic workspace topology discovery (`src/rush/discovery/workspace.py`) for npm, pnpm, yarn, Cargo, and Turborepo with strict path containment.
 - **Authenticated In-Memory Web Dashboard & Rich TUI (Phase 27)**:
-  - Single-binary zero-dependency local HTTP server (`src/rush/dashboard.py`) binding exclusively to `127.0.0.1` with ephemeral `X-Rush-Auth` tokens, DNS rebinding prevention, and CSRF Origin validation.
+  - Local HTTP server (`src/rush/dashboard/`) binding exclusively to `127.0.0.1` with ephemeral `X-Rush-Auth` tokens, DNS rebinding prevention, and CSRF Origin validation.
   - Interactive terminal finding explorer (`src/rush/tui.py`) built with Rich layouts.
 - **Trust-Gated Dynamic Plugin Runtime (Phase 28)**:
   - Declarative script plugin execution (`src/rush/plugins/`) with local repository trust verification (`~/.rush/trusted_repositories.json`) preventing arbitrary code execution in untrusted checkouts.
@@ -229,7 +231,7 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 - Dynamic version resolution authority (`rush.__version__`) resolving via `importlib.metadata.version("rush-cli")`.
 
 ### Phase 53 Architecture: AST Redaction & Write Boundaries
-- Bounded recursive syntax-aware secret sanitization kernel (`src/rush/contracts/sanitization.py`).
+- Bounded recursive secret sanitization kernel (`src/rush/safety/redactor.py`) and sanitized atomic-write contracts (`src/rush/io/atomic_file.py`).
 - Pre-truncation output redaction and fail-closed unsupported object protection.
 - Diagnostic NDJSON exception logging to stderr with credential masking (resolving R-002, R-008).
 

@@ -1,0 +1,50 @@
+{
+  "task": "P64-00 MCP_REFERENCE live-schema correction",
+  "baseline": "997b56e64bb2f72688cdd34252227a596f0fdb3d",
+  "supersedes": ".scratch/p6400-user-doc-evidence.json entry for docs/MCP_REFERENCE.md only",
+  "file": {
+    "path": "docs/MCP_REFERENCE.md",
+    "sha256": "9b96aad32a1cf060cff56186e72ac8eb93eb72e933e182acc80d35574bb51e7b",
+    "audience": "MCP clients, users, and maintainers",
+    "authority": "current"
+  },
+  "corrected_sections": [
+    {
+      "section": "Inputs",
+      "lines": "43-50",
+      "evidence": "Corrected rush_format check default, rush_sbom output_path name, rush_snapshot required opaque options, and permission defaults from live FastMCP schemas."
+    },
+    {
+      "section": "Phase 41-43 FastMCP Tool Additions",
+      "lines": "78-100",
+      "evidence": "Compared every registered signature. Added rush_context_retrieve path='.', rush_context_pack allow_cache_write=false, and mesh capability=None fields required by live schemas."
+    },
+    {
+      "section": "Phase 50a FastMCP Tool Additions",
+      "lines": "104-121",
+      "evidence": "Replaced stale fields and defaults for attest and alias, license_matrix, iam_audit, prompt_eval, provenance_ai, mem_profile, cold_start, media_opt, offline_review, tui_diff, and benchmark. Preserved exact dead_asset, pr_synthesize, and error_catalog schemas. Explicitly labeled unregistered context_skeletonize and context_cache_manifest names historical."
+    },
+    {
+      "section": "FastMCP Route Reconciliation and Governance",
+      "lines": "124-126",
+      "evidence": "Current live registration is 74 names; live registry and generated reference identified as callable-surface authority."
+    }
+  ],
+  "schema_comparison": {
+    "authority_command": "uv run python using scripts.sync_docs.collect_runtime_contracts(Path.cwd())['mcp']",
+    "registered_names": 74,
+    "documented_registered_signatures_checked": 35,
+    "signature_mismatches_after_correction": 0,
+    "complete_name_block_missing": [],
+    "complete_name_block_extra": [],
+    "explicit_historical_unregistered_names": [
+      "rush_context_skeletonize",
+      "rush_context_cache_manifest"
+    ]
+  },
+  "verification": {
+    "git_diff_check": "PASS",
+    "hash_verified_against_current_bytes": true,
+    "remaining_blockers": []
+  }
+}

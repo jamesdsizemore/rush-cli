@@ -1,3 +1,5 @@
+Current status: historical decision; The perturbation and verified-repair requirements remain unimplemented by the current repeated-pytest path, which guesses classification and emits a comment-only patch ([application review F12](../reports/phase-64-66-application-review.md)). [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) requires genuine perturbation, diagnosis, and verified repair; the safety/completion consequences below are not current behavior.
+
 # ADR-0034: Autonomous Flaky Test Stress Perturbation and Self-Healing
 
 ## Status

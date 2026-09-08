@@ -8,15 +8,15 @@ The `provider_resume` operation accepts a checkpoint name and supported provider
 
 Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional checkpoint `name`, `files`, and `allow_cache_write`. The result is canonical JSON, with denied writes and absent checkpoints represented by `status: "skipped"`.
 
-`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Tool names include hyphens where the command does, for example `rush_semantic-drift` and `rush_ai-eval`.
+`uv run rush mcp serve` registers each catalog tool through the shared invocation executor. Catalog hyphens become underscores in MCP names, for example `rush_semantic_drift` and `rush_ai_eval`.
 
 ## Common result
 
-Every tool returns canonical `ToolResultV1` data (`schema_version: "1.0.0"`) documented in [Result reference](result-reference.md), featuring canonical finding severities (`info`, `warning`, `error`). Service operations (such as stdio protocol initializations) remain unwrapped JSON-RPC protocol frames. A missing optional engine is a structured `skipped` result, not an installation request.
+Catalog tools return canonical `ToolResultV1` data (`schema_version: "1.0.0"`) documented in [Result reference](result-reference.md). Service operations remain JSON-RPC protocol frames. Some legacy custom MCP tools still return specialized strings or dictionaries; MCP discovery and each tool's generated schema are authoritative. A missing optional engine in a catalog tool is a structured `skipped` result.
 
 ## Inputs
 
-Most tools accept:
+Catalog wrappers commonly accept `path`, permission flags, and tool-specific options. Defaults are false for permission flags. Inspect the generated MCP schema before invocation; not every tool accepts every field.
 
 ```json
 {
@@ -40,27 +40,14 @@ Special callable options include:
 - `rush_snapshot`: `path`, `accept=false`, `report_path=null`.
 - `rush_ai-eval`: `path`, standard permissions.
 
-## Complete tool names
+## Current tool names
 
-```text
-rush_review, rush_lint, rush_format, rush_test, rush_security,
-rush_typecheck, rush_dead, rush_complexity, rush_slop,
-rush_markdown, rush_actions, rush_yaml, rush_sql, rush_templates,
-rush_containerfile, rush_iac, rush_secrets, rush_sbom,
-rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
-rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
-rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
-rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
-rush_get_patch, rush_apply_fix, rush_session_context, rush_memory,
-rush_guard, rush_token, rush_sync, rush_hygiene, rush_codegraph,
-rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score,
-rush_error_catalog, rush_license_matrix, rush_iam_audit
-```
+At baseline `997b56e`, live `build_server().list_tools()` returns 74 registered tools. Use MCP discovery for the exact current names and input schemas. Fixed copied lists are not completeness evidence because catalog registration and named custom registration can change independently.
 
 ## AI Agent Remediation & Safety Tools (Phases 29–40)
 
 - `rush_get_patch`: Returns unified diff for a finding.
-- `rush_apply_fix`: Safely applies validated unified diffs with path containment and protected file shielding (Control 7).
+- `rush_apply_fix`: Applies validated unified diffs through the current patch path. Invocation-owned restoration remains required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43); do not treat current broad cleanup as safe promotion evidence.
 - `rush_session_context`: Retrieves multi-turn evaluation history framed in `<rush_session_memory>` XML tags.
 - `rush_memory` (Phase 61): `MemoryTool`'s `ask`/`write`/`promote`/`list`/`recall`/`maintain` operations over the unified `TypedArtifactStore`; returns `ToolResultV1` with `status="skipped"` for denied/absent cases, matching the `rush_session_context` precedent — same registration path (`ALL_TOOLS`/`TOOL_SPECS`), not a different shape.
 - `rush_guard`: Validates shell command safety and confines path traversal.

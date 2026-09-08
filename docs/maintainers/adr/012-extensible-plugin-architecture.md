@@ -1,3 +1,5 @@
+Current status: historical decision; Current public plugin commands are `rush plugin list` and `rush plugin run`; automated creation/installation skills below are accepted design requirements rather than a registered public skills route. The content-addressed trust amendment remains the plugin execution contract. See [plugins and agent skills](../../agentic-rush/plugins-and-agent-skills.md) and [Phase 65](../../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
+
 # ADR-012: Extensible Plugin Architecture and AI Agent Plugin Skills
 
 ## Status

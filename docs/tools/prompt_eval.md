@@ -7,16 +7,12 @@
 
 ### CLI
 ```bash
-rush prompt-eval [PATH] [--pass-rate-threshold <float>] [--max-tokens <int>] [--max-cost <float>] [--json]
+uv run rush prompt-eval PATH [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_prompt_eval`
-- **Parameters:**
-  - `path` (str): Path to JSON/JSONL file or directory containing golden evaluation run records.
-  - `pass_rate_threshold` (float, optional): Minimum pass rate required (default: 1.0).
-  - `max_tokens_threshold` (int, optional): Token budget limit.
-  - `max_cost_threshold` (float, optional): Cost budget limit.
+- **Parameters:** required `path` (str), required opaque `options` object, and common permission booleans defaulting to false. Current CLI exposes no threshold options, and current MCP schema does not expose their inner names.
 
 ## Evaluation Criteria
 1. **Sequence Match**: Exact ordered matching of executed tool/step names against golden expectations.

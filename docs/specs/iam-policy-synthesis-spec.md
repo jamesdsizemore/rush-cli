@@ -1,7 +1,7 @@
 # Specification: Least-Privilege Cloud IAM Policy Synthesizer
 
 ## 1. Overview
-`IamAuditTool` (`src/rush/tools/iam_audit.py`) statically inspects source code for cloud SDK calls across AWS (`boto3`), GCP (`google.cloud`), and Azure (`azure.storage`), synthesizing minimal least-privilege JSON IAM policies. It also analyzes Terraform (`.tf`) files to detect dangerous wildcard permissions.
+`IamAuditTool` (`src/rush/tools/iam_audit.py`) statically inspects source code for cloud SDK calls across AWS (`boto3`), GCP (`google.cloud`), and Azure (`azure.storage`) and proposes action policies. It also analyzes Terraform (`.tf`) files for wildcard permissions. An action list using `Resource: "*"` is not a complete least-privilege policy; deployment-specific resource restrictions and unobserved calls require review. [Phase 64 P64-17](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) repairs the hidden-parent traversal gap so skipped coverage cannot be presented as a clean audit.
 
 ## 2. Multi-Cloud SDK Static Inspection
 1. **AWS SDK (`boto3`, `botocore`)**:
@@ -39,14 +39,14 @@
 
 ## 5. Security & Confinement
 - Analysis is 100% offline static AST parsing with zero network calls or credentials required.
-- Exporting policy JSON to disk via `--output-policy-file` / `--export-path` requires explicit `--allow-artifact-write` permission and path traversal validation.
+- Exporting policy JSON uses CLI `--output` or MCP `output_policy_file` and requires explicit `allow_artifact_write` permission plus path traversal validation. CLI `--output-policy-file` and `--export-path` are not registered.
 
 ## 6. CLI & FastMCP Contracts
 - **CLI**:
   ```bash
-  rush iam-audit [PATH] [--output <policy.json>] [--allow-artifact-write] [--json]
+  rush iam-audit . --output policy.json --allow-artifact-write --json
   ```
 - **FastMCP Tool**:
   ```python
-  rush_iam_audit(path=".", output_policy_file=None, allow_artifact_write=False)
+  rush_iam_audit(path=".", output_policy_file="", allow_artifact_write=False)
   ```

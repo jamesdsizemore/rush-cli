@@ -1,3 +1,5 @@
+Current status: historical decision; The storage-layer supersession remains [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md). Revert-derived records are heuristic evidence, not proof of causal truth or guaranteed regression prevention; [mistake-memory workflow](../workflows/bi-temporal-mistake-pre-mortem.md) documents current behavior and [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) governs remaining memory capabilities.
+
 # ADR-0041: Bi-Temporal Git-Revert Mistake Memory Spine
 
 ## Status

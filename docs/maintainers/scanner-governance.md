@@ -42,8 +42,9 @@ grants a browser, network, slow, write, or baseline-changing permission.
   scanner output as a durable Rush store.
 - Imported reports remain user-owned local inputs. Rush does not upload them,
   create a review baseline by default, or silently overwrite a baseline.
-- Direct review uses supplied `changed_files` only. It never obtains a Git diff
-  or change history itself.
+- Review scope must reflect the invoked route: explicit files, staged changes,
+  or a requested Git comparison. Do not assume every review caller supplies
+  `changed_files`; verify the CLI and MCP collection paths for the candidate.
 - A caller may hold an in-memory fingerprint baseline for `new`/`existing`
   comparison. Persisting, replacing, or accepting a baseline requires a future
   explicitly authorized user surface and a containment/overwrite contract.
@@ -70,7 +71,7 @@ may remain `skipped`; they must not be represented as passing evidence.
 
 ## Attribution, Asset Hygiene & PR Card Governance (Phase 50b)
 - **Provenance AI**: Zero Git mutations; strictly reads commit history.
-- **Dead Asset**: Strictly read-only analysis by default. Pruning requires explicit `--prune` and `--allow-artifact-write` with SHA-256 pre-deletion validation.
+- **Dead Asset**: Analysis is read-only by default. No `--prune` CLI flag is registered. Preserve the requirement for explicit authorization and SHA-256 pre-deletion validation before implementing any future pruning route; current MCP `export_manifest` writes a report, not asset deletion.
 - **PR Synthesize**: Offline diff extraction, risk tier computation, and CODEOWNERS routing with zero network calls.
 
 ## Performance Profiling, Offline Review & Provenance Governance (Phase 50c)

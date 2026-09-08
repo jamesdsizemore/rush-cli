@@ -45,10 +45,10 @@ jobs:
       - name: TDD Guard
         run: uv run rush tdd . --json > tdd_results.json
 
-      - name: Code Review Heuristics & Reports
+      - name: Code Review Heuristics
         run: |
-          uv run rush review . --export-html review.html --export-sarif review.sarif --json > review_results.json
-          uv run rush security . --export-sarif security.sarif --json > security_results.json
+          uv run rush review . --json > review_results.json
+          uv run rush security . --export-sarif security.sarif --allow-artifact-write --json > security_results.json
 
       - name: Upload Security SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
@@ -57,15 +57,8 @@ jobs:
           sarif_file: security.sarif
           category: rush-security
 
-      - name: Upload Review HTML Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: rush-review-report
-          path: review.html
-
       - name: Linting & AST Analysis
-        run: uv run rush lint . --check --json > lint_results.json
+        run: uv run rush lint . --json > lint_results.json
 
       - name: Modular Architecture & Slop Audits
         run: |

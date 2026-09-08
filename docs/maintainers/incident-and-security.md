@@ -20,9 +20,9 @@ The following events are treated as high-priority security incidents:
 2. **Containment**: If vulnerability is reproducible, isolate the affected engine adapter.
 3. **Synthetic Reproduction**: Create sanitized unit tests that reproduce the vulnerability without real credentials.
 4. **Fix & Redaction Verification**: Implement fix using strict subprocess isolation and regex redaction.
-5. **Regression Testing**: Run `pytest tests/ -q` and verify all security reference test suites.
-6. **Security Advisory & CVE**: Publish GitHub Security Advisory with remediation steps.
-7. **Release Patch**: Bump patch version and publish updated wheel.
+5. **Regression Testing**: Run `uv run --python 3.12 --extra dev python -m pytest tests/ -q` and verify all security reference test suites.
+6. **Security Advisory & CVE**: Prepare a private advisory with remediation steps; publish only with explicit authorization.
+7. **Release Patch**: Verify the patch and release artifacts. Version changes and publication require explicit authorization.
 
 See [Security Policy](../SECURITY.md) and [Permissions](../safety/permissions.md).
 
@@ -42,12 +42,12 @@ Maintainers must verify that all newly added tools, exports, and logging calls c
 - **Non-Recoverable Capability Storage**: Stored tokens, locks, or trust credentials must never persist raw secrets. All capability verification must use `VerifierRecord` (`src/rush/io/verifier_record.py`) storing only PBKDF2-HMAC-SHA256 salted hashes with constant-time verification.
 
 ### Plugin Trust Breach Triage (Phase 56)
-If a malicious plugin closure is detected, run `rush trust plugin <name> --revoke` immediately. The user ledger will purge the capability record and delete the snapshot directory.
+If a malicious plugin closure is detected, preserve incident evidence and run `rush trust --plugin PLUGIN_NAME --revoke`, replacing `PLUGIN_NAME` with the affected plugin. Verify the resulting trust state; do not assume revocation deletes every plugin snapshot or running process.
 
 ## Cache & Egress Incident Procedures (Phase 57)
 
 If cache poisoning is suspected:
-1. Purge cache with `rush cache clear` or remove the SQLite database.
+1. Preserve the suspected cache as incident evidence, then run `rush cache clean` from the affected repository. This clears the result cache; do not delete the separate `.rush/memory.db` memory store as a cache remedy.
 2. Verify provider API keys and review egress logs for unauthorized redirect attempts.
 
 ## Memory Store Incident Triage (Phase 61)
@@ -77,9 +77,9 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Failed promotion can invoke destructive Git cleanup. Exact preservation of arbitrary working-tree state is not established: review the open rollback and dry-run findings in the [application review](../reports/phase-64-66-application-review.md), preserve incident evidence, and verify the Phase 64 repair before relying on rollback.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
-   - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+   - Reconcile live registrations with `governance/public-operations.toml` and exercise `ToolOperationAdapter`, `AdminOperationAdapter` and `ServiceOperationAdapter` at their runtime boundaries. Manifest declarations alone do not establish enforcement; stdio output must preserve JSON-RPC service messages.
 ### Supply Chain & Provenance Incidents (Phase 59)
 Invalid signatures, duplicate key attempts, or untrusted builders raise `ProvenanceError` and abort execution.

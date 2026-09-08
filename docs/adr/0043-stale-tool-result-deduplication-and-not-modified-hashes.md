@@ -1,3 +1,5 @@
+Current status: historical decision; Local stale-result and continuity-hash utilities cannot themselves rewrite an external agent's existing conversation history. The automatic sweeping and 60–80% savings consequences below require integration and measurement; [token economy and context](../agentic-rush/token-economy-and-context.md) and [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) define current limits and remaining work.
+
 # ADR-0043: Stale Tool Result Deduplication and Continuity Hashes
 
 ## Status

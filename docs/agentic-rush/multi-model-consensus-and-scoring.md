@@ -8,7 +8,7 @@ Rush’s **Consensus & Scorecard Subsystem** (`rush consensus`, `rush score`) re
 
 ## 1. Multi-Model Consensus Reconciliation
 
-The `rush consensus reconcile` engine collects review outputs from multiple AI models (Claude 3.7 Sonnet, GPT-4o, Gemini 2.5 Pro, local DeepSeek/Ollama models) and performs weighted agreement voting:
+The `rush consensus reconcile` engine reads supplied JSON reports and groups findings by path, line and rule. It filters by distinct-model agreement ratio; it neither calls these models nor independently verifies findings:
 
 ```mermaid
 flowchart TD
@@ -20,20 +20,20 @@ flowchart TD
 
 ```bash
 # Reconcile multi-model AI findings from JSON reports
-rush consensus reconcile --inputs claude_review.json gpt_review.json gemini_review.json
+rush consensus reconcile claude_review.json gpt_review.json gemini_review.json
 ```
 
-- **Filters Out Hallucinations**: If only one model flags a non-existent issue and cannot point to an exact AST rule or compiler violation, the finding is weighted down or discarded.
-- **Amplifies High-Risk Vulnerabilities**: When multiple independent models agree on a flaw, its severity is elevated to `fail` or `critical`.
+- **Agreement filter**: A finding below `--min-agreement` is omitted; agreement does not establish truth.
+- **Severity selection**: Uses the most common supplied severity; no independent vulnerability escalation is computed.
 
 ---
 
 ## 2. The 6-Pillar Repository Health Scorecard
 
-The `rush score compute` command evaluates your repository across 6 deterministic pillars to generate an objective health score (0–100%) and letter grade (A+ to F):
+The `rush score compute` command combines six caller-supplied numeric pillar values to calculate a score (0–100%) and letter grade (A+ to F):
 
 ```bash
-# Compute comprehensive repository health score
+# Combine supplied pillar values; defaults are not measured repository health
 rush score compute
 ```
 
@@ -53,10 +53,10 @@ Rush can export your quality scorecard into visual formats for pull requests, da
 
 ```bash
 # Generate SVG badge for README
-rush score badge --output docs/badges/quality-score.svg
+rush score compute --export-svg docs/badges/quality-score.svg
 
-# Generate markdown summary card for GitHub Pull Requests
-rush score pr-card
+# score pr-card is not registered; inspect current output options
+rush score compute --help
 ```
 
 ---

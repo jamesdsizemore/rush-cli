@@ -1,3 +1,5 @@
+Current status: historical decision; Current dependency authority is `pyproject.toml`/`uv.lock` (tiktoken 0.14.0), and current token commands are listed in [CLI reference](../CLI_REFERENCE.md). The old pins, model/pricing names, latency, and overflow guarantees below are historical; local token estimates do not prove actual provider billing or universal tokenizer equivalence. [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) requires measured token effects.
+
 # ADR-0022: Offline BPE Token Accounting via tiktoken
 
 ## Status

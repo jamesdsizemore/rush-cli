@@ -1,3 +1,5 @@
+Current status: historical decision; The metadata decision remains required. Current CLI paths, MCP registrations, and catalog entries are distinct generated inventories in [CLI reference](../../CLI_REFERENCE.md) and [MCP reference](../../MCP_REFERENCE.md). [Application review F06 and F11](../../reports/phase-64-66-application-review.md) records dispatch/workload defects that catalog presence does not resolve.
+
 # ADR-003: catalog-driven metadata
 
 **Status:** accepted

@@ -1,3 +1,5 @@
+> Current status: historical research/planned requirements; current contract: [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); evidence: [application review](reports/phase-64-66-application-review.md). Original body below remains evidence, not proof its commands, measurements, or proposed capabilities work. Accepted future requirements remain planned in Phases 63–66.
+
 # Rush CLI Comprehensive Benchmarking Report & Execution Framework
 
 ## 1. Executive Summary & Objectives

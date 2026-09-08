@@ -2,7 +2,7 @@
 
 When an AI agent is asked to fix a bug or add a parameter to a function, traditional tools force the agent to either run `grep` (which returns noisy, disconnected line snippets) or read the entire 2,000-line file into memory (which wastes tokens and risks context saturation).
 
-Rush’s **CodeGraph Subsystem** (`rush codegraph`) builds an ultra-fast, local Code Property Graph (CPG) stored in an embedded SQLite database (`.rush/codegraph.db`), enabling sub-millisecond verbatim symbol slicing and caller graph traversal.
+Rush’s **CodeGraph Subsystem** (`rush codegraph`) builds an ultra-fast, local Code Property Graph (CPG) stored in an embedded SQLite database (`.rush/codegraph.db`), supporting symbol slicing and caller graph traversal. Runtime depends on repository and index state.
 
 ---
 
@@ -15,7 +15,7 @@ The `rush codegraph slice` command extracts the complete, line-numbered implemen
 rush codegraph slice "calculate_total_risk"
 ```
 
-### Output Example:
+### Illustrative output shape (not captured runtime evidence):
 ```python
 # [src/rush/hotspots/risk_matrix.py:45-62]
 45: def calculate_total_risk(churn_count: int, cyclomatic_complexity: int) -> float:
@@ -40,10 +40,10 @@ Before refactoring a symbol, an agent must know who calls it to avoid introducin
 rush codegraph callers "AuthService.validate_token"
 
 # Explore symbol definitions across the workspace
-rush codegraph explore "UserSession"
+rush codegraph slice "UserSession"
 ```
 
-### Caller Tree Output:
+### Illustrative caller tree (not captured runtime evidence):
 ```text
 Symbol: AuthService.validate_token
   ├── src/api/middleware.py:28 (AuthMiddleware.authenticate_request)

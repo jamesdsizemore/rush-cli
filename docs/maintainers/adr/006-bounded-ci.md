@@ -1,3 +1,5 @@
+Current status: historical decision; The bounded CI policy remains required; its Phase 59 amendment is not proof that the current pipeline has enforced every listed gate. [Application review F27–F29](../../reports/phase-64-66-application-review.md) and [Phase 64](../../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) record CI, artifact, and portability acceptance work.
+
 # ADR-006: bounded CI
 
 **Status:** accepted

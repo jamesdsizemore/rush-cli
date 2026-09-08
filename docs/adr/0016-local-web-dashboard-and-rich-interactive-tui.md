@@ -1,3 +1,5 @@
+Current status: planned; current contract: [Phase 66 interactive TUI and local web](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md); evidence: [application review F36–F40](../reports/phase-64-66-application-review.md). The accepted interface outcomes remain required. Current `rush ui` is a snapshot and the dashboard is incomplete; the aliases and `[dashboard]` configuration below are historical design claims, not current executable routes. Phase 66 supplies the implementation contract, including its selected interface dependencies.
+
 # ADR-0016: Local Web Dashboard and Rich Interactive Terminal UI
 
 ## Status

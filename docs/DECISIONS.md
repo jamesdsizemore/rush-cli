@@ -16,8 +16,8 @@ This document records the foundational Architectural Decision Records (ADRs) tha
 | [ADR 0006](adr/0006-report-import-vs-live-adapter.md) | Dual-Mode Report Import vs. Live Execution | Tools support dual modes: importing existing JSON/XML/SARIF reports or executing live binaries under permission flags. | `src/rush/tools/` |
 | [ADR 0007](adr/0007-slow-network-and-destructive-permissions.md) | Explicit Execution Permission Boundary | Network, slow, build, browser, and artifact-write operations require explicit permission flags (`--allow-*`) and are denied by default. | `src/rush/permissions.py` |
 | [ADR 0008](adr/0008-browser-evidence-final-program.md) | Browser Evidence Runtime Isolation | Headless browser engines (Playwright, axe-core) require `--allow-browser` and strict process boundaries detached from MCP stdio. | `src/rush/engines/playwright.py` |
-| [ADR 0009](adr/0009-testing-fixtures-and-optional-ci.md) | Fixture-First Testing & Bounded CI | Real engine execution is proven via deterministic fixture reports in tests rather than bundling all 77 binaries in CI. | `tests/fixtures/engine_reports/` |
-| [ADR 0010](adr/0010-review-and-remediation-gates.md) | Review & Remediation Gates | Heuristic review is deterministic; LLM review is a development stub; finding freshness uses in-memory baselines. | `src/rush/tools/quality.py` |
+| [ADR 0009](adr/0009-testing-fixtures-and-optional-ci.md) | Fixture-First Testing & Bounded CI | Real engine execution is proven via deterministic fixture reports in tests rather than bundling catalogued engine adapters in CI. | `tests/fixtures/engine_reports/` |
+| [ADR 0010](adr/0010-review-and-remediation-gates.md) | Review & Remediation Gates | Heuristic review is deterministic; LLM review can call a configured provider; finding freshness uses in-memory baselines. | `src/rush/tools/quality.py` |
 
 ---
 

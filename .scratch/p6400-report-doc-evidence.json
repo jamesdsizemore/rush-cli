@@ -1,0 +1,527 @@
+{
+  "excluded": [
+    "docs/reports/phase-64-66-documentation-coverage.md"
+  ],
+  "file_count": 26,
+  "files": [
+    {
+      "audience": "product-roadmap reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "concept asset bytes retained; not implementation evidence"
+      ],
+      "media_type": "image/png",
+      "owner": "fallback",
+      "path": "docs/assets/rush-terminal-control-plane-concept.png",
+      "referrers": [],
+      "sha256": "165cf8fb0db2053ab7d742237e34630cacbeaa569bcfdb9370f6bc131b50e352",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers reviewing immutable legacy goal evidence",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "immutable legacy evidence; bytes/hash retained; never reuse asset or behavior"
+      ],
+      "media_type": "text/javascript",
+      "owner": "legacy-evidence",
+      "path": "docs/goals/cross-llm-memory-61-62/.goalbuddy-board/app.js",
+      "referrers": [],
+      "sha256": "5d2e68eea3253fce5d2e1c229669d7dcc2f029e6802d8c27dcce51cadff1c7a4",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers reviewing immutable legacy goal evidence",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "immutable legacy evidence; bytes/hash retained; never reuse asset or behavior"
+      ],
+      "media_type": "image/png",
+      "owner": "legacy-evidence",
+      "path": "docs/goals/cross-llm-memory-61-62/.goalbuddy-board/goalbuddy-mark.png",
+      "referrers": [],
+      "sha256": "d2b2d58eae6ff9029a4d59480a61bd20f013a0f27e14ece02a4064a286abc533",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers reviewing immutable legacy goal evidence",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "immutable legacy evidence; bytes/hash retained; never reuse asset or behavior"
+      ],
+      "media_type": "text/html",
+      "owner": "legacy-evidence",
+      "path": "docs/goals/cross-llm-memory-61-62/.goalbuddy-board/index.html",
+      "referrers": [],
+      "sha256": "576e7124c9f4978e2d449152bab835b0a5f0f7fa10588c58dbfbb1c45e183af0",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers reviewing immutable legacy goal evidence",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "immutable legacy evidence; bytes/hash retained; never reuse asset or behavior"
+      ],
+      "media_type": "text/css",
+      "owner": "legacy-evidence",
+      "path": "docs/goals/cross-llm-memory-61-62/.goalbuddy-board/styles.css",
+      "referrers": [],
+      "sha256": "237bc0d4c68244612fa1c8bab23c05fe330ae954a32101b4b6ebdacd1a43c724",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers reviewing immutable legacy goal evidence",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "immutable legacy evidence; bytes/hash retained; never reuse asset or behavior"
+      ],
+      "immutable_body_sha256": "1c63d3df0d3f64845e6595b7362522c7ec88a1cac8801e267e12684e5265e0e1",
+      "media_type": "text/markdown",
+      "owner": "legacy-evidence",
+      "path": "docs/goals/cross-llm-memory-61-62/goal.md",
+      "referrers": [],
+      "sha256": "1c63d3df0d3f64845e6595b7362522c7ec88a1cac8801e267e12684e5265e0e1",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers reviewing immutable legacy goal evidence",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "immutable legacy evidence; bytes/hash retained; never reuse asset or behavior"
+      ],
+      "media_type": "application/octet-stream",
+      "owner": "legacy-evidence",
+      "path": "docs/goals/cross-llm-memory-61-62/state.yaml",
+      "referrers": [],
+      "sha256": "d19bac8b667c3c66322b7b7d306e10a18d29d288e5ffce467eb2983f9c94d559",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "coding agents and task authors",
+      "authority": "instruction",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "instruction/template authority reviewed; body retained unchanged"
+      ],
+      "media_type": "text/markdown",
+      "owner": "fallback",
+      "path": "docs/prompts/AGENTIC_INNOVATION_MASTER_PROMPT.md",
+      "referrers": [],
+      "sha256": "ae9cb866f9e8d9b8e939d454bf3bdd7f34faa32cc3f53685d251c2f30f947b6e",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "media_type": "application/json",
+      "owner": "historical",
+      "path": "docs/reports/continuity-gates/BG-AUTH.json",
+      "referrers": [],
+      "sha256": "c591368605aa98736d72e38d4a802c0e9a4c8ada47e0db500ca3b8261eeca2d2",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "media_type": "application/json",
+      "owner": "historical",
+      "path": "docs/reports/continuity-gates/BG-COORD.json",
+      "referrers": [],
+      "sha256": "3e8f6c1c509a6c9aedf8db38275ffcabc7db8748042fecf3bf2f8007a4e7e9e4",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "media_type": "application/json",
+      "owner": "historical",
+      "path": "docs/reports/continuity-gates/BG-CTX.json",
+      "referrers": [],
+      "sha256": "9339b8d8ffd065b1bce60dd1cb0918773dea74b7a9cef21f5c8508e567e7c9fa",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "media_type": "application/json",
+      "owner": "historical",
+      "path": "docs/reports/continuity-gates/BG-PRIV.json",
+      "referrers": [],
+      "sha256": "d723411d976c7ba8aadb9a0daf0e2ea5f18d5d4d321cabdaf14431505a06cd93",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and implementation planners",
+      "authority": "planned",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "planned/proposed evidence only; no completed runtime or benchmark result claimed"
+      ],
+      "immutable_body_sha256": "061d292021aebe489d7f416069a1473f6e466803cd358a588b179ab6e2bc4fa0",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/cross-llm-memory-system-plan-2026-09-06.md",
+      "referrers": [],
+      "sha256": "061d292021aebe489d7f416069a1473f6e466803cd358a588b179ab6e2bc4fa0",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "3d7de40a1c658153577399cc682a36766465f1d7898f2ee2f998b48ebcafa875",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/cross-llm-memory-system-synthesis-2026-09-06.md",
+      "referrers": [],
+      "sha256": "3d7de40a1c658153577399cc682a36766465f1d7898f2ee2f998b48ebcafa875",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [
+        "leading Current status paragraph"
+      ],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "059dc4c6a0ac19a6c400c9c2dbe66cdd60404444684798f73319a0e690c9491a",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/final-handoff.md",
+      "referrers": [
+        "docs/README.md"
+      ],
+      "sha256": "ed1d854cd42254ef0d3dc17693069c782d09880768aab5ddf4bb7dd648684a47",
+      "source_state": "tracked",
+      "superseded": true
+    },
+    {
+      "audience": "maintainers and implementation planners",
+      "authority": "planned",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "planned/proposed evidence only; no completed runtime or benchmark result claimed"
+      ],
+      "immutable_body_sha256": "ba3d48b4f407ebad6b3a31eb93b03e973bd586fd63ece0597fad6c16da7c5b9f",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/memory-capabilities-benchmark-strategy.md",
+      "referrers": [
+        "docs/phase-plans/README.md",
+        "docs/phase-plans/phase-63-memory-capabilities-vibecoder-plan.md",
+        "docs/reports/phase-64-66-application-review.md"
+      ],
+      "sha256": "ba3d48b4f407ebad6b3a31eb93b03e973bd586fd63ece0597fad6c16da7c5b9f",
+      "source_state": "untracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "c5a57b9b864fcff9ad4e7b44f3d270e9b66f8ef763551c2d8582ff9b4cfdd226",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/memory-innovation-enhancement-report.md",
+      "referrers": [],
+      "sha256": "c5a57b9b864fcff9ad4e7b44f3d270e9b66f8ef763551c2d8582ff9b4cfdd226",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers planning Phases 64-66",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "review baseline evidence; verdict is not-ready and does not claim runtime completion"
+      ],
+      "immutable_body_sha256": "4bce64adf90d43e1305579283ca6ddc0af45e09c774791d9fdc4f2bdfdd0a60c",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/phase-64-66-application-review.md",
+      "referrers": [
+        "docs/API_REFERENCE.md",
+        "docs/ARCHITECTURE.md",
+        "docs/CLI_COOKBOOK.md",
+        "docs/CLI_REFERENCE.md",
+        "docs/CONFIGURATION.md",
+        "docs/CONFIG_SCHEMA.md",
+        "docs/ENVIRONMENT_VARIABLES.md",
+        "docs/GLOSSARY.md",
+        "docs/JSON_SCHEMA.md",
+        "docs/KNOWN_ISSUES.md",
+        "docs/MCP.md",
+        "docs/MCP_REFERENCE.md",
+        "docs/PRIVACY.md",
+        "docs/SAFETY.md",
+        "docs/SCOPE.md",
+        "docs/SECURITY.md",
+        "docs/SEMANTIC_DRIFT.md",
+        "docs/TOOL_CATALOG.md",
+        "docs/USER_GUIDE.md",
+        "docs/adr/0016-local-web-dashboard-and-rich-interactive-tui.md",
+        "docs/adr/0021-ephemeral-git-worktree-sandboxing.md",
+        "docs/agentic-rush/ai-safety-and-sandboxing.md",
+        "docs/agentic-rush/plugins-and-agent-skills.md",
+        "docs/benchmarking-report.md",
+        "docs/innovation-enhancement-funcionality-report.md",
+        "docs/innovation-enhancement-report.md",
+        "docs/maintainers/architecture-lifecycle.md",
+        "docs/maintainers/incident-and-security.md",
+        "docs/maintainers/release-playbook.md",
+        "docs/maintainers/versioning-and-compatibility.md",
+        "docs/phase-plans/README.md",
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md",
+        "docs/phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md",
+        "docs/phase-plans/phase-66-interactive-tui-and-local-web-plan.md",
+        "docs/reports/final-handoff.md",
+        "docs/rush-token-innovation-enhancement-report-plan.md",
+        "docs/safety/permissions.md",
+        "docs/safety/privacy-and-data-handling.md",
+        "docs/safety/safety-overview.md",
+        "docs/safety/security-model.md",
+        "docs/specs/ai-attribution-spec.md",
+        "docs/token-reduction-innovation-report.md"
+      ],
+      "sha256": "4bce64adf90d43e1305579283ca6ddc0af45e09c774791d9fdc4f2bdfdd0a60c",
+      "source_state": "untracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "8fe89a4755dc75eba5c96e0555bb501a9fb375a9f446aff20f7844ca583a919f",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/runtime-memory-and-agent-skills.md",
+      "referrers": [],
+      "sha256": "8fe89a4755dc75eba5c96e0555bb501a9fb375a9f446aff20f7844ca583a919f",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "f0b5674dc6bfecf67fd3f9859d334888921ffda388cf5646d35610ee78c6a26f",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/rush-benchmark-plan-implementation-review.md",
+      "referrers": [],
+      "sha256": "f0b5674dc6bfecf67fd3f9859d334888921ffda388cf5646d35610ee78c6a26f",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and implementation planners",
+      "authority": "planned",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "planned/proposed evidence only; no completed runtime or benchmark result claimed"
+      ],
+      "immutable_body_sha256": "63e5f1375d778aa40a5fdca04077efcb3a91dc087d274d0a6d059b838da9138a",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/rush-benchmark-plan.md",
+      "referrers": [
+        "docs/DEVELOPER_GUIDE.md"
+      ],
+      "sha256": "63e5f1375d778aa40a5fdca04077efcb3a91dc087d274d0a6d059b838da9138a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "9d6bde1470e4cea2e2926bd8642cdaab37d8fd63854705cfced5868dc2d4039b",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/rush-frontier-unclaimed-opportunities-report.md",
+      "referrers": [],
+      "sha256": "9d6bde1470e4cea2e2926bd8642cdaab37d8fd63854705cfced5868dc2d4039b",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and implementation planners",
+      "authority": "planned",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "planned/proposed evidence only; no completed runtime or benchmark result claimed"
+      ],
+      "immutable_body_sha256": "d2c7eae442f18c14c282052cecc9435ccb4dc8a7efd95206f30fc43eccf082e8",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/rush-terminal-control-plane-product-roadmap.md",
+      "referrers": [],
+      "sha256": "d2c7eae442f18c14c282052cecc9435ccb4dc8a7efd95206f30fc43eccf082e8",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "6e72c9856c5706a50d52cfc2984bb5f51aa47b123762d62eb6b2b5a501df7f40",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/rush-unified-agent-intelligence-development-plan-agy.md",
+      "referrers": [],
+      "sha256": "6e72c9856c5706a50d52cfc2984bb5f51aa47b123762d62eb6b2b5a501df7f40",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "historical report/result body retained; current implementation claims require live source evidence"
+      ],
+      "immutable_body_sha256": "4f2e92a9d50d80b8b4b9fe362605fd2216b929e50e23e09dd4a95440d9d615cf",
+      "media_type": "text/markdown",
+      "owner": "historical",
+      "path": "docs/reports/rush-unified-agent-intelligence-development-plan.md",
+      "referrers": [],
+      "sha256": "4f2e92a9d50d80b8b4b9fe362605fd2216b929e50e23e09dd4a95440d9d615cf",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "coding agents and task authors",
+      "authority": "instruction",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": [
+        "instruction/template authority reviewed; body retained unchanged"
+      ],
+      "media_type": "text/markdown",
+      "owner": "plans-templates-agents",
+      "path": "docs/templates/task-block-template.md",
+      "referrers": [],
+      "sha256": "10fdb5380f04097258e29327cf74fe474532cdc42747a38310d0befa2107ecc3",
+      "source_state": "tracked"
+    }
+  ],
+  "schema": "p64-00-report-doc-evidence/v1",
+  "scope": [
+    "docs/reports/**",
+    "docs/prompts/**",
+    "docs/templates/**",
+    "docs/assets/**",
+    "docs/goals/**"
+  ]
+}

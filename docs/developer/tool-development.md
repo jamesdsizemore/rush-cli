@@ -55,7 +55,7 @@ Every tool output is validated against the canonical `ToolResultV1` schema (`sch
 ## 2. 7-Step Tool Registration Checklist
 
 1. **Implement Tool Class**: Create `src/rush/tools/<name>.py` extending `ToolFn` (e.g. `TddGuardTool`).
-2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py` (maintaining 53 tools across core and flagship suites, as of Phase 61's `MemoryTool`).
+2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py`. Current live registries contain 53 catalogued tools; adding one requires matching catalog, CLI/MCP and documentation-contract updates.
 3. **Register in Catalog**: Add `ToolSpec` to `src/rush/catalog.py` under `TOOL_SPECS` and update `_TOOL_MATURITY` — the module-level `if set(_TOOL_MATURITY) != set(TOOL_SPECS): raise RuntimeError(...)` check requires the two dicts' key sets to match exactly; a `TOOL_SPECS` entry with no `_TOOL_MATURITY` counterpart breaks every `catalog.py` import.
    - **Multi-operation tools** (e.g. `SessionContinuityTool`, `MemoryTool`): `make_tool_wrapper` alone only produces an MCP surface. A `TOOL_SPECS` entry alone only produces a generic `PATH [--json]` CLI command, which doesn't fit a tool with multiple named operations. Add a bespoke `@cli.group(name="<tool>")` with one subcommand per operation instead (see `@cli.group(name="session")`, `cli.py:1878`), and add the tool's bare name to the CLI exclusion set (`cli.py:1201-1208`) so the generic catalog command is never generated alongside it.
 4. **Register Engine Adapters**: Add engine classes in `src/rush/engines/` and register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
@@ -67,7 +67,7 @@ Every tool output is validated against the canonical `ToolResultV1` schema (`sch
 
 ## 3. Exporter & Reporting Integration
 
-All `ToolFn` executions support unified artifact generation:
+Generic catalog CLI commands expose shared artifact flags; each tool must implement only the export modes its contract declares. Custom and bespoke commands may expose narrower flags:
 - **CLI Exporter Flags**:
   - `--export-html <path>`: Generates standalone interactive dashboard via `src/rush/html_export.py`.
   - `--export-sarif <path>`: Generates standard static analysis interchange JSON via `src/rush/sarif.py`.

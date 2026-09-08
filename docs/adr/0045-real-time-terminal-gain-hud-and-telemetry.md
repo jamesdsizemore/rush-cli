@@ -1,3 +1,5 @@
+Current status: planned; current contract: [Phase 66 persistent interfaces](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md); evidence: [current gain workflow](../workflows/gain_tui_and_telemetry.md). `rush context gain` currently displays a snapshot. Persistent animation and per-project telemetry remain required; estimates do not establish measured provider billing savings.
+
 # ADR-0045: Real-Time Terminal Gain HUD and Telemetry
 
 ## Status

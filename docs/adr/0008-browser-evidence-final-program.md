@@ -1,3 +1,5 @@
+Current status: historical decision; The Phase 00–08 sequencing below is historical. [Phase 66](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md) is the current persistent-interface implementation contract, while [application review F36–F41](../reports/phase-64-66-application-review.md) records the current snapshot TUI and incomplete local web behavior. Acceptance of this ADR does not establish interface completion.
+
 # ADR 0008: Browser evidence is the final program
 
 ## Context

@@ -3,14 +3,14 @@
 Source code is only part of a repository. Rush has focused, non-rewriting checks for common project files:
 
 ```bash
-rush markdown .
-rush yaml .
-rush sql .
-rush templates .
-rush containerfile .
-rush iac .
-rush actions .
-rush ci .
+uv run rush markdown .
+uv run rush yaml .
+uv run rush sql .
+uv run rush templates .
+uv run rush containerfile .
+uv run rush iac .
+uv run rush actions .
+uv run rush ci --help
 ```
 
 - **Markdown** uses contained markdownlint, Lychee, Vale, Alex, and No-Jargon for prose hygiene and link integrity.
@@ -20,7 +20,7 @@ rush ci .
 - **Containerfiles** uses Hadolint and Dockle for CIS Docker benchmarks.
 - **IaC** targets Terraform and Kubernetes through TFLint, Checkov, Kubeconform, Terrascan, Kube-score, Conftest, Polaris, and KubeLinter.
 - **Actions** checks GitHub workflow YAML with Actionlint while disabling external shellcheck/pyflakes integrations.
-- **CI** inspects local workflow files and checks OpenSSF Scorecard supply chain posture.
+- **CI** is currently a command group whose only route is `rush ci init`; it generates a workflow and is not a read-only project-file check.
 - **IAM Policies & Terraform Wildcards** uses `rush iam-audit` to audit cloud SDK usage and detect wildcard actions (`*`) in `.tf` infrastructure files.
 - **Dependency License Manifests** uses `rush license-matrix` to verify open-source licenses across `pyproject.toml`, `package.json`, and `Cargo.toml` manifests.
 
@@ -29,12 +29,12 @@ A missing helper yields `skipped`. Install only the checks your repository adopt
 ## Static Asset Hygiene (`rush dead-asset`)
 Unused image and font files bloat application repositories and Docker containers:
 ```bash
-rush dead-asset .
+uv run rush dead-asset .
 ```
 Rush identifies unreferenced assets and calculates potential disk space savings.
 
 ## Resource Lifecycle & Leak Auditing (`rush mem-profile`)
 Detect unclosed file handles, database connections, and sockets outside context managers:
 ```bash
-rush mem-profile .
+uv run rush mem-profile .
 ```

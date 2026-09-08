@@ -4,10 +4,12 @@ This directory is the numbered, self-contained, TDD-driven implementation-plan c
 
 - Phases 41-50 implement the roadmap in [`docs/rush-token-innovation-enhancement-report-plan.md`](../rush-token-innovation-enhancement-report-plan.md).
 - Phases 51-60 continue the cycle with the correctness and security program governed by [`docs/developer/repository-remediation-plan.md`](../developer/repository-remediation-plan.md).
+- Phases 61-63 continue memory development: typed-artifact foundations, integration into existing tools, then expanded memory capabilities and vibecoder workflows. Phase 63 is planned; its implementation is not claimed complete.
+- Phases 64-66 continue with runtime correctness, one-command installation and complete project/agent workflows, then the required interactive TUI and per-project local web application. All three are planned, not implemented. The [whole-application review](../reports/phase-64-66-application-review.md) is their finding and coverage ledger.
 
 Each phase plan defines its authority, prerequisites, outcomes, exact writes, tests, dependencies, documentation work, stop conditions, verification, and successor handoff. A plan does not authorize implementation lifecycle actions such as committing, merging, publishing, or releasing.
 
-**Current remediation-plan status:** All remediation phases 51 through 60 are Completed. All 16 roadmap findings (R-001 through R-016) are 100% resolved and verified.
+**Historical remediation-plan status:** Phases 51 through 60 and findings R-001 through R-016 were recorded completed in their original evidence. Those records are not a current whole-product readiness verdict. The Phase 64–66 review at `997b56e` identifies additional defects and missing user routes; its findings remain open until implementation evidence closes them.
 
 ## Master phase sequencing and index
 
@@ -37,6 +39,10 @@ Each phase plan defines its authority, prerequisites, outcomes, exact writes, te
 | 60 | [Maintainability hotspot reduction](./phase-60-maintainability-hotspot-reduction-plan.md) | R-015 non-release program | Release-ready Phases 52-59 | Completed: Remediation-program completion (all 26 tests passed) |
 | 61 | [Cross-LLM memory typed-artifact schema, trust tiers, transport dispatcher](./phase-61-cross-llm-memory-typed-artifact-schema-plan.md) | Roadmap phase — unified `TypedArtifactStore`, 4-tier trust taxonomy, ADR-0049 | Phase 60 | Completed: unified memory store, `MemoryTool`, all 39 tests passed (not an `R-xxx` finding) |
 | 62 | [Cross-LLM memory integration layer](./phase-62-memory-integration-layer-plan.md) | Roadmap phase — wires `TypedArtifactStore` into cache, review, maintenance, handoff, attribution, and API-diff staleness; per-type expiry; decision-record schema | Phase 61 | Completed: 6 subsystems integrated, per-type expiry, `DecisionRecordFields`, all 26 tests passed (not an `R-xxx` finding) |
+| 63 | [Memory capabilities and vibecoder integrations](./phase-63-memory-capabilities-vibecoder-plan.md) | Roadmap continuation — bounded recall, connected evidence, verified repair/intent/recipe workflows, receiver read-back and comparative benchmarks | Developed Phases 61/62; current inherited baseline verified by MC00 | Planned: 20 requirements, 16 workstreams and 80 tasks; MC15 owns reviewed implementation and benchmark handoff |
+| 64 | [Runtime correctness and safe execution](./phase-64-runtime-correctness-and-safe-execution-plan.md) | Recursive documentation coverage; safe fixes/patches, real engines, correct analytics and executable gates | Reviewed developed baseline; repairs precede dependent Phase 63 work | Planned: P64-00–20; reviewed runtime evidence |
+| 65 | [Project provisioning, scans and agent workflow](./phase-65-project-provisioning-scan-and-agent-workflow-plan.md) | One-command cross-platform installation, all detected agent integrations, managed toolchains, full scan, aggregate, handoff, verified rescan and scoped evidence | Phases 64 and 63 | Planned: P65-01–10; installed end-to-end evidence |
+| 66 | [Interactive TUI and local web application](./phase-66-interactive-tui-and-local-web-plan.md) | Interactive project map; neon TUI/dashboard with integrated motion; per-repo overview, results, memory, tokens, Git and all outputs | Phase 65 shared workflows | Planned development: P66-01–07; actual terminal/browser acceptance |
 
 ## Remediation-cycle continuity
 
@@ -61,6 +67,20 @@ Each phase plan defines its authority, prerequisites, outcomes, exact writes, te
 | R-009, R-010, R-016, and R-011 runtime migration | Phase 58 (Completed) |
 | R-013, R-014 | Phase 59 (Completed) |
 | R-015 | Phase 60 (Completed) |
+
+## Memory-cycle continuity
+
+[Phase 63](phase-63-memory-capabilities-vibecoder-plan.md) extends Phase 61's typed-memory foundation and Phase 62's integrations. Its MC00–MC15 identifiers denote workstreams within Phase 63; MC00.1–MC15.5 denote individual tasks. They are not additional phases. The plan's continuation table maps predecessor contracts to their owning Phase 63 workstreams.
+
+Existing Phase 61/62 evidence remains a record of its original revision. Phase 63 starts from the developed source and checks its inherited baseline before dependent changes. Its [benchmark strategy](../reports/memory-capabilities-benchmark-strategy.md) combines established public workloads with Rush-specific behavioral scenarios. Planning status does not imply implementation or measured improvement.
+
+## Product-continuation execution order
+
+The execution DAG is **Phase 64 → Phase 63 → Phase 65 → Phase 66**. Phase numbers record continuation planning order; newly found unsafe baseline behavior must be repaired before the already-planned memory expansion consumes it. Phase 63's MC00–MC15 and 80 tasks keep their existing identities. Phase 65 composes that memory work with provisioning, complete scanning and agent remediation. Phase 66 supplies both full interfaces without duplicating backend behavior.
+
+Each packet's exact task IDs, files, RED fixtures, expected results and completion gates are in its owning plan. P65-10 is the final install integration packet and executes after P65-05; artifact production P65-01 closes independently. No plan's existence, structural review or historical test count proves product implementation or readiness.
+
+Phase 65 separates global installation for the OS user account from selecting, adding, configuring or creating projects, including choosing a project later. P64-00 implements recursive documentation validation and corrects current references throughout `docs/`; subsequent packets update their documented behavior alongside working code. Phase 66 implements the interactive project-map opening view, neon blue/pink/purple palette and integrated motion through named source changes and behavioral tests; P66-02 owns the map renderer and its transitions.
 
 ## Architectural guardrails
 

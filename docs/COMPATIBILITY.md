@@ -12,9 +12,9 @@ This document defines the platform, operating system, and language ecosystem com
 
 | Component | Requirement / Specification | Supported Scope |
 |---|---|---|
-| **Python** | Python 3.12 or newer | Core package, FastMCP server, heuristic review, all engine adapters. |
+| **Python** | Python 3.12 (`>=3.12,<3.13`) | Exact declared package requirement in `pyproject.toml`. |
 | **Package Manager** | uv (recommended), pip | Development loop, frozen dependency lockfile, package build (`uv build`). |
-| **Operating Systems** | Windows 10/11, macOS (x86_64, ARM64), Linux (glibc, musl) | Path separators normalized, subprocess environment isolated, ANSI/color auto-detected. |
+| **Operating Systems** | Windows, macOS, Linux are intended targets | Clean-platform installation and archive/architecture verification remain planned in [P65-01](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md); source-level portability tests do not prove all listed platform variants. |
 | **MCP Transport** | stdio (JSON-RPC over standard input/output) | Compatible with Claude Desktop, Cursor, Claude Code, Goose, Hermes, Zed, Windsurf. |
 
 ---
@@ -40,7 +40,7 @@ Rush auto-detects project languages by analyzing root project markers (`pyprojec
 
 ## 3. Engine Version Compatibility Matrix
 
-For the complete list of all 77 external engines, minimum tested versions, install hints, and reference test suites, see the [Engine Compatibility Matrix](ENGINE_COMPATIBILITY.md) and [Engine Directory](reference/engine-directory.md).
+For the complete list of catalogued engine adapters, minimum tested versions, install hints, and reference test suites, see the [Engine Compatibility Matrix](ENGINE_COMPATIBILITY.md) and [Engine Directory](reference/engine-directory.md).
 
 ---
 

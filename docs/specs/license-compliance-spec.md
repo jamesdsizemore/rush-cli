@@ -13,6 +13,8 @@
    - Parses `[dependencies]` from `Cargo.toml`.
 
 ## 3. SPDX Normalization & Risk Classification
+Current limitation: the legacy classifier does not correctly evaluate all SPDX compound expressions. [Phase 64 P64-16](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) implements expression-aware evaluation; the categories below describe the existing policy vocabulary, not proof of complete SPDX coverage.
+
 Extracted license expressions are normalized against standard SPDX 2.0 identifiers and categorized:
 - **Permissive / Allowed (Pass)**:
   `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicense`, `CC0-1.0`, `0BSD`, `PSF-2.0`, `Python-2.0`.
@@ -25,14 +27,15 @@ Extracted license expressions are normalized against standard SPDX 2.0 identifie
 
 ## 4. Execution Permissions & Export Safety
 - **Offline By Default**: Operates completely locally without external HTTP network calls.
-- **Export Confinement**: Exporting JSON matrices via `--export-path` requires explicit `--allow-artifact-write` permission. Path traversal (`..` escapes) is strictly prohibited.
+- **Export Contract**: No `--export-path` CLI flag or `export_path` MCP parameter is registered for this tool. `--json` returns the result to the caller. Any future file-export route must require explicit artifact-write permission and reject traversal outside its authorized root.
 
 ## 5. CLI & FastMCP Contracts
 - **CLI**:
   ```bash
-  rush license-matrix [PATH] [--allowed-licenses <LIST>] [--export-path <PATH>] [--allow-artifact-write] [--json]
+  rush license-matrix . --json
   ```
 - **FastMCP Tool**:
   ```python
-  rush_license_matrix(path=".", allowed_licenses=None, export_path=None, allow_artifact_write=False)
+  rush_license_matrix(path=".")
   ```
+  MCP additionally exposes `allowed_licenses` and `package_licenses`; use the live input schema for their defaults. CLI `--allowed-licenses` is not registered.

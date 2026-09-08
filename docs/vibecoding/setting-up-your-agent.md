@@ -1,8 +1,6 @@
 # Setting Up Your AI Agent with Rush
 
-Rush communicates seamlessly with all major AI coding assistants through the open **Model Context Protocol (MCP)** and canonical **`AGENTS.md`** rule files.
-
-Setting up your environment takes less than two minutes.
+Rush exposes a local stdio **Model Context Protocol (MCP)** server. Current setup is manual and requires the editable source checkout described in [Install Rush](../getting-started/installation.md). Automatic installation, readiness checks, and agent connection are **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--single-beginner-journey-and-agent-connection-f35-f42).**
 
 ---
 
@@ -12,22 +10,19 @@ Open your terminal at your repository root and run:
 
 ```bash
 # Generate the initial rush.toml configuration
-rush init .
+uv run --directory /absolute/path/to/rush-cli rush init /absolute/path/to/project
 
 # Compile canonical AGENTS.md rules for all AI coding tools
-rush governance sync
+uv run --directory /absolute/path/to/rush-cli rush governance sync
 ```
 
-This creates:
-- `rush.toml`: Your project's quality settings.
-- `AGENTS.md`: The single source of truth for all AI assistants.
-- `.cursorrules`, `.clinerules`, `.windsurfrules`: Tailored instructions for your specific IDEs.
+`rush init` creates `rush.toml`. Review `rush governance sync --help` and its generated diff before using governance output in a repository.
 
 ---
 
 ## 2. Step 2: Configure FastMCP for Your AI Tool
 
-Rush includes a built-in stdio FastMCP server (`rush mcp serve`) that exposes all Rush tools directly to your AI assistant.
+Rush includes a built-in stdio FastMCP server. Configure clients with an absolute Rush source-checkout path.
 
 ### A. Cursor Setup
 1. Open Cursor **Settings** (`Cmd+,` or `Ctrl+,`).
@@ -35,7 +30,7 @@ Rush includes a built-in stdio FastMCP server (`rush mcp serve`) that exposes al
 3. Fill in:
    - **Name**: `rush`
    - **Type**: `command`
-   - **Command**: `rush mcp serve`
+   - **Command**: `uv run --directory /absolute/path/to/rush-cli rush mcp serve`
 
 ---
 
@@ -46,8 +41,8 @@ Add Rush to your Claude configuration (`~/.claude.json` or `claude_desktop_confi
 {
   "mcpServers": {
     "rush": {
-      "command": "rush",
-      "args": ["mcp", "serve"]
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/rush-cli", "rush", "mcp", "serve"]
     }
   }
 }
@@ -64,8 +59,8 @@ Add Rush to your Claude configuration (`~/.claude.json` or `claude_desktop_confi
 {
   "mcpServers": {
     "rush": {
-      "command": "rush",
-      "args": ["mcp", "serve"]
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/rush-cli", "rush", "mcp", "serve"]
     }
   }
 }
@@ -80,8 +75,8 @@ Add Rush to your Windsurf Cascade MCP settings (`~/.codeium/windsurf/mcp_config.
 {
   "mcpServers": {
     "rush": {
-      "command": "rush",
-      "args": ["mcp", "serve"]
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/rush-cli", "rush", "mcp", "serve"]
     }
   }
 }
@@ -95,7 +90,7 @@ In your AI chat window, prompt your assistant:
 
 > *"Use the `rush_capabilities` tool to inspect this repository and tell me what engines are installed."*
 
-Your assistant will query Rush over local stdio and list all available quality tools in real-time!
+Your assistant should query Rush over local stdio. Confirm the discovered tool exists before invocation; server discovery is the current authority for tool names and schemas.
 
 ---
 

@@ -10,9 +10,9 @@ There is no `[tools.continuity]` permission field. Checkpoint creation is contro
 
 ## Memory database path (Phase 61)
 
-`.rush/memory.db` (`TypedArtifactStore`, `[memory].memory_db_path` in `rush.toml`) is the unified SQLite WAL database for all 7 memory subjects; it is not user-relocatable per repository (fixed path, matching every other `.rush/` satellite path). The now-absorbed satellite paths (`preferences_path`, `failures_db_path`, `invariants_path`) remain in the schema for backwards compatibility but no longer point at canonical data — see `docs/CONFIGURATION.md`.
+`.rush/memory.db` is the unified SQLite database selected by `TypedArtifactStore`. The central `RushConfig` schema has no `[memory]` or `memory_db_path` field; historical satellite path examples do not configure the current store. See [configuration overview](CONFIGURATION.md).
 
-Rush uses a typed TOML configuration model defined via Python dataclasses in `src/rush/config.py`. Configuration is discovery-driven, bounded by the repository root, and validated against the canonical catalog of all 52 tools.
+Rush uses a typed TOML configuration model defined via Python dataclasses in `src/rush/config.py`. Configuration is discovery-driven, bounded by the repository root, and validated against the canonical catalog of catalogued tools.
 
 ---
 
@@ -53,6 +53,7 @@ check = true
 engine_args = []
 check = true
 
+# Historical/planned consumer settings below are not parsed by RushConfig.
 # Bundle budget thresholds (Phase 36)
 [bundle]
 max_gzip_bytes = 153600 # 150 KB
@@ -79,7 +80,7 @@ confine_workspace_paths = true
 ## 2. Table Validation & Precedence Rules
 
 
-1. **Exact Tool Matching**: Every `[tools.NAME]` table header must match one of the 52 valid tool names in `rush.catalog.TOOL_SPECS`. Any unrecognized tool name raises `RushConfigError`.
+1. **Exact Tool Matching**: Every `[tools.NAME]` table header must match one of the catalogued tools in `rush.catalog.TOOL_SPECS`. Any unrecognized tool name raises `RushConfigError`.
 2. **Precedence Hierarchy**:
    ```text
    Built-in Defaults -> Nearest rush.toml (upward walk to .git root) -> Explicit CLI Arguments
@@ -100,12 +101,12 @@ See [Configuration Reference](reference/configuration-reference.md) and [Configu
 
 ## Invocation and Cache Schema Attributes (Phase 57)
 
-- `[cache]`: Controls invocation cache enablement, cache directory overrides, and maximum entry age.
-- `[tools.<name>].pure`: Boolean flag indicating whether tool execution is pure and eligible for invocation caching.
+- `[cache]`: `enabled` (default true), `dir` (default `.rush`), and `max_size_mb` (default 100). There is no maximum-age field in `RushConfig`.
+- `[tools.<name>].pure` is not a supported configuration option; purity is operation metadata. Unknown tool options raise `RushConfigError`.
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -126,13 +127,15 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 ### `[release.provenance]`
+Historical/planned schema proposal; not parsed by `RushConfig`. Use `rush attest --help` for actual invocation options.
 - `builder_id` (string): Canonical builder URI.
 - `allow_unsigned` (bool): Allow unsigned drafts (default: true).
 
 ### `[engines]`
+Historical/planned schema proposal; not parsed by `RushConfig`.
 - `isolated_path` (bool): Enforce fixed PATH isolation.

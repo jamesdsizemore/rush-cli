@@ -27,15 +27,7 @@ Every page must answer some combination of: what is this, why does it matter, wh
 
 ## Implemented-model capability boundary
 
-Document model capabilities exactly as implemented. Rush does **not** run local
-models. Its default `review` behavior is local deterministic Python heuristics.
-`review --use-graft` may use optional local Graft context when explicitly
-requested. The `review --llm` path is currently a deterministic development
-stub: it detects an Anthropic/OpenAI environment key but does not make a real
-provider call. Do not market, document, or configure it as a functioning local
-or hosted AI review feature. If model support is implemented later, document
-providers, local runtime support, data boundaries, consent, configuration,
-failure behavior, and privacy only after verifying the implementation.
+Document model capabilities from current source. Default `review` uses local Python heuristics; `--use-graft` optionally adds Graft context. `--llm` can call a configured Anthropic/OpenAI provider with findings and falls back when no valid completion is returned (`src/rush/review/llm.py`). `offline-review` has local model/runner prerequisites; verify the selected execution path. Document data boundaries and actual failures; do not promise a complete AI review or universal network gate.
 
 ## Root README
 

@@ -6,7 +6,7 @@ Replay, failure, and mined mistake records returned during coordination recovery
 
 Autonomous AI coding agents possess tremendous speed, but granting an LLM unsupervised shell and filesystem access introduces severe operational risks. A single hallucinated command or uncontained file path can wipe local data, overwrite git history, or leak environment credentials.
 
-Rush’s **AI Safety & Sandboxing Subsystem** (`rush safety`) establishes a deterministic, non-bypassable perimeter around all agent interactions.
+Rush exposes explicit `rush guard` inspection commands. They do not intercept external agent execution or provide an OS sandbox. Current patch and containment defects are documented in [F01/F03–F05/F43](../reports/phase-64-66-application-review.md); safe behavior remains planned in [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md).
 
 Continuity coordination follows the same rule: inspecting locks, merge previews, flight events, and failure receipts is read-only. A caller must explicitly resolve ownership or a conflict; Rush never silently unlocks, merges, or replays work.
 
@@ -14,14 +14,14 @@ Continuity coordination follows the same rule: inspecting locks, merge previews,
 
 ## 1. Destructive Command Interception
 
-The `rush safety check-cmd` engine inspects shell commands proposed by AI agents against a comprehensive database of hazardous patterns before they are executed.
+The `rush guard check-cmd` engine inspects shell commands proposed by AI agents against a comprehensive database of hazardous patterns before they are executed.
 
 ```bash
 # Verify a proposed command before execution
-rush safety check-cmd "rm -rf node_modules"
-# Output: [ALLOWED] Safe directory cleanup within workspace.
+rush guard check-cmd "rm -rf node_modules"
+# Inspect the returned decision; this only checks the supplied string.
 
-rush safety check-cmd "rm -rf /"
+rush guard check-cmd "rm -rf /"
 # Output: [BLOCKED] Destructive root filesystem deletion pattern.
 ```
 
@@ -36,20 +36,20 @@ rush safety check-cmd "rm -rf /"
 
 ## 2. Filesystem Boundary Confinement
 
-When agents read or write files, Rush verifies that all paths resolve strictly within the project boundary.
+`guard check-path` validates a supplied path against protected governance rules. It is not an interceptor for arbitrary reads/writes.
 
 ```bash
 # Verify path confinement
-rush safety check-path "../../etc/passwd"
+rush guard check-path "../../etc/passwd"
 # Output: [BLOCKED] Path traversal attempt outside workspace boundary.
 
-rush safety check-path "src/auth/jwt.py"
+rush guard check-path "src/auth/jwt.py"
 # Output: [ALLOWED] Path is contained within project root.
 ```
 
 - Prevents directory traversal exploits (`../`, symlink jumping).
 - Protects parent directories and sensitive operating system files.
-- Automatically shields sensitive local configuration files (`.env`, `.git/config`, `~/.ssh`).
+- Do not treat this check as a universal shield: checkpoint/governance symlink escapes remain open.
 
 ---
 
@@ -66,20 +66,22 @@ flowchart LR
     TestSuite -- Pass --> Merge["Fast-Forward Clean Merge to main"]
 ```
 
-### How to Run in a Sandbox
+### Planned isolated apply route
 
-```bash
+Status: planned — P64-04. `patch apply` and its options below are not registered; the accepted route must still be implemented safely.
+
+```text
 # Apply a candidate AI patch inside an isolated sandbox
 rush patch apply candidate.diff --sandbox
 ```
 
-If the patch introduces a syntax error or causes tests to fail, the sandbox is discarded immediately with zero impact on your uncommitted work or working tree.
+Current failed worktree creation can return an empty directory, and cleanup can discard user changes. Exact restoration is not implemented (F05/F43).
 
 ---
 
 ## 4. Secret & Credential Redaction
 
-Any output produced by child engines, logs, or agent transcripts is filtered through Rush’s deterministic secret scrubber. High-entropy API keys (OpenAI, Anthropic, AWS, GitHub tokens, database passwords) are replaced with `[REDACTED]` before they are returned to the user or serialized to disk.
+The shared sanitizer handles normalized output, but custom token-outline MCP output still bypasses it (F07). High-entropy API keys (OpenAI, Anthropic, AWS, GitHub tokens, database passwords) are replaced with `[REDACTED]` before they are returned to the user or serialized to disk.
 
 ---
 

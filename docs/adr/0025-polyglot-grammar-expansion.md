@@ -1,3 +1,5 @@
+Current status: historical decision; The old dependency pins, 370+ grammar count, command names, and instantaneous cross-platform claims below are historical. Current pins live in `pyproject.toml`/`uv.lock`; [codegraph and semantic slicing](../agentic-rush/codegraph-and-semantic-slicing.md) documents executable routes and parser limits. This retains the polyglot outcome without asserting every language/runtime combination has been validated.
+
 # ADR-0025: Polyglot Grammar Expansion via tree-sitter-language-pack
 
 ## Status

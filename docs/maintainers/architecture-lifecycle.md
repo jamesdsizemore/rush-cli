@@ -6,32 +6,32 @@ Maintain project architectural rules via `InvariantGraph` and record failed patc
 - `FailureLedger` (`.rush/memory/failures.db`) keeps writing and reading `failures.db` directly and unchanged for its own duplicate-error-loop checks; `.rush/memory/failures.db` is never renamed. `migration.py`'s `migrate_failure_ledger()` additionally copies its rows into the store, so the store — not `failures.db` — is the canonical source other tools query for failure history.
 
 ## Architectural Layer Matrix Governance (Phase 46)
-Define and maintain layer matrices in `rush.toml` under `[architecture.layers]` and enforce via `rush arch-guard` in CI.
+Keep architectural rules in the supported architecture engine inputs. The current `RushConfig` parser does not load `[architecture.layers]`; adding that table does not configure enforcement. Run `rush arch-guard` and inspect its findings alongside architecture tests. The [Phase 64 plan](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) retains the required engine corrections.
 
 
 
 ## API Versioning & Breaking Change Gates
-Enforce zero breaking changes on minor releases via `rush api-diff` in CI.
+Run `rush api-diff --base main` in CI and review reported changes against the public compatibility contract; a successful heuristic check alone does not prove zero breaking changes.
 
 
 
 ## Migration Lifecycle Governance
-Enforce continuous schema parity using `rush db-drift` on all PRs that touch database models.
+Run `rush db-drift` on PRs touching database models and verify migrations with database tests. Current table-identity and missing-migration gaps remain assigned to Phase 64 P64-15.
 
 
 
 ## Requirement Traceability Governance
-Enforce requirement tag verification (`rush trace`) across all specifications and PRs.
+Run requirement tag checks (`rush trace`) across specifications and reconcile each requirement with executable acceptance evidence. Tags alone do not establish implementation.
 
 
 
 ## Flagship Platform Architecture Lifecycle
-All 42 core platform engines across Phases 01–50 are verified with continuous SLSA attestation, Merkle caching, and architectural boundary guards.
+Historical phase plans describe intended platform coverage. Current verification must exercise live engine registrations and their prerequisites; unsigned provenance does not certify a SLSA level. The [application review](../reports/phase-64-66-application-review.md) records unresolved engine and integration gaps.
 
 ## Maintainability & Complexity Lifecycle Governance (Phase 60)
 
 1. **McCabe C901 Invariant Enforcement**:
-   - Maintainers must ensure CI enforces McCabe cyclomatic complexity C901 <= 10 across all production modules via `.venv/Scripts/ruff.exe check --select C901 --config "lint.mccabe.max-complexity = 10" src/`.
+   - Maintainers must ensure CI enforces McCabe cyclomatic complexity C901 <= 10 across all production modules via `uv run --python 3.12 --extra dev ruff check --select C901 --config "lint.mccabe.max-complexity = 10" src/`.
    - Any PR introducing a function or method with C901 > 10 is blocked from merging.
 
 2. **Exemption Lifecycle Governance**:

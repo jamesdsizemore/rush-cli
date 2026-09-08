@@ -1,3 +1,5 @@
+Current status: historical decision; These records preserve durable decisions and historical consequences; acceptance is not a declaration that every described route or safety outcome is implemented. The current defect baseline is [application review](../../reports/phase-64-66-application-review.md), with correction contracts in [Phase 64](../../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md), [Phase 65](../../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md), and [Phase 66](../../phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
+
 # Architecture decision records
 
 ADRs explain durable choices and their consequences.

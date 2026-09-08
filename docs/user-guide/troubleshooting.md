@@ -30,26 +30,17 @@ For a `metadata.coordination` result, `conflict`, `stale`, and `merge_conflict` 
 
 ---
 
-### 2. "Why does my test fail with `Uncommitted changes detected` when running `rush fix`?"
-**Explanation**: `rush fix` modifies source files to auto-format code and clean unused imports. To protect you from accidental data loss, Rush requires a clean Git working directory before applying automated edits.
+### 2. "Should I bypass `Uncommitted changes detected` for `rush fix`?"
+**Explanation**: No. Current `fix` has unresolved checkout/index preservation defects. `--force` bypasses a guard; it does not prove safe ownership or recovery.
 
-**Solution**:
-- Commit or stash your current changes first:
-  ```bash
-  git commit -am "wip: save work before auto-fix"
-  rush fix .
-  ```
-- Or pass `--force` to bypass the uncommitted changes check:
-  ```bash
-  rush fix . --force
-  ```
+**Solution**: Keep valued work unchanged and apply findings manually. Safe dry-run/apply behavior is **planned repair — implementation [Phase 64, P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01).**
 
 ---
 
 ### 3. "How do I diagnose environment health and PATH precedence?"
 **Solution**: Run the built-in diagnostic doctor:
 ```bash
-rush doctor .
+uv run rush doctor .
 ```
 Rush will check:
 - Which Python interpreter and virtual environment is active.
@@ -64,9 +55,9 @@ Rush will check:
 **Solution**:
 - Pass the required permission flag explicitly:
   ```bash
-  rush e2e . --allow-browser
-  rush mutation . --allow-slow
-  rush load . --allow-network
+  uv run rush e2e . --allow-browser
+  uv run rush mutation . --allow-slow
+  uv run rush load . --allow-network
   ```
 
 ---

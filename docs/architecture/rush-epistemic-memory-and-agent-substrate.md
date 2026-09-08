@@ -1,5 +1,7 @@
 # Rush Epistemic Memory & Coding Agent Substrate
 
+Current status: This document combines earlier design requirements with Phase 61 integration notes. Sections 2–5 describe intended outcomes, not the current `MemoryArtifact` schema or a list of registered MCP tools. The current durable store is `.rush/memory.db`; the class names, `.rush/ledger/` and capsule paths below are conceptual contracts. [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) implements the connected memory outcomes, and [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) implements agent setup and workflow delivery. Automatic hydration, edit observation and proof promotion must not be claimed active merely because Rush is installed. Actual MCP availability comes from live `tools/list`.
+
 ## Bounded recovery references
 
 Context omissions are stored only after redaction as local CCR chunks and exposed by a stable handle. Coordination recovery can add mined git-revert guardrails as a `subject="failure"`, `trust_tier="DERIVED"` candidate record (Phase 61's unified typed-artifact schema, `src/rush/memory/store.py` — superseding the earlier binary `historical_evidence`/`quarantined` flag pair); these are context for judgment, never executable instructions or a trigger for retry.

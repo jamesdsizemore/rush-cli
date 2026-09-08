@@ -12,31 +12,30 @@ Every engine adapter extends the `Engine` base class in `src/rush/engines/base.p
 class MyEngine(Engine):
     name: str = "my-engine"
     binary: str = "my-engine-cli"
+    file_extensions = ("py",)
 
-    def is_available(self) -> bool:
-        """Check if binary is found on PATH or in current venv using resolution cache."""
-        return resolve_binary(self.binary) is not None
+    def run(
+        self, path: Path, args: list[str], cwd: Path | None = None
+    ) -> EngineResult:
+        """Construct bounded argv and retain raw process evidence."""
+        binary = resolve_binary(self.binary) or self.binary
+        process = run_subprocess(
+            [binary, "--format", "json", *args, str(path)],
+            cwd=cwd or path,
+            timeout=120,
+        )
+        return EngineResult(
+            exit_code=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr,
+            duration_ms=0,
+        )
 
-    def run(self, target: Path, options: dict[str, Any]) -> ToolResult:
-        """Constructs bounded argv, executes with run_subprocess(), and parses output."""
-        bin_path = resolve_binary(self.binary)
-        if not bin_path:
-            return ToolResult(
-                tool=options.get("tool", "mytool"),
-                engine=self.name,
-                engine_version=None,
-                status="skipped",
-                duration_ms=0,
-                summary=f"Engine '{self.name}' not found on PATH. Install via: npm install -g {self.binary}",
-                findings=[],
-                raw=None,
-            )
-
-        cmd = [bin_path, "--format", "json", str(target)]
-        code, stdout, stderr = run_subprocess(cmd, cwd=target, timeout=120.0)
-
-        # Parse JSON and normalize findings
-        return self.normalize(stdout, stderr, code, str(target))
+    def normalize(
+        self, raw: EngineResult, path: Path, tool_name: str
+    ) -> ToolResult:
+        """Parse raw evidence and return canonical findings/status."""
+        ...
 ```
 
 > **Note on Binary Execution**: `run_subprocess` catches `FileNotFoundError` if a resolved binary disappears or fails to spawn on Windows/POSIX, safely returning exit code `127` and stderr diagnostic so the engine fails closed with structured results rather than crashing the runtime.
@@ -82,7 +81,7 @@ class MyEngine(Engine):
    - Register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
    - Add to `ENGINE_SPECS` and `TOOL_SPECS` engine list in `src/rush/catalog.py`.
    - Register in `PARSER_FIXTURE_SUITES` in `src/rush/catalog.py`.
-5. **Documentation**: Run `python scripts/sync_docs.py --update` to verify and auto-sync all documentation files across the repository.
+5. **Documentation**: Update affected references and run `python scripts/sync_docs.py --check`. The checker is read-only and reports exact stale paths/contracts.
 
 See [Tool Development](tool-development.md) and [Coding Standards](coding-standards.md).
 

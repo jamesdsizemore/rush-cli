@@ -1,7 +1,9 @@
 # Error Catalog (`rush error-catalog`)
 
 ## Overview
-`rush error-catalog` is a deterministic security and quality tool that extracts raised and thrown exceptions from Python and TypeScript/JavaScript source code. It synthesizes a structured [RFC 7807 Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) error catalog and provides permission-gated Markdown documentation exports.
+`rush error-catalog` is a deterministic security and quality tool that extracts raised and thrown exceptions from Python, TypeScript/JavaScript, and Rust source code. It synthesizes a structured [RFC 7807 Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) error catalog. MCP exposes permission-gated Markdown export; current CLI does not expose an export flag despite stale command help prose.
+
+**Status: planned correction — implementation [Phase 64, P64-18](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-18--source-aware-error-catalog-and-scope-aware-complexity-f22-f23).** Current TypeScript/JavaScript line regex can count commented throws and miss multiline throws. Treat those results as incomplete until packet acceptance passes.
 
 ## Classification
 - **Category**: `security`
@@ -20,24 +22,23 @@
    - `type`: Canonical URI reference `https://rush-cli.org/errors/<slug>`.
    - `detail`: Default message or observed exception detail.
    - `occurrences`: Array of file locations and line numbers where the error is raised.
-5. **Guarded Markdown Export**: Generates Markdown documentation tables. Writing export files requires explicit `--allow-artifact-write` permission and enforces path containment within the project root.
+5. **Guarded Markdown Export**: MCP `export_path` generates Markdown documentation tables with `allow_artifact_write=true` and project-root containment. Current CLI has no `--export-path` or `--export-docs` option.
 
 ## CLI Usage
 
 ### Basic Scan
 ```bash
-rush error-catalog src/
+uv run rush error-catalog src/
 ```
 
 ### JSON Wire Format
 ```bash
-rush error-catalog src/ --json
+uv run rush error-catalog src/ --json
 ```
 
-### Exporting Documentation Catalog
-```bash
-rush error-catalog src/ --export-path docs/errors.md --allow-artifact-write
-```
+### Exporting documentation catalog
+
+Use MCP `export_path` with `allow_artifact_write=true`. No current CLI export spelling exists.
 
 ## FastMCP Usage
 ```json
@@ -45,6 +46,7 @@ rush error-catalog src/ --export-path docs/errors.md --allow-artifact-write
   "name": "rush_error_catalog",
   "arguments": {
     "path": "src/",
+    "export_path": null,
     "allow_artifact_write": false
   }
 }

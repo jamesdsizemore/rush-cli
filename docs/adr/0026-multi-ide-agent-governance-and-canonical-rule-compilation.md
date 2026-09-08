@@ -1,3 +1,5 @@
+Current status: historical decision; Current parity inspection is `rush governance check`, not `rush governance verify`; provisioning is a separate scaffold route. Synchronization has symlink-containment and partial-write defects ([application review F04](../reports/phase-64-66-application-review.md)). [Governance and multi-IDE rules](../agentic-rush/governance-and-multi-ide-rules.md) documents current commands; [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) retains the containment requirement.
+
 # ADR-0026: Multi-IDE Agent Governance and Canonical Rule Compilation
 
 ## Status

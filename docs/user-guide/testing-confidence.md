@@ -9,7 +9,7 @@ Rush makes running, verifying, and measuring your tests simple and transparent.
 ## 1. Running Your Tests (`rush test`)
 
 ```bash
-rush test .
+uv run rush test .
 ```
 
 When you run `rush test`, Rush automatically detects your test framework and executes your suite:
@@ -24,7 +24,7 @@ If all tests pass, you get a clean summary of total tests run and total executio
 ## 2. Enforcing Test-Driven Development (`rush tdd`)
 
 ```bash
-rush tdd .
+uv run rush tdd .
 ```
 
 How often have you seen a pull request where someone modified critical business logic, but forgot to write a test for it?
@@ -45,13 +45,13 @@ Rush supports **dual-mode coverage**:
 If your CI or local test runner already generated a coverage file (`coverage.json`, `lcov.info`, or `cobertura.xml`), Rush imports and normalizes it instantly:
 
 ```bash
-rush coverage coverage.json
+uv run rush coverage coverage.json
 ```
 
 ### Mode 2: Executed Mode
 Run native coverage measurements on demand:
 ```bash
-rush coverage . --allow-slow
+uv run rush coverage . --allow-slow
 ```
 
 ---
@@ -61,7 +61,7 @@ rush coverage . --allow-slow
 A "flaky test" is a test that sometimes passes and sometimes fails without any code changes (often caused by timing issues, network race conditions, or unseeded random numbers).
 
 ```bash
-rush flaky . --allow-slow
+uv run rush flaky . --allow-slow
 ```
 
 Rush executes tests under quarantined repetitions to identify flaky tests and report them before they destabilize your team's CI pipeline.
@@ -75,7 +75,7 @@ High code coverage doesn't always mean high test quality: you could have 100% te
 Mutation testing introduces tiny intentional bugs ("mutations") into your code (like changing `if a > b:` to `if a < b:`) and checks if your tests catch the bug:
 
 ```bash
-rush mutation . --allow-slow
+uv run rush mutation . --allow-slow
 ```
 
 If your tests fail when the code is mutated, the mutant is "killed" (your tests are strong). If the tests still pass, Rush highlights where your test assertions are too weak.

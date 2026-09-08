@@ -8,21 +8,15 @@
 ### CLI
 ```bash
 # Check current samples against baseline
-rush benchmark check [PATH] [--threshold <percentage>] [--json]
+uv run rush benchmark check [PATH] [--threshold <percentage>] [--json]
 
 # Record new baseline into .rush/baselines.json
-rush benchmark check [PATH] --record --allow-cache-write [--json]
+uv run rush benchmark check [PATH] --record --allow-cache-write [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_benchmark`
-- **Parameters:**
-  - `path` (str): Target workspace path.
-  - `samples` (list of float, optional): Execution latency/duration measurements to evaluate.
-  - `threshold_percent` (float, optional): Maximum regression percentage allowed (default: 5.0%).
-  - `record` (bool, optional): Record current samples as baseline in `.rush/baselines.json`.
-  - `baseline_name` (str, optional): Target baseline scenario identifier (default: `default`).
-  - `allow_cache_write` (bool): Required when `record=True` is requested.
+- **Parameters:** required `path` (str), required opaque `options` object, and common permission booleans defaulting to false. Current MCP schema does not expose or document inner `options` fields; do not invent them.
 
 ## Capabilities
 1. **Descriptive Sample Comparison**: Computes mean, median, min, max of current run samples vs baseline mean.

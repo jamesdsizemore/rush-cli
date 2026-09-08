@@ -17,15 +17,15 @@ Assume a monorepo containing:
 
 ### Step 1: Universal Code Review & TDD Verification
 ```bash
-rush tdd .
-rush review . --export-html artifacts/polyglot-report.html
+uv run rush tdd .
+uv run rush review . --json
 ```
 Rush evaluates TDD compliance, file sizes, scaffold markers (`TODO`, `FIXME`), and maintainability across all files deterministically, generating an interactive HTML report.
 
 ### Step 2: Multi-Language Linting & Formatting
 ```bash
-rush lint . --json
-rush format . --check --json
+uv run rush lint . --json
+uv run rush format . --check --json
 ```
 Rush automatically discovers and invokes:
 - **Python**: Ruff, Flake8-Bugbear, ast-grep, Globstar
@@ -34,22 +34,22 @@ Rush automatically discovers and invokes:
 
 ### Step 3: Architecture, Complexity & AI Anti-Slop
 ```bash
-rush complexity . --json
-rush slop . --json
+uv run rush complexity . --json
+uv run rush slop . --json
 ```
 Rush checks Python modular boundaries with Tach, tracks decay with Sentrux, measures token costs with Clines, and scans 10 languages for AI boilerplate with aislop.
 
 ### Step 4: Polyglot Security & Secret Audit
 ```bash
-rush security . --json
-rush secrets . --json
+uv run rush security . --json
+uv run rush secrets . --json
 ```
 Rush runs pip-audit, npm audit, Semgrep, Trivy, Medusa, Gitleaks, and TruffleHog, merging all findings into coordinate-sorted `ToolResult` JSON output with redacted credentials.
 
 ### Step 5: Multi-Language Test Suites & Diff Coverage
 ```bash
-rush test . --json
-rush coverage . --allow-slow --json
+uv run rush test . --json
+uv run rush coverage . --allow-slow --json
 ```
 Rush runs pytest for the Python backend and Vitest for the TypeScript frontend, while verifying diff coverage with Undercover.
 
@@ -57,16 +57,16 @@ Rush runs pytest for the Python backend and Vitest for the TypeScript frontend, 
 
 ### Step 7: Asset Hygiene & PR Evidence Card Synthesis (Phase 50b)
 ```bash
-rush dead-asset . --json
-rush pr-synthesize . --json
+uv run rush dead-asset . --json
+uv run rush pr-synthesize . --json
 ```
 Rush identifies unreferenced images/fonts and synthesizes a comprehensive PR card with risk tiering and CODEOWNERS reviewer routing.
 
 ### Step 6: Polyglot Quality Catalog & Cloud Infrastructure Audit (Phase 50a)
 ```bash
-rush error-catalog . --json
-rush license-matrix . --json
-rush iam-audit . --json
+uv run rush error-catalog . --json
+uv run rush license-matrix . --json
+uv run rush iam-audit . --json
 ```
 Rush extracts exceptions across Python, TypeScript, and Rust, audits dependency licenses across `pyproject.toml` and `package.json`, and verifies least-privilege cloud IAM policies while detecting wildcard actions in `infra/*.tf`.
 
@@ -78,6 +78,6 @@ See [Tutorials Overview](../TUTORIALS.md) and [CI Integration Guide](ci-integrat
 
 ### Step 8: Cold-Start Profiling & Honest Provenance (Phase 50c)
 ```bash
-rush cold-start . --json
-rush attest . --json
+uv run rush cold-start . --json
+uv run rush attest . --json
 ```

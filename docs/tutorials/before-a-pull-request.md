@@ -5,21 +5,21 @@
 1. Start from a clean understanding of your Git diff.
 2. Enforce TDD compliance and run quality checks:
    ```bash
-   rush tdd .
-   rush review . --export-html artifacts/pr-review.html
-   rush lint .
-   rush format . --check
-   rush complexity .
-   rush slop .
-   rush test .
-   rush security .
+   uv run rush tdd .
+   uv run rush review . --json
+   uv run rush lint .
+   uv run rush format . --check
+   uv run rush complexity .
+   uv run rush slop .
+   uv run rush test .
+   uv run rush security .
    ```
 3. Add focused project checks where relevant:
    ```bash
-   rush markdown .
-   rush actions .
-   rush secrets .
-   rush coverage . --allow-slow
+   uv run rush markdown .
+   uv run rush actions .
+   uv run rush secrets .
+   uv run rush coverage . --allow-slow
    ```
 4. Treat a required `skipped` result as incomplete setup.
 5. Attach the generated `artifacts/pr-review.html` or SARIF artifact to the PR summary.
@@ -32,7 +32,7 @@
 
 Run Rush's 7-vector release readiness cockpit to verify scratch cleanliness, environment declarations, doc links, migration safety, and SemVer compatibility:
 ```bash
-rush ship gate
+uv run rush ship gate
 ```
 If any vector fails, inspect the diagnostic output and remediate before opening your pull request.
 
@@ -62,14 +62,14 @@ Run `rush error-catalog .`, `rush license-matrix .`, and `rush iam-audit .` to a
 ## Step 11: Verify Attribution & Generate Semantic PR Card (Phase 50b)
 Run `rush provenance-ai .`, `rush dead-asset .`, and `rush pr-synthesize .` to generate a verifiable PR card with risk tiering and CODEOWNERS routing:
 ```bash
-rush pr-synthesize . --export-path artifacts/PR_CARD.md --allow-artifact-write
+uv run rush pr-synthesize . --json
 ```
 
 ## Step 12: Cold-Start Check & Build Attestation (Phase 50c)
 Check for heavy imports and generate honest build provenance drafts:
 ```bash
-rush cold-start .
-rush attest . --export-path artifacts/provenance.json --allow-artifact-write
+uv run rush cold-start .
+uv run rush attest . --artifact-path dist/package.whl --out artifacts/provenance.json --allow-artifact-write --json
 ```
 
 Run `rush pr-synthesize` and `rush attest` to complete the pre-flight release checklist.

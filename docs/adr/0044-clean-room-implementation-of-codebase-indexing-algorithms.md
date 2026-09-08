@@ -1,3 +1,5 @@
+Current status: historical decision; The clean-room authorship policy remains required. Its absolute licensing and enterprise-compliance consequences are not certification evidence; current license analysis has a grouped-SPDX interpretation defect ([application review F18](../reports/phase-64-66-application-review.md)) scheduled in [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Preserve the policy without treating analyzer output as proof of legal compliance.
+
 # ADR-0044: Clean-Room Implementation of Codebase Indexing Algorithms
 
 ## Status

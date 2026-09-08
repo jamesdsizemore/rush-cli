@@ -3,18 +3,20 @@
 ## Overview
 `rush iam-audit` statically parses source code for cloud SDK calls across AWS (`boto3`), GCP (`google.cloud.storage`, `google.cloud.bigquery`), and Azure (`azure.storage.blob`), synthesizes minimal least-privilege IAM policies, and scans Terraform (`.tf`) files for dangerous wildcard permissions (`iam-wildcard-action`).
 
+**Status: planned correction — implementation [Phase 64, P64-17](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-17--relative-hidden-paths-and-strict-coverage-import-f20-f21).** Current discovery can exclude all files when the selected project is under a hidden parent directory. Zero analyzed files is unavailable evidence.
+
 ## Usage
 
 ### CLI
 ```bash
-rush iam-audit [PATH] [--output <policy.json>] [--allow-artifact-write] [--json]
+uv run rush iam-audit [PATH] [--output POLICY_JSON] [--allow-artifact-write] [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_iam_audit`
 - **Parameters:**
   - `path` (str): Target codebase path to scan.
-  - `output_policy_file` (str, optional): Contained path to write synthesized IAM policy JSON.
+  - `output_policy_file` (str; default `""`): Contained path to write synthesized IAM policy JSON.
   - `allow_artifact_write` (bool): Required when exporting policy JSON to `output_policy_file`.
 
 ## Supported Clouds & Services

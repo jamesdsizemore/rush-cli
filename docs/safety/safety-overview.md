@@ -4,14 +4,14 @@
 
 Mined mistake records are redacted and labelled historical evidence in coordination recovery. They remain non-authoritative: no command, patch, merge, or retry follows automatically from them.
 
-Rush is designed to make the safe action the default.
+Safe defaults remain the design requirement. Current `fix --dry-run`, `ship clean`, checkpoint/governance symlinks and custom token-outline output violate it (F01–F07). Repairs remain planned in [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md).
 
 - **No implicit installs.** Missing optional engines return `skipped`.
 - **No silent source rewrite.** Review/check commands are read-only; formatter mutation is an explicit path and `--check` is available.
-- **No hidden publication.** Release is dry-run; publication execution is intentionally unavailable.
+- **No hidden publication.** Current CLI exposes `release check` for version parity; publication execution is unavailable.
 - **No history rewrite.** Commit-message checking never changes Git.
 - **Explicit execution permissions.** Browser, slow, network, download, build, and artifact-write operations require explicit permission flags (`--allow-*`) and report structured `metadata.execution`.
-- **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` makes no provider call.
+- **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` can send findings to a configured provider.
 - **No secrets in normalized logs/results.** Obvious secret assignments are redacted, but raw external tool behavior still deserves care.
 - **Continuity is receipt-based.** Save requires explicit cache-write permission; restore marks changed declared dependencies `stale`, keeps legacy checkpoints `unknown`, and never promotes historic instructions to authority.
 - **Coordination is evidence-only.** Held/stale locks, merge conflicts, and replay/failure receipts never authorize an unlock, merge, replay, or retry.
@@ -35,11 +35,11 @@ Read [Permissions](permissions.md), [Privacy](privacy-and-data-handling.md), and
 
 ## Invocation & Parity Safety Summary (Phase 57)
 
-Phase 57 guarantees that CLI and MCP interactions share identical safety guarantees, physical scope restrictions, and cryptographic execution caching.
+CLI/MCP share invocation components, but value coercion and custom-output bypass defects remain open (F06/F07). Shared code is not proof of identical behavior.
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+The following component contracts are not whole-application guarantees. Checkpoint/governance symlink escapes, sandbox fallback, destructive cleanup and custom-output redaction defects remain open; see [Known issues](../KNOWN_ISSUES.md).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -60,7 +60,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

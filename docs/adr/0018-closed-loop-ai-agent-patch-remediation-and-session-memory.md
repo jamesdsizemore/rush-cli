@@ -1,3 +1,5 @@
+Current status: historical decision; Patch remediation remains required; public patch apply/rollback and the MCP endpoint names below are not registered. The broad reset/clean rollback claims do not preserve arbitrary pre-existing user state ([application review F25 and F43](../reports/phase-64-66-application-review.md)); [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) supplies the repair contract. Memory storage is superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md), with further capability work in [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md).
+
 # ADR-0018: Closed-Loop AI Agent Patch Remediation and Session Context Memory
 
 ## Status

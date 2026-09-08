@@ -14,7 +14,7 @@ git config core.hooksPath .githooks
 ```
 
 The hook script executes:
-1. `python scripts/sync_docs.py --check` (Zero-drift documentation audit across all 128 doc files)
+1. `python scripts/sync_docs.py --check` (recursive coverage/link/registration audit; prose truth requires evidence receipts)
 2. `pytest tests/test_docs_parity_and_sync.py -q` (Automated pytest doc parity suite)
 
 ---
@@ -63,6 +63,8 @@ repos:
 ---
 
 ## 4. Built-in Pre-Commit Intelligence & Tamper Guard (`rush hook run`)
+
+Current F26 defect: staged paths are selected, but worktree bytes are inspected. This can miss invalid staged content repaired only in the working tree. Exact Git-index checks remain planned in [P64-19](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). No latency or staged-byte assurance is established here.
 
 Rush provides an ultra-fast staged execution engine specifically designed for pre-commit hooks:
 

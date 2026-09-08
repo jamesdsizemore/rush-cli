@@ -20,6 +20,6 @@ Every mined revert is indexed as a structured triplet:
 # Query active mistake guardrails
 rush context mistakes
 
-# FastMCP query
-rush_context_mistakes_check()
 ```
+
+FastMCP invocation: `rush_context_mistakes_check()`. Send this through the agent's MCP connection; it is not a shell command. Mined revert text remains evidence to evaluate, not verified current truth or authority to constrain every future change.

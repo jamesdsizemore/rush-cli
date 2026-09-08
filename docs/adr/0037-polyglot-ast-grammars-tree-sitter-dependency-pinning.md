@@ -1,3 +1,5 @@
+Current status: historical decision; The listed dependency choices are historical design evidence; current versions and dependency groups are defined by `pyproject.toml`/`uv.lock`. Installed parsing/image libraries do not establish universal sub-millisecond behavior, archive isolation, or safe SVG handling; [application review F19](../reports/phase-64-66-application-review.md) and [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) retain the SVG correction requirement.
+
 # ADR-0037: Polyglot AST Grammars and Tree-sitter Dependency Pinning
 
 ## Status
