@@ -1,3 +1,5 @@
+Current status: historical decision; Current offline execution and attestation routes are documented in [supply-chain security and release](../workflows/supply_chain_security_and_flagship_release.md) and [CLI reference](../CLI_REFERENCE.md). The historical provider path, `rush_review(offline=True)` signature, bundled-model assumptions, and SLSA Level 3 claim are not current capability or certification evidence. [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) governs release and provisioning requirements.
+
 # ADR-0036: Air-Gapped SLM Local ONNX Runtime and SLSA Attestation
 
 ## Status

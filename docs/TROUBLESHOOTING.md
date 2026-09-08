@@ -1,6 +1,6 @@
 # Troubleshooting Guide & Common Resolutions
 
-This guide addresses common error messages, unexpected behaviors, and troubleshooting steps across all 38 tools and 121 engines in Rush CLI.
+This guide addresses common errors in registered Rush tools and engine adapters. [Known issues](KNOWN_ISSUES.md) distinguishes current defects from missing prerequisites.
 
 ---
 
@@ -44,7 +44,7 @@ This guide addresses common error messages, unexpected behaviors, and troublesho
 rush capabilities . --json
 
 # Run command with verbose logging to stderr
-rush review . --verbose
+rush --log-level debug review .
 ```
 
 See [Troubleshooting Matrix](TROUBLESHOOTING_MATRIX.md) and [User Guide Troubleshooting](user-guide/troubleshooting.md).

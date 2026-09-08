@@ -1,3 +1,5 @@
+Current status: historical decision; Session storage is superseded by [ADR-0049](../../adr/0049-typed-artifact-memory-schema-and-trust-tiers.md). The MCP endpoint names below and public patch apply/rollback are not registered; single-turn remediation remains required future behavior. [Application review F25 and F43](../../reports/phase-64-66-application-review.md), [Phase 64](../../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md), and [Phase 63](../../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) govern patch preservation and remaining memory capabilities.
+
 # ADR-015: Closed-Loop AI Agent Patch Remediation and Session Context Memory
 
 ## Status

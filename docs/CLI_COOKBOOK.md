@@ -1,5 +1,7 @@
 # CLI Cookbook & Command Recipes
 
+Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).
+
 ## Provider-backed checkpoint continuation
 
 Save a checkpoint, then run `rush session resume handoff --provider claude_code --allow-network --json` (or `codex_cli`, `antigravity_cli`, `9router_cli`, or `omniroute_api`). `9router_cli` runs Codex through fixed local 9Router; set `RUSH_9ROUTER_API_KEY` in the invoking process and do not supply a model. OmniRoute uses one fixed `127.0.0.1:20128/v1/chat/completions` request with `model: "auto"`; it stores neither a key nor provider output. A missing executable, credential, timeout, nonsemantic response, or nonzero exit is structured. Z.AI is deferred.
@@ -46,8 +48,8 @@ rush review . --use-graft
 ### Export Standalone HTML & SARIF 2.1.0 Reports
 Generate visual inspection artifacts for human reviewers and CI systems:
 ```bash
-rush review . --export-html report.html --export-sarif review.sarif
-rush security . --export-html security.html
+rush security . --export-html report.html --export-sarif security.sarif --allow-artifact-write
+rush security . --export-html security.html --allow-artifact-write
 ```
 
 ### Enforce Test-Driven Development (TDD)
@@ -169,7 +171,7 @@ rush commit-msg . -m "feat(security): add trufflehog scanner adapter"
 
 ### Dry-Run Release Planning & Attestation
 ```bash
-rush release . --json
+rush release check
 ```
 *Engines:* Cosign (cryptographic signatures), SLSA Verifier (provenance attestations), Semantic-Release (automated semver calculation).
 
@@ -193,12 +195,14 @@ rush audit .
 rush gate . --fail-fast
 ```
 
-### Automated Code Remediation & Dry-Run Preview
+### Automated Code Remediation — currently unsafe
+
+`fix --dry-run` can discard staged and unstaged work. Do not run these commands on valuable work. Bounded preview/restoration is planned in [P64-01](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); see [F01](reports/phase-64-66-application-review.md).
 ```bash
-# Preview proposed fixes without altering files
+# Current destructive dry-run defect: disposable checkout only
 rush fix . --dry-run
 
-# Apply safe automated fixes across engines
+# Attempts fixes; cleanup can discard unrelated changes
 rush fix .
 ```
 
@@ -211,9 +215,11 @@ rush watch .
 rush watch . --tool lint --debounce 500
 ```
 
-### Interactive Terminal TUI & Web Dashboard
+### Terminal snapshot & currently broken web dashboard
+
+`ui` prints one Rich layout and exits. The stdlib HTTP dashboard has mismatched client/server API and authentication; use CLI results. Persistent TUI and working web controls are planned in [Phase 66](phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
 ```bash
-# Launch interactive terminal findings explorer
+# Print one terminal findings layout
 rush ui .
 
 # Launch authenticated local web dashboard on 127.0.0.1
@@ -259,7 +265,10 @@ rush guard check-path "src/rush/main.py"
 ```
 
 ### Apply AI Remediation Patches in Isolated Git Worktrees
-```bash
+
+Status: planned — [P64-04](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). `patch apply` is not registered. Accepted commands/options below are future requirements, not runnable recipes. Current `patch test` also has unsafe sandbox fallback and cleanup prerequisites (F05/F43).
+
+```text
 # Preview patch application in isolated worktree sandbox
 rush patch apply patch.diff --dry-run
 
@@ -352,7 +361,7 @@ rush consensus reconcile
 ### Saving and Restoring Work Sessions
 ```bash
 # Save active session snapshot
-rush session save refactor-auth -f src/auth.py -f tests/test_auth.py
+rush session save refactor-auth -f src/auth.py -f tests/test_auth.py --allow-cache-write
 
 # List sessions
 rush session list
@@ -381,7 +390,7 @@ rush ship pack
 rush hallu-guard
 
 # Compress module to AST skeleton
-rush token outline src/rush/cli.py --focus-symbol run_stdio
+rush token outline src/rush/cli.py
 
 # Retrieve uncompressed CCR chunk
 rush context retrieve <HASH>
@@ -465,7 +474,7 @@ rush simulate-ci --workflow test.yml
 ## SLSA Attestation & Security Recipes (Phase 50)
 ### Generating Cryptographic Build Provenance
 ```bash
-rush attest --out release.intoto.jsonl
+rush attest . --artifact-path dist/rush_cli-0.3.0-py3-none-any.whl --out release.intoto.jsonl --allow-artifact-write
 ```
 
 ### Auditing Dependencies for Copyleft Risks

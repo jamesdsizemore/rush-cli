@@ -1,3 +1,5 @@
+Current status: historical decision; Current public plugin commands are `rush plugin list` and `rush plugin run`; install, validate, create, and agent-skill routes below are accepted design requirements rather than registered commands. See [plugins and agent skills](../agentic-rush/plugins-and-agent-skills.md) and [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) for current workflow scope.
+
 # ADR-0015: Extensible Plugin Architecture and AI Agent Plugin Skills
 
 ## Status

@@ -14,13 +14,13 @@ Coordination inspection is read-only. Held and stale locks, merge conflicts, and
 
 ## 1. The 7 Defensive Controls
 
-Rush implements seven defense-in-depth architectural controls:
+These seven intended controls have current exceptions: F01–F08/F43 describe data-loss, containment, output and permission defects. [Known issues](KNOWN_ISSUES.md) links the required Phase 64 repairs; these controls are not blanket guarantees.
 
 1. **Control 1 (Flag-Salted Cryptographic Caching)**: Cache keys incorporate file content hashes and runtime CLI flags (`src/rush/cache.py`), preventing stale result pollution or bypass via command-line manipulation.
 2. **Control 2 (Path Boundary Confinement & Monorepo Scoping)**: Tools strictly validate target paths against the repository root (`assert_safe_workspace_path` and `discover_workspaces`), rejecting `..` traversal escapes.
 3. **Control 3 (Shell Injection Prevention & Typed Arguments)**: Package installation (`src/rush/tools/setup_wizard.py`) validates package names via strict regex `^[a-zA-Z0-9@_./-]+$` and executes subprocesses with typed argv lists (`shell=False`, `stdin=DEVNULL`).
 4. **Control 4 (Binary Integrity & Anti-Shadowing)**: Environment doctor (`src/rush/tools/doctor.py`) checks PATH precedence (virtualenv -> system PATH) and flags binary shadowing vulnerabilities in current working directories.
-5. **Control 5 (Dashboard Auth, Loopback Binding, DNS Rebinding & CSRF Protection)**: The local web dashboard (`src/rush/dashboard.py`) binds strictly to `127.0.0.1`, enforces ephemeral 64-hex token auth (`X-Rush-Auth`), validates `Host` headers to defeat DNS rebinding, and rejects cross-origin `fetch` requests.
+5. **Control 5 (Dashboard Auth, Loopback Binding, DNS Rebinding & CSRF Protection)**: The stdlib server (`src/rush/dashboard/server.py`) binds to loopback and generates a URL-safe token. Client/server auth and endpoint mismatches, shared class state and prefix-based authority checks remain open (F37/F39/F40); repairs are planned in Phase 66.
 6. **Control 6 (Repository Trust Gating)**: Custom script plugins and hooks are blocked in untrusted repository directories by default until explicitly authorized via `rush trust` (`src/rush/plugins/trust.py`), preventing RCE on newly cloned checkouts.
 7. **Control 7 (Patch Confinement & XML Session Memory Framing)**: Automated patches (`src/rush/patch_generator.py`) shield sensitive paths (`.git/`, `.env`, `.rush/cache.db`), and multi-turn session history (`src/rush/session_memory.py`) is framed in strict XML boundary tags (`<rush_session_memory>`) with XML escaping to neutralize prompt injection.
 
@@ -56,12 +56,12 @@ See [Security Model](safety/security-model.md), [Incident & Security Runbook](ma
 
 
 ## Safe Ephemeral Sandboxing (Phase 47)
-`GitSandbox` guarantees that test perturbation and self-healing fixes execute strictly in throwaway worktrees, preventing any corruption of working trees or developer secrets.
+Current `GitSandbox` can fall back to an empty directory after worktree failure (F05); test healing repeats pytest and produces a comment-only patch (F12). Verified isolated repair remains planned in P64-04/P64-12.
 
 
 
 ## Schema Integrity & Type Safety (Phase 48)
-`rush db-drift` and `rush strictify` protect runtime services against schema mismatch panics and unvalidated type injection payloads.
+`rush db-drift` currently conflates table columns; `rush strictify` invents overbroad guards (F16/F17). Grounded constraints and table-aware migration comparison remain planned in P64-15.
 
 
 
@@ -118,7 +118,7 @@ Exporting artifacts requires explicit `--allow-artifact-write` permission and st
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -139,7 +139,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

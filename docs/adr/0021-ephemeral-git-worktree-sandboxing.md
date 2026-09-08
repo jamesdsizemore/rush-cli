@@ -1,3 +1,5 @@
+Current status: planned; current contract: [Phase 64 safe execution](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); evidence: [application review](../reports/phase-64-66-application-review.md). The isolation requirement remains accepted. Existing sandbox primitives do not prove complete isolation or safe rollback across all callers; current defects require the Phase 64 preservation and permission tests.
+
 # ADR-0021: Ephemeral Git Worktree Sandboxing
 
 ## Status

@@ -8,7 +8,7 @@
 
 Use `operation: "save" | "list" | "restore"` with the project `path`. `save` additionally accepts `name`, `files`, `allow_cache_write: true`, `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, and `dependencies`; all responses are canonical `ToolResult` objects. A missing checkpoint or ungranted save is a structured `skipped` result, never prose on stdio. CLI and MCP expose identical redacted `metadata.handoff` receipt semantics.
 
-`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Tool names include hyphens where the command does, for example `rush_semantic-drift` and `rush_ai-eval`.
+`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Registered names use underscores, for example `rush_semantic_drift` and `rush_ai_eval`. CLI groups are not automatically MCP tools.
 
 Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the continuity implementation and return the same `ToolResult` envelope as their CLI equivalents.
 
@@ -22,7 +22,7 @@ Use `operation: "ask" | "write" | "promote" | "list" | "recall" | "maintain"` ov
 
 ## Common result
 
-Every tool returns canonical ToolResult data documented in [Result reference](reference/result-reference.md). A missing optional engine is a structured `skipped` result, not an installation request.
+Catalog tools return canonical ToolResult data documented in [Result reference](reference/result-reference.md); some custom MCP operations return strings or specialized dictionaries. A missing optional engine is a structured `skipped` result, not an installation request.
 
 ## Inputs
 
@@ -43,27 +43,19 @@ Most tools accept:
 
 Special callable options include:
 
-- `rush_review`: `path`, `use_llm=false`, `use_graft=false`, `changed_files=[]`.
-- `rush_format`: `path`, check-mode options.
-- `rush_commit-msg`: `path`, `message=""`.
-- `rush_sbom`: `path`, `output=null`, `overwrite=false`.
-- `rush_snapshot`: `path`, `accept=false`, `report_path=null`.
-- `rush_ai-eval`: `path`, standard permissions.
+- `rush_review`: `path`, `use_llm=false`, `use_graft=false`, `changed_files=null`.
+- `rush_format`: required `path`, `check=false`.
+- `rush_commit_msg`: `path`, `message=""`.
+- `rush_sbom`: required `path`, `output_path=null`, `overwrite=false`, and the seven permission flags above, each `false`.
+- `rush_snapshot`: required `path` and opaque `options`; `accept=false`, `report_path=null`, and the seven permission flags above, each `false`.
+- `rush_ai_eval`: required `path` and the seven permission flags above, each `false`.
 
 ## Complete tool names
 
+Current runtime registration: 74 names (`collect_runtime_contracts`). Exact parameter/type/default schemas are in the [generated MCP reference](reference/mcp-tool-reference.md).
+
 ```text
-rush_review, rush_lint, rush_format, rush_test, rush_security,
-rush_typecheck, rush_dead, rush_complexity, rush_slop,
-rush_markdown, rush_actions, rush_yaml, rush_sql, rush_templates,
-rush_containerfile, rush_iac, rush_secrets, rush_sbom,
-rush_coverage, rush_pbt, rush_flaky, rush_contract, rush_snapshot,
-rush_visual, rush_mutation, rush_e2e, rush_fuzz, rush_load,
-rush_semantic-drift, rush_commit-msg, rush_ci, rush_release,
-rush_codeql, rush_ai-eval, rush_tdd, rush_fix, rush_doctor,
-rush_guard, rush_token, rush_sync, rush_hygiene, rush_codegraph,
-rush_bundle, rush_hotspots, rush_governance, rush_hook, rush_score,
-rush_error_catalog, rush_license_matrix, rush_iam_audit
+rush_actions, rush_ai_eval, rush_api_diff, rush_arch_guard, rush_attest, rush_attest_generate, rush_benchmark, rush_blast_radius, rush_ci, rush_codeql, rush_cold_start, rush_commit_msg, rush_complexity, rush_containerfile, rush_context_gain_stats, rush_context_mistakes_check, rush_context_pack, rush_context_retrieve, rush_continuity, rush_contract, rush_coverage, rush_db_drift, rush_dead, rush_dead_asset, rush_doctor, rush_e2e, rush_error_catalog, rush_fix, rush_flaky, rush_format, rush_fuzz, rush_hallu_guard, rush_iac, rush_iam_audit, rush_license_matrix, rush_lint, rush_load, rush_markdown, rush_media_opt, rush_mem_profile, rush_memory, rush_mesh_acquire_lock, rush_mesh_release_lock, rush_mutation, rush_offline_review, rush_pbt, rush_pr_synthesize, rush_prompt_eval, rush_provenance_ai, rush_release, rush_review, rush_sbom, rush_secrets, rush_security, rush_semantic_drift, rush_ship_clean, rush_ship_env, rush_ship_gate, rush_simplify, rush_slop, rush_snapshot, rush_sql, rush_strictify, rush_swarm_merge, rush_tdd, rush_templates, rush_test, rush_test_heal, rush_token_outline, rush_trace, rush_tui_diff, rush_typecheck, rush_visual, rush_yaml
 ```
 
 ## Protocol guarantees
@@ -79,23 +71,23 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 
 ## Phase 41–43 FastMCP Tool Additions
 
-* **`rush_session_save(name, files)`**: Save developer context snapshot to `.rush/sessions/`.
-* **`rush_ship_clean(dry_run=False)`**: Clean scratch directories and build caches before release.
+* **Historical `rush_session_save` name:** not registered; use `rush_continuity` with `operation="save"` and explicit `allow_cache_write=true`.
+* **`rush_ship_clean(dry_run=False)`**: Deletes scratch/build paths by default without ownership proof (F02). Use `dry_run=true` for inspection; safe apply remains planned in P64-02.
 * **`rush_ship_env()`**: Audit codebase environment variable usage against `.env.example`.
 * **`rush_ship_gate()`**: Run 7-vector pre-flight release readiness cockpit.
-* **`rush_token_outline(path, focus_symbol="")`**: Generate token-efficient AST skeleton outline of a code file.
-* **`rush_context_retrieve(chunk_hash)`**: Retrieve uncompressed content from CCR chunk store by hash.
+* **`rush_token_outline(path, focus_symbol="")`**: Generate a code outline; current custom output can leak secrets (F07), pending P64-05.
+* **`rush_context_retrieve(chunk_hash, path=".")`**: Retrieve uncompressed content from CCR chunk store by hash.
 * **`rush_hallu_guard(path="")`**: Audit code imports against installed packages and stdlib.
 * **`rush_context_mistakes_check()`**: Check git revert history for past mistakes and anti-patterns.
 
-* **`rush_context_pack(path, symbol="", budget=4000)`**: Pack graph-pruned context outline under a strict token budget.
+* **`rush_context_pack(path, symbol="", budget=4000, allow_cache_write=false)`**: Pack graph-pruned context outline under a strict token budget.
 
-* **`rush_context_gain_stats()`**: Return real-time token economy savings, compression ratios, and dollar metrics as JSON.
+* **`rush_context_gain_stats()`**: Return local token/compression estimates; no measured provider billing or cache-hit guarantee.
 
 * **`rush_blast_radius(path, depth=5)`**: Calculate downstream transitive blast radius for a changed file.
 * **`rush_arch_guard()`**: Validate codebase against clean architecture layer boundaries.
 
-* **`rush_test_heal(target, runs=5)`**: Diagnose flaky test race conditions in isolated sandbox and propose fixes.
+* **`rush_test_heal(target, runs=5)`**: Current implementation repeats identical pytest runs and makes a comment-only patch (F12); verified diagnosis/repair remains planned in P64-12.
 * **`rush_api_diff(base="main")`**: Detect breaking public API contract changes against base Git ref.
 
 * **`rush_db_drift()`**: Audit ORM models against migrations to detect schema drift.
@@ -103,38 +95,38 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 * **`rush_strictify(file)`**: Synthesize runtime type guards for unvalidated parameters.
 
 * **`rush_trace()`**: Scan codebase and specs to output requirement traceability matrix.
-* **`rush_mesh_acquire_lock(path, agent_id)`**: Acquire non-blocking multi-agent file lock.
-* **`rush_mesh_release_lock(path, agent_id)`**: Release multi-agent file lock.
+* **`rush_mesh_acquire_lock(path, agent_id, capability=None)`**: Acquire non-blocking multi-agent file lock.
+* **`rush_mesh_release_lock(path, agent_id, capability=None)`**: Release multi-agent file lock.
 * **`rush_swarm_merge(base_code, ours_code, theirs_code)`**: Execute 3-way AST merge conflict resolution.
 
 ## Phase 50a FastMCP Tool Additions
 
-* **`rush_attest(path, target_artifact, export_path=None)`**: Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifact.
-* **`rush_attest_generate(artifact_path="")`**: *(Deprecated compatibility alias)* Delegates directly to `rush_attest`.
-* **`rush_license_matrix(path, project_license="", allowed_licenses=None, export_path=None)`**: Audit dependency licenses across manifests.
-* **`rush_iam_audit(path, export_path=None)`**: Synthesize least-privilege AWS IAM JSON policy from static SDK usage.
-* **`rush_dead_asset(path, export_manifest=None)`**: Scan repository for unreferenced media, font, and static assets (strictly read-only).
-* **`rush_pr_synthesize(path, base_ref="main", export_path=None)`**: Synthesize structured pull request card from Git diff and tool results.
-* **`rush_prompt_eval(path, pass_rate_threshold=1.0, max_tokens=None, max_cost=None)`**: Evaluate recorded golden prompt runs.
-* **`rush_error_catalog(path, export_path=None)`**: Extract errors and generate RFC 7807 problem details.
-* **`rush_provenance_ai(path, max_commits=500)`**: Audit Git commit trailers, calculate 30/60/90-day line survival rates, and correlate defects.
-* **`rush_mem_profile(path, mode="static", probe_cmd=None)`**: Scan unclosed resources and run dynamic memory probes.
-* **`rush_cold_start(path, mode="static", entry_point=None, threshold_ms=50.0)`**: Analyze module import cold-start latency.
-* **`rush_media_opt(path, operation="audit")`**: Audit, sanitize SVGs, and optimize raster media assets.
-* **`rush_offline_review(path, runner_path=None, model=None, model_path=None)`**: Air-gapped local LLM review using Ollama or llama-cli discovered on PATH.
-* **`rush_tui_diff(path, base_ref=None, target_ref="HEAD")`**: Compute Git finding deltas across commits.
-* **`rush_benchmark(path, metric=None, value=None, threshold_pct=10.0, record=False)`**: Compare performance samples against baseline thresholds.
-* **`rush_context_skeletonize(path)`**: Extract compressed AST outline skeletons for a target source file.
-* **`rush_context_cache_manifest()`**: Retrieve Merkle DAG content-addressable cache block manifests.
+* **`rush_attest(path, artifact_path="", output_path="", verify="", builder_id="https://rush-cli.org/builder/v1", trusted_roots=[], allowed_signers=[], allowed_builders=[], allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Generate in-toto Statement v1 / SLSA Provenance v1 unsigned draft for an artifact.
+* **`rush_attest_generate(path, artifact_path="", output_path="", verify="", builder_id="https://rush-cli.org/builder/v1", trusted_roots=[], allowed_signers=[], allowed_builders=[], allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: *(Deprecated compatibility alias)* Registered with the same schema as `rush_attest` and delegates directly to it.
+* **`rush_license_matrix(path, package_licenses=None, allowed_licenses=["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unlicense", "CC0-1.0", "0BSD", "PSF-2.0", "Python-2.0", "Zlib"], allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Audit dependency licenses across manifests.
+* **`rush_iam_audit(path, output_policy_file="", allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Synthesize least-privilege AWS IAM JSON policy from static SDK usage.
+* **`rush_dead_asset(path, export_manifest=None, allow_artifact_write=false)`**: Scan repository for unreferenced media, font, and static assets.
+* **`rush_pr_synthesize(path, base_ref="main", export_path=None, allow_artifact_write=false)`**: Synthesize structured pull request card from Git diff and tool results.
+* **`rush_prompt_eval(path, options, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Evaluate recorded golden prompt runs. `options` is required and opaque in the registered MCP schema; inspect the generated schema rather than assuming inner fields.
+* **`rush_error_catalog(path, export_path=None, allow_artifact_write=false)`**: Extract errors and generate RFC 7807 problem details.
+* **`rush_provenance_ai(path, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Audit Git commit trailers, calculate 30/60/90-day line survival rates, and correlate defects.
+* **`rush_mem_profile(path, options, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Scan unclosed resources and run dynamic memory probes. `options` is required and opaque in the registered MCP schema.
+* **`rush_cold_start(path, options, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Analyze module import cold-start latency. `options` is required and opaque in the registered MCP schema.
+* **`rush_media_opt(path, options, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Audit, sanitize SVGs, and optimize raster media assets. `options` is required and opaque in the registered MCP schema.
+* **`rush_offline_review(path, options, model="codellama", runner_path=None, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Air-gapped local LLM review using Ollama or llama-cli discovered on PATH. `options` is required and opaque in the registered MCP schema.
+* **`rush_tui_diff(path, options, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Compute Git finding deltas across commits. `options` is required and opaque in the registered MCP schema.
+* **`rush_benchmark(path, options, allow_network=false, allow_download=false, allow_cache_write=false, allow_build=false, allow_slow=false, allow_artifact_write=false, allow_browser=false)`**: Compare performance samples against baseline thresholds. `options` is required and opaque in the registered MCP schema.
+* **Historical `rush_context_skeletonize(path)` name:** not registered in the current MCP server.
+* **Historical `rush_context_cache_manifest()` name:** not registered in the current MCP server.
 
 ---
 
 ## FastMCP Route Reconciliation & Governance (Phase 51 & Phase 54)
 
-All 73 FastMCP registered tools and 17 service operations are cataloged in `governance/public-operations.toml` and bound to runtime adapters in `rush.contracts.operations`:
+The current FastMCP server registers 74 tool names. Historical governance inventory counts can differ; live `build_server().list_tools()` and the generated reference define the callable surface.
 - **Tool Operation Responses**: FastMCP tool executions return canonical `ToolResultV1` JSON (`schema_version: "1.0.0"`), validated through `ToolOperationAdapter`.
 - **Service Protocol Invariant**: Core MCP service protocol methods (`initialize`, `tools/list`, `ping`) return unwrapped protocol frames, managed by `ServiceOperationAdapter`, and are strictly never wrapped in `ToolResultV1`.
-- **Sanitization Invariant**: Output sanitization via Phase 53 strictly precedes schema serialization, guaranteeing that MCP responses never leak secrets to agent clients.
+- **Sanitization Invariant**: Output sanitization via Phase 53 strictly precedes schema serialization, providing a shared mechanism; custom token-outline bypass remains open (F07).
 - **Transport Invariant**: stdio stdout is strictly JSON-RPC; all logs and diagnostics belong on stderr.
 
 ### Plugin Trust & Verification under MCP (Phase 56)
@@ -146,7 +138,7 @@ All 10 core quality tools (`continuity`, `semantic-drift`, `review`, `lint`, `fo
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -167,7 +159,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

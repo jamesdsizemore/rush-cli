@@ -16,8 +16,8 @@ Rush scans your codebase across multiple languages to identify symbols that are 
 # Detect unused exports and dead code across Python and TypeScript
 rush hygiene dead-code
 
-# Automatically clean unused imports across Python files
-rush hygiene clean-imports
+# Inspect registered hygiene commands; clean-imports is not registered
+rush hygiene --help
 ```
 
 ### What It Cleans:
@@ -31,7 +31,7 @@ rush hygiene clean-imports
 
 Standard git line-based merge tools frequently fail when two agents insert imports or functions at the same file location, causing git merge conflicts.
 
-The `rush conflict solve` command performs a **structural 3-way AST merge**:
+`rush conflict solve FILE_A FILE_B` accepts two files and prints a merge. The explicit three-input route is `rush swarm-merge --base BASE --ours OURS --theirs THEIRS`. Diagram below describes the three-way model; merged output still requires inspection and tests.
 
 ```mermaid
 flowchart TD
@@ -44,13 +44,13 @@ flowchart TD
 
 ```bash
 # Resolve merge conflicts between two conflicting source branches
-rush conflict solve src/services/user_service.py --ours branch_a.py --theirs branch_b.py
+rush conflict solve branch_a.py branch_b.py
 ```
 
 ### Why AST Merges Succeed Where Text Merges Fail:
 1. **Sorted Import Unioning**: Merges imported symbols intelligently rather than conflicting on line order.
 2. **Class & Function Unioning**: Appends newly added methods into the appropriate class definitions without colliding with adjacent method additions.
-3. **Syntax Validation**: Ensures the resulting resolved file is 100% syntactically valid code before saving.
+3. **Validation**: Inspect output and run relevant tests before writing it; a parsed merge is not semantic proof.
 
 ---
 

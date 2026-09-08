@@ -1,3 +1,5 @@
+Current status: historical decision; Invocation-scoped permissions and containment remain required. Current fix dry-run, MCP ship cleanup, checkpoint, governance, and AI-evaluation paths violate parts of this contract; see [application review F01–F08](../reports/phase-64-66-application-review.md) and [Phase 64 safe execution](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Do not treat this decision as a current safety guarantee.
+
 # ADR 0007: Slow, network, and destructive permissions
 
 ## Context

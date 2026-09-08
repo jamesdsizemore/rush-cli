@@ -1,3 +1,5 @@
+Current status: historical decision; Current import checks are bounded heuristics described in [anti-hallucination](../agentic-rush/anti-hallucination.md). They do not prove prevention of all typosquatting or import failures, nor universal pre-write interception or the latency bound below. Accepted patch verification remains governed by [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); use [CLI reference](../CLI_REFERENCE.md) for actual permissions and options.
+
 # ADR-0033: Real-Time AST Package Hallucination and Phantom Import Guard
 
 ## Status

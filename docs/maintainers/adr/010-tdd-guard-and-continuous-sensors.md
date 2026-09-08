@@ -1,3 +1,5 @@
+Current status: historical decision; Sensor integration and fail-closed patch verification remain required. TDD test-file checks do not guarantee regression protection, and current fix/checkpoint/sandbox/patch paths violate the blanket containment and exact-state rollback claims in the Phase 58 section ([application review F01, F03, F05, and F43](../../reports/phase-64-66-application-review.md)). [Phase 64](../../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) governs repairs; the historical section is not current safety evidence.
+
 # ADR-010: TDD Guard & Continuous Architectural Sensors
 
 ## Status

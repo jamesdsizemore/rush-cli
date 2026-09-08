@@ -1,3 +1,5 @@
+Current status: historical decision; Lock and merge components are documented in [multi-agent mesh and traceability](../workflows/multi_agent_mesh_and_traceability.md). Their existence does not establish conflict-free concurrent coding, universal platform transport support, or safe rollback across callers; [application review F05 and F43](../reports/phase-64-66-application-review.md) and [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) govern current preservation defects.
+
 # ADR-0047: Multi-Agent FastMCP Mesh and AST 3-Way Merge
 
 ## Status

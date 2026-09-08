@@ -1,0 +1,355 @@
+{
+  "files": [
+    {
+      "path": "docs/architecture/rush-epistemic-memory-and-agent-substrate.md",
+      "sha256": "7b00a48ad2d49885fa628eb9cb2e1608715dd7be1d238e32e9e8b3b92ce79b70",
+      "audience": "Rush users and implementers",
+      "authority": "planned",
+      "evidence": [
+        "Sections 2–5 explicitly distinguish conceptual schema, hydration and hooks from current Phase 61 store; Phase 63/65 links retain required outcomes."
+      ]
+    },
+    {
+      "path": "docs/maintainers/architecture-lifecycle.md",
+      "sha256": "1073e25c305be8876048ce0e7a46c472c452ab3aa516d2a5c303e52ede9337b4",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Corrected unsupported architecture.layers configuration, current complexity command, historical engine claims and migration evidence limits."
+      ]
+    },
+    {
+      "path": "docs/maintainers/documentation-style-guide.md",
+      "sha256": "7822a5d46dbb0332e5693878eb2f71c28ffcca2d7ab243c1d3bfdff9d61a9be9",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Replaced fixed document-count scope with recursive ownership; checker command and semantic-versus-structural evidence boundary."
+      ]
+    },
+    {
+      "path": "docs/maintainers/incident-and-security.md",
+      "sha256": "ffe053326ff7ae71c0913d7c05ff59959a037a657c2d758aab0c4fdd807fb061",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Corrected trust --plugin --revoke and cache clean against live help; preserved memory evidence and corrected rollback and operation coverage guarantees."
+      ]
+    },
+    {
+      "path": "docs/maintainers/release-playbook.md",
+      "sha256": "cd181aaaa86b4f50e4c5b6f23be80cb7024a199bd61d2a8c24939a736f5b6586",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Corrected attest flags, historical operation counts, release readiness and rollback guarantees against live CLI and application review."
+      ]
+    },
+    {
+      "path": "docs/maintainers/scanner-governance.md",
+      "sha256": "4b428c32300c630736ffa2fd560d68548f017c933e9a3569bf95e3c31c4e56df",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Preserved promotion/retention policy; corrected review scope assumptions and nonexistent dead-asset --prune flag."
+      ]
+    },
+    {
+      "path": "docs/maintainers/support-runbook.md",
+      "sha256": "c9012dc0a9e786c2acf9a357e0cfd488f17704d50f2c7e8505e989942498e530",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Retained environment triage and sanitized parser fixture procedure; read complete file and checked current support/troubleshooting references."
+      ]
+    },
+    {
+      "path": "docs/maintainers/versioning-and-compatibility.md",
+      "sha256": "e157653b905b381ff1ade2076245c8869af91787f2c6fd9b0073765c18b8d9a4",
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "evidence": [
+        "Corrected command-specific flags, quality-result versus service contracts, satellite migration differences and unsupported rollback guarantees."
+      ]
+    },
+    {
+      "path": "docs/specs/ai-attribution-spec.md",
+      "sha256": "d287e4be7dffdef6a50cbfed69382d9aa4ce3deb448a2c1e71e082cee4b157a3",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Section 4 labels survival placeholders as defects assigned P64-13; section 5 removes unregistered max_commits."
+      ]
+    },
+    {
+      "path": "docs/specs/arch-guard-spec.md",
+      "sha256": "9480005bac959229b46a0f56f24edaf8ed36518a649e70200f7c4de81a8274f4",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained ArchGuard source seam and live rush arch-guard / rush_arch_guard registrations."
+      ]
+    },
+    {
+      "path": "docs/specs/blast-radius-spec.md",
+      "sha256": "266b0456acef13ebca144f3b445a07cc7902e87bc7ca9091ad062a33af7c8b10",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained analyze(changed_files, max_depth=5) contract confirmed by Graft BlastRadiusAnalyzer source signature."
+      ]
+    },
+    {
+      "path": "docs/specs/cognitive-complexity-decomposition-spec.md",
+      "sha256": "5d2f97de38ef42adfd3e69731111ff99fd5bc98326ade2baca92ae47f16e697b",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Distinguished suggestions from verified refactoring; nested-scope counting assigned P64-18."
+      ]
+    },
+    {
+      "path": "docs/specs/context-compression-and-recovery-spec.md",
+      "sha256": "ee017b143fd39438ce1d91b03c7e7d6880bfba1e612fbb12b92957e6033fece8",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained recovery requirements; LRU eviction identified as required behavior rather than current completion."
+      ]
+    },
+    {
+      "path": "docs/specs/db-migration-drift-spec.md",
+      "sha256": "3500b8a5f12ebead66420a1144c743c64c0b6ab33b7ab9c783268fb4778d2b52",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Explicit planned P64-15 table identity and missing-migration repair; preserved complete required computation."
+      ]
+    },
+    {
+      "path": "docs/specs/flaky-test-healer-spec.md",
+      "sha256": "8969f3d85220ce971a53d6e620b4fc574c414f379f8d36cc263e279ad374c231",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Explicit planned P64-12 execution/isolation/healing contract; distinguished legacy five-run heuristic from required stress workload."
+      ]
+    },
+    {
+      "path": "docs/specs/flight-recorder-spec.md",
+      "sha256": "13ffb04340313bda88ec8ac0ef594aa1a44a2ef9fdb80166fa9615fb10d6cff1",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained descriptive recovery non-authority; --replay option verified through current flight-recorder help."
+      ]
+    },
+    {
+      "path": "docs/specs/iam-policy-synthesis-spec.md",
+      "sha256": "ab8b41eefc837d7dfb7343ff86a63417e012996658f404801d63d3aa6b35840f",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected CLI --output / MCP output_policy_file; distinguished wildcard resource proposal from least privilege and linked P64-17."
+      ]
+    },
+    {
+      "path": "docs/specs/license-compliance-spec.md",
+      "sha256": "31854f40ef292299bb723687147e6384feafeeb552cb3d1ffa348a1244e1aade",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected absent CLI allowlist/export and MCP export parameters; SPDX compound-expression repair assigned P64-16."
+      ]
+    },
+    {
+      "path": "docs/specs/performance-profiling-spec.md",
+      "sha256": "b8ecd98cb8f6e1b51f6130d16efd96cf06235bbef589ebc49b3e488720a56a52",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Removed nonexistent --dynamic CLI route; required MCP path/options and failing-target measurement repair assigned P64-14."
+      ]
+    },
+    {
+      "path": "docs/specs/pr-synthesis-spec.md",
+      "sha256": "137c2d170b146b91b6aeed3318f2404a3508db923d436670a9c603cfe1516e3c",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected absent CLI base/export flags; retained MCP base_ref/export_path and explicit artifact-write permission."
+      ]
+    },
+    {
+      "path": "docs/specs/prompt-cache-alignment-spec.md",
+      "sha256": "1973a1d535f52ea333a7cc56ec250c0ea45cad7d083d46066a22b558a88846a0",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained local-only alignment, no provider-cache guarantee, and live context align-prompt --system route."
+      ]
+    },
+    {
+      "path": "docs/specs/public-api-diff-spec.md",
+      "sha256": "11290f8c1c484bea466b0862d3a07ab291b87f3ab140b14b1744f7e2827b0bc5",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained ApiDiffer source reference and current api-diff --base / rush_api_diff(base) input contract."
+      ]
+    },
+    {
+      "path": "docs/specs/slsa-attestation-spec.md",
+      "sha256": "a44cc76731513532485f16528824b5f5909b8108b4ee799116deb51a71a23617",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected generation flags; preserved unsigned provenance versus certification distinction and compatibility class."
+      ]
+    },
+    {
+      "path": "docs/specs/spec-to-code-traceability-spec.md",
+      "sha256": "d73f10e4bab1ae91b5a8a482bb931869e5e2134a3527c507be4d8d8300dac1bd",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained requirement-mapping specification and live trace/rush_trace routes; specification is not execution evidence."
+      ]
+    },
+    {
+      "path": "docs/specs/stale-sweeper-spec.md",
+      "sha256": "c13b329096968cf9bf647935a8e7a537cda561e5a854bdf20142b906793cb943",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained StaleSweeper history-pruning contract and recovery boundary; no automatic replay or prompt claim added."
+      ]
+    },
+    {
+      "path": "docs/specs/swarm-3way-ast-merge-spec.md",
+      "sha256": "1bbe6563e96cdf2bc9a55cdd9ba48706aebcfcd8389ab073036ee7940ad8a6d9",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained explicit conflict/no merged-code behavior and current three-file CLI / three-string MCP contract."
+      ]
+    },
+    {
+      "path": "docs/specs/telemetry-ledger-spec.md",
+      "sha256": "9b49d9db935d18b355650bd0adbcda5fc947064321f364e212a04ff2e78826d5",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained explicitly recorded local measurements, not_measured omission boundary and estimate-versus-provider-invoice distinction."
+      ]
+    },
+    {
+      "path": "docs/specs/terse-persona-spec.md",
+      "sha256": "af960ddcc6b4778bb967970f67c9a8b5eeb0ca928a6e25e4f696e92ecc2c15c3",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected absent universal --style flag and unsupported fixed percentage saving."
+      ]
+    },
+    {
+      "path": "docs/specs/toon-serialization-spec.md",
+      "sha256": "da834f4c246cfe079b1bb9a5d12e04e31e6b9da155be726363f9b58b6a738e16",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Separated local compact serialization from MCP JSON-RPC; removed universal --format toon and fixed saving guarantees."
+      ]
+    },
+    {
+      "path": "docs/specs/type-guard-synthesis-spec.md",
+      "sha256": "13a4fccd466c4f5afef847676fd48cbb037a6c99dcf9df67cd4289bb7f80d317",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Preserved safe constraint-grounded requirement as planned P64-15; current heuristic proposals not declared verified."
+      ]
+    },
+    {
+      "path": "docs/workflows/agent_grounding.md",
+      "sha256": "79a270fbffbf36fbc56637889067946700a4079d94e92413f985afc932ec4b35",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected package-presence security guarantee and separated actual MCP invocation from shell examples."
+      ]
+    },
+    {
+      "path": "docs/workflows/bi-temporal-mistake-pre-mortem.md",
+      "sha256": "5f00c3b6271a158c90972432e0b536fbde4cf0d40d176dd0d05f005a81fc932f",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Verified rush_context_mistakes_check registration; clarified mined evidence is not execution authority."
+      ]
+    },
+    {
+      "path": "docs/workflows/blast_radius_and_architecture_governance.md",
+      "sha256": "7c1b2c377669f1ebfc3905c500654003849fe6a36f12d45e25cf1cd52c9e8c55",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained current blast-radius --path and arch-guard invocation examples."
+      ]
+    },
+    {
+      "path": "docs/workflows/context_packing_and_budgeting.md",
+      "sha256": "7fc498f6d9d286057f5eefbd0386df729a41729b79d7bbda16a2349203b4d6bd",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected required --path and real cli symbol example; preserved omission/recovery and measured-token boundary."
+      ]
+    },
+    {
+      "path": "docs/workflows/database_drift_and_code_simplification.md",
+      "sha256": "9280ee229473bf0413421c34f08ceedb4c6669e764e1db1397e906d9c135806f",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Added current P64-15/P64-18 computation limits while retaining required workflow."
+      ]
+    },
+    {
+      "path": "docs/workflows/flaky_test_healing_and_api_contracts.md",
+      "sha256": "c0714ef5bae9b58f0c2c8bce1593317f10aee7038722b4a860c76bc048f53bfe",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Identified repeated-run legacy behavior and P64-12 verified-healing requirement."
+      ]
+    },
+    {
+      "path": "docs/workflows/gain_tui_and_telemetry.md",
+      "sha256": "9ea11329953d23fc56a01b9d63522da0cc4b7f5f9057979d7976f5a47a3f4415",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected snapshot-versus-persistent interface and measured-provider-versus-estimated cost; linked P66-03."
+      ]
+    },
+    {
+      "path": "docs/workflows/multi_agent_mesh_and_traceability.md",
+      "sha256": "d5a91afc1d03b2fac876b1fdc5dc79e0d4a6145a53e9116b8cc9a534b7f99119",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Retained non-authoritative recovery, explicit merge conflicts and registered trace/swarm-merge/simulate-ci routes."
+      ]
+    },
+    {
+      "path": "docs/workflows/supply_chain_security_and_flagship_release.md",
+      "sha256": "f8baf84a42175cbc520d99c3fe2d49d5179bd866bb5f67d215daa03a33133a8a",
+      "audience": "Rush users and implementers",
+      "authority": "current",
+      "evidence": [
+        "Corrected error-catalog, license-matrix, dead-asset, attest and pr-synthesize CLI examples against live flags."
+      ]
+    }
+  ]
+}

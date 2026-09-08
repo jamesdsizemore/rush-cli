@@ -3,19 +3,18 @@
 ## Overview
 `rush mem-profile` audits Python source files for memory leaks and unclosed resource allocations (files, sockets, database handles) via static AST analysis, and optionally executes a dynamic subprocess memory tracing probe guarded by `--allow-slow`.
 
+**Status: planned correction — implementation [Phase 64, P64-14](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-14--honest-profiler-target-execution-f15).** Current dynamic path can report success when the target process fails. Inspect child exit evidence; do not treat failed target execution as a completed profile.
+
 ## Usage
 
 ### CLI
 ```bash
-rush mem-profile [PATH] [--allow-slow] [--json]
+uv run rush mem-profile PATH [--allow-slow] [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_mem_profile`
-- **Parameters:**
-  - `path` (str): Target Python file or directory to profile.
-  - `dynamic` (bool, optional): Enable dynamic subprocess memory tracing.
-  - `allow_slow` (bool): Required when `dynamic=True` is requested.
+- **Parameters:** required `path` (str), required opaque `options` object, and common permission booleans defaulting to false. Current MCP schema exposes no top-level `dynamic` parameter.
 
 ## Inspection Scope
 1. **Static AST Analysis**: Detects `open()`, `socket.socket()`, `sqlite3.connect()`, `urllib.request.urlopen()` called without a `with` context manager or without subsequent `.close()`.

@@ -1,3 +1,5 @@
+Current status: historical decision; Current consensus reconciles supplied findings and score computation uses supplied numeric pillars; agreement does not eliminate hallucinations, and default scores are not measured repository health. Current export routes are command-specific. [Multi-model consensus and scoring](../agentic-rush/multi-model-consensus-and-scoring.md) documents those limits; the automatic trend, PR-card, and universal health consequences below remain design outcomes.
+
 # ADR-0028: Multi-Model Consensus Reconciliation and Quality Scorecard
 
 ## Status

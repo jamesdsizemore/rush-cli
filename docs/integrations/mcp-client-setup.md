@@ -4,7 +4,7 @@
 
 No MCP client configuration, OAuth setting, or persistent Rush credential is required for provider continuation. Clients call the local `rush_continuity` tool and must request permission for supported user-owned CLI routes or fixed-loopback API routes. For `9router_cli`, set `RUSH_9ROUTER_API_KEY` only in the MCP server's process environment; Rush copies it only to the one Codex child process and never chooses a model.
 
-Configure Rush as a local Model Context Protocol (MCP) server across Claude Desktop, Claude Code, Cursor, Windsurf, Zed, and other AI coding assistants.
+Current setup is manual. Configure Rush as a local Model Context Protocol (MCP) server after completing the editable source installation. Automatic client discovery and connection remain **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--single-beginner-journey-and-agent-connection-f35-f42).**
 
 ---
 
@@ -36,7 +36,7 @@ JSON-RPC responses on stdout (Diagnostics on stderr)
       "args": [
         "run",
         "--directory",
-        "C:\\Users\\james\\developer\\rush-cli",
+        "C:\\absolute\\path\\to\\rush-cli",
         "rush",
         "mcp",
         "serve"
@@ -58,7 +58,7 @@ JSON-RPC responses on stdout (Diagnostics on stderr)
       "args": [
         "run",
         "--directory",
-        "${workspaceFolder}",
+        "/absolute/path/to/rush-cli",
         "rush",
         "mcp",
         "serve"
@@ -75,7 +75,7 @@ JSON-RPC responses on stdout (Diagnostics on stderr)
     "rush": {
       "command": {
         "path": "uv",
-        "args": ["run", "rush", "mcp", "serve"]
+        "args": ["run", "--directory", "/absolute/path/to/rush-cli", "rush", "mcp", "serve"]
       }
     }
   }
@@ -87,8 +87,7 @@ JSON-RPC responses on stdout (Diagnostics on stderr)
 ## 3. Verification Protocol
 
 1. Start your MCP client.
-2. Verify the catalogued tools, including `rush_continuity`, appear with the `rush_` prefix:
-   - `rush_review`, `rush_lint`, `rush_format`, `rush_test`, `rush_security`, `rush_typecheck`, `rush_dead`, `rush_complexity`, `rush_slop`, `rush_markdown`, `rush_actions`, `rush_yaml`, `rush_sql`, `rush_templates`, `rush_containerfile`, `rush_iac`, `rush_secrets`, `rush_sbom`, `rush_ai_eval`, `rush_codeql`, `rush_coverage`, `rush_pbt`, `rush_flaky`, `rush_contract`, `rush_snapshot`, `rush_visual`, `rush_mutation`, `rush_e2e`, `rush_fuzz`, `rush_load`, `rush_semantic_drift`, `rush_commit_msg`, `rush_ci`, `rush_release`, `rush_continuity`.
-3. Invoke `rush_review` with `{"path": "."}` and verify structured `ToolResult` JSON output.
+2. Verify tools from the live server appear with the `rush_` prefix. The generated catalog is authoritative; do not use a copied fixed list as completeness evidence.
+3. Invoke `rush_review` with an absolute project path and verify structured `ToolResult` JSON output.
 
-See [MCP Overview](mcp-overview.md) and [MCP Reference](../MCP_REFERENCE.md).
+See [MCP Overview](mcp-overview.md) and [MCP Reference](../reference/mcp-tool-reference.md).

@@ -1,3 +1,5 @@
+Current status: historical decision; Configured Anthropic/OpenAI review is implemented through the current provider selection and review pipeline; it can send review inputs to the selected provider when requested. The helper names below are historical design identifiers. [Privacy and data handling](../safety/privacy-and-data-handling.md) and [CLI reference](../CLI_REFERENCE.md) describe the current opt-in route and fallback behavior.
+
 # ADR 0012: Pluggable LLM Provider Abstraction Layer
 
 ## Context

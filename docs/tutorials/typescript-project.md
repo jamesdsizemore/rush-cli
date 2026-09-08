@@ -11,16 +11,16 @@
 2. Ensure each helper has its normal project configuration.
 3. Run:
    ```bash
-   rush tdd .
-   rush review . --export-html artifacts/review.html
-   rush lint .
-   rush format . --check
-   rush typecheck .
-   rush dead .
-   rush complexity .
-   rush slop .
-   rush test .
-   rush security .
+   uv run rush tdd .
+   uv run rush review . --json
+   uv run rush lint .
+   uv run rush format . --check
+   uv run rush typecheck .
+   uv run rush dead .
+   uv run rush complexity .
+   uv run rush slop .
+   uv run rush test .
+   uv run rush security .
    ```
 4. If an engine skips, run that engine directly to confirm `PATH` and configuration.
 

@@ -15,11 +15,11 @@
    uv run rush --help
    ```
    Expected: a generated command list and `mcp` group.
-3. Run review and export an interactive HTML dashboard:
+3. Run deterministic review:
    ```bash
-   uv run rush review src --export-html review.html
+   uv run rush review src --json
    ```
-   Expected: `ok` or `warn`, with a self-contained visual inspection report generated at `review.html`.
+   Expected: canonical JSON with current deterministic heuristic findings. Current `review` exposes no HTML/SARIF export option.
 4. Run JSON mode:
    ```bash
    uv run rush review src --json

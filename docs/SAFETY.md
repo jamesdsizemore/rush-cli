@@ -4,20 +4,20 @@
 
 Provider resume is opt-in, projection-limited, and non-retrying. OmniRoute uses one fixed loopback API request and validates semantic completion without retaining its response. `9router_cli` runs Codex through fixed local 9Router with a child-process-only credential, no model argument, and no output retention. Z.AI is deferred without invocation. There is no automatic provider routing, OAuth flow, or profile mutation.
 
-Rush is designed to make the safe action the default.
+Rush aims for safe defaults, but current safety defects remain open. `fix --dry-run` can destroy user work, `ship clean` deletes by default, checkpoint/governance symlinks escape containment, and custom token-outline output can expose secrets. See [Known issues](KNOWN_ISSUES.md) and [P64-01–P64-06](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); those fixes are planned.
 
 - **No implicit installs.** Missing optional engines return `skipped`.
 - **No silent source rewrite.** Review/check commands are read-only; formatter mutation is an explicit path and `--check` is available.
-- **No hidden publication.** Release is dry-run; publication execution is intentionally unavailable.
+- **No hidden publication.** Current CLI exposes `release check` for version parity; it does not publish packages.
 - **No history rewrite.** Commit-message checking never changes Git.
-- **No network service.** MCP is local stdio only.
-- **Explicit execution permissions.** Browser, slow, network, download, build, and artifact-write operations require explicit permission flags (`--allow-*`) and report structured `metadata.execution`.
-- **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` makes no provider call.
+- **MCP transport.** MCP is local stdio only. The separate `dashboard` command starts a loopback HTTP server with open Phase 66 defects.
+- **Execution permissions.** Supported boundaries use invocation flags and `metadata.execution`; AI eval lacks required gating (F08), so this is not yet universal enforcement.
+- **No model marketing beyond implementation.** Review is deterministic; Graft is explicit; `--llm` can send findings to a configured provider.
 - **No secrets in normalized logs/results.** Obvious secret assignments are redacted, but raw external tool behavior still deserves care.
 - **No automatic coordination recovery.** Continuity may surface local ownership, stale evidence, merge conflicts, and redacted recovery receipts, but it never unlocks, merges, replays, or retries on the caller’s behalf.
 - **No historic instruction promotion.** Session handoff stores historic-instruction presence at `trust_tier="EXTERNAL_WRITE"`/`"DERIVED"` (Phase 61's unified typed-artifact schema — never `STATED` on entry, replacing the earlier binary quarantine flag); it never becomes a current directive.
 - **No silent stale replay.** Restore recomputes declared dependency hashes and labels changed or missing dependencies `stale`; legacy checkpoints remain `unknown` rather than being migrated automatically.
-- **Autonomous Agent Safety & Worktree Sandboxing.** Dangerous shell commands (`rm -rf`, `drop table`, `reset --hard`) are intercepted via `rush guard check-cmd`; filesystem writes are strictly confined to workspace boundaries via `rush guard check-path`; AI remediation patches run in isolated Git worktree sandboxes with circuit breakers.
+- **Autonomous Agent Safety & Worktree Sandboxing.** `rush guard check-cmd` inspects supplied strings and `rush guard check-path` checks a supplied path. They do not intercept external agent actions. Isolated public patch apply and safe cleanup remain planned in P64-04.
 - **Subagent Acyclic Invocations.** Hierarchical agent execution trees are validated to guarantee bounded call depth and acyclic DAG topology.
 
 ```mermaid
@@ -37,7 +37,7 @@ Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-han
 
 
 ## Context Safety, Grounding & Secret Redaction (Phases 41–43)
-* **Secret Redaction**: `PackageLinter` and all Rush transports redact keys as `[REDACTED]`.
+* **Secret Redaction**: Normalized output uses `[REDACTED]`; custom `rush_token_outline` bypass is still open (F07).
 * **Phantom Package Defense**: `GroundingVerifier` parses AST imports against `sys.stdlib_module_names` and `importlib.metadata.distributions()` to block supply-chain typosquatting and hallucinated libraries.
 * **Failure Ledger**: `FailureLedger` records failed patch AST fingerprints (`subject="failure"` rows in the unified `TypedArtifactStore`, `.rush/memory.db`, as of Phase 61 — formerly its own `.rush/memory/failures.db`) to prevent repetitive error loops.
 
@@ -65,12 +65,12 @@ Read [Permissions](safety/permissions.md), [Privacy](safety/privacy-and-data-han
 
 ## Single Execution Boundary and Fail-Closed Egress (Phase 57)
 
-- **Zero Runtime TypeError Retries**: Callables are adapted once during registration. If an operation raises an internal `TypeError` after side effects, the error propagates directly without retry.
+- **TypeError handling**: Invocation adapters bind calls once, but workflow suites still retry `TypeError` without permissions (F34). Single execution across callers remains planned in P65-04.
 - **Provider Egress Truthfulness**: The `review_kind = "llm"` label is assigned strictly after receiving a non-empty, schema-valid response from an approved HTTPS origin. Network failures, timeouts, or permission denials fall back to heuristic reviews or structured error states.
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -91,9 +91,9 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
 ### Build Claim Truthfulness & Engine Safety (Phase 59)
-Rush guarantees truthful build claims: unsigned provenance drafts are never reported as signed or accredited with SLSA levels. Missing distribution packages fail closed with skipped status. Supported engines cannot pass when all tests are skipped.
+Rush guarantees truthful build claims: unsigned provenance drafts are never reported as signed or accredited with SLSA levels. Missing distribution packages fail closed with skipped status. Lint/format and simulated-workload success defects remain open (F09–F11); a catalog status alone does not prove execution.

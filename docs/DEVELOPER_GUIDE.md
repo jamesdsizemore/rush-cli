@@ -11,9 +11,9 @@ This guide is for contributors. User help begins at [Documentation home](README.
 ```bash
 uv sync --all-extras --frozen
 unset VIRTUAL_ENV PYTHONPATH
-.venv/Scripts/python.exe -m pytest tests/ -q
-.venv/Scripts/ruff.exe check src tests
-.venv/Scripts/ruff.exe format --check src tests
+uv run --python 3.12 --extra dev python -m pytest tests/ -q
+uv run --python 3.12 --extra dev ruff check src tests
+uv run --python 3.12 --extra dev ruff format --check src tests
 git diff --check
 ```
 

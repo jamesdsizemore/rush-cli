@@ -29,4 +29,4 @@ When an agent or developer requires the uncompressed verbatim content, it retrie
       last_accessed_at INTEGER NOT NULL
   );
   ```
-* **Eviction Policy**: Least Recently Used (LRU) with configurable size cap.
+* **Eviction requirement**: LRU with a configurable size cap is a retained design requirement, not implemented CCR behavior. The current retrieval contract above does not promise automatic eviction; memory lifecycle work is tracked in the [Phase 63 plan](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md).

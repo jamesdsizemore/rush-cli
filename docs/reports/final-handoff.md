@@ -1,3 +1,5 @@
+Current status: historical Phase 51-60 handoff; current contract: [Phase 64 runtime correctness and safe execution](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); evidence: [whole-application review](phase-64-66-application-review.md).
+
 # Repository Remediation Program Final Handoff Report
 
 ## Executive Program Summary: 100% Remediation Complete

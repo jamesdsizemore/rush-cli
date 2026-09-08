@@ -1,3 +1,5 @@
+Current status: historical decision; Optional engines are still discovered rather than installed implicitly. The Phase 59 isolated-environment amendment is a support/testing contract, not proof that every developer invocation ignores ambient PATH; [engine compatibility](../../ENGINE_COMPATIBILITY.md) describes discovery and compatibility limits.
+
 # ADR-002: external engine discovery
 
 **Status:** accepted

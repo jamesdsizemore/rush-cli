@@ -1,7 +1,7 @@
 # Workflow: Real-Time AST Import Grounding Verification
 
 ## 1. Overview
-The AST Grounding Verifier (`rush hallu-guard`) protects AI coding sessions from dependency hallucinations and package typosquatting vulnerabilities by verifying that every imported symbol or package exists in the Python standard library or the active environment's installed distributions.
+The AST Grounding Verifier (`rush hallu-guard`) checks Python imports against local module and distribution evidence. A found package does not prove that it is safe, correctly attributed, or free of typosquatting; package presence also does not prove every imported symbol exists. Inspect findings alongside dependency and security scans.
 
 ## 2. Verification Protocol
 1. Parse code concrete syntax tree using Python `ast`.
@@ -17,6 +17,6 @@ The AST Grounding Verifier (`rush hallu-guard`) protects AI coding sessions from
 # Run codebase-wide grounding check
 rush hallu-guard
 
-# Run FastMCP grounding check on a single file
-rush_hallu_guard(path="src/new_feature.py")
 ```
+
+FastMCP call: `rush_hallu_guard(path="src/new_feature.py")`. This is a tool invocation through the agent, not a shell command.

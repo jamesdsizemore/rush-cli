@@ -8,7 +8,7 @@ Do not add transport-specific provider logic. `provider_resume` is routed throug
 
 `SessionContinuityTool` belongs in `ALL_TOOLS`; `_register_tools` exposes it as `rush_continuity` through its shared `__call__`. Do not add separate session-save MCP handlers, because they would bypass the common result and permission contract.
 
-This guide explains how Rush exposes its 52 catalogued tools as a Model Context Protocol (MCP) server over local standard input/output (`stdio`) for AI coding assistants.
+This guide explains how Rush exposes 53 catalogued tools plus custom compatibility routes as 74 registered Model Context Protocol (MCP) names over local standard input/output (`stdio`) for AI coding assistants. `scripts/sync_docs.py --check` compares every registered parameter/default/type tuple with the documentation receipt.
 
 ---
 
@@ -20,32 +20,15 @@ Rush uses the `mcp` Python library (FastMCP) to register tools. Each tool is reg
 
 ## 2. FastMCP Tool Invocations (`ToolFn.__call__`)
 
-When an AI assistant calls an MCP tool, FastMCP routes the invocation to `ToolFn.__call__()`:
+When an AI assistant calls a catalog tool, FastMCP routes the invocation through the registered tool's real `ToolFn.__call__()` signature. Signatures vary by tool; do not document a synthetic shared options object. For example, the current error-catalog surface is:
 
 ```python
 def __call__(
-    self,
-    path: str = ".",
-    allow_network: bool = False,
-    allow_download: bool = False,
-    allow_cache_write: bool = False,
-    allow_build: bool = False,
-    allow_slow: bool = False,
+    self, path: Path, *,
     allow_artifact_write: bool = False,
-    allow_browser: bool = False,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    perms = ExecutionPermissions(
-        allow_network=allow_network,
-        allow_download=allow_download,
-        allow_cache_write=allow_cache_write,
-        allow_build=allow_build,
-        allow_slow=allow_slow,
-        allow_artifact_write=allow_artifact_write,
-        allow_browser=allow_browser,
-    )
-    result = self.run(Path(path), permissions=perms, **kwargs)
-    return dict(result)
+    export_path: Path | str | None = None,
+) -> ToolResult:
+    ...
 ```
 
 ---

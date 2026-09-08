@@ -1,6 +1,6 @@
 # Alternatives, Comparisons, and Complements
 
-Rush provides a unified, local-first, safe front door across 77 specialized quality engines, linters, security scanners, test runners, and AI evaluators. This document clarifies how Rush compares to and complements adjacent tools in the modern developer ecosystem.
+Rush provides a unified, local-first, safe front door across catalogued engine adapters, linters, security scanners, test runners, and AI evaluators. This document clarifies how Rush compares to and complements adjacent tools in the modern developer ecosystem.
 
 ---
 
@@ -10,7 +10,7 @@ Rush provides a unified, local-first, safe front door across 77 specialized qual
 |---|---|---|---|
 | **Direct Engine CLI** | Ruff, ESLint, pytest, Semgrep, Trivy, Hadolint | Native CLI flags, auto-fix mutations, deep ecosystem-specific configurations. | Unified `ToolResult` JSON output, offline safety defaults, normalized findings, redacted secrets, single stdio MCP server for AI agents. |
 | **Polyglot Linter Orchestrators** | MegaLinter, Super-Linter | Running exhaustive linting pipelines in remote CI containers. | Lightweight local execution, instant startup (<50ms), stdio MCP integration, zero container overhead, dual-mode report imports. |
-| **Git Hook Frameworks** | pre-commit, husky, lefthook | Managing Git lifecycle hooks, staged file filters, and auto-stash workflows. | Rush runs as the unified command target inside pre-commit hooks (e.g. `rush lint . --check`), eliminating multi-language hook sprawl. |
+| **Git Hook Frameworks** | pre-commit, husky, lefthook | Managing Git lifecycle hooks, staged file filters, and auto-stash workflows. | Rush runs as the unified command target inside pre-commit hooks (e.g. `rush lint .`), eliminating multi-language hook sprawl. |
 | **AI Coding Assistants** | Claude Code, Cursor, Copilot, Hermes | Generating code, refactoring architectures, answering natural language questions. | Rush acts as the local MCP verification backend, giving AI assistants safe, deterministic tools (`rush_review`, `rush_lint`, `rush_security`, `rush_ai-eval`). |
 | **Code Knowledge Graphs** | Graft, Sourcegraph, CodeGraph | Tracing symbols, call hierarchies, cross-file references, and code connectivity. | Graft answers "How is this code connected?" while Rush answers "What quality and safety evidence exists?" Rush optionally integrates Graft context (`--use-graft`). |
 

@@ -4,9 +4,11 @@ Rush is engineered as a unified, modular quality intelligence platform. To help 
 
 ---
 
+Current status: design diagrams below retain subsystem intent, not executed acceptance. Current exceptions: destructive fix preview (F01), simulated workloads (F11), one-shot Rich UI and broken stdlib web API (F36–F40). See [Known issues](KNOWN_ISSUES.md); safe runtime and interactive interfaces remain planned in [Phase 64](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) and [Phase 66](phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
+
 ## 1. Core Code Quality & Automated Remediation Bundle
 
-The Core Code Quality bundle orchestrates static analysis, deterministic heuristics, AST pattern matching, AI anti-slop filtering, and non-destructive automated remediation.
+The Core Code Quality bundle orchestrates static analysis, deterministic heuristics, AST pattern matching, AI anti-slop filtering, and automated remediation with an open destructive cleanup defect (F01).
 
 ```mermaid
 flowchart TB
@@ -38,7 +40,7 @@ flowchart TB
 
     subgraph Remediation["Automated Remediation (rush fix)"]
         DryRun{"--dry-run Mode?"}
-        Preview["Display Unified Diff Preview"]
+        Preview["Current dry-run can discard user changes (F01)"]
         Apply["Apply Confined File Modifications"]
     end
 
@@ -266,7 +268,7 @@ flowchart TB
     subgraph Dashboard["Local In-Memory Dashboard (rush dashboard)"]
         HTTPServer["Ephemeral HTTP Server on 127.0.0.1"]
         SecurityGating["CSRF Origin Check + Ephemeral Token Auth"]
-        RichTUI["Rich Terminal UI (rush tui)"]
+        RichTUI["One-shot Rich layout (rush ui)"]
     end
 
     Manifests --> WorkspaceDetect

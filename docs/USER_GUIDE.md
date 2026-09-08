@@ -54,9 +54,9 @@ flowchart LR
 1. **`rush check .`** (The Quick Health Check):
    - Run this while you are actively writing code. It runs your linters, format checkers, and type checkers together in milliseconds.
 2. **`rush fix .`** (The Automatic Broom):
-   - Spot some messy indentation, inconsistent quotes, or unused imports? Run `rush fix .` and let Rush safely clean it up for you. (Tip: Use `rush fix . --dry-run` to preview the changes first!)
+   - Current `rush fix`, including `--dry-run`, can discard staged and unstaged changes. Do not use it on valuable work. Safe bounded remediation remains planned in [P64-01](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); see [F01](reports/phase-64-66-application-review.md).
 3. **`rush test .`** (The Safety Net):
-   - Runs your unit and integration tests to guarantee that your changes didn't accidentally break existing behavior.
+   - Runs supported installed test engines. Inspect executed tests, failures and skips; passing tests cover only the behavior they exercise.
 4. **`rush gate .`** (The Pre-Merge Guard):
    - Before opening a Pull Request or merging your branch into `main`, run `rush gate .` to run a comprehensive quality check across all standards.
 
@@ -83,7 +83,7 @@ If you use AI coding assistants, Rush is your new best friend. AI models are lig
 Rush includes dedicated guides for both [Agentic Rush](AGENTIC_RUSH.md) and [Vibecoding with Rush](VIBECODING.md) that protect your codebase:
 - **`rush slop .`**: Catches AI hallucinations, repetitive boilerplate, and useless comments.
 - **`rush tdd .`**: Verifies that your AI wrote tests for every new feature.
-- **`rush safety check-cmd "<cmd>"`**: Intercepts destructive commands before they harm your filesystem.
+- **`rush guard check-cmd "<cmd>"`**: Inspects a supplied command string. It is not an OS sandbox and does not intercept commands your agent runs elsewhere.
 - **`rush codegraph slice "<symbol>"`**: Slices exact function implementations to save 90% of prompt tokens.
 
 👉 Check out the [Vibecoding Master Portal](VIBECODING.md), the [Working with AI Agents Guide](user-guide/working-with-ai-agents.md), and the [Agentic Rush Knowledge Base](AGENTIC_RUSH.md) to learn more.
@@ -99,13 +99,13 @@ Prefer visual interfaces over terminal text? Rush has you covered:
   ```bash
   rush ui .
   ```
-  Launches a keyboard-navigable terminal dashboard to browse findings file by file.
+  Runs checks synchronously, prints one Rich layout, then exits. Keyboard navigation and a persistent TUI remain planned in [P66-03](phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
 
 - **Local Web Dashboard**:
   ```bash
   rush dashboard .
   ```
-  Opens an authenticated, private web dashboard in your browser (`http://127.0.0.1`) complete with metric charts, vulnerability summaries, and remediation tips.
+  Starts a stdlib HTTP server on loopback after synchronous checks. Its browser/server API currently disagrees on endpoint and authentication, so findings do not load reliably. Use CLI JSON for results. Authentication isolation, working findings and full controls remain planned in [Phase 66](phase-plans/phase-66-interactive-tui-and-local-web-plan.md); see [F37–F40](reports/phase-64-66-application-review.md).
 
 ---
 
@@ -162,7 +162,7 @@ Rush v0.2.0 introduces context optimization, AI token reduction, and release rea
 
 
 ## SLSA Attestation & Security Suite (Phase 50)
-* `rush attest --out statement.jsonl`: Generate build provenance.
+* `rush attest . --artifact-path dist/rush_cli-0.3.0-py3-none-any.whl --out statement.jsonl --allow-artifact-write`: Generate build provenance.
 * `rush license-matrix`: Scan for copyleft licenses.
 * `rush iam-audit`: Synthesize minimal IAM policies.
 * `rush dead-asset`: Clean up unused assets.

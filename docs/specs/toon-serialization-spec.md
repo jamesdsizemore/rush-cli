@@ -1,7 +1,7 @@
 # Specification: TOON v4.1 (Token-Oriented Object Notation) Wire Format
 
 ## 1. Overview
-TOON (Token-Oriented Object Notation) v4.1 is an ultra-compact tabular serialization wire format engineered specifically for LLM tool call responses and FastMCP transports. It replaces redundant JSON key-value overhead with markdown pipe-delimited tables, achieving 40% to 65% token savings on array-of-objects payloads.
+Rush's TOON utility represents tabular local data as pipe-delimited text. It does not replace MCP's JSON-RPC transport or the canonical tool response contract. Token savings depend on the actual payload and tokenizer; the prior 40–65% figure is not a measured guarantee for arbitrary input.
 
 ## 2. Wire Structure
 ```markdown
@@ -19,4 +19,4 @@ TOON (Token-Oriented Object Notation) v4.1 is an ultra-compact tabular serializa
 ## 4. API Reference
 * `rush.token_economy.toon.encode_toon(data: list[dict[str, Any]]) -> str`
 * `rush.token_economy.toon.decode_toon(toon_str: str) -> list[dict[str, Any]]`
-* CLI Flag: `--format toon` on supported subcommands.
+* There is no universal `--format toon` CLI option. Use the Python utility explicitly and inspect each command's actual `--help` before selecting an output format.

@@ -10,7 +10,7 @@ Before opening an issue or asking for support, check the following resources:
 1. **Troubleshooting Guides**: Read [Troubleshooting Guide](user-guide/troubleshooting.md) and the [Troubleshooting Matrix](TROUBLESHOOTING_MATRIX.md).
 2. **Frequently Asked Questions**: Check [FAQ](FAQ.md) and [User Guide FAQ](user-guide/faq.md).
 3. **Verify Tool Availability**: Run `rush capabilities . --json` to verify whether Rush discovers the engine on your `PATH`.
-4. **Inspect Raw Output**: Run your command with `--json` or `--verbose` to inspect the raw subprocess exit codes and stderr messages.
+4. **Inspect Output**: Use `--json` on a command that exposes it, or global `--log-level debug` before the command. Remove secrets before sharing results.
 
 ---
 

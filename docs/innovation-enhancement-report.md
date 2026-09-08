@@ -1,3 +1,5 @@
+> Current status: historical research/planned requirements; current contract: [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); evidence: [application review](reports/phase-64-66-application-review.md). Original body below remains evidence, not proof its commands, measurements, or proposed capabilities work. Accepted future requirements remain planned in Phases 63–66.
+
 # Rush CLI: Comprehensive Architectural Review & 28-Feature Innovation Blueprint
 
 > **Superseded by Phase 61** (2026-09-07): this report's `session_memory`/`preference_store`/`invariant_graph`/`failure_ledger`/`checkpoint_journal`/ADR-0030 citations describe the pre-Phase-61 design. Phase 61 replaced them with `src/rush/memory/store.py`'s unified `TypedArtifactStore` (`.rush/memory.db`, 7-subject/4-tier-trust schema) and ADR-0049; Phase 62 wired 6 existing subsystems into it. This is a historical research record — content otherwise unchanged.

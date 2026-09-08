@@ -2,7 +2,7 @@
 
 Every engineering organization has unique domain requirements: proprietary database linters, internal API validation scripts, custom migration checkers, or team-specific architectural rules.
 
-Rush’s **Trust-Gated Plugin System** (`rush plugins`) and **Agent Skills Generator** (`rush skills`) let you declare custom quality tools that both human developers and autonomous AI agents can invoke with complete security.
+Rush’s **Trust-Gated Plugin System** (`rush plugin`) and **Agent Skills Generator** (internal generator) support custom tooling. Current CLI has no `skills` group; plugins run with ambient user permissions, not kernel isolation.
 
 ---
 
@@ -37,17 +37,17 @@ In `rush.toml`:
 [plugins.check-api-contracts]
 command = "python scripts/verify_contracts.py"
 description = "Verify internal protobuf contracts against backend services"
-file_extensions = ["proto", "py"]
-timeout = 30
+patterns = ["*.proto", "*.py"]
+timeout_seconds = 30
 ```
 
 ### Running the Plugin:
 ```bash
 # List all configured plugins
-rush plugins list
+rush plugin list
 
 # Execute a specific plugin
-rush plugins run check-api-contracts .
+rush plugin run check-api-contracts .
 ```
 
 ---
@@ -56,9 +56,9 @@ rush plugins run check-api-contracts .
 
 Autonomous AI agents (such as Cursor, Claude Code, Cline, and Hermes) discover tools through standardized Agent Skill manifests (`SKILL.md`).
 
-Rush can automatically export all canonical tools, custom plugins, and workflow suites as native AI Agent Skills:
+Historical skill-export proposal: these `skills` commands are not registered. Accepted agent integration remains planned in [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
 
-```bash
+```text
 # Export Rush tools as Agent Skills
 rush skills export --format claude --output .gemini/skills/rush/
 
@@ -83,12 +83,12 @@ AI coding agents executing plugins must ensure user trust has been granted. If t
 ## Agent Invocation & Cache Integration (Phase 57)
 
 Autonomous agents invoking Rush via MCP enjoy full parity with human CLI users:
-- Unified context resolution guarantees identical tool behavior.
-- Cache lookups accelerate repetitive quality checks without risk of stale dirty-state hits.
+- CLI/MCP share invocation code, but value-coercion parity defects remain open (F06), pending P64-05.
+- Cache correctness depends on declared identity and dependencies; a cache hit is not independent fresh verification.
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+The following component contracts are not whole-application guarantees. Checkpoint/governance symlink escapes, sandbox fallback, destructive cleanup and custom-output redaction defects remain open; see [Known issues](../KNOWN_ISSUES.md).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -109,7 +109,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

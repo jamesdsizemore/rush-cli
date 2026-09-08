@@ -5,7 +5,7 @@ Comprehensive answers to common architectural, operational, and user questions a
 ---
 
 ### What is Rush?
-Rush is a local-first CLI and stdio-only MCP server that provides a unified, deterministic interface across 77 specialized quality engines, security scanners, linters, test runners, and AI safety evaluators.
+Rush is a local-first CLI and stdio-only MCP server that provides a unified, deterministic interface across catalogued engine adapters, security scanners, linters, test runners, and AI safety evaluators.
 
 ### Does Rush replace tools like Ruff, ESLint, Semgrep, or pytest?
 No. Rush does not replace native quality engines. Instead, it acts as a safe, normalized front door that discovers existing tools on your `PATH`, runs them with isolated subprocess safety, normalizes findings to a canonical schema, and serves them to developers and AI coding agents.
@@ -30,7 +30,7 @@ Rush enforces explicit execution permissions for potentially slow, heavy, or mut
 - `--allow-browser`: Launching browser engines (Playwright, Chromium/WebKit/Firefox).
 
 ### Does `rush review --llm` send code to external AI providers?
-No. In the current release, `rush review --llm` is a development stub that returns deterministic placeholder information and makes zero outbound network or API calls. Default review uses fast, deterministic local heuristics.
+Yes, when requested with `rush review --llm` and a provider is configured, Rush can send findings to Anthropic/OpenAI. Default review uses fast, deterministic local heuristics.
 
 For more questions, see the [User Guide FAQ](user-guide/faq.md) and [Troubleshooting Guide](user-guide/troubleshooting.md).
 

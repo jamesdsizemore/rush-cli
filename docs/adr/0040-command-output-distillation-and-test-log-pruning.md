@@ -1,3 +1,5 @@
+Current status: historical decision; Distiller utilities do not establish universal subprocess integration, a global `--raw` flag, or the latency and 85–95% savings below. [CLI reference](../CLI_REFERENCE.md) and [token economy and context](../agentic-rush/token-economy-and-context.md) describe current routes and restoration limits; [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) preserves measured token-effect requirements.
+
 # ADR-0040: Command-Output Distillation and Test Log Pruning
 
 ## Status

@@ -1,3 +1,5 @@
+Current status: historical decision; Caching and Git-scoping primitives are implemented, with command-specific flags documented in [CLI reference](../CLI_REFERENCE.md). The sub-second and reproducibility consequences below are design expectations, not universal measured guarantees; staged path selection also does not prove staged-byte validation ([application review F26](../reports/phase-64-66-application-review.md)).
+
 # ADR-0014: Incremental Content-Hash Result Caching and Git Scoping
 
 ## Status

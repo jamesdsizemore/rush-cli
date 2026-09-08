@@ -1,3 +1,5 @@
+Current status: historical decision; The subprocess-hardening policy remains required. Current worktree and patch cleanup defects show that a list-based Git invocation alone does not prove safe state preservation or universal portability. See [application review F05, F29, and F43](../reports/phase-64-66-application-review.md) and [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); the absolute portability and compatibility consequences below are historical claims.
+
 # ADR-0024: Hardened Subprocess Git Invocations
 
 ## Status

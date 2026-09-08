@@ -3,6 +3,8 @@
 ## Overview
 `rush provenance-ai` audits AI code attribution and provenance across Git commit history. It inspects commit trailers (`Co-authored-by:`, `Generated-by:`, `Model:`, `Agent:`, `AI-Assisted:`), checks for repository shallow clones, calculates 30/60/90-day code line survival rates via `git blame --line-porcelain`, and correlates fix commits with AI-attributed changes.
 
+**Status: planned correction — implementation [Phase 64, P64-13](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-13--real-provenance-survival-and-correlation-f13-f14).** Current survival omits deleted/replaced cohort lines, and current correlation uses marginal ratios rather than paired origin/fix observations. Do not treat those metrics as valid until packet acceptance passes.
+
 ## Classification
 - **Category**: `workflow`
 - **Maturity**: `real_adapter`
@@ -22,12 +24,12 @@
 
 ### Basic Audit
 ```bash
-rush provenance-ai .
+uv run rush provenance-ai .
 ```
 
 ### JSON Wire Format
 ```bash
-rush provenance-ai . --json
+uv run rush provenance-ai . --json
 ```
 
 ## FastMCP Usage
@@ -35,8 +37,7 @@ rush provenance-ai . --json
 {
   "name": "rush_provenance_ai",
   "arguments": {
-    "path": ".",
-    "max_commits": 500
+    "path": "."
   }
 }
 ```

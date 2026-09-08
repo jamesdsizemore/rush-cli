@@ -10,7 +10,7 @@ Continuity sends only current goal, open work, and freshness to a supported CLI 
 
 ## Local behavior
 
-Rush reads the target and invokes installed local engines. It has no telemetry implementation and opens no network server. Human output goes to CLI stdout; MCP stdout is protocol-only; NDJSON logs go to stderr.
+Rush reads the target and invokes installed local engines. It has no telemetry implementation. MCP uses stdio; the separate dashboard starts a loopback HTTP server with open Phase 66 defects. Human output goes to CLI stdout; MCP stdout is protocol-only; NDJSON logs go to stderr.
 
 Continuity checkpoints stay local under `.rush/`. Before persistence, Rush redacts secret-shaped values and stores only a bounded handoff receipt: current goal/open work, dependency hashes, historic-instruction presence, and a failure receipt. It does not persist provider credentials, raw transcripts, historic-instruction text, or failed patches. As of Phase 61, every write to the unified `TypedArtifactStore` (`.rush/memory.db`) runs `sanitize_value()` inside `write()` itself — a caller cannot bypass redaction by forgetting to call it.
 
@@ -20,7 +20,7 @@ An engine is a separate program. Some dependency scanners may need advisory data
 
 ## Model behavior
 
-Default review is deterministic. `--use-graft` explicitly requests local Graft context. `--llm` only detects an Anthropic/OpenAI key and returns deterministic stub text; it makes no model call. If real providers are added, their data and consent contract must be documented before release.
+Default review is deterministic. `--use-graft` explicitly requests local Graft context. `--llm` can send findings to a configured Anthropic/OpenAI provider; it falls back to heuristic results when no valid completion is returned.
 
 ## Secrets
 
@@ -37,7 +37,7 @@ for maintainer retention, error-budget, and deprecation policy.
 
 ## End-to-End Recursive Sanitization (Phase 53)
 
-Rush treats all persistent and public output boundaries as sanitization choke-points:
+The shared sanitizer is a defense-in-depth mechanism. Custom token-outline MCP output still bypasses it (F07); this is not universal secret-exclusion proof:
 - `sanitize_value` redacts secrets from dictionary values AND keys.
 - Dict key collision suffixing ensures no data loss occurs when separate keys share redaction targets.
 - Pre-truncation subprocess handling ensures secrets cut off by character limits are redacted before truncation.
@@ -56,7 +56,7 @@ Data written to the invocation cache is sanitized prior to persistence. Prompts 
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+The following component contracts are not whole-application guarantees. Checkpoint/governance symlink escapes, sandbox fallback, destructive cleanup and custom-output redaction defects remain open; see [Known issues](../KNOWN_ISSUES.md).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -77,7 +77,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

@@ -12,10 +12,10 @@ Before cutting any release candidate:
 # 1. Clear foreign virtualenv contamination
 unset VIRTUAL_ENV PYTHONPATH
 
-# 2. Run the complete pytest test suite (955+ tests)
+# 2. Run the complete pytest test suite; every collected test must pass
 .venv/Scripts/python.exe -m pytest tests/ -q
 
-# 3. Verify documentation parity & internal cross-links across all 128 doc files
+# 3. Verify recursive documentation parity, hashes, links and runtime contracts
 .venv/Scripts/python.exe scripts/sync_docs.py --check
 
 # 4. Check linter and formatter
@@ -23,15 +23,15 @@ unset VIRTUAL_ENV PYTHONPATH
 .venv/Scripts/ruff.exe format --check src tests scripts
 
 # 5. Check Graft knowledge graph
-graft --dir .hermes/graft check .
+graft check .
 ```
 
 ---
 
 ## 2. Version Bump & Changelog
 
-1. Update version in `pyproject.toml` (`version = "0.2.0"`).
-2. Update version in `src/rush/__init__.py` (`__version__ = "0.2.0"`).
+1. Update version in `pyproject.toml` to the intended release version.
+2. Confirm `src/rush/__init__.py` still derives installed version from `importlib.metadata.version("rush-cli")`; update only its development fallback when the project version changes.
 3. Document all new features, engine additions, and bug fixes in `CHANGELOG.md`.
 
 ---
@@ -51,6 +51,8 @@ uv pip install --python .release_test_env/Scripts/python.exe dist/*.whl
 .release_test_env/Scripts/rush.exe review src/
 .release_test_env/Scripts/rush.exe lint src/
 ```
+
+Commands above use Windows executable paths. On macOS/Linux use `.release_test_env/bin/python` and `.release_test_env/bin/rush`.
 
 ---
 

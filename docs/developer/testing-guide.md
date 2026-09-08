@@ -1,6 +1,6 @@
 # Developer Testing Guide & Test Architecture
 
-This guide explains the 9 testing layers that maintain the deterministic test pass rate across all 52 tools and 124 engines in Rush CLI.
+This guide explains the 9 testing layers used for current registries of 53 tools and 121 engines in Rush CLI. Registered MCP surface currently contains 74 names.
 
 ---
 
@@ -8,13 +8,13 @@ This guide explains the 9 testing layers that maintain the deterministic test pa
 
 ```text
 Layer 1: Unit Contracts (Finding normalization, fingerprint hashing, secret redaction)
-Layer 2: Parser Fixtures (tests/fixtures/engine_reports/ for all 121 engines)
+Layer 2: Parser Fixtures (tests/fixtures/engine_reports/ for registered parser suites)
 Layer 3: Subprocess Invocation Tests (Mocked run_subprocess proving argv and timeout)
 Layer 4: Routing & Aggregation Tests (Language marker detection and status precedence)
 Layer 5: CLI Registry Tests (Click argument parsing, JSON emission, exit codes)
 Layer 6: FastMCP Server Tests (stdio JSON-RPC transport and schema validity)
 Layer 7: Execution Permission Tests (Flag enforcement for network, slow, browser, build)
-Layer 8: Documentation Parity & Sync Tests (Link verification across 128 markdown files)
+Layer 8: Documentation Coverage Tests (recursive inventory, hashes, links, anchors, ownership and runtime contracts)
 Layer 9: Packaging & Clean Distribution Tests (Wheel and sdist installation smoke tests)
 ```
 
@@ -27,7 +27,7 @@ Layer 9: Packaging & Clean Distribution Tests (Wheel and sdist installation smok
 .venv/Scripts/python.exe -m pytest tests/ -q
 
 # Run specific test category
-.venv/Scripts/python.exe -m pytest tests/test_docs_parity_and_sync.py
+.venv/Scripts/python.exe -m pytest tests/test_sync_docs.py -q
 .venv/Scripts/python.exe -m pytest tests/test_mcp.py
 .venv/Scripts/python.exe -m pytest tests/test_permissions.py
 
@@ -85,7 +85,7 @@ Key invariants:
 - `tests/test_attest.py`: in-toto v1 Statement generation, dist/ artifact discovery, unsigned draft assurance, export permission checks.
 - `tests/test_mem_profile.py`: Static AST unclosed resource detection, clean context managers, dynamic tracemalloc sampling.
 - `tests/test_cold_start.py`: Heavy top-level package detection, wildcard imports, dynamic importtime waterfall analysis.
-- `tests/test_offline_review.py`: Model absence handling, onnxruntime skip semantics, mocked inference session.
+- `tests/test_offline_runner.py`: Model absence handling, runner error semantics, and parsed findings.
 - `tests/test_benchmark.py`: Missing baseline handling, cache write permission gating, regression detection.
 - `tests/test_phase50c_integration.py`: End-to-end CLI JSON emission and FastMCP registration parity for all 5 tools.
 

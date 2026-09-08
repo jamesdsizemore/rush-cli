@@ -8,16 +8,18 @@
 
 ### CLI
 ```bash
-rush attest [PATH] [--artifact-path <path>] [--out <output_path>] [--builder-id <uri>] [--allow-artifact-write] [--json]
+uv run rush attest [PATH] [--artifact-path PATH] [--out PATH] [--builder-id URI] [--verify PATH] [--trusted-root TEXT] [--allowed-signer TEXT] [--allow-artifact-write] [--json]
 ```
 
 ### MCP
-- **Tool Name:** `rush_attest` (and deprecated alias `rush_attest_generate`)
+- **Tool Name:** `rush_attest` (custom alias `rush_attest_generate` is also currently registered)
 - **Parameters:**
   - `path` (str): Target directory or file to attest.
   - `artifact_path` (str, optional): Explicit target artifact path to attest.
-  - `output_path` (str, optional): Contained path to export in-toto provenance JSON.
-  - `builder_id` (str, optional): Builder URI identifier.
+  - `output_path` (str, optional; default `""`): Contained path to export in-toto provenance JSON.
+  - `builder_id` (str; default `https://rush-cli.org/builder/v1`): Builder URI identifier.
+  - `verify` (str, optional; default `""`): Signed provenance envelope to verify.
+  - `trusted_roots`, `allowed_signers`, `allowed_builders` (lists; default empty): Verification policy inputs.
   - `allow_artifact_write` (bool): Required when exporting provenance to `output_path`.
 
 ## Output Schema
@@ -66,4 +68,4 @@ Emits canonical `ToolResult` with `raw` containing an in-toto Statement v1 paylo
 - Exporting provenance statements via `--out` / `output_path` requires explicit `--allow-artifact-write` permission.
 - Output paths are strictly confined to the workspace root; path traversal escapes (`..`) and symlink attacks are rejected.
 ### Truthful Unsigned Drafts (Phase 59)
-`rush attest` produces honest unsigned drafts by default with physical artifact digests from `dist/`.
+`rush attest` produces unsigned drafts by default with physical artifact digests from `dist/`.

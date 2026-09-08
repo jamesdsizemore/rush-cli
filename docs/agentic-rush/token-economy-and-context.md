@@ -25,7 +25,7 @@ rush token count src/rush/cli.py
 # Total BPE Tokens: 18,420 tokens (cl100k_base / o200k_base)
 
 # Compare token density across your workspace
-rush token count src/ --top 10
+rush token count src/
 ```
 
 Supported tokenizers include `cl100k_base` (GPT-4 / Claude estimation) and `o200k_base` (GPT-4o).
@@ -43,7 +43,7 @@ The `rush token outline` command parses the source code's Abstract Syntax Tree (
 rush token outline src/rush/tools/review.py
 ```
 
-### Compression Comparison
+### Illustrative compression comparison (not a current benchmark)
 
 ```python
 # Raw Source (120 lines, 1,450 tokens):
@@ -67,16 +67,16 @@ class ReviewTool(Tool):
 
 ## 3. Prompt Diet & Context Advisor
 
-The `rush token cache-advisor` scans your repository and prompt templates to recommend optimal prompt layouts for LLM prompt caching (such as Anthropic Prompt Caching and OpenAI Prefix Caching).
+Historical proposal: `token cache-advisor` is not registered. Current `context align-prompt` performs local prefix padding; it cannot guarantee provider cache hits.
 
 ```bash
-# Analyze prompt efficiency and cache readiness
-rush token cache-advisor
+# Inspect currently registered prompt operations
+rush context --help
 ```
 
 - Groups static system instructions, tool definitions, and repository rules at the start of prompts.
 - Separates dynamic, frequently-changing context (like active diffs) at the tail of prompts.
-- Maximizes cache hit rates to cut API latency by up to 50%.
+- Provider hit rate and latency require measured provider evidence; no percentage is established here.
 
 ---
 

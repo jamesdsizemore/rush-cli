@@ -7,16 +7,12 @@
 
 ### CLI
 ```bash
-rush tui-diff [PATH] [--base-ref <git_ref>] [--json]
+uv run rush tui-diff PATH [--json]
 ```
 
 ### MCP
 - **Tool Name:** `rush_tui_diff`
-- **Parameters:**
-  - `path` (str): Target repository path.
-  - `base_ref` (str, optional): Git base ref (default: `HEAD~1`).
-  - `base_findings` (list, optional): Previous findings list to diff against.
-  - `current_findings` (list, optional): Current findings list.
+- **Parameters:** required `path` (str), required opaque `options` object, and common permission booleans defaulting to false. Current CLI exposes no `--base-ref`; current MCP schema does not expose top-level finding lists.
 
 ## Delta Computation
 1. **New Findings / Regressions**: Findings in current run that were not present in base. Emits findings with rule `tui-diff/new-finding-regression`.

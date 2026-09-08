@@ -1,5 +1,7 @@
 # Engine compatibility and integration contract
 
+Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).
+
 ## Continuity route engines
 
 The supported direct engines are Claude Code (`claude_code`), Codex CLI (`codex_cli`), and Antigravity CLI (`antigravity_cli`); OmniRoute (`omniroute_api`) is supported through its fixed local OpenAI-compatible endpoint. `9router_cli` runs Codex CLI through fixed local 9Router with a child-process-only credential and no model argument. Z.AI is deferred.

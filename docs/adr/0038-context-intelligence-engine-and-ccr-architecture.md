@@ -1,3 +1,5 @@
+Current status: historical decision; Current CCR and packing behavior is documented in [token economy and context](../agentic-rush/token-economy-and-context.md). Recoverability depends on retained local chunks; eviction and missing chunks preclude a universal reversibility or zero-degradation guarantee. The latency and 65–85% savings below are historical design targets; [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) governs measurement and memory capability work.
+
 # ADR-0038: Context Intelligence Engine and CCR Architecture
 
 ## Status

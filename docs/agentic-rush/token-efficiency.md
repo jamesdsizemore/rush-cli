@@ -16,7 +16,7 @@ An insufficient context budget yields a recoverable redacted CCR handle, not an 
 
 
 ## Test Healing Efficiency
-`TestHealer` avoids dumping dozens of failed test tracebacks into agent context by isolating and summarizing root causes.
+Current `TestHealer` repeats identical pytest runs and guesses causes (F12). Real perturbation/verified repair is planned in [P64-12](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md).
 
 
 
@@ -31,4 +31,4 @@ AST-based conflict resolution completely bypasses costly LLM re-prompting loops 
 
 
 ## Complete Token Economy Architecture
-Rush CLI v0.3.0 achieves an aggregate 75–90% reduction in token consumption across multi-turn AI coding workflows through AST skeletonization, Merkle caching, stale sweeping, and terse personas.
+The earlier aggregate 75–90% claim is not a current measured guarantee. Report local token counts for concrete inputs; provider savings and multi-turn outcomes require separate evidence.

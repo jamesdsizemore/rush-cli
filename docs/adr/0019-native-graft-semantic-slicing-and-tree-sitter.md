@@ -1,3 +1,5 @@
+Current status: historical decision; The dependency pins, MCP names, and performance percentages below are historical design claims. Current pins are defined in `pyproject.toml`/`uv.lock` (Tree-sitter 0.26.0); current slicing routes and limits are documented in [codegraph and semantic slicing](../agentic-rush/codegraph-and-semantic-slicing.md). [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) defines required token-effect measurement; this ADR is not benchmark evidence.
+
 # ADR-0019: Native Graft Semantic Slicing and Tree-Sitter AST Engine
 
 ## Status

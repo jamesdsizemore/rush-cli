@@ -1,0 +1,1116 @@
+{
+  "file_count": 80,
+  "files": [
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "current-status boundary",
+        "system flow counts",
+        "core registry contracts",
+        "dashboard source path",
+        "sanitization source paths"
+      ],
+      "current_refs": [
+        "src/rush/catalog.py",
+        "src/rush/tools/__init__.py",
+        "src/rush/engines/__init__.py",
+        "src/rush/mcp.py",
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/architecture.md",
+      "sha256": "09380889a459ac436ca0eaf73906750c9655fb43cb831cb50e8e9b1e8c03285f",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/backlog.md",
+      "sha256": "32e7e210d219768c48e19639773b663242ce29c0fbd0ca9949514f9f50872a46",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/benchmarking-report.md",
+      "sha256": "2ad4092270a1bb98afc67062d275df8c3354111e9ad75c04041f1b93be2416f9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/brainstorm-agentic-coding-support-plan.md",
+      "sha256": "351d4c158d7166d3c82ff29612edcffebd0f711647dc3e09a2619b45c07fa0f5",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/brainstorm-git-intelligence-plan.md",
+      "sha256": "f1971ce16fa9e4a91bbb7d0165111a6f79f3bbe9145a95e84a32d67a07b2effc",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/brainstorm-innovation-custom-plan.md",
+      "sha256": "e4d4b7cb7f315906132c2158a975d30d99d6e1f71c029bf0822de7cd1ce716c7",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "local gate sequence",
+        "CI runner scope",
+        "wheel install path",
+        "mypy planned status"
+      ],
+      "current_refs": [
+        ".github/workflows/ci.yml",
+        "pyproject.toml",
+        "scripts/probe_installed_artifacts.py",
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-20"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/ci-and-packaging.md",
+      "sha256": "0ef1be38f38021c2bf737cea732d2f003abebbb370c45addd4f33da8d1dd753a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "AGENTS.md",
+        "pyproject.toml",
+        "src/rush/runtime/subprocesses.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/coding-standards.md",
+      "sha256": "c485c9c214886c2bcf7efea71bd4210c95dada392cf42dc940b22c5e029fcec5",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "src/rush/config.py",
+        "src/rush/catalog.py",
+        "tests/test_config.py",
+        "examples/rush.toml"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/configuration-development.md",
+      "sha256": "355e56c7f5b29dd5791fdc187028412bfe5075fdbd5ec29cb05d4e3ecb3fa29a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "AGENTS.md",
+        "pyproject.toml",
+        "src/rush/tools/__init__.py",
+        "src/rush/mcp.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/contributor-onboarding.md",
+      "sha256": "05040fbd7b2b2d259fb904794dc006aa326c57ea1c7ecc79f7dfa73b6fbcaeb3",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "src/rush/runtime/subprocesses.py",
+        "src/rush/safety/redactor.py",
+        "tests/test_mcp.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/debugging-guide.md",
+      "sha256": "8f7182a17e977e651484b32736c6dd426ef013605905213aecd39e6abaeb1a36",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "Engine.run/normalize example",
+        "documentation checker command"
+      ],
+      "current_refs": [
+        "src/rush/engines/base.py",
+        "src/rush/runtime/subprocesses.py",
+        "src/rush/catalog.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/engine-development.md",
+      "sha256": "33ff3553bb8307a383cb1e9bf945bb073a41afa4d6a1d44e40b87dbd85b9e54f",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/headrushtoolsurls.txt",
+      "sha256": "c90537aa65fe63757575da5a667b8b0770e5f697fe6a968d4b4511a5fd525ac2",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/innovation-enhancement-funcionality-report.md",
+      "sha256": "886b774ca0d086b041cf6439ebe0991ae78ebea1da5ec9057c84d010559e403a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/innovation-enhancement-functionality-report.md",
+      "sha256": "886b774ca0d086b041cf6439ebe0991ae78ebea1da5ec9057c84d010559e403a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/innovation-remediation-plan.md",
+      "sha256": "35a0175fb7ad36e47a513ae4cd9586aa024a79bf6ab1f3482398f76b6a7e2ceb",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/integrations-scope-plan.md",
+      "sha256": "628b3b3ae6020c3ab1f18714fb61f4d70c96ab4234811a0fe79d752480346ac9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/issues.md",
+      "sha256": "53add0d9eadeff0bc7080bc4086e69ce2ba948531aef25d8593379dc8c720b91",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/master-brainstorm-innovation-plan.md",
+      "sha256": "65889faea344d7dcd51fe62abf12fad9e8cd1491eef7a949046bf9c644e6e0ab",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/master-innovation-remediation-build-plan.md",
+      "sha256": "ad0940c6187a37d524811a6f8d1d49d96e49d112f06c775d8c4e49e6ad5f5d66",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/master-pm-build-plan.md",
+      "sha256": "6ada27199e910a950f52f399cd5ea80586119587d5cfd4c082ee6f71bb2c7f65",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "live registration counts",
+        "per-tool signature contract",
+        "error-catalog signature example"
+      ],
+      "current_refs": [
+        "src/rush/mcp.py",
+        "src/rush/mcp_support/tool_registry.py",
+        "src/rush/tools/error_catalog.py",
+        "tests/test_mcp.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/mcp-development.md",
+      "sha256": "4e6700cf48e8710e251bcb76c780cbf58ea6781bb7e00066e831d8a73e1ea5c0",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-07-08-coding-agent-handoff.md",
+      "sha256": "cfe17810f3f67d33dec5ee70183a3d54dcb645fdd3ee5f635f07c579a49fb2dc",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-09-19-coding-agent-handoff.md",
+      "sha256": "af4197598314681a3451a618b89002643a895dcc8852f988d54edde2078420bf",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-20-plan-ai-anti-slop-modular-boundaries-and-continuous-sensors.md",
+      "sha256": "570c7c7607b767fefe9848775eade99ed50cdeb7e336b6e1288c28c1e8240326",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-21-plan-incremental-cache-and-git-scoping.md",
+      "sha256": "3cef665a02788356ea241a8e91638bc78b6a63a9bf779d9045d3ea38f8d939a2",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-22-plan-unified-automated-remediation.md",
+      "sha256": "6e17f40ea9727df6aa402315c2ba52720a8bc7baa09101f2803fe16faa448798",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-23-plan-sanitized-stack-onboarding-and-config-init.md",
+      "sha256": "080a77c6b50909307ab47cb2218ba372b6dcdc70fbb8226b230cd75e007ed8d4",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-24-plan-hardened-workflow-suites-and-environment-doctor.md",
+      "sha256": "8822a1418bb4e05c8a37b6e296dc9fc090d1b431053982efe073f4800fcddc52",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-25-plan-real-time-file-system-watcher.md",
+      "sha256": "931f5cd215dfd73a4ee7d69e8d8d49e3a7fb9348b285805e2fbca5d76b8b32d8",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-26-plan-monorepo-and-workspace-boundaries.md",
+      "sha256": "3c595530c3aa6e9a10c2ec7d2a73f6bf03024e6b5e5fe89ab1962c186fc267f3",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-27-plan-authenticated-in-memory-dashboard-and-tui.md",
+      "sha256": "dc6b26d94373fd6e426fb1a63ba5b5be61830e076f7052d4b4dcf573ae29a3d9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-28-plan-trust-gated-plugin-system-and-agent-skills.md",
+      "sha256": "e83b5f30c3581d80841c88415aed989a420847f91ad0bcc40d0595e70df7b13f",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-29-plan-isolated-ai-patch-remediation-and-memory.md",
+      "sha256": "8f5269261781f0aa5e0621b20144d7e0d36306193786de294d17c969f75cd90d",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-30-plan-standalone-packaging-versioning-and-ci.md",
+      "sha256": "31c251987c625b7daacfdbfae64dc66fac242864f2203a59c8695969ef7692a8",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-31-plan-agent-safety-and-worktree-sandboxing.md",
+      "sha256": "cfca8b93069079bbb004a2c264b0d9cf9d8c06a74a25c55a7b219fe53f731a3c",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-32-plan-token-economy-and-context-optimization.md",
+      "sha256": "75aa152409bf6d49f16a13ce9476e0a1ccb676834adf94a7bf45835bf9088cbd",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-33-plan-full-stack-sync-and-type-safety-gates.md",
+      "sha256": "15fdbdea7d9753c6067c11f181c0dc50cd89a82918f8933e787f96acabe7446a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-34-plan-codebase-hygiene-and-merge-resolution.md",
+      "sha256": "634b8f8ad374ffd6926e186de9f1a9d65014a0350281612cc48106ed65aff01e",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-35-plan-polyglot-ast-slicing-and-semantic-codegraph.md",
+      "sha256": "2a39f43357368ab05f0376b69ff7d516c197dbc13ae802eb7a5af934e9337cc9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-36-plan-frontend-asset-and-bundle-optimization.md",
+      "sha256": "e844e9a5633d79f7193e5bfc05dc0fb7beed300d90012a4d9a67775f0b771228",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-37-plan-git-hotspots-churn-and-code-velocity.md",
+      "sha256": "24a231fccf13309b5b41e5a4bb48b2422f4694af99a9ccc5555ca647bf1aa3a8",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-38-plan-agent-governance-and-repo-scaffolding.md",
+      "sha256": "17cc9e5910f22bfec747e2e700661e4f076686b58171b9ae8d8310b3a83e5a73",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-39-plan-git-pre-commit-intelligence-and-hook-guard.md",
+      "sha256": "270cf8675d62dcad761ff949338fd8a9100eb58313aaaf5b79920f8b4f8b5d27",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-40-plan-multi-model-consensus-and-quality-scorecard.md",
+      "sha256": "9bc7bd921cb98ce66f2f866885d24c8941e5490a24437cd6d87191f77126250a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-41-plan-foundations-bpe-distillers-and-base-ship.md",
+      "sha256": "330b9bbe2e873d3daf8659a9998fefac67a58b8e10a0304f71115668eb866fc9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-42-plan-toon-ast-skeletons-and-ship-gate.md",
+      "sha256": "6d8a41260d6d14b973b74230040256f4ea15ee043316aeda1f69966bd4f5738e",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-43-plan-ccr-grounding-and-mistake-memory.md",
+      "sha256": "b8b2e661efc66b27ce1db3c4b4cc56d5eac636ccbe0c6131680bb0fd9c770d61",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-44-plan-context-pack-and-prompt-cache-alignment.md",
+      "sha256": "f3e363cbb181db8c66bf079f19c5e88030be3d9d9a2231eb3fa1f395c654bd6b",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-45-plan-gain-tui-telemetry-and-terse-persona.md",
+      "sha256": "58fe42fc2b996badea297a52035abfbc2c29735f8a1e03b4312bec440b7c33d9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-46-plan-blast-radius-and-architecture-guard.md",
+      "sha256": "f83dca8a1fbb3164a53eb1b3a2d09d00acdccd8bce8351cf31e598816f63927a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-47-plan-test-heal-and-api-diff.md",
+      "sha256": "f67fc98a948267e8dbbe6fdc5ea74af7ce3aee516d18cc4ea42cf473f31e4fce",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-48-plan-db-drift-simplify-and-strictify.md",
+      "sha256": "666c833a5f06b08cabcc4bde87f830a965c51eaa59137e06211b249a11fc167d",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-49-plan-traceability-flight-recorder-and-swarm-merge.md",
+      "sha256": "b2ab0173f2e43a8304037aedf53924fd1d620a43d91b9d97363e362b785a079d",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-50-implementation-evidence.md",
+      "sha256": "18a71d9c5b8771ad6ea4ed624194e51213998838db61bf675181417c7b7a3b7e",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-50-plan-slsa-attestation-security-suite-and-flagship-release.md",
+      "sha256": "dbbe18b3f5e6d8c8761511e6a49528c63609319f9563c7bdd6c9dcf2df81b1ea",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-51-implementation-evidence.md",
+      "sha256": "f57ae00a294893ea1a58af6475bef12e61cd561755f784a592bce903873cc0e5",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-52-implementation-evidence.md",
+      "sha256": "bfdccae1a7dca53013f7f8f030065d52930d07c72743084999edd4ca867a5b92",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-53-implementation-evidence.md",
+      "sha256": "ba06d3a7a83a3a49a5c131ef3ff2aa62513354e57cf0ae4f6687e629ad4abf27",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-54-implementation-evidence.md",
+      "sha256": "21e0baece703a3b3b0d14a937e7cfa9fbe9913b5ba7e7924884c2938e5e6cc9b",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-55-implementation-evidence.md",
+      "sha256": "1eea1ca7c91b6da653a982fb06fcc1ad7307be1d2704c3c9764c544aa82dbfc8",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-56-implementation-evidence.md",
+      "sha256": "95102547c134a8336ce54d31176851d28d7669730d6541796c35691393f5732c",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-57-implementation-evidence.md",
+      "sha256": "6dd6d7d433213a1addfdbe821243fc57a92bd09e5fd894f57f625fd34e20899b",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-58-implementation-evidence.md",
+      "sha256": "9f388c955f2f2b41fcbc113231e9a7c6e045e9f580a360cf985e930467ef8488",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-59-implementation-evidence.md",
+      "sha256": "163a9b286cf750a07d1374a8ffdca997d80c9d7f064c4a0dc768ae95daad41af",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "historical",
+      "path": "docs/developer/phase-60-implementation-evidence.md",
+      "sha256": "bd205641e95c70d5568f5d0494079ed679cbab2a048d12b6559ae2ebafc56a70",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/pm-review.md",
+      "sha256": "29ec415f45845f6ac5653ca11b8f09dd6c98018199e27bfafce2d91c04eeca25",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "count-free verification",
+        "Graft path",
+        "version authority",
+        "POSIX executable paths"
+      ],
+      "current_refs": [
+        "pyproject.toml",
+        "src/rush/__init__.py",
+        ".github/workflows/ci.yml",
+        "scripts/sync_docs.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/release-process.md",
+      "sha256": "e45f70b0c88edd04d9b1d5a99bf8324355732362a675d48c23ab1a128f6dbc0e",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/repository-remediation-plan.adversarial-review.md",
+      "sha256": "68c55e6f4eba50b630b96ee7de49991b7924f0e4333b7d88c86150c4c87b59fc",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/repository-remediation-plan.md",
+      "sha256": "8ad4d791e01c8d8a6a204ed56ad436ec6162e485160a675c0d4c529f837fc63d",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "src/rush/tools/routing.py",
+        "src/rush/token_economy/router.py",
+        "tests/test_routing.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/routing-development.md",
+      "sha256": "9925b40e6385911d1f39b21fb22342ba9e3b99bd4e905539de4352bedff92c85",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/rush-integrations-report.md",
+      "sha256": "f712c7f9d8726ea07d018ed052c18b3e40955cd3ba86c9380424a321dd8af3b9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/rush-token-innovation-enhancement-report-plan.md",
+      "sha256": "0739a1ea31a5fd59e5789282fd766fbd4d55686d3b532df001db7e50f8c2c3d7",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/ship-readiness-deep-research-report.md",
+      "sha256": "e3b6d2e14561b3bb2f48dd46f92884c437c67337dd5214c9708e84b4de472ad5",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [],
+      "current_refs": [
+        "src/rush/catalog.py",
+        "src/rush/cli.py",
+        "src/rush/mcp.py",
+        "tests/test_cli_registry.py",
+        "tests/test_mcp.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/source-tree.md",
+      "sha256": "480b7c3524f31535d7bccf09ce5bd2829868d1b0766229d4ce0aeed30399ffa9",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "live registry counts",
+        "fixture/documentation layers",
+        "sync-docs test path",
+        "offline-review test path"
+      ],
+      "current_refs": [
+        "pyproject.toml",
+        "tests/test_sync_docs.py",
+        "tests/test_mcp.py",
+        "src/rush/catalog.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/testing-guide.md",
+      "sha256": "4e436ad595a37da6ddeb4bec0d9dea432f2756f44bede8fb9950cc2f75d2ce6a",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/token-reduction-innovation-report.md",
+      "sha256": "eb840619bcb9f987d5901b70e7bd2914dec12fd129f818ad57359ab028c50f5f",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "contributors and maintainers",
+      "authority": "current",
+      "changed_sections": [
+        "live registry maintenance",
+        "artifact flag scope"
+      ],
+      "current_refs": [
+        "src/rush/tools/base.py",
+        "src/rush/tools/__init__.py",
+        "src/rush/catalog.py",
+        "src/rush/cli.py",
+        "src/rush/mcp.py"
+      ],
+      "evidence": "current claims compared with listed live source/tests",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/tool-development.md",
+      "sha256": "5f9437300f25ce60c4ab2b8790d88304d8008cc05a443f8ccd77e16c6078c817",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/vibecoder-toolkit-plan.md",
+      "sha256": "5aac03755d382c32a57ac8483219a1ffc242295f5e6a0b67fd1c1985d6634089",
+      "source_state": "tracked"
+    },
+    {
+      "audience": "maintainers and historical reviewers",
+      "authority": "historical",
+      "changed_sections": [],
+      "current_refs": [
+        "docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md"
+      ],
+      "evidence": "full body read and retained as historical evidence; hash records unchanged bytes",
+      "owner": "developer-maintainer",
+      "path": "docs/developer/vibers-code-review.md",
+      "sha256": "43f6f77306f6ec36410cf9eef8bb4b80b785ba52048edc9c400d720d4e76f419",
+      "source_state": "tracked"
+    }
+  ],
+  "schema": "p64-00-developer-evidence/v1",
+  "scope": "docs/developer/**"
+}

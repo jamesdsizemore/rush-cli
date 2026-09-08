@@ -1,5 +1,7 @@
 # Maintainers/Release Playbook
 
+Current status: This checklist requires fresh execution against the release candidate. Historical phase closure labels below do not establish current release readiness. The [application review](../reports/phase-64-66-application-review.md) records unresolved runtime and installed-artifact gaps; [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) owns their repair. Publishing and tagging require explicit authorization.
+
 ## Pre-Release Gate Verification (Phases 41–43)
 Before publishing a release:
 ```bash
@@ -14,7 +16,7 @@ rush ship gate
 
 ## Pre-Release Architecture & Blast Radius Checks
 1. Run `rush arch-guard` to ensure clean architectural boundaries.
-2. Run `rush blast-radius` across all modified core modules.
+2. Run `rush blast-radius --path src/rush/changed_module.py` for each modified core module, replacing the example path.
 
 
 
@@ -24,19 +26,19 @@ Verify public API contract compatibility using `rush api-diff --base main`.
 
 
 ## Pre-Release Database Audit
-Execute `rush db-drift` to guarantee zero unmigrated schema changes before tagging releases.
+Execute `rush db-drift` and inspect its findings. Current detection does not establish absence of migration drift; Phase 64 P64-15 repairs table identity and missing-migration coverage.
 
 
 
 ## Pre-Release Traceability Verification
-Run `rush trace` and `rush simulate-ci` to verify full specification compliance prior to tagging releases.
+Run `rush trace` and `rush simulate-ci` as supporting checks. Their output does not prove full specification compliance; reconcile requirements with executed tests before tagging releases.
 
 
 
 ## Flagship v0.3.0 Release Checklist
-1. Execute `rush license-matrix` and `rush iam-audit`.
-2. Run `rush attest --target-artifact dist/*.whl --export-path dist/release.intoto.json --allow-artifact-write`.
-3. Verify all 52 catalog tools and 73 FastMCP tools pass test suites.
+1. Execute `rush license-matrix . --json` and `rush iam-audit . --json`.
+2. Run `rush attest . --artifact-path dist/RELEASE.whl --out dist/release.intoto.json --allow-artifact-write`, replacing `RELEASE.whl` with the exact built artifact. This generates unsigned provenance, not a SLSA level certification.
+3. Verify the current catalog and live FastMCP registrations against their contract suites; reconcile counts with the generated documentation coverage receipt rather than a fixed historical total.
 
 ## Pre-Release Installed Artifact & Governance Probes (Phases 51 & 52: Findings R-001 & R-012 Closed)
 Before publishing any release or pushing tags:
@@ -71,7 +73,7 @@ Before finalizing any release candidate:
    ```bash
    pytest tests/test_phase54_result_schema.py tests/test_phase54_operation_adapters.py -v
    ```
-2. Confirm 100% operation reconciliation (146 operations) across Click leaves and FastMCP routes:
+2. Reconcile the current Click leaves and live FastMCP routes against the operations inventory; a saved manifest count alone does not establish coverage:
    ```bash
    pytest tests/test_phase51_public_operations.py -v
    ```
@@ -109,7 +111,7 @@ Prior to release:
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+The following subsystem contracts require verification against the candidate. Historical R-009, R-010, R-011 and R-016 closure does not supersede the unresolved findings in the current application review:
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -130,12 +132,12 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Failed promotion can invoke destructive Git cleanup. Do not claim exact restoration of arbitrary working-tree state: the current application review records unresolved rollback and dry-run safety defects. Verify the Phase 64 repair and preservation tests before relying on this path.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
-   - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.
+   - Reconcile live registrations with `governance/public-operations.toml` and exercise the target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`). A declaration alone does not prove runtime enforcement; stdio service output must preserve JSON-RPC messages.
 ### Release Verification Gates (Phase 59)
 1. Run `python scripts/probe_installed_artifacts.py` on wheel and sdist.
 2. Verify `mypy --version` and `mypy src/rush` execute with exit code 0 (mandatory non-skipped release gate).
 3. Generate and verify unsigned provenance draft with real artifact digests.
-4. Run full test suite (1,189+ tests passing with 0 warnings).
+4. Run the full test suite with the project Python 3.12 interpreter. Record actual pass, fail, skip and warning totals for this candidate; historical totals are not acceptance evidence.

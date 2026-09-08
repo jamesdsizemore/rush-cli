@@ -11,7 +11,7 @@ Here is how Rush helps you ship with swagger.
 ## 1. The 6-Pillar Repository Health Scorecard
 
 ```bash
-rush score compute
+uv run rush score compute
 ```
 
 Rush calculates an objective, deterministic 0–100% health score and letter grade (A+ to F) across 6 key pillars:
@@ -33,49 +33,34 @@ Rush calculates an objective, deterministic 0–100% health score and letter gra
 
 ---
 
-## 2. Generating GitHub PR Cards (`rush score pr-card`)
+## 2. Computing repository score (`rush score compute`)
 
-When opening a Pull Request, generate a clean markdown summary to paste into your PR description:
+When opening a pull request, capture the score output as evidence:
 
 ```bash
-rush score pr-card
+uv run rush score compute
 ```
 
-### Generated PR Card:
-```markdown
-### 🛡️ Rush Quality Verified (Grade: A+)
-- **Tests**: 682 passed, 0 failures (100% green)
-- **Linting & Formatting**: 100% compliant with Ruff & Prettier
-- **Security & Secrets**: 0 vulnerabilities detected
-- **Documentation**: All documentation verified in full parity
-```
-
-Reviewers and teammates will be blown away by the clarity and rigor of your submission.
+`score compute` does not generate a PR card or prove every listed engine executed. Include only observed score inputs and separate executed test/security evidence.
 
 ---
 
-## 3. Automated Changelog & Semver (`rush release`)
+## 3. Release version parity (`rush release check`)
 
 When you are ready to cut a new release tag or publish a package:
 
 ```bash
-# Calculate next semver version and preview changelog
-rush release . --dry-run
+# Check current version parity
+uv run rush release check
 ```
 
-Rush inspects your commit history, groups changes by Conventional Commit types (`feat`, `fix`, `docs`), and formats an updated `CHANGELOG.md` entry automatically.
+Current `release` group exposes only `check`; it does not generate a changelog, tag, or publish a package.
 
 ---
 
-## 4. Visual README Badges
+## 4. Badge status
 
-Add a dynamic SVG quality badge to your repository's README:
-
-```bash
-rush score badge --output badges/quality.svg
-```
-
-You can embed the generated badge directly in your `README.md` to showcase your repository's test coverage and health grade.
+Current `score` group exposes only `compute`; it does not generate an SVG badge. Keep the badge requirement separate until an implemented command and artifact test exist.
 
 
 ---

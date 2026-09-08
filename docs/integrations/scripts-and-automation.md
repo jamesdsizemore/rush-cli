@@ -27,10 +27,10 @@ set -eo pipefail
 echo "Running Rush Quality Gateway..."
 
 # Run review and fail immediately if code review heuristics fail
-rush review .
+uv run rush review .
 
 # Run linting with JSON capture
-LINT_OUTPUT=$(rush lint . --check --json)
+LINT_OUTPUT=$(uv run rush lint . --json)
 LINT_STATUS=$(echo "$LINT_OUTPUT" | python -c "import json, sys; print(json.load(sys.stdin).get('status'))")
 
 if [ "$LINT_STATUS" = "fail" ] || [ "$LINT_STATUS" = "error" ]; then
@@ -50,16 +50,16 @@ echo "✅ All automated checks passed."
 .PHONY: check test security ci-clean
 
 check:
-	rush review .
-	rush lint . --check
-	rush format . --check
+	uv run rush review .
+	uv run rush lint .
+	uv run rush format . --check
 
 test:
-	rush test .
+	uv run rush test .
 
 security:
-	rush security .
-	rush secrets .
+	uv run rush security .
+	uv run rush secrets .
 
 ci-clean: check test security
 	@echo "All local verification gates clean."

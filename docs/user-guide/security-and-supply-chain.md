@@ -17,7 +17,7 @@ Session handoff uses the same posture: explicit cache-write permission, local re
 Accidentally committing an AWS secret access key, Stripe token, or database password to a public repository can lead to immediate compromise.
 
 ```bash
-rush secrets .
+uv run rush secrets .
 ```
 
 ### What Rush Checks:
@@ -35,7 +35,7 @@ Whenever Rush encounters a secret in any log, finding, or terminal output, it au
 Most modern applications rely on hundreds of third-party open-source packages. When a known vulnerability (CVE) is discovered in a package you use, you need to know immediately.
 
 ```bash
-rush security .
+uv run rush security .
 ```
 
 ### What Rush Invokes:
@@ -52,7 +52,7 @@ When shipping software to enterprise customers or open-source communities, you o
 
 ```bash
 # Generate a CycloneDX SBOM
-rush sbom . -o bom.json --allow-artifact-write
+uv run rush sbom . --output bom.json --allow-artifact-write
 ```
 
 Rush coordinates `cdxgen` and `ScanCode` to audit dependencies, scan license terms, and generate standard CycloneDX and SPDX documents.
@@ -64,7 +64,7 @@ Rush coordinates `cdxgen` and `ScanCode` to audit dependencies, scan license ter
 If your project builds with LLM prompts, agent workflows, or RAG systems, you need to test against prompt injection and jailbreaks:
 
 ```bash
-rush ai-eval .
+uv run rush ai-eval .
 ```
 
 Rush coordinates `Promptfoo`, `Garak`, and `DeepEval` to test that your AI system follows safety policies and refuses malicious prompts.
@@ -79,19 +79,19 @@ Rush coordinates `Promptfoo`, `Garak`, and `DeepEval` to test that your AI syste
 ## 5. Polyglot Error Cataloging (`rush error-catalog`)
 Extracts and documents exception pathways across Python, TypeScript, and Rust without leaking sensitive runtime details:
 ```bash
-rush error-catalog src/ --export-docs docs/errors.md --allow-artifact-write
+uv run rush error-catalog src/ --json
 ```
 
 ## 6. Copyleft Dependency Risk Matrix (`rush license-matrix`)
 Audits dependencies across `pyproject.toml`, `package.json`, and `Cargo.toml` against an allowlist of permissive SPDX licenses:
 ```bash
-rush license-matrix . --allowed-licenses "MIT,Apache-2.0,BSD-3-Clause"
+uv run rush license-matrix . --json
 ```
 
 ## 7. Cloud IAM Policy Synthesis & Terraform Wildcards (`rush iam-audit`)
 Statically extracts multi-cloud SDK operations and verifies that Terraform configurations do not contain dangerous wildcard actions (`*`):
 ```bash
-rush iam-audit . --export-path policy.json --allow-artifact-write
+uv run rush iam-audit . --output policy.json --allow-artifact-write --json
 ```
 
 ## Phantom Package Defense (Phase 43)
@@ -100,13 +100,13 @@ rush iam-audit . --export-path policy.json --allow-artifact-write
 ## 8. AI Code Provenance & Attribution (`rush provenance-ai`)
 Audit Git commit history for AI generation trailers and track code survival:
 ```bash
-rush provenance-ai .
+uv run rush provenance-ai .
 ```
 
 ## 9. Honest Build Provenance Drafts (`rush attest`)
 Generate an in-toto Statement v1 binding real distribution artifact digests from `dist/`:
 ```bash
-rush attest . --export-path artifacts/provenance.json --allow-artifact-write
+uv run rush attest . --artifact-path dist/package.whl --out artifacts/provenance.json --allow-artifact-write --json
 ```
 
 ### Running Custom Plugins Securely (Phase 56)
@@ -142,11 +142,11 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
    - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
-4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
+4. **Contained Patch Verification (`rush.patch`) — current safety repair pending**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current failure cleanup can run broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not use this as safe rollback evidence. Invocation-owned restoration is required by [Phase 64, P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43).
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

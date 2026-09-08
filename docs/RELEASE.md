@@ -7,7 +7,7 @@ This document defines the release workflow, semantic versioning rules, and pre-p
 ## 1. Safety Boundary for Releases
 
 - **No Implicit Tags or Push**: Rush never automatically writes Git tags or executes `git push` without explicit user control.
-- **Dry-Run by Default**: The `rush release` command operates in dry-run mode, calculating the next semantic version, verifying artifact inventory, and inspecting provenance attestations.
+- **Dry-Run by Default**: Current `rush release` is a group exposing `release check` for version parity. Catalog/MCP release inspection is a separate registration; this CLI does not calculate a release plan.
 - **Cryptographic Attestations**: Releases integrate with Cosign and SLSA Verifier (Phase 11/19) to verify supply chain signatures.
 
 ---
@@ -17,10 +17,10 @@ This document defines the release workflow, semantic versioning rules, and pre-p
 1. **Verify All Test Suites & Linters**:
    ```bash
    unset VIRTUAL_ENV PYTHONPATH
-   .venv/Scripts/python.exe -m pytest tests/ -q
-   .venv/Scripts/python.exe scripts/sync_docs.py --check
-   .venv/Scripts/ruff.exe check src tests scripts
-   .venv/Scripts/ruff.exe format --check src tests scripts
+   uv run --python 3.12 --extra dev python -m pytest tests/ -q
+   uv run --python 3.12 --extra dev python scripts/sync_docs.py --check
+   uv run --python 3.12 --extra dev ruff check src tests scripts
+   uv run --python 3.12 --extra dev ruff format --check src tests scripts
    graft --dir .hermes/graft check .
    ```
 
@@ -47,11 +47,11 @@ See [Release Process Guide](developer/release-process.md) and [Versioning Policy
 
 ## Release Checklist with Ship Cockpit (Phases 41–43)
 
-1. Run `rush ship clean` to remove scratch directories and build debris.
+1. Inspect `rush ship clean --dry-run`; current default deletion is unsafe for user-owned scratch files (F02). Permission-gated, ownership-checked apply remains planned in P64-02.
 2. Run `rush ship env` to verify environment variable parity.
 3. Run `rush ship migration` to verify database DDL locks.
-4. Run `rush ship semver` to ensure no accidental breaking public API changes.
+4. Run `rush ship semver OLD_FILE NEW_FILE` and inspect the static signature differences.
 5. Run `rush ship pack` to ensure zero secret leaks in distributions.
 6. Run `rush ship gate` for final 7-vector release readiness authorization.
 ### Pre-Release Verification (Phase 59)
-Release readiness requires passing all 1,189 tests, zero ruff errors, clean wheel/sdist probes, non-skipped `mypy` release gate, and truthful provenance draft generation.
+Release readiness requires passing the current required tests, Ruff and installed-artifact checks. The old 1,189-test count is historical. CI currently invokes undeclared `mypy` and has ordering/portability failures; repair remains planned in [P64-20](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Archive/checksum and clean-machine installation work remains planned in [P65-01](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md). No release readiness is established by this document.

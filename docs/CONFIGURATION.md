@@ -8,7 +8,7 @@ Rush does not store provider credentials, executable paths, OAuth profiles, endp
 
 `rush.toml` cannot grant session persistence. A caller must grant `--allow-cache-write` for each CLI save, or `allow_cache_write: true` for the corresponding MCP call; this prevents a repository configuration file from silently authorizing local writes.
 
-Rush configuration is designed to be optional, lightweight, and local-first. Most repositories require zero configuration because Rush uses intelligent ecosystem discovery and sensible defaults across all 77 quality engines.
+Rush configuration is designed to be optional, lightweight, and local-first. Most repositories require zero configuration because Rush uses intelligent ecosystem discovery and sensible defaults across catalogued engine adapters.
 
 ---
 
@@ -40,7 +40,7 @@ check = true
 - **Automated Init (`rush init`)**: Automatically inspect your repository and write a tailored `rush.toml`.
 - **Schema Validation (`rush config check`)**: Statically validates `rush.toml` against canonical schemas and tool catalogs.
 - **Custom Plugins (`[plugins.<name>]`)**: Declare custom linter/analyzer script execution commands.
-- **Local Dashboard (`[dashboard]`)**: Configure port and loopback parameters for the in-memory web dashboard.
+- **Local Dashboard**: Use the registered CLI `--port` option. The central configuration parser does not consume `[dashboard]`; working web interaction remains planned in Phase 66.
 - **Automatic Upward Discovery**: Rush walks upward from the target directory until it finds the nearest `rush.toml` file or reaches the `.git` boundary.
 - **Strict Catalog Validation**: Every `[tools.<name>]` section is validated against `TOOL_SPECS` in `src/rush/catalog.py` at parse time. Typographical errors raise actionable configuration errors immediately.
 - **Engine Arguments Pass-Through**: Pass specific flags to underlying linters (e.g. `engine_args = ["--select", "E,F,W,I"]`).
@@ -55,6 +55,8 @@ check = true
 - [Configuration Schema](CONFIG_SCHEMA.md): Schema validation rules.
 
 ## Context Intelligence & Preferences Configuration (Phases 41–43)
+
+Historical/planned configuration sketch below. `RushConfig` does not parse `[context_intel]` or `[memory]`; these keys do not relocate stores, enable distillers, or authorize persistence. `.rush/memory.db` is selected by memory runtime code. Memory administration remains governed by [Phase 63](phase-plans/phase-63-memory-capabilities-vibecoder-plan.md).
 
 ```toml
 [context_intel]
@@ -78,77 +80,70 @@ sessions_path = ".rush/sessions" # still written: checkpoint_journal.py's save_c
 ccr_cache_path = ".rush/cache/ccr.db"
 failures_db_path = ".rush/memory/failures.db" # legacy, .migrated after first Phase 61 run
 invariants_path = ".rush/memory/invariants.json" # legacy, .migrated after first Phase 61 run
+```
 
 ## Phase 50a Quality & Security Suite Tool Configuration
 
 ```toml
 [tools.error-catalog]
-operation = "audit"
-export_docs = "docs/ERROR_CATALOG.md"
-output_module = "src/rush/errors.py"
+export_path = "docs/ERROR_CATALOG.md"
 
 [tools.license-matrix]
-project_license = "Apache-2.0"
 allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC"]
-export_path = "reports/licenses.json"
 
 [tools.iam-audit]
-export_path = "reports/iam-policy.json"
+output_policy_file = "reports/iam-policy.json"
 ```
 
 ## Phase 50b/50c Flagship Tool Configuration
 
 ```toml
 [tools.attest]
-target_artifact = "dist/app-0.1.0-py3-none-any.whl"
-export_path = "dist/app-0.1.0.intoto.json"
+artifact_path = "dist/app-0.1.0-py3-none-any.whl"
+output_path = "dist/app-0.1.0.intoto.json"
 
 [tools.license-matrix]
-project_license = "Apache-2.0"
 allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC"]
-export_path = "reports/licenses.json"
 
 [tools.iam-audit]
-export_path = "reports/iam-policy.json"
+output_policy_file = "reports/iam-policy.json"
 
 [tools.dead-asset]
-operation = "audit"
 export_manifest = "reports/dead-assets.json"
 
 [tools.pr-synthesize]
 base_ref = "main"
-export_card = "reports/pr-card.md"
+export_path = "reports/pr-card.md"
 
 [tools.prompt-eval]
 pass_rate_threshold = 1.0
-max_tokens = 50000
-max_cost = 0.50
+max_tokens_threshold = 50000
+max_cost_threshold = 0.50
 
 [tools.error-catalog]
-operation = "audit"
-export_docs = "docs/ERROR_CATALOG.md"
-output_module = "src/rush/errors.py"
+export_path = "docs/ERROR_CATALOG.md"
 
 [tools.mem-profile]
-mode = "static"
+dynamic = false
 
 [tools.cold-start]
-mode = "static"
-threshold_ms = 50.0
+dynamic = false
 
 [tools.media-opt]
-operation = "audit"
+sanitize = false
+optimize = false
 
 [tools.offline-review]
 model_path = "models/reviewer.onnx"
 
 [tools.tui-diff]
-target_ref = "HEAD"
+base_ref = "HEAD~1"
 
 [tools.benchmark]
-metric = "duration_ms"
-threshold_pct = 10.0
+threshold_percent = 5.0
 ```
+
+These are separate examples; do not paste duplicate `[tools.*]` tables into one file. Artifact-producing options require per-invocation permission. Accepted analysis corrections remain planned in [Phase 64](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Source: `src/rush/config.py::_parse` and `src/rush/catalog.py::TOOL_SPECS`; `rush config check .` reports malformed or unknown tool options.
 
 ### Plugin Configuration & Secret References (Phase 56)
 In `rush.toml`, configure plugins under `[plugins.<name>]`:
@@ -170,7 +165,7 @@ Configuration digests (`effective_config_digest`) are derived from normalized to
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 
-Rush implements closed-loop resilience, fail-closed security, and physical containment across multi-agent concurrency, persistent memory, and AI-driven patch remediation (Findings R-009, R-010, R-011, R-016):
+These Phase 58 component contracts are not whole-application safety guarantees. Checkpoint symlink reads, governance symlink writes, sandbox fallback and patch cleanup remain open ([application review](reports/phase-64-66-application-review.md) F03–F05/F43; [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) P64-03/P64-04).
 
 1. **Capability Locks & Verifier Custody (`rush.mcp_mesh`)**:
    - Callers retain high-entropy capability tokens (`LockCapabilityInput`) delivered exclusively via protected channels (`stdin`, `descriptor`, or sensitive MCP parameters); argv and environment leakage are rejected fail-closed.
@@ -191,7 +186,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Failed promotion or verification triggers automatic atomic rollback (`git reset --hard`, `git clean -fd`) restoring the working directory to its exact pre-patch commit and state.
+   - Current rollback uses broad `git reset --hard`/`git clean -fd` and can destroy unrelated changes. It does not restore an exact pre-invocation index/worktree. Status: planned — bounded restoration in P64-01/P64-04, [Phase 64 runtime plan](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [application review](reports/phase-64-66-application-review.md) F01/F43.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

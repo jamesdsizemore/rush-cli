@@ -1,3 +1,5 @@
+Current status: historical decision; Ship checks are bounded local analyses, not proof of zero-downtime migrations or release readiness. MCP ship cleanup currently defaults to destructive execution ([application review F02](../reports/phase-64-66-application-review.md)); [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) governs preservation repairs, and [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) governs release/workflow completion. The latency and safety guarantees below remain requirements rather than current evidence.
+
 # ADR-0031: Pre-Flight Ship-Readiness Cockpit and Zero-Downtime Gates
 
 ## Status

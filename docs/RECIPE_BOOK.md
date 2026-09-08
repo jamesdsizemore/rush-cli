@@ -1,5 +1,7 @@
 # Recipe Book & Advanced Engineering Scenarios
 
+Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).
+
 This recipe book provides battle-tested command workflows for multi-language repositories, pre-flight checks, CI automation, and AI pair programming.
 
 ---
@@ -40,8 +42,8 @@ rush secrets . --json
 # 3. Generate CycloneDX SBOM artifact
 rush sbom . -o release-sbom.json --overwrite --allow-artifact-write --json
 
-# 4. Audit OpenSSF Scorecard supply chain posture
-rush ci . --json
+# 4. Inspect current CI command surface; legacy ci PATH --json is not registered
+rush ci --help
 ```
 
 ---

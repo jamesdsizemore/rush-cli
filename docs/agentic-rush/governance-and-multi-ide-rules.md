@@ -18,7 +18,7 @@ Rush’s **Agent Governance Subsystem** (`rush governance`) establishes `AGENTS.
 
 ## 2. Compiling Rules Across All IDEs
 
-The `rush governance sync` command reads `AGENTS.md` and compiles tailored rule files for every supported AI coding environment:
+The `rush governance sync` command reads `AGENTS.md` and writes supported rule targets. Current writes can follow an outside symlink (F04); bounded atomic synchronization is planned in [P64-03](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Do not run against untrusted targets.
 
 ```bash
 # Compile canonical AGENTS.md into all IDE rule formats
@@ -36,7 +36,7 @@ rush governance sync
 
 ## 3. Subagent Boundary Guard
 
-When autonomous subagents are dispatched in parallel, `rush governance check` verifies that no subagent exceeds its authorized operational scope or violates team architecture policies.
+When autonomous subagents are dispatched in parallel, `rush governance check` compares generated rule-file content with `AGENTS.md`; it does not supervise subagent permissions.
 
 ```bash
 # Check repository governance parity and agent permissions
@@ -51,7 +51,7 @@ To bootstrap a new project with production-ready agent governance in seconds:
 
 ```bash
 # Scaffold canonical AGENTS.md and rush.toml templates
-rush governance scaffold init
+rush scaffold init
 ```
 
 ---

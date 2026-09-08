@@ -1,59 +1,59 @@
 # Your first ten minutes with Rush
 
-This walkthrough proves that Rush is installed, runs a safe local review, and can return machine-readable output.
+This walkthrough uses the current editable source checkout, runs a local deterministic review, and returns machine-readable output. Complete beginner installation, automatic agent connection, comprehensive scan/repair/rescan, and project readiness remain planned in [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
 
 ## 1. Confirm the command and check environment health
 
 ```bash
-rush --help
-rush doctor .
+uv run rush --help
+uv run rush doctor .
 ```
 
 `rush doctor` diagnoses your local environment health, verifies PATH precedence, checks virtual environments, and flags binary shadowing.
 
-## 2. Auto-discover stack and initialize configuration
+## 2. Initialize and validate configuration
 
 ```bash
-# Auto-detect project tech stack and optionally install missing tools
-rush setup .
-
 # Generate a tailored rush.toml configuration file
-rush init .
+uv run rush init .
 
 # Verify configuration validity
-rush config check .
+uv run rush config check .
 ```
+
+Current `rush setup` does not provide the verified integrated installation route required by [Phase 65, P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--real-setup-and-canonical-package-installation-f30-f31). Do not use it as beginner installation evidence.
 
 ## 3. Run the fast inner-loop check suite
 
 ```bash
-rush check .
+uv run rush check .
 ```
 
-`rush check` runs linting, formatting checks, and static typechecking in parallel.
+`rush check` runs the current fixed check suite and returns child results. A missing optional engine can produce `skipped`; inspect JSON before treating the suite as complete evidence.
 
-## 4. Launch the interactive TUI or local web dashboard
+## 4. Current UI and dashboard limits
 
 ```bash
-# Interactive terminal finding explorer
-rush ui .
+# Current one-shot terminal summary
+uv run rush ui .
 
-# Authenticated local web dashboard on 127.0.0.1
-rush dashboard .
+# Current local web prototype
+uv run rush dashboard .
 ```
+
+These commands exist, but current implementations do not satisfy the accepted persistent TUI and complete web workflow. **Status: planned — implementation [Phase 66](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md).**
 
 ## 5. Review and safe automated remediation
 
 ```bash
 # Review deterministic heuristics
-rush review src
+uv run rush review src --json
 
-# Preview automated fixes without altering code
-rush fix . --dry-run
-
-# Apply safe fixes across linter engines
-rush fix .
+# Inspect available fix options; current safe-execution repairs are pending
+uv run rush fix --help
 ```
+
+Current `fix` execution has unresolved checkout/index preservation defects. Do not use it on valued work until [Phase 64, P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01) is implemented and verified.
 
 ## What to do next
 

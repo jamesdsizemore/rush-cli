@@ -1,3 +1,5 @@
+Current status: historical decision; Current public hook route is `rush hook run`; `rush hook install` is not registered. Current validation selects staged paths but reads worktree bytes, so staged-content safety and latency guarantees below are not established ([application review F26](../reports/phase-64-66-application-review.md)). See [pre-commit intelligence](../agentic-rush/pre-commit-intelligence.md) and [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); hook installation remains explicitly user-controlled.
+
 # ADR-0027: Sub-Second Git Pre-Commit Intelligence and Hook Guard
 
 ## Status

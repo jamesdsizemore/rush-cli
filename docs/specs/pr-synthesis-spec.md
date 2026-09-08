@@ -21,8 +21,8 @@ The synthesizer automatically locates `.github/CODEOWNERS`, `CODEOWNERS`, or `do
 - Aggregates unique reviewers into `metadata.recommended_reviewers` and renders them in the PR markdown card.
 
 ## 4. Contained Artifact Export
-Exporting the PR card to disk via `--export-path` requires explicit `--allow-artifact-write` permission. Path traversal (`..`) outside the workspace root returns an immediate structured `error`.
+MCP `export_path` requests PR card output with explicit `allow_artifact_write` permission and containment checks. CLI `--export-path` is not registered. Use CLI `--json` to return the card to the caller; neither route publishes a pull request by itself.
 
 ## 5. CLI & FastMCP Contracts
-- **CLI**: `rush pr-synthesize [PATH] [--base-ref <REF>] [--export-path <PATH>] [--allow-artifact-write] [--json]`
-- **FastMCP**: `rush_pr_synthesize(path=".", base_ref="main", export_path=None, allow_artifact_write=False)`
+- **CLI**: `rush pr-synthesize . --json`; CLI `--base-ref` and `--export-path` are not registered.
+- **FastMCP**: `rush_pr_synthesize(path=".", base_ref="main")`. MCP additionally exposes `export_path` and `allow_artifact_write`; use the live schema for defaults.

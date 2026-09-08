@@ -36,6 +36,6 @@ Rush uses your existing `pyproject.toml`, `eslint.config.js`, `.spectral.yaml`, 
 2. **Explicit Permissions Required**:
    - In v0.1, advanced tools were non-executing placeholders. In v0.2+, tools can execute live runners under explicit permission flags (e.g. `--allow-slow`, `--allow-network`, `--allow-browser`).
 3. **Configuration Schema**:
-   - `[tools.NAME]` sections are strictly validated against the 34 catalog tools in `src/rush/catalog.py`.
+   - `[tools.NAME]` sections are strictly validated against the catalogued tools in `src/rush/catalog.py`.
 
 See [Known Issues](KNOWN_ISSUES.md) and [Result Reference](reference/result-reference.md).

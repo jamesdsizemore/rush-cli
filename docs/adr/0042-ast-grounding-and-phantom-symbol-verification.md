@@ -1,3 +1,5 @@
+Current status: historical decision; Current grounding checks are bounded heuristics described in [anti-hallucination](../agentic-rush/anti-hallucination.md). The 100% elimination, universal patch interception, and latency consequences below are accepted design aspirations rather than verified current guarantees. [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) supplies the safe patch-verification contract.
+
 # ADR-0042: AST Grounding and Phantom Symbol Verification
 
 ## Status

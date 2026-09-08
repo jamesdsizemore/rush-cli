@@ -1,3 +1,5 @@
+Current status: historical decision; The accepted boundary-framing requirement remains, but current XML framing is not evidence that all MCP output is cryptographically signed or that prompt injection is neutralized. The old session-memory database is superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md); [security model](../safety/security-model.md) describes current trust limits, and [Phase 63](../phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) governs remaining memory capabilities.
+
 # ADR-0020: Cryptographic HMAC Context Boundary Framing
 
 ## Status

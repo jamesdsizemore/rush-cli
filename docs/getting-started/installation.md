@@ -1,6 +1,6 @@
 # Install Rush
 
-Rush is a Python 3.12 command-line application. The recommended development and source-install workflow uses [uv](https://docs.astral.sh/uv/), a Python package and environment manager.
+Rush is a Python 3.12 command-line application. Current installation is an editable source checkout managed by [uv](https://docs.astral.sh/uv/). A standalone, package-manager, and clean-machine installer is planned in [Phase 65, P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-cross-platform-installation-and-release-assets-f28-f42).
 
 ## Before you begin
 
@@ -34,7 +34,7 @@ uv sync --all-extras --frozen
 uv run rush --help
 ```
 
-If `rush` is not on `PATH`, continue using `uv run rush`, or install the built wheel into an isolated uv tool environment.
+Run Rush as `uv run rush` from this checkout. Current setup does not install a standalone `rush` command on `PATH`.
 
 ## Linux
 
@@ -47,34 +47,9 @@ uv sync --all-extras --frozen
 uv run rush review .
 ```
 
-## Standalone and Package Manager Installation
+## Standalone and package-manager installation
 
-### Homebrew (macOS / Linux)
-```bash
-brew install jamesdsizemore/tap/rush
-```
-
-### Scoop (Windows)
-```bash
-scoop bucket add rush https://github.com/jamesdsizemore/rush-cli
-scoop install rush
-```
-
-### Windows Package Manager (Winget)
-```bash
-winget install jamesdsizemore.rush
-```
-
-## Install from a wheel or source
-
-A release or local build may provide a `.whl` file. Install it into an isolated environment rather than a system Python:
-
-```bash
-uv tool install /absolute/path/to/rush-0.1.0-py3-none-any.whl
-rush --version
-```
-
-Rush is not documented as a published package until a release artifact is actually available. Building from source is covered in [CI and packaging](../developer/ci-and-packaging.md).
+**Status: planned — implementation [P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-cross-platform-installation-and-release-assets-f28-f42).** Current Homebrew, Scoop, Winget, wheel, and archive assets are not verified installation routes. Use the editable source checkout above. Phase 65 retains the accepted cross-platform installer requirement and its clean-OS verification gates.
 
 ## Optional quality tools
 
@@ -88,7 +63,7 @@ uv add --dev ruff pytest pip-audit mypy
 npm install --save-dev eslint prettier vitest typescript
 ```
 
-Rush never performs these installs. See the [engine directory](../reference/engine-directory.md) for every supported helper.
+Current `rush setup` does not provide a verified installer for these dependencies. Install chosen helpers yourself. See the [engine directory](../reference/engine-directory.md) for supported helpers and prerequisites. Integrated detection, installation, readiness, and agent connection remain planned in [Phase 65, P65-02 through P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
 
 ## Corporate proxy and offline environments
 

@@ -1,3 +1,5 @@
+Current status: historical decision; The report-import/live-execution distinction remains required. Current mutation, fuzz, load, and contract live paths can report success after version probes without executing the workload; [application review F11](../reports/phase-64-66-application-review.md) and [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) govern correction.
+
 # ADR 0006: Report importer versus live adapter
 
 ## Context

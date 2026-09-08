@@ -1,3 +1,5 @@
+Current status: historical decision; Current tools are exposed through the registered command tree, not a `rush vibecoder` namespace. The 22-tool count, latency, and comprehensive integrity guarantees below are historical; current drift/profile/analysis defects are recorded in [application review F15–F23](../reports/phase-64-66-application-review.md). [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) and [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) preserve the corrective workflow requirements.
+
 # ADR-0029: Unified Vibe-Coder Toolkit and Sub-Second Feedback Loop
 
 ## Status

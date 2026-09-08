@@ -14,25 +14,24 @@
 2. **Multi-Format Asset Discovery**: Scans for static assets including `.png`, `.jpg`, `.jpeg`, `.svg`, `.gif`, `.webp`, `.ttf`, `.woff`, `.woff2`, `.ico`, `.bmp`, `.tiff`, `.mp4`, `.webm`, excluding `.git`, `.venv`, `.rush`, `node_modules`, `dist`, and `build`.
 3. **Comprehensive Source Cross-Referencing**: Searches across Python, TypeScript, JavaScript, HTML, CSS, SCSS, Markdown, JSON, YAML, and XML files to detect asset references by filename or relative path.
 4. **Deterministic Audit Manifest**: Computes SHA-256 digests and file sizes for every asset, tagging each as `referenced` or `unreferenced`.
-5. **Contained Manifest Export**: Exporting audit manifests via `--export-manifest` requires explicit `--allow-artifact-write` permission and enforces workspace containment (rejecting path traversals).
+5. **Contained Manifest Export**: MCP `export_manifest` requires explicit `allow_artifact_write=true` and enforces workspace containment. Current CLI has no `--export-manifest` option.
 6. **Strictly Read-Only Invariant**: Does not modify, unlink, or delete any files in the repository.
 
 ## CLI Usage
 
 ### Audit Scan (Read-Only)
 ```bash
-rush dead-asset .
+uv run rush dead-asset .
 ```
 
 ### JSON Wire Format
 ```bash
-rush dead-asset . --json
+uv run rush dead-asset . --json
 ```
 
-### Exporting Manifest
-```bash
-rush dead-asset . --export-manifest .rush/asset-manifest.json --allow-artifact-write
-```
+### Exporting a manifest
+
+Current CLI exposes no manifest-export flag. Use MCP `export_manifest` with `allow_artifact_write=true` after reviewing the contained destination.
 
 ## FastMCP Usage
 ```json

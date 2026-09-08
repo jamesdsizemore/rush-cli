@@ -14,7 +14,7 @@ Rush uses a multi-layered testing strategy combining deterministic parser fixtur
 tests/
 ├── fixtures/
 │   └── engine_reports/         # Deterministic fixture outputs (clean, findings, malformed)
-├── test_*_reference.py         # Dedicated reference test suites for all 121 engines
+├── test_*_reference.py         # Dedicated reference test suites for registered engine parser contracts
 ├── test_docs_parity_and_sync.py # Zero-drift documentation and link validation suite
 ├── test_phase01_truth_audit.py # Truth audit verifying PARSER_FIXTURE_SUITES registration
 ├── test_mcp.py                 # FastMCP stdio transport and schema validation
@@ -28,20 +28,20 @@ tests/
 
 ```bash
 # Run all tests (deterministic, mock-isolated, fast)
-.venv/Scripts/python.exe -m pytest tests/ -q
+uv run --python 3.12 --extra dev python -m pytest tests/ -q
 
 # Run specific engine reference test suite
-.venv/Scripts/python.exe -m pytest tests/test_semgrep_reference.py
+uv run --python 3.12 --extra dev python -m pytest tests/test_semgrep_reference.py
 
 # Verify documentation parity
-.venv/Scripts/python.exe -m pytest tests/test_docs_parity_and_sync.py
+uv run --python 3.12 --extra dev python -m pytest tests/test_docs_parity_and_sync.py
 ```
 
 ---
 
 ## 3. Contributor Test Contracts
 
-1. **Deterministic Execution**: Tests must not make live internet requests or require all 77 third-party binaries to be installed in CI.
+1. **Deterministic Execution**: Tests must not make live internet requests or require catalogued engine adapters to be installed in CI.
 2. **Fixture-First Development**: Every engine adapter must have corresponding JSON/text/XML fixtures in `tests/fixtures/engine_reports/<engine>/`.
 3. **Transport Isolation**: FastMCP stdio tests must verify that stdin/stdout frames remain pure.
 
@@ -63,13 +63,13 @@ The reproducible benchmark harness provides descriptor-driven validation across 
 
 ```bash
 # Run all benchmark test suites (contracts, runner, providers, privacy, context, coordination, local)
-.venv/Scripts/python.exe -m pytest tests/test_benchmark_*.py -q
+uv run --python 3.12 --extra dev python -m pytest tests/test_benchmark_*.py -q
 
 # Verify the detached-worker boundary without launching a live model or provider
-.venv/Scripts/python.exe -m pytest tests/test_benchmark_jobs.py tests/test_cli_benchmark.py -q
+uv run --python 3.12 --extra dev python -m pytest tests/test_benchmark_jobs.py tests/test_cli_benchmark.py -q
 
 # Run all 40 declared scenarios and output atomic results to research/benchmark/B1/
-.venv/Scripts/python.exe -m scripts.benchmarks.run --all --output research/benchmark/B1
+uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --all --output research/benchmark/B1
 ```
 
 Key benchmark guarantees:

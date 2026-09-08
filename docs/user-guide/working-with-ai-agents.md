@@ -16,7 +16,7 @@ However, working with AI models without guardrails introduces common frustration
 3. **Broken Tests & Silent Regressions**: The AI changes code without verifying that existing unit tests still pass.
 4. **Dangerous Commands**: The AI suggests shell commands that could wipe uncommitted work.
 
-Rush was designed from the ground up to be the ultimate companion and quality gate for AI coding workflows.
+Rush provides local quality commands and a stdio MCP server for AI coding workflows.
 
 When several agents touch a repository, use continuity coordination evidence before making another change. A held or stale lock and a merge conflict are stop-and-inspect signals, not permission for Rush to overwrite another agent’s work. Recovery receipts summarize prior events and failures without replaying them.
 
@@ -28,11 +28,11 @@ Use `rush session save NAME --allow-cache-write --goal "…" --open-work "…" -
 
 ## 1. Connecting Rush to Your AI Assistant via FastMCP
 
-Rush includes a built-in, local Model Context Protocol (MCP) server that exposes all Rush quality tools directly to your AI assistant:
+Rush includes a built-in local Model Context Protocol (MCP) server. Current source installation requires `uv` plus an absolute Rush checkout path in client configuration:
 
 ```bash
 # Test the MCP server locally (stdio transport)
-rush mcp serve
+uv run --directory /absolute/path/to/rush-cli rush mcp serve
 ```
 
 ### Adding Rush to Cursor, Claude Code, or Cline:
@@ -42,14 +42,14 @@ Add Rush to your assistant's MCP configuration (`settings.json` or `claude_deskt
 {
   "mcpServers": {
     "rush": {
-      "command": "rush",
-      "args": ["mcp", "serve"]
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/rush-cli", "rush", "mcp", "serve"]
     }
   }
 }
 ```
 
-Now, your AI assistant can run `rush_check`, `rush_tdd`, and `rush_codegraph_slice` directly as native tools!
+Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Automatic client connection is **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--single-beginner-journey-and-agent-connection-f35-f42).**
 
 ---
 
@@ -69,7 +69,7 @@ flowchart LR
 ### Step 1: Give Your AI Lean Context with CodeGraph
 Instead of pasting an entire 1,500-line file into your prompt, extract just the function you want to edit:
 ```bash
-rush codegraph slice "AuthService.generate_token"
+uv run rush codegraph slice "AuthService.generate_token"
 ```
 Paste the 20-line verbatim slice into your prompt. This saves up to 90% of your token budget and keeps the AI laser-focused.
 
@@ -80,8 +80,8 @@ Ask your AI to write both the implementation and the unit test:
 ### Step 3: Verify the Changes Instantly
 After the AI generates the code, tell the assistant to run:
 ```bash
-rush check .
-rush tdd .
+uv run rush check .
+uv run rush tdd .
 ```
 - `rush check .` verifies that there are zero syntax errors, formatting issues, or type mismatches.
 - `rush tdd .` guarantees that tests exist for the newly modified code.
@@ -92,7 +92,7 @@ rush tdd .
 
 AI models often add excessive boilerplate comments or hollow placeholders. Run:
 ```bash
-rush slop .
+uv run rush slop .
 ```
 Rush will flag useless comment repetitions (like `# This function adds two numbers: def add(a, b):`) and empty stub methods so your codebase stays clean and professional.
 
@@ -103,7 +103,7 @@ Rush will flag useless comment repetitions (like `# This function adds two numbe
 If your team uses multiple AI tools across different developers (Cursor, Cline, Windsurf), you can declare your project rules once in `AGENTS.md` and compile them across all IDE formats in one keystroke:
 
 ```bash
-rush governance sync
+uv run rush governance sync
 ```
 Rush automatically updates `.cursorrules`, `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
 

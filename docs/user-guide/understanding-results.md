@@ -39,7 +39,7 @@ Each result includes:
 | **`SKIPPED`** | Gray | An optional engine is not installed on your system or requires explicit permission flags. | If you want that engine, install it (e.g. via `uv pip install` or `npm install -g`). Otherwise, you can safely ignore it. |
 | **`ERROR`** | Red | The engine crashed, was given an invalid argument, or hit a timeout. | Read the error traceback or run `rush doctor .` to check your environment. |
 
-> **Permission Gates**: Commands like `rush error-catalog` (with `--export-docs`) or `rush iam-audit` (with `--export-path`) return `SKIPPED` if `--allow-artifact-write` is omitted, protecting repositories from unintended file mutations.
+> **Permission Gates**: Artifact-writing commands require `--allow-artifact-write`. For example, `rush iam-audit --output PATH` is denied without the grant. Current `rush error-catalog` CLI has no `--export-docs` option.
 
 ---
 
@@ -70,7 +70,7 @@ If you run Rush inside GitHub Actions, GitLab CI, or pre-commit scripts, Rush re
 If your script, dashboard, or AI coding assistant needs to consume Rush findings programmatically, simply append `--json` to any command:
 
 ```bash
-rush lint . --json
+uv run rush lint . --json
 ```
 
 Rush returns a clean, canonical JSON object:

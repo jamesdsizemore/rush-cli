@@ -1,3 +1,5 @@
+Current status: historical decision; The non-destructive default and release-green-light claims below are not current guarantees: MCP ship cleanup defaults to destructive execution ([application review F02](../reports/phase-64-66-application-review.md)). [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) governs preservation; [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) governs release/workflow completion. The two-second target is not a universal measured result.
+
 # ADR-0046: Pre-Flight Ship-Readiness Cockpit
 
 ## Status

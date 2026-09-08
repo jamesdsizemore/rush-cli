@@ -1,5 +1,7 @@
 # Practical Examples & Common Workflows
 
+Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).
+
 This guide provides concrete, real-world examples for running Rush across different project types, frameworks, and continuous delivery setups.
 
 ---
@@ -90,8 +92,8 @@ rush complexity . --json
 # 2. Scan polyglot codebase for AI filler slop and hallucinated structures
 rush slop . --json
 
-# 3. Verify offline cryptographic trust certificates before release
-rush release . --json
+# 3. Check version parity; signed-envelope verification uses rush attest
+rush release check
 ```
 
 ---
@@ -100,10 +102,10 @@ rush release . --json
 
 ```bash
 # 1. Export interactive dark-mode HTML inspection dashboard
-rush review . --export-html artifacts/review.html
+rush security . --export-html artifacts/security.html --allow-artifact-write
 
 # 2. Export SARIF 2.1.0 for GitHub Code Scanning
-rush security . --export-sarif artifacts/security.sarif
+rush security . --export-sarif artifacts/security.sarif --allow-artifact-write
 ```
 
 ---

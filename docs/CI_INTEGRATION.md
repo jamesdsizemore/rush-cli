@@ -1,5 +1,7 @@
 # Continuous Integration (CI) Integration Guide
 
+Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).
+
 Rush is built for deterministic execution in Continuous Integration pipelines. It runs fast, generates standardized `ToolResult` JSON output, and isolates environment side effects.
 
 ---
@@ -47,7 +49,7 @@ jobs:
       - name: Run Rush Review & Lint
         run: |
           uv run rush review . --json > review.json
-          uv run rush lint . --check --json > lint.json
+          uv run rush lint . --json > lint.json
           uv run rush format . --check --json > format.json
 
       - name: Run Security & Secret Scanners
@@ -89,7 +91,7 @@ rush_checks:
     - uv sync --frozen
   script:
     - uv run rush review . --json
-    - uv run rush lint . --check --json
+    - uv run rush lint . --json
     - uv run rush security . --json
     - uv run rush test . --json
 ```
@@ -149,5 +151,5 @@ Add `rush ship gate` and `rush hallu-guard` to your GitHub Actions pipeline:
 ### SLSA Attestation CI Gate
 ```yaml
 - name: SLSA Provenance Attestation
-  run: rush attest --out provenance.intoto.jsonl
+  run: rush attest . --artifact-path dist/rush_cli-0.3.0-py3-none-any.whl --out provenance.intoto.jsonl --allow-artifact-write
 ```

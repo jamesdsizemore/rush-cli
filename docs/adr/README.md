@@ -1,3 +1,5 @@
+Current status: historical decision; This index preserves historical source/test ownership and phase references; named seams and tests are not a current existence or acceptance inventory. Current implementation status is recorded in [application review](../reports/phase-64-66-application-review.md) and [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); executable commands are listed in [CLI reference](../CLI_REFERENCE.md). Individual ADR status notes distinguish retained decisions from superseded behavior.
+
 # ADR index and implementation cross-reference
 
 | ADR | Source seam | Test owner | Affected phase |

@@ -19,7 +19,7 @@ You paste all 1,200 lines into the chat window. (Cost: ~4,500 tokens).
 
 ### The Rush Way (Lean & Fast):
 ```bash
-rush codegraph slice "send_webhook"
+uv run rush codegraph slice "send_webhook"
 ```
 
 Rush extracts just the 15-line function implementation with line numbers:
@@ -40,7 +40,7 @@ Your AI gets the exact lines it needs to write a clean diff patch, responds in 1
 What if the AI needs to understand an entire module's architecture or class hierarchy without needing the internal implementation bodies?
 
 ```bash
-rush token outline src/services/billing.py
+uv run rush token outline src/services/billing.py
 ```
 
 Rush parses the Abstract Syntax Tree (AST) and generates a compact, type-annotated outline:
@@ -63,10 +63,10 @@ Curious how many tokens your repository or prompt templates take up?
 
 ```bash
 # Count BPE tokens for any file locally (zero network calls)
-rush token count src/main.py
+uv run rush token count src/main.py
 
 # Find the heaviest token hogs in your repository
-rush token count src/ --top 5
+uv run rush token count src/ --top 5
 ```
 
 ---
