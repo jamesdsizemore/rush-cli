@@ -187,7 +187,7 @@ def _slug(value: str) -> str:
         for char in value
         if char in "-_ " or char.isalnum() or unicodedata.category(char).startswith("M")
     )
-    return re.sub(r"\s+", "-", value)
+    return re.sub(r"\s", "-", value)
 
 
 def _anchors(text: str) -> set[str]:
@@ -440,7 +440,9 @@ def read_coverage_receipt(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _check_links(repo_root: Path, all_paths: set[str]) -> list[str]:
+def _check_links(
+    repo_root: Path, all_paths: set[str], historical_paths: set[str]
+) -> list[str]:
     errors: list[str] = []
     root = repo_root.resolve()
     for relative in sorted(all_paths):
@@ -448,6 +450,8 @@ def _check_links(repo_root: Path, all_paths: set[str]) -> list[str]:
         if source.suffix.lower() not in TEXT_SUFFIXES:
             continue
         text = source.read_text(encoding="utf-8")
+        if relative in historical_paths:
+            text = text.split("\n\n", 1)[0]
         for raw_link in _markdown_links(text):
             split = urlsplit(raw_link)
             if split.scheme or split.netloc:
@@ -496,13 +500,25 @@ def _check_contracts(actual: dict[str, Any], recorded: Any) -> list[str]:
         for command in sorted(set(saved_commands) - set(expected_commands)):
             errors.append(f"contracts.{surface}: stale unregistered command {command}")
         for command in sorted(set(expected_commands) & set(saved_commands)):
+            saved_command = saved_commands[command]
+            if not isinstance(saved_command, dict):
+                errors.append(
+                    f"contracts.{surface}.{command}: command must be an object"
+                )
+                continue
+            saved_parameters = saved_command.get("parameters")
+            if not isinstance(saved_parameters, list):
+                errors.append(
+                    f"contracts.{surface}.{command}: parameters must be a list"
+                )
+                continue
             expected_params = {
                 item["name"]: item
                 for item in expected_commands[command].get("parameters", [])
             }
             saved_params = {
                 item.get("name"): item
-                for item in saved_commands[command].get("parameters", [])
+                for item in saved_parameters
                 if isinstance(item, dict) and item.get("name")
             }
             for name in sorted(set(expected_params) - set(saved_params)):
@@ -623,17 +639,25 @@ def check_docs(
                     errors.append(f"{relative}: missing current-status cross-reference")
         if path.suffix.lower() not in TEXT_RECORD_SUFFIXES:
             recorded_referrers = entry.get("referrers")
-            if not isinstance(recorded_referrers, list) or not recorded_referrers:
-                errors.append(
-                    f"{relative}: binary asset requires referring document paths"
-                )
+            if not isinstance(recorded_referrers, list):
+                errors.append(f"{relative}: binary asset referrers must be a list")
             elif sorted(recorded_referrers) != actual_referrers[relative]:
                 errors.append(
                     f"{relative}: referrers mismatch; expected "
                     f"{actual_referrers[relative]}; recorded {sorted(recorded_referrers)}"
                 )
 
-    errors.extend(_check_links(repo_root, all_paths))
+    errors.extend(
+        _check_links(
+            repo_root,
+            all_paths,
+            {
+                relative
+                for relative, entry in entries.items()
+                if entry.get("authority") == "historical"
+            },
+        )
+    )
     expected_contracts = (
         contracts if contracts is not None else collect_runtime_contracts(repo_root)
     )

@@ -1,6 +1,6 @@
 # Setting Up Your AI Agent with Rush
 
-Rush exposes a local stdio **Model Context Protocol (MCP)** server. Current setup is manual and requires the editable source checkout described in [Install Rush](../getting-started/installation.md). Automatic installation, readiness checks, and agent connection are **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--single-beginner-journey-and-agent-connection-f35-f42).**
+Rush exposes a local stdio **Model Context Protocol (MCP)** server. Current setup is manual and requires the editable source checkout described in [Install Rush](../getting-started/installation.md). Automatic installation, readiness checks, and agent connection are **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42).**
 
 ---
 

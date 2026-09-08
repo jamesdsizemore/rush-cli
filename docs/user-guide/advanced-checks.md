@@ -164,7 +164,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Current failure cleanup can run broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not use this as safe rollback evidence. Invocation-owned restoration is required by [Phase 64, P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43).
+   - Current failure cleanup can run broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not use this as safe rollback evidence. Invocation-owned restoration is required by [Phase 64, P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--real-isolated-patch-application-f05-f2425-f43).
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

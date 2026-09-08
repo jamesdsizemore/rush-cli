@@ -49,7 +49,7 @@ Add Rush to your assistant's MCP configuration (`settings.json` or `claude_deskt
 }
 ```
 
-Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Automatic client connection is **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--single-beginner-journey-and-agent-connection-f35-f42).**
+Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Automatic client connection is **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42).**
 
 ---
 

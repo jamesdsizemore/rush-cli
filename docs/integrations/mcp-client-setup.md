@@ -4,7 +4,7 @@
 
 No MCP client configuration, OAuth setting, or persistent Rush credential is required for provider continuation. Clients call the local `rush_continuity` tool and must request permission for supported user-owned CLI routes or fixed-loopback API routes. For `9router_cli`, set `RUSH_9ROUTER_API_KEY` only in the MCP server's process environment; Rush copies it only to the one Codex child process and never chooses a model.
 
-Current setup is manual. Configure Rush as a local Model Context Protocol (MCP) server after completing the editable source installation. Automatic client discovery and connection remain **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--single-beginner-journey-and-agent-connection-f35-f42).**
+Current setup is manual. Configure Rush as a local Model Context Protocol (MCP) server after completing the editable source installation. Automatic client discovery and connection remain **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42).**
 
 ---
 

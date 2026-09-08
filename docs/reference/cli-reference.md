@@ -114,12 +114,12 @@ Evaluation commands expose permission flags according to their own generated hel
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
 | `fix PATH` | Confined automated remediation for formatting and linter errors. | `--dry-run`, `--force` | Modifies code within workspace |
-| `setup [PATH]` | Current stack inspection/setup prototype. Integrated, verified installation remains planned in [P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--real-setup-and-canonical-package-installation-f30-f31). | `--non-interactive`, `--json` | Current package-manager identities and execution branches are not accepted installation evidence |
+| `setup [PATH]` | Current stack inspection/setup prototype. Integrated, verified installation remains planned in [P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--install-complete-applicable-toolchains-f3031). | `--non-interactive`, `--json` | Current package-manager identities and execution branches are not accepted installation evidence |
 | `init [PATH]` | Generate starter `rush.toml` for detected project stacks. | `--force` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
-| `ui [PATH]` | Current one-shot Rich terminal summary. Persistent navigation remains planned in [P66-03](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md#p66-03--persistent-animated-and-navigable-tui-f36). | Permissions | none |
+| `ui [PATH]` | Current one-shot Rich terminal summary. Persistent navigation remains planned in [P66-03](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md#p66-03--persistent-colorful-animated-tui-f36). | Permissions | none |
 | `dashboard [PATH]` | Current local web prototype. Its browser/server API is broken at this baseline; repair and complete workflow remain planned in [P66-01 through P66-07](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md). | `--port`, Permissions | starts local server only after synchronous checks |
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
@@ -242,7 +242,7 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Current promotion cleanup contains broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not promote this as safe public behavior. Invocation-owned restoration is required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43).
+   - Current promotion cleanup contains broad `git reset --hard`, `git clean -fd`, and worktree cleanup. Do not promote this as safe public behavior. Invocation-owned restoration is required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--real-isolated-patch-application-f05-f2425-f43).
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

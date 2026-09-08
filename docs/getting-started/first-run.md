@@ -21,7 +21,7 @@ uv run rush init .
 uv run rush config check .
 ```
 
-Current `rush setup` does not provide the verified integrated installation route required by [Phase 65, P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--real-setup-and-canonical-package-installation-f30-f31). Do not use it as beginner installation evidence.
+Current `rush setup` does not provide the verified integrated installation route required by [Phase 65, P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--install-complete-applicable-toolchains-f3031). Do not use it as beginner installation evidence.
 
 ## 3. Run the fast inner-loop check suite
 

@@ -3,7 +3,7 @@
 ## Overview
 `rush media-opt` audits repository media files for security vulnerabilities (SVG active script and event handler injection), layout stability (CLS missing image dimensions in HTML/templates), and raster compression optimization per D50-15.
 
-**Status: planned correction — implementation [Phase 64, P64-16](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-16--spdx-expressions-and-decoded-svg-safety-f18-f19).** Current SVG checks can miss entity-encoded script schemes. Do not treat a clean result as proof decoded attributes are safe until packet acceptance passes.
+**Status: planned correction — implementation [Phase 64, P64-16](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-16--parse-license-expressions-and-svg-safely-f1819).** Current SVG checks can miss entity-encoded script schemes. Do not treat a clean result as proof decoded attributes are safe until packet acceptance passes.
 
 ## Usage
 

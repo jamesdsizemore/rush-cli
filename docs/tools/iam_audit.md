@@ -3,7 +3,7 @@
 ## Overview
 `rush iam-audit` statically parses source code for cloud SDK calls across AWS (`boto3`), GCP (`google.cloud.storage`, `google.cloud.bigquery`), and Azure (`azure.storage.blob`), synthesizes minimal least-privilege IAM policies, and scans Terraform (`.tf`) files for dangerous wildcard permissions (`iam-wildcard-action`).
 
-**Status: planned correction — implementation [Phase 64, P64-17](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-17--relative-hidden-paths-and-strict-coverage-import-f20-f21).** Current discovery can exclude all files when the selected project is under a hidden parent directory. Zero analyzed files is unavailable evidence.
+**Status: planned correction — implementation [Phase 64, P64-17](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-17--project-relative-discovery-and-valid-coverage-f2021).** Current discovery can exclude all files when the selected project is under a hidden parent directory. Zero analyzed files is unavailable evidence.
 
 ## Usage
 

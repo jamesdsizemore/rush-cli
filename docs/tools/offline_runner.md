@@ -3,7 +3,7 @@
 ## Overview
 `rush offline-review` runs local air-gapped code quality and security reviews using externally installed local LLM runners (`ollama` or `llama-cli`). In accordance with repository invariants, this tool bundles zero model weights, has zero network egress, requires no heavy external machine learning packages, and returns a structured `status='skipped'` when no local runner daemon is running or installed.
 
-**Status: planned correction — implementation [Phase 64, P64-17](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-17--relative-hidden-paths-and-strict-coverage-import-f20-f21).** Current discovery can exclude all files when the selected project is under a hidden parent directory. Zero evaluated files is unavailable evidence.
+**Status: planned correction — implementation [Phase 64, P64-17](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-17--project-relative-discovery-and-valid-coverage-f2021).** Current discovery can exclude all files when the selected project is under a hidden parent directory. Zero evaluated files is unavailable evidence.
 
 ## Usage
 

@@ -3,7 +3,7 @@
 ## Overview
 `rush license-matrix` audits project dependencies across `pyproject.toml`, `package.json`, `Cargo.toml`, and installed package metadata for copyleft risks and open-source license compliance. It compares extracted licenses against an exact allowlist, flags copyleft licenses as high-risk errors, and flags unknown or compound licenses for manual review.
 
-**Status: planned correction — implementation [Phase 64, P64-16](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-16--spdx-expressions-and-decoded-svg-safety-f18-f19).** Current grouped SPDX expression handling can understate copyleft risk. Do not use current classification as compliance evidence.
+**Status: planned correction — implementation [Phase 64, P64-16](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-16--parse-license-expressions-and-svg-safely-f1819).** Current grouped SPDX expression handling can understate copyleft risk. Do not use current classification as compliance evidence.
 
 ## Usage
 

@@ -47,7 +47,7 @@ At baseline `997b56e`, live `build_server().list_tools()` returns 74 registered 
 ## AI Agent Remediation & Safety Tools (Phases 29–40)
 
 - `rush_get_patch`: Returns unified diff for a finding.
-- `rush_apply_fix`: Applies validated unified diffs through the current patch path. Invocation-owned restoration remains required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--safe-patch-application-and-promotion-f03-f43); do not treat current broad cleanup as safe promotion evidence.
+- `rush_apply_fix`: Applies validated unified diffs through the current patch path. Invocation-owned restoration remains required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--real-isolated-patch-application-f05-f2425-f43); do not treat current broad cleanup as safe promotion evidence.
 - `rush_session_context`: Retrieves multi-turn evaluation history framed in `<rush_session_memory>` XML tags.
 - `rush_memory` (Phase 61): `MemoryTool`'s `ask`/`write`/`promote`/`list`/`recall`/`maintain` operations over the unified `TypedArtifactStore`; returns `ToolResultV1` with `status="skipped"` for denied/absent cases, matching the `rush_session_context` precedent — same registration path (`ALL_TOOLS`/`TOOL_SPECS`), not a different shape.
 - `rush_guard`: Validates shell command safety and confines path traversal.

@@ -43,7 +43,7 @@ Tool and engine metadata must agree with executable registries and tests. Do not
 - [Add a language route](developer/routing-development.md)
 - [Add a config field](developer/configuration-development.md)
 - [Change MCP](developer/mcp-development.md)
-- [Add a safety-gated operation](developer/tool-development.md#safety-review)
+- [Add a safety-gated operation](developer/tool-development.md#1-tool-lifecycle--architecture)
 
 For the completed Phases 01–30 implementations, read:
 - [Master PM Build Plan](developer/master-pm-build-plan.md): Complete specifications for Phases 21–30, incorporating the 7 Defensive Controls and 3 Architectural Recommendations.

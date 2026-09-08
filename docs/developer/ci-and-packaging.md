@@ -86,4 +86,4 @@ Commands above use Windows executable paths. On macOS/Linux use `.clean_test_env
 
 See [Distribution Guide](../DISTRIBUTION.md) and [Release Process](release-process.md).
 ### Hardened CI & Engine Conformance (Phase 59)
-CI invokes `uv run mypy src/rush`, but `mypy` is not yet declared in `pyproject.toml` or `uv.lock`. Status: planned — implementation [P64-20](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-20-repair-baseline-test-packaging-and-ci-gates-f27-f29) adds the locked dependency before this gate can count as provisioned typecheck evidence.
+CI invokes `uv run mypy src/rush`, but `mypy` is not yet declared in `pyproject.toml` or `uv.lock`. Status: planned — implementation [P64-20](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-20--repair-baseline-test-packaging-and-ci-gates-f27-f29) adds the locked dependency before this gate can count as provisioned typecheck evidence.

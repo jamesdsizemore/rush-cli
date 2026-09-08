@@ -792,7 +792,7 @@ This repository's phase-plan convention (Phase 58 template) has no GoalBuddy-sty
        to monitor.
      - **Safety:** 100% offline, local-first, zero new third-party dependencies (§8.3).
      ```
-  2. Add "Superseded by [ADR-0049](0049-...)" as the first line under ADR-0030's `## Status` section.
+  2. Add "Superseded by [ADR-0049](../adr/0049-typed-artifact-memory-schema-and-trust-tiers.md)" as the first line under ADR-0030's `## Status` section.
   3. Add the same pointer to ADR-0018, ADR-0020, ADR-0041 where each describes now-superseded specifics.
   4. Add the ADR-0049 index row to both `docs/adr/README.md` and `docs/maintainers/adr/README.md`.
   5. Fix `docs/maintainers/adr/015-agent-remediation-and-memory.md`'s mirror of ADR-0018.

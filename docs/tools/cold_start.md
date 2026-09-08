@@ -3,7 +3,7 @@
 ## Overview
 `rush cold-start` inventories top-level module imports via static AST analysis to identify heavy dependencies that degrade CLI startup latency. It also supports dynamic `-X importtime` tracing when authorized with `--allow-slow` per D50-14.
 
-**Status: planned correction — implementation [Phase 64, P64-14](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-14--honest-profiler-target-execution-f15).** Current dynamic path can report success when the target process fails. Inspect child exit evidence; do not treat failed target execution as completed import timing.
+**Status: planned correction — implementation [Phase 64, P64-14](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-14--failed-target-profiles-are-failures-f15).** Current dynamic path can report success when the target process fails. Inspect child exit evidence; do not treat failed target execution as completed import timing.
 
 ## Usage
 

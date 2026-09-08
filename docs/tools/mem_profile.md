@@ -3,7 +3,7 @@
 ## Overview
 `rush mem-profile` audits Python source files for memory leaks and unclosed resource allocations (files, sockets, database handles) via static AST analysis, and optionally executes a dynamic subprocess memory tracing probe guarded by `--allow-slow`.
 
-**Status: planned correction — implementation [Phase 64, P64-14](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-14--honest-profiler-target-execution-f15).** Current dynamic path can report success when the target process fails. Inspect child exit evidence; do not treat failed target execution as a completed profile.
+**Status: planned correction — implementation [Phase 64, P64-14](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-14--failed-target-profiles-are-failures-f15).** Current dynamic path can report success when the target process fails. Inspect child exit evidence; do not treat failed target execution as a completed profile.
 
 ## Usage
 

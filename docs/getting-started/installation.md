@@ -1,6 +1,6 @@
 # Install Rush
 
-Rush is a Python 3.12 command-line application. Current installation is an editable source checkout managed by [uv](https://docs.astral.sh/uv/). A standalone, package-manager, and clean-machine installer is planned in [Phase 65, P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-cross-platform-installation-and-release-assets-f28-f42).
+Rush is a Python 3.12 command-line application. Current installation is an editable source checkout managed by [uv](https://docs.astral.sh/uv/). A standalone, package-manager, and clean-machine installer is planned in [Phase 65, P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-standalone-release-artifacts-f28).
 
 ## Before you begin
 
@@ -49,7 +49,7 @@ uv run rush review .
 
 ## Standalone and package-manager installation
 
-**Status: planned — implementation [P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-cross-platform-installation-and-release-assets-f28-f42).** Current Homebrew, Scoop, Winget, wheel, and archive assets are not verified installation routes. Use the editable source checkout above. Phase 65 retains the accepted cross-platform installer requirement and its clean-OS verification gates.
+**Status: planned — implementation [P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-standalone-release-artifacts-f28).** Current Homebrew, Scoop, Winget, wheel, and archive assets are not verified installation routes. Use the editable source checkout above. Phase 65 retains the accepted cross-platform installer requirement and its clean-OS verification gates.
 
 ## Optional quality tools
 
