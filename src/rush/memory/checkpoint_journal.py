@@ -5,11 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
 from rush.io.physical_paths import PhysicalRoot
+from rush.memory.migration import read_origin
+from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import SecretRedactor
 
 
@@ -43,20 +47,52 @@ class CheckpointJournal:
         rel_path = Path(".rush") / "sessions" / f"{name}.json"
         atomic = AtomicFile(self.physical_root)
         sanitized = SanitizedJsonValue.from_value(checkpoint_data)
-        return atomic.write_json(rel_path, sanitized)
+        result = atomic.write_json(rel_path, sanitized)
+        self._write_handoff_artifact(name, checkpoint_data, timestamp)
+        return result
+
+    def _write_handoff_artifact(
+        self, name: str, checkpoint_data: dict[str, Any], created_at: float
+    ) -> None:
+        """Forward-writes the checkpoint (receipt included) as one `family="handoff"` row.
+
+        No `origin_kind`/`origin_id` is set here (unlike `migration.migrate_checkpoint_journal`'s
+        one-shot absorption of pre-existing files) so this per-save write never collides with, or
+        gets skipped by, that idempotent migration's `(origin_kind, origin_id)` uniqueness check.
+        """
+        TypedArtifactStore(self.project_root).write(
+            MemoryArtifact(
+                id=str(uuid.uuid4()),
+                family="handoff",
+                subject="active_context",
+                trust_tier=default_entry_tier("local_tool"),
+                content=checkpoint_data,
+                source="checkpoint_journal:save_checkpoint",
+                created_at=created_at,
+                symbol_ref=SecretRedactor.redact_text(name),
+            )
+        )
 
     def restore_checkpoint(self, name: str) -> dict[str, Any] | None:
-        """Retrieves a checkpoint by name."""
+        """Retrieves a checkpoint by name.
+
+        Tries the physical `.json` file first; if it is absent (already renamed `.migrated` by
+        `migration.migrate_checkpoint_journal`), falls back to the `TypedArtifactStore` row so this
+        method stays the sole existence authority `continuity.py`'s `_run_restore` relies on.
+        """
         target = self.session_dir / f"{name}.json"
-        if not target.exists():
-            return None
-        try:
-            data = json.loads(target.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
+        if target.exists():
+            try:
+                data = json.loads(target.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    return None
+                return data
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
                 return None
-            return data
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        migrated = read_origin(self.project_root, "checkpoint", name)
+        if migrated is None or migrated.get("status") == "corrupt":
             return None
+        return migrated
 
     def list_checkpoints(self) -> list[dict[str, Any]]:
         """Lists all saved session checkpoints, retaining and digesting corrupt records."""

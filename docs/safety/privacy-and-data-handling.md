@@ -2,7 +2,7 @@
 
 ## Recoverable omission privacy
 
-Before an omitted context payload is retained for CCR recovery, Rush applies the same value redaction boundary used for returned context. The recovery handle is local; mined mistake rationale is redacted and labelled historical evidence, never promoted to instruction authority.
+Before an omitted context payload is retained for CCR recovery, Rush applies the same value redaction boundary used for returned context. The recovery handle is local; mined mistake rationale is redacted and stored with a `trust_tier` (`DERIVED` — Phase 61's unified typed-artifact schema, never `STATED` on entry), never promoted to instruction authority.
 
 ## Provider-resume projection
 
@@ -12,7 +12,7 @@ Continuity sends only current goal, open work, and freshness to a supported CLI 
 
 Rush reads the target and invokes installed local engines. It has no telemetry implementation and opens no network server. Human output goes to CLI stdout; MCP stdout is protocol-only; NDJSON logs go to stderr.
 
-Continuity checkpoints stay local under `.rush/`. Before persistence, Rush redacts secret-shaped values and stores only a bounded handoff receipt: current goal/open work, dependency hashes, historic-instruction presence, and a failure receipt. It does not persist provider credentials, raw transcripts, historic-instruction text, or failed patches.
+Continuity checkpoints stay local under `.rush/`. Before persistence, Rush redacts secret-shaped values and stores only a bounded handoff receipt: current goal/open work, dependency hashes, historic-instruction presence, and a failure receipt. It does not persist provider credentials, raw transcripts, historic-instruction text, or failed patches. As of Phase 61, every write to the unified `TypedArtifactStore` (`.rush/memory.db`) runs `sanitize_value()` inside `write()` itself — a caller cannot bypass redaction by forgetting to call it.
 
 ## External engines
 
@@ -68,9 +68,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

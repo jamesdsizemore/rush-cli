@@ -43,6 +43,10 @@ rush watch .
 
 Whenever you or your AI agent save a file, Rush instantly runs a fast check. If any minor formatting or import issue is spotted, you can run `rush fix .` in a separate terminal split and be back in your flow in under 2 seconds.
 
+### Failed-Fix Memory Pairing (Phase 61)
+
+When a patch fails, its `PatchMemoryStore` row (keyed by `error_signature`) and the matching failure record in the unified `TypedArtifactStore` (`subject="failure"`, keyed by `fingerprint`) are linked via the migrated schema — a queryable join, not two disconnected rows. This is what stops `rush fix` from re-proposing a patch shape already known to have failed for the same error.
+
 ---
 
 ## Next Steps
@@ -64,9 +68,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

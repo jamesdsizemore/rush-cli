@@ -34,14 +34,24 @@ class HookTamperDetector:
 
     def verify_signatures(self) -> tuple[bool, list[str]]:
         if not self.sig_file.exists():
-            return False, [
-                "Hook signatures not recorded in .rush/hook_signatures.json."
-            ]
+            # Already renamed `.migrated` by migration.migrate_hook_signatures(); the unified
+            # store, not the old file, is now the source of truth (Phase 61 §6.3 Invariant 5).
+            # Lazy import: rush.hook's package __init__ re-exports HookTamperDetector, and
+            # store.py imports rush.hook.trojan_source, so a top-level import here would cycle
+            # back into migration.py before it finishes defining read_origin_kind.
+            from rush.memory.migration import read_origin_kind
 
-        try:
-            expected = json.loads(self.sig_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError) as e:
-            return False, [f"Corrupt hook signature file: {e}"]
+            migrated = read_origin_kind(self.repo_root, "hook_signature")
+            if not migrated:
+                return False, [
+                    "Hook signatures not recorded in .rush/hook_signatures.json."
+                ]
+            expected = {entry["hook_name"]: entry["sha256"] for entry in migrated}
+        else:
+            try:
+                expected = json.loads(self.sig_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, ValueError) as e:
+                return False, [f"Corrupt hook signature file: {e}"]
 
         tampered = []
         for name, exp_sha in expected.items():

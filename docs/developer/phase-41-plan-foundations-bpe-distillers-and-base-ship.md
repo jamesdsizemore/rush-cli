@@ -1,5 +1,7 @@
 # Phase 41: Foundations, BPE Accounting, Command Distillers & Base Ship Vectors
 
+> **Superseded by Phase 61 for the memory/mistake-memory portions** (2026-09-07): any memory-subsystem citations below (e.g. ADR-0030) are superseded by ADR-0049 and `src/rush/memory/store.py`'s unified `TypedArtifactStore`. This is a historical build-plan record — content otherwise unchanged.
+
 ## Metadata
 - **Phase ID**: `PHASE-41` (Phase 41 of Innovation Roadmap)
 - **Phase Name**: Foundations, Exact BPE Accounting, Subprocess Log Distillers & Base Ship Vectors

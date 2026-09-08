@@ -61,6 +61,7 @@ from .load import LoadTool
 from .markdown import MarkdownTool
 from .media_opt import MediaOptTool
 from .mem_profile import MemProfileTool
+from .memory import MemoryTool
 from .mutation import MutationTool
 from .offline_runner import OfflineReviewTool
 from .pbt import PbtTool
@@ -116,6 +117,7 @@ ALL_TOOLS: list[ToolFn] = [
     LoadTool(),
     CommitMsgTool(),
     SessionContinuityTool(),
+    MemoryTool(),
     CiTool(),
     ReleaseTool(),
     SemanticDriftTool(),
@@ -163,6 +165,7 @@ __all__ = [  # noqa: RUF022
     "MarkdownTool",
     "MediaOptTool",
     "MemProfileTool",
+    "MemoryTool",
     "OfflineReviewTool",
     "PrSynthesizeTool",
     "PrSynthesizer",

@@ -55,8 +55,9 @@ Every tool output is validated against the canonical `ToolResultV1` schema (`sch
 ## 2. 7-Step Tool Registration Checklist
 
 1. **Implement Tool Class**: Create `src/rush/tools/<name>.py` extending `ToolFn` (e.g. `TddGuardTool`).
-2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py` (maintaining 52 tools across core and flagship suites).
-3. **Register in Catalog**: Add `ToolSpec` to `src/rush/catalog.py` under `TOOL_SPECS` and update `_TOOL_MATURITY`.
+2. **Register in `ALL_TOOLS`**: Add instance to `src/rush/tools/__init__.py` (maintaining 53 tools across core and flagship suites, as of Phase 61's `MemoryTool`).
+3. **Register in Catalog**: Add `ToolSpec` to `src/rush/catalog.py` under `TOOL_SPECS` and update `_TOOL_MATURITY` — the module-level `if set(_TOOL_MATURITY) != set(TOOL_SPECS): raise RuntimeError(...)` check requires the two dicts' key sets to match exactly; a `TOOL_SPECS` entry with no `_TOOL_MATURITY` counterpart breaks every `catalog.py` import.
+   - **Multi-operation tools** (e.g. `SessionContinuityTool`, `MemoryTool`): `make_tool_wrapper` alone only produces an MCP surface. A `TOOL_SPECS` entry alone only produces a generic `PATH [--json]` CLI command, which doesn't fit a tool with multiple named operations. Add a bespoke `@cli.group(name="<tool>")` with one subcommand per operation instead (see `@cli.group(name="session")`, `cli.py:1878`), and add the tool's bare name to the CLI exclusion set (`cli.py:1201-1208`) so the generic catalog command is never generated alongside it.
 4. **Register Engine Adapters**: Add engine classes in `src/rush/engines/` and register in `ENGINES` dictionary in `src/rush/engines/__init__.py`.
 5. **Add Fixtures & Reference Tests**: Add JSON fixtures to `tests/fixtures/engine_reports/` and reference test suite `tests/test_<engine>_reference.py`.
 6. **Update Parity Audit**: Add fixture suite path to `PARSER_FIXTURE_SUITES` in `src/rush/catalog.py`.
@@ -140,9 +141,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

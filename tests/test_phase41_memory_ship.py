@@ -2,11 +2,14 @@
 
 from pathlib import Path
 
+# Import order matters: rush.tools.continuity must load before rush.memory.checkpoint_journal
+# to avoid a circular import (checkpoint_journal -> ... -> continuity.providers -> checkpoint_journal).
+from rush.tools.continuity import SessionContinuityTool
 from rush.memory.checkpoint_journal import CheckpointJournal
 from rush.memory.failure_ledger import FailureLedger
 from rush.memory.preference_store import PreferenceStore
+from rush.memory.trust import default_entry_tier
 from rush.permissions import ExecutionPermissions
-from rush.tools.continuity import SessionContinuityTool
 from rush.tools.ship.cleaner import ScratchCleaner
 from rush.tools.ship.docs_linter import DocsLinter
 from rush.tools.ship.env_linter import EnvParityLinter
@@ -80,8 +83,10 @@ def test_continuity_handoff_is_redacted_quarantined_and_stale_aware(
     assert secret not in persisted
     assert secret not in str(saved)
     handoff = saved["metadata"]["handoff"]
-    assert handoff["historic_instruction"]["authority"] == "historical_evidence"
-    assert handoff["historic_instruction"]["state"] == "quarantined"
+    assert handoff["historic_instruction"]["trust_tier"] == default_entry_tier(
+        "local_tool"
+    )
+    assert handoff["historic_instruction"]["present"] is True
     assert handoff["failure_receipt"]["fingerprint"] == fingerprint
     assert "failed_patch" not in str(handoff)
 

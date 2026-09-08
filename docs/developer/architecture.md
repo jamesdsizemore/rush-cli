@@ -122,12 +122,21 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/token_economy/ccr_store.py`: `CCRStore` (`.rush/cache/ccr.db`).
 * `src/rush/codegraph/grounding_verifier.py`: `GroundingVerifier`.
 * `src/rush/tools/hallu_guard.py`: `HalluGuard`.
-* `src/rush/memory/preference_store.py`: `PreferenceStore` (`.rush/preferences.json`).
-* `src/rush/memory/checkpoint_journal.py`: `CheckpointJournal` (`.rush/sessions/`).
-* `src/rush/memory/merkle_invalidator.py`: `MerkleInvalidator` (`.rush/cache/merkle.json`).
-* `src/rush/memory/invariant_graph.py`: `InvariantGraph` (`.rush/memory/invariants.json`).
-* `src/rush/memory/failure_ledger.py`: `FailureLedger` (`.rush/memory/failures.db`).
-* `src/rush/memory/mistake_miner.py`: `MistakeMiner`.
+* `src/rush/memory/preference_store.py`: `PreferenceStore` — thin compatibility view over `TypedArtifactStore` as of Phase 61 (formerly its own `.rush/preferences.json`).
+* `src/rush/memory/checkpoint_journal.py`: `CheckpointJournal` — thin compatibility view over `TypedArtifactStore` (`family="handoff"`, `subject="active_context"`) as of Phase 61; still returns a real `Path` from `save_checkpoint()` (`.rush/sessions/` file kept as a durable secondary artifact, not renamed).
+* `src/rush/memory/merkle_invalidator.py`: `MerkleInvalidator` — thin compatibility view over `TypedArtifactStore` as of Phase 61 (formerly its own `.rush/cache/merkle.json`); its pure `hash_content()` computation is reused by `TypedArtifactStore.recall()`'s staleness check.
+* `src/rush/memory/invariant_graph.py`: `InvariantGraph` — thin compatibility view over `TypedArtifactStore` as of Phase 61 (formerly its own `.rush/memory/invariants.json`).
+* `src/rush/memory/failure_ledger.py`: `FailureLedger` — thin compatibility view over `TypedArtifactStore` as of Phase 61 (formerly its own `.rush/memory/failures.db`).
+* `src/rush/memory/mistake_miner.py`: `MistakeMiner` — pure git-log miner; shapes (does not persist) `subject="failure"`, `trust_tier="DERIVED"` candidate dicts as of Phase 61, persisted only via `MemoryTool.write()`.
+* `src/rush/memory/store.py`: `TypedArtifactStore`, `MemoryArtifact` (Phase 61) — the unified SQLite WAL store (`.rush/memory.db`) all of the above now read/write through; see `docs/ARCHITECTURE.md`'s "Phase 61 Architecture" section for the full 7-subject/4-tier-trust design.
+* `src/rush/memory/trust.py`: `TrustTier`, `PromotionResult`, `default_entry_tier`, `evaluate_promotion`, `evaluate_conflict`, `count_corroboration` (Phase 61) — the write-promotion rule.
+* `src/rush/memory/migration.py`: one-shot idempotent migration functions, one per absorbed source (Phase 61).
+* `src/rush/memory/transport.py`: per-tool cross-tool memory transport dispatcher (native SDK → ACP → dedicated-file), Phase 61.
+* `src/rush/tools/memory.py`: `MemoryTool(ToolFn)` — `ask`/`write`/`promote`/`list`/`recall`/`maintain`, registered as both `rush_memory` (MCP) and `@cli.group(name="memory")` (CLI), Phase 61.
+* `src/rush/token_economy/memory_cache_gate.py`: `check_memory_before_pack()` — defended cache lookup wired into `pack_context()`, `DERIVED` write-back gated on `granted.cache_write` (Phase 62).
+* `src/rush/memory/maintenance.py`: `run_maintenance_cycle()` — `promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep` maintenance tasks, `MeshLockManager`-leased, reachable via `MemoryTool`'s `maintain` operation (Phase 62).
+* `src/rush/memory/expiry.py`: `ExpiryPolicy`, `DEFAULT_POLICIES`, `sweep_expired()` — per-`trust_tier` TTL expiry (`STATED` never, `DERIVED` 14d, `EXTERNAL_WRITE` 30d, `IMPORTED` 90d), independent of merkle/API-diff staleness (Phase 62).
+* `src/rush/memory/decision_schema.py`: `DecisionRecordFields` — remediation-shaped fields reused by `mistake_miner.py`'s candidate-shaping function (Phase 62).
 * `src/rush/tools/ship/`: `ScratchCleaner`, `EnvParityLinter`, `DocsLinter`, `MigrationLinter`, `SemverLinter`, `PackageLinter`, `ShipCockpit`.
 
 ## Context Packing, Telemetry & Blast Radius Architecture (Phases 44–46)
@@ -261,11 +270,12 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 2. **CAS Map Transactions & Persistent Memory (`rush.memory`)**:
    - `CASMapTransaction` enforces optimistic concurrency with monotonic version numbers and atomic file replacement (`rush.io.AtomicFile`) using sanitized JSON payloads (`SanitizedJsonValue`).
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
-   - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
+   - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks. As of Phase 61, all three are thin compatibility views over `TypedArtifactStore` (`.rush/memory.db`) — see the module inventory above.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

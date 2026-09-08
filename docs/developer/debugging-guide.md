@@ -113,9 +113,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
@@ -130,4 +131,11 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 - `AmbiguousKeyError`: Unicode NFKC collision detected.
 - `UntrustedSignerError`: Signer key not in allowlist.
 - `AllSkippedViolationError`: Supported engine returned all-skipped results.
+
+### Memory Subsystem Troubleshooting (Phase 61)
+- **WAL lock contention**: `.rush/memory.db` is SQLite WAL mode; a concurrent long-running writer can block another writer. `TypedArtifactStore` opens its connection with the same timeout pattern as `ResultCache._init_db()` (`cache.py:103`) — a stuck lock past that timeout raises rather than hanging silently.
+- **`stale: true` on a recalled record**: the `symbol_ref`+`content_hash` pair no longer matches the current AST content-hash of that symbol (Invariant 6) — the underlying code changed since the record was written. Not an error; re-verify before trusting the content.
+- **Signature mismatch on recall**: `recall()` recomputes `hashlib.sha256(content_bytes).hexdigest()` against the row's current `content` and compares it to the stored `signature`; a mismatch raises. This is a corruption-detection checksum (accidental corruption, partial write, bit rot, a hand-edited row), not cryptographic tamper evidence against a malicious database writer — see `docs/safety/security-model.md`.
+- **`recall()` returns zero rows unexpectedly**: check the session allowlist — an empty/absent allowlist fails closed (returns no rows), it never falls back to "allow all" (T-61.38).
+- **A migrated record appears missing**: check for the source's `.migrated`-suffixed satellite file (e.g. `.rush/hook_signatures.json.migrated`) — Invariant 5 renames rather than deletes; re-running the migration function is idempotent and safe.
 - `ReleaseGateFailureError`: Release-gate engine (mypy) unavailable or failing.

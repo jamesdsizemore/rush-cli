@@ -1,0 +1,431 @@
+# Phase 62 Remediation Manifest: Cross-LLM Memory Integration Layer
+#
+# Roadmap phase, not a remediation-finding phase — closes no R-xxx entry in
+# governance/remediation-contracts.toml (that ledger's 16 findings stayed
+# 16/16 completed through this phase). Uses the identical per-test schema as
+# governance/remediation-contracts.toml's [[findings]] records and
+# governance/remediation-phase-61.toml's convention (id, title, owner_phase,
+# severity, release_blocker, red_task, green_task, target_seam, test_file,
+# test_function, predecessor, docs_owner, status) so this phase's own
+# completion record stays queryable the same structured way.
+
+[phase]
+id = 62
+name = "memory-integration-layer"
+title = "Cross-LLM Memory Integration Layer"
+status = "completed"
+completed_at = "2026-09-07T00:00:00Z"
+test_count = 26
+authority = "docs/reports/cross-llm-memory-system-synthesis-2026-09-06.md"
+governing_plan = "docs/phase-plans/phase-62-memory-integration-layer-plan.md"
+
+[requirements]
+closed = []
+release_blockers_remaining = 0
+all_release_blockers_closed = true
+remediation_program_complete = true
+note = "This phase closes no R-xxx finding (roadmap phase, authorized by an accepted design report per Phase 61's own precedent, not by governance/remediation-contracts.toml)."
+
+[contract_tests]
+total_contract_tests = 26
+all_contract_tests_passed = true
+test_files = [
+    "tests/test_phase62_cache_gate.py",
+    "tests/test_phase62_review_memory.py",
+    "tests/test_phase62_maintenance.py",
+    "tests/test_phase62_handoff_diff.py",
+    "tests/test_phase62_attribution.py",
+    "tests/test_phase62_api_staleness.py",
+    "tests/test_phase62_expiry.py",
+    "tests/test_phase62_decision_schema.py",
+]
+
+[[findings]]
+id = "T-62.01"
+title = "Cache hit returns stored content without new pack"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.1.1"
+green_task = "P62.1.2"
+target_seam = "src/rush/token_economy/memory_cache_gate.py"
+test_file = "tests/test_phase62_cache_gate.py"
+test_function = "test_cache_hit_returns_stored_content_without_new_pack"
+predecessor = "Phase 61 TypedArtifactStore.search()/recall()"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.02"
+title = "Cache miss falls through to pack_context"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.1.1"
+green_task = "P62.1.2"
+target_seam = "src/rush/token_economy/memory_cache_gate.py"
+test_file = "tests/test_phase62_cache_gate.py"
+test_function = "test_cache_miss_falls_through_to_pack"
+predecessor = "T-62.01"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.03"
+title = "Review finding cites prior failure memory"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.2.1"
+green_task = "P62.2.2"
+target_seam = "src/rush/tools/review.py"
+test_file = "tests/test_phase62_review_memory.py"
+test_function = "test_review_finding_cites_prior_failure_memory"
+predecessor = "Phase 61 TypedArtifactStore.recall(subject=\"failure\")"
+status = "completed"
+docs_owner = "docs/developer/testing-guide.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.04"
+title = "Review cites architectural decision record"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.2.1"
+green_task = "P62.2.2"
+target_seam = "src/rush/tools/review.py"
+test_file = "tests/test_phase62_review_memory.py"
+test_function = "test_review_cites_architectural_decision"
+predecessor = "T-62.03"
+status = "completed"
+docs_owner = "docs/developer/testing-guide.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.05"
+title = "Maintenance cycle acquires and releases lock"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.3.1"
+green_task = "P62.3.2"
+target_seam = "src/rush/memory/maintenance.py"
+test_file = "tests/test_phase62_maintenance.py"
+test_function = "test_maintenance_cycle_acquires_and_releases_lock"
+predecessor = "Phase 58 MeshLockManager"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/DEVELOPER_GUIDE.md"
+
+[[findings]]
+id = "T-62.06"
+title = "Maintenance cycle respects batch_size parameter"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.3.1"
+green_task = "P62.3.2"
+target_seam = "src/rush/memory/maintenance.py"
+test_file = "tests/test_phase62_maintenance.py"
+test_function = "test_maintenance_cycle_respects_batch_size_parameter"
+predecessor = "T-62.05"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/DEVELOPER_GUIDE.md"
+
+[[findings]]
+id = "T-62.07"
+title = "Second handoff to same tool sends delta only"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.4.1"
+green_task = "P62.4.2"
+target_seam = "src/rush/continuity/receipts.py"
+test_file = "tests/test_phase62_handoff_diff.py"
+test_function = "test_second_handoff_to_same_tool_sends_delta_only"
+predecessor = "Phase 61 CheckpointJournal handoff metadata"
+status = "completed"
+docs_owner = "docs/JSON_SCHEMA.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.08"
+title = "First handoff to a tool sends full snapshot"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.4.1"
+green_task = "P62.4.2"
+target_seam = "src/rush/continuity/receipts.py"
+test_file = "tests/test_phase62_handoff_diff.py"
+test_function = "test_first_handoff_to_a_tool_sends_full_snapshot"
+predecessor = "T-62.07"
+status = "completed"
+docs_owner = "docs/JSON_SCHEMA.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.09"
+title = "Fix commit links to originating failure record"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.5.1"
+green_task = "P62.5.2"
+target_seam = "src/rush/session_memory.py"
+test_file = "tests/test_phase62_attribution.py"
+test_function = "test_fix_commit_links_to_originating_failure_record"
+predecessor = "Phase 61 GitTrailerParser"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/developer/architecture.md"
+
+[[findings]]
+id = "T-62.10"
+title = "Attribution stores commit SHA, not full commit content"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.5.1"
+green_task = "P62.5.2"
+target_seam = "src/rush/session_memory.py"
+test_file = "tests/test_phase62_attribution.py"
+test_function = "test_attribution_stores_sha_not_full_commit_content"
+predecessor = "T-62.09"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/developer/architecture.md"
+
+[[findings]]
+id = "T-62.11"
+title = "Signature break flags stale via API diff when merkle baseline predates it"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.6.1"
+green_task = "P62.6.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase62_api_staleness.py"
+test_function = "test_signature_break_flags_stale_via_main_diff_when_merkle_baseline_predates_it"
+predecessor = "Phase 61 MerkleInvalidator.check_and_update"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.12"
+title = "STATED records never expire"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.7.1"
+green_task = "P62.7.2"
+target_seam = "src/rush/memory/expiry.py"
+test_file = "tests/test_phase62_expiry.py"
+test_function = "test_stated_records_never_expire"
+predecessor = "Phase 60 TimeDecayCalculator (time_decay.py:12)"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.13"
+title = "DERIVED record expires after configured 14-day TTL"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.7.1"
+green_task = "P62.7.2"
+target_seam = "src/rush/memory/expiry.py"
+test_file = "tests/test_phase62_expiry.py"
+test_function = "test_derived_record_expires_after_configured_ttl"
+predecessor = "T-62.12"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.14"
+title = "Expiry and staleness are independent booleans"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.7.1"
+green_task = "P62.7.2"
+target_seam = "src/rush/memory/expiry.py"
+test_file = "tests/test_phase62_expiry.py"
+test_function = "test_expiry_and_staleness_are_independent"
+predecessor = "T-62.13"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.15"
+title = "Architectural decision record carries DecisionRecordFields"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.8.1"
+green_task = "P62.8.2"
+target_seam = "src/rush/memory/decision_schema.py"
+test_file = "tests/test_phase62_decision_schema.py"
+test_function = "test_architectural_decision_record_carries_remediation_shaped_fields"
+predecessor = "Phase 61 mistake_miner.py candidate-shaping function (P61.6.2)"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/developer/testing-guide.md"
+
+[[findings]]
+id = "T-62.16"
+title = "Decision status defaults in_progress, accepts completed"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.8.1"
+green_task = "P62.8.2"
+target_seam = "src/rush/memory/decision_schema.py"
+test_file = "tests/test_phase62_decision_schema.py"
+test_function = "test_status_defaults_in_progress_and_accepts_completed"
+predecessor = "T-62.15"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/developer/testing-guide.md"
+
+[[findings]]
+id = "T-62.17"
+title = "mistake_miner failure write carries decision schema round-trip"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.8.1"
+green_task = "P62.8.2"
+target_seam = "src/rush/memory/mistake_miner.py"
+test_file = "tests/test_phase62_decision_schema.py"
+test_function = "test_mistake_miner_failure_write_carries_decision_schema_round_trip"
+predecessor = "T-62.16"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/developer/testing-guide.md"
+
+[[findings]]
+id = "T-62.18"
+title = "Cache hit with failed recall defense falls through to pack"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.1.1"
+green_task = "P62.1.2"
+target_seam = "src/rush/token_economy/memory_cache_gate.py"
+test_file = "tests/test_phase62_cache_gate.py"
+test_function = "test_cache_hit_with_failed_recall_defense_falls_through_to_pack"
+predecessor = "T-62.02"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.19"
+title = "Cache miss write-back requires cache_write permission"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.1.1"
+green_task = "P62.1.2"
+target_seam = "src/rush/token_economy/memory_cache_gate.py"
+test_file = "tests/test_phase62_cache_gate.py"
+test_function = "test_cache_miss_write_back_requires_cache_write_permission"
+predecessor = "T-62.18"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.20"
+title = "Cache miss write-back uses DERIVED trust tier and exact key"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.1.1"
+green_task = "P62.1.2"
+target_seam = "src/rush/token_economy/memory_cache_gate.py"
+test_file = "tests/test_phase62_cache_gate.py"
+test_function = "test_cache_miss_write_back_uses_derived_trust_tier_and_exact_key"
+predecessor = "T-62.19"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.21"
+title = "Expired lease reclaimed by second cycle survives first cycle's stale release"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.3.1"
+green_task = "P62.3.2"
+target_seam = "src/rush/memory/maintenance.py"
+test_file = "tests/test_phase62_maintenance.py"
+test_function = "test_expired_lease_reclaimed_by_second_cycle_survives_first_cycles_stale_release"
+predecessor = "T-62.06"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/DEVELOPER_GUIDE.md"
+
+[[findings]]
+id = "T-62.22"
+title = "MemoryTool maintain operation dispatches to run_maintenance_cycle"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.3.1"
+green_task = "P62.3.2"
+target_seam = "src/rush/memory/maintenance.py"
+test_file = "tests/test_phase62_maintenance.py"
+test_function = "test_memory_tool_maintain_operation_dispatches_to_run_maintenance_cycle"
+predecessor = "T-62.21"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/DEVELOPER_GUIDE.md"
+
+[[findings]]
+id = "T-62.23"
+title = "Direct run() caller without __call__ still threads provider_id"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.4.1"
+green_task = "P62.4.2"
+target_seam = "src/rush/tools/continuity.py"
+test_file = "tests/test_phase62_handoff_diff.py"
+test_function = "test_direct_run_caller_without_call_still_threads_provider_id"
+predecessor = "T-62.08"
+status = "completed"
+docs_owner = "docs/JSON_SCHEMA.md, docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-62.24"
+title = "EXTERNAL_WRITE record expires after configured 30-day TTL"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.7.1"
+green_task = "P62.7.2"
+target_seam = "src/rush/memory/expiry.py"
+test_file = "tests/test_phase62_expiry.py"
+test_function = "test_external_write_record_expires_after_configured_ttl"
+predecessor = "T-62.14"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.25"
+title = "IMPORTED record expires after configured 90-day TTL"
+owner_phase = 62
+severity = "medium"
+release_blocker = false
+red_task = "P62.7.1"
+green_task = "P62.7.2"
+target_seam = "src/rush/memory/expiry.py"
+test_file = "tests/test_phase62_expiry.py"
+test_function = "test_imported_record_expires_after_configured_ttl"
+predecessor = "T-62.24"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-62.26"
+title = "Unavailable base_ref reports unknown, not fresh"
+owner_phase = 62
+severity = "high"
+release_blocker = false
+red_task = "P62.6.1"
+green_task = "P62.6.2"
+target_seam = "src/rush/tools/api_diff.py"
+test_file = "tests/test_phase62_api_staleness.py"
+test_function = "test_unavailable_base_ref_reports_unknown_not_fresh"
+predecessor = "T-62.11"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"

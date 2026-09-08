@@ -1,5 +1,7 @@
 # Phase 42: Compact Serialization (TOON), Polyglot AST Skeletons & Ship Gate
 
+> **Superseded by Phase 61 for the memory/mistake-memory portions** (2026-09-07): any memory-subsystem citations below (e.g. ADR-0030) are superseded by ADR-0049 and `src/rush/memory/store.py`'s unified `TypedArtifactStore`. This is a historical build-plan record — content otherwise unchanged.
+
 ## Metadata
 - **Phase ID**: `PHASE-42` (Phase 42 of Innovation Roadmap)
 - **Phase Name**: TOON v4.1 Wire Serialization, Polyglot AST Skeletons & 7-Vector Ship Gate Cockpit

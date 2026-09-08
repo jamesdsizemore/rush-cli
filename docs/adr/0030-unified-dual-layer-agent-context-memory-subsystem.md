@@ -1,6 +1,7 @@
 # ADR-0030: Unified Dual-Layer Agent Context Memory Subsystem
 
 ## Status
+Superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md).
 Accepted (v0.2.0 / Phase 41A-41B)
 
 ## Context

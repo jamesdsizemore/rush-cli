@@ -76,10 +76,18 @@ def test_plugin_manifest_validator() -> None:
     assert len(res_bad.errors) > 0
 
 
-def test_agent_skill_generator() -> None:
+def test_agent_skill_generator(tmp_path: Path, monkeypatch) -> None:
+    from rush.plugins.closure import build_plugin_closure
     from rush.plugins.loader import PluginSpec
     from rush.plugins.skills_generator import AgentSkillGenerator
+    from rush.plugins.trust_store import PluginTrustStore
 
+    monkeypatch.chdir(tmp_path)
+    ledger_path = tmp_path / "ledger.json"
+    monkeypatch.setenv("RUSH_PLUGIN_TRUST_LEDGER", str(ledger_path))
+
+    # Closure-less PluginSpec: no closure identity, so trust can never be established —
+    # the "rush plugin run" line is omitted (fail-closed).
     spec = PluginSpec(
         name="custom_scanner",
         command=["python", "scan.py"],
@@ -88,4 +96,31 @@ def test_agent_skill_generator() -> None:
     )
     skill_md = AgentSkillGenerator.generate_skill_markdown(spec)
     assert "name: custom_scanner" in skill_md
-    assert "rush plugin run custom_scanner" in skill_md
+    assert "rush plugin run custom_scanner" not in skill_md
+
+    # PluginSpec with a real closure whose digest has been explicitly trust-granted:
+    # the "rush plugin run" line is present.
+    plugin_root = tmp_path / "trusted_plugin"
+    plugin_root.mkdir()
+    entrypoint = plugin_root / "scan.py"
+    entrypoint.write_text("print('scan')", encoding="utf-8")
+
+    closure = build_plugin_closure(
+        plugin_root=plugin_root,
+        entrypoint=entrypoint,
+        config={"name": "trusted_scanner", "command": ["python", "scan.py"]},
+        plugin_name="trusted_scanner",
+    )
+    PluginTrustStore(ledger_path=ledger_path).grant_trust(
+        "trusted_scanner", closure.closure_digest
+    )
+
+    trusted_spec = PluginSpec(
+        name="trusted_scanner",
+        command=["python", "scan.py"],
+        executable_path=entrypoint,
+        description="Trusted Scanner",
+        closure=closure,
+    )
+    trusted_skill_md = AgentSkillGenerator.generate_skill_markdown(trusted_spec)
+    assert "rush plugin run trusted_scanner" in trusted_skill_md

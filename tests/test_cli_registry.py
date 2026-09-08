@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from rush.catalog import TOOL_SPECS, ToolSpec
 from rush.cli import build_catalog_path_command, cli
 from rush.mcp import build_server_instructions
+from rush.memory.trust import default_entry_tier
 from rush.permissions import ExecutionPermissions
 from rush.token_economy.ccr_store import CCRStore
 from rush.tools import LintTool
@@ -174,7 +175,10 @@ def test_session_cli_returns_the_same_canonical_lifecycle_result(
     handoff = payloads[2]["metadata"]["handoff"]
     assert handoff["current_goal"] == "Finish the redacted handoff"
     assert handoff["open_work"] == ["verify restore receipt"]
-    assert handoff["historic_instruction"]["authority"] == "historical_evidence"
+    assert handoff["historic_instruction"]["trust_tier"] == default_entry_tier(
+        "local_tool"
+    )
+    assert handoff["historic_instruction"]["present"] is True
 
 
 def test_context_cli_uses_shared_canonical_envelope(tmp_path: Path) -> None:

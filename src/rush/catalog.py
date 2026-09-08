@@ -124,6 +124,17 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         engine_names=(),
         maturity="real_adapter",
     ),
+    "memory": ToolSpec(
+        name="memory",
+        category="workflow",
+        description="Query, write, or promote cross-tool memory artifacts.",
+        mcp_description=(
+            "Query, write, or promote a cross-tool memory artifact in the typed artifact "
+            "store. Write/promote require explicit cache-write permission."
+        ),
+        engine_names=(),
+        maturity="real_adapter",
+    ),
     "semantic-drift": ToolSpec(
         name="semantic-drift",
         category="test",
@@ -743,6 +754,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 
 _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "continuity": "real_adapter",
+    "memory": "real_adapter",
     "semantic-drift": "browser_runtime",
     "review": "real_adapter",
     "lint": "real_adapter",

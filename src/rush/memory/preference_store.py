@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from rush.memory.migration import read_origin, read_origin_kind
 from rush.memory.transactions import CASMapTransaction
 
 
@@ -34,7 +35,13 @@ class PreferenceStore:
         self.tx.update(mutator, max_retries=20)
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self._read().get(key, default)
+        data = self._read()
+        if key in data:
+            return data[key]
+        migrated = read_origin(self.project_root, "preference", key)
+        if migrated is not None:
+            return migrated.get("value", default)
+        return default
 
     def set(self, key: str, value: Any) -> None:
         def mutator(data: dict[str, Any]) -> dict[str, Any]:
@@ -61,4 +68,9 @@ class PreferenceStore:
         return deleted
 
     def list_all(self) -> dict[str, Any]:
-        return self._read()
+        data = dict(self._read())
+        for entry in read_origin_kind(self.project_root, "preference"):
+            key = entry.get("key")
+            if key is not None and key not in data:
+                data[key] = entry.get("value")
+        return data

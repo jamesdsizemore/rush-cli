@@ -1,0 +1,627 @@
+# Phase 61 Remediation Manifest: Cross-LLM Memory Typed-Artifact Schema, Trust Tiers, and Transport Dispatcher
+#
+# Roadmap phase, not a remediation-finding phase — closes no R-xxx entry in
+# governance/remediation-contracts.toml (that ledger's 16 findings stayed
+# 16/16 completed through this phase). Uses the identical per-test schema as
+# governance/remediation-contracts.toml's [[findings]] records (id, title,
+# owner_phase, severity, release_blocker, red_task, green_task, target_seam,
+# test_file, test_function, predecessor, docs_owner, status) so this phase's
+# own completion record stays queryable the same structured way.
+
+[phase]
+id = 61
+name = "cross-llm-memory-typed-artifact-schema"
+title = "Cross-LLM Memory Typed-Artifact Schema, Trust Tiers, and Transport Dispatcher"
+status = "completed"
+completed_at = "2026-09-07T00:00:00Z"
+test_count = 39
+authority = "docs/reports/cross-llm-memory-system-synthesis-2026-09-06.md"
+governing_plan = "docs/phase-plans/phase-61-cross-llm-memory-typed-artifact-schema-plan.md"
+
+[requirements]
+closed = []
+release_blockers_remaining = 0
+all_release_blockers_closed = true
+remediation_program_complete = true
+note = "This phase closes no R-xxx finding (roadmap phase, authorized by an accepted design report per Phases 41-50's precedent, not by governance/remediation-contracts.toml)."
+
+[contract_tests]
+total_contract_tests = 39
+all_contract_tests_passed = true
+test_files = [
+    "tests/test_phase61_store.py",
+    "tests/test_phase61_trust.py",
+    "tests/test_phase61_migration.py",
+    "tests/test_phase61_episodic.py",
+    "tests/test_phase61_handoff.py",
+    "tests/test_phase61_domain_knowledge.py",
+    "tests/test_phase61_skill_pattern.py",
+    "tests/test_phase61_transport.py",
+    "tests/test_phase61_memory_tool.py",
+    "tests/test_phase61_adr.py",
+]
+
+[[findings]]
+id = "T-61.01"
+title = "WAL mode enabled on TypedArtifactStore init"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_wal_mode_enabled_on_init"
+predecessor = "Phase 58 CASMapTransaction"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/developer/architecture.md"
+
+[[findings]]
+id = "T-61.02"
+title = "write() rejects STATED on initial insert"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_write_rejects_stated_on_initial_insert"
+predecessor = "T-61.01"
+status = "completed"
+docs_owner = "docs/ARCHITECTURE.md, docs/SAFETY.md"
+
+[[findings]]
+id = "T-61.03"
+title = "write() redacts content before persisting"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_write_redacts_content_before_persisting"
+predecessor = "T-61.02"
+status = "completed"
+docs_owner = "docs/PRIVACY.md, docs/safety/privacy-and-data-handling.md"
+
+[[findings]]
+id = "T-61.04"
+title = "recall() rescans STATED signature and raises on mismatch"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_recall_rescans_stated_signature_and_raises_on_mismatch"
+predecessor = "T-61.03"
+status = "completed"
+docs_owner = "docs/safety/security-model.md, docs/developer/debugging-guide.md"
+
+[[findings]]
+id = "T-61.05"
+title = "recall() scans content for Trojan Source characters"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_recall_scans_content_for_trojan_source_chars"
+predecessor = "T-61.04"
+status = "completed"
+docs_owner = "docs/SAFETY.md, docs/SECURITY.md"
+
+[[findings]]
+id = "T-61.06"
+title = "Staleness flips on symbol content-hash mismatch"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_staleness_flips_on_symbol_content_hash_mismatch"
+predecessor = "T-61.05"
+status = "completed"
+docs_owner = "docs/developer/debugging-guide.md"
+
+[[findings]]
+id = "T-61.07"
+title = "FTS5 query matches indexed content across insert/update/delete"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.1.1"
+green_task = "P61.1.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_fts5_query_matches_indexed_content"
+predecessor = "T-61.06"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-61.08"
+title = "default_entry_tier never returns STATED"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_default_entry_tier_never_returns_stated"
+predecessor = "T-61.01"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md, docs/getting-started/glossary.md"
+
+[[findings]]
+id = "T-61.09"
+title = "Promotion requires ALLOW/REDACT/BLOCK screen pass"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_promotion_requires_allow_redact_block_pass"
+predecessor = "T-61.08"
+status = "completed"
+docs_owner = "docs/user-guide/security-and-supply-chain.md"
+
+[[findings]]
+id = "T-61.10"
+title = "Promotion requires regex pre-filter pass"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_promotion_requires_regex_prefilter_pass"
+predecessor = "T-61.09"
+status = "completed"
+docs_owner = "docs/user-guide/security-and-supply-chain.md"
+
+[[findings]]
+id = "T-61.11"
+title = "Promotion requires full schema populated"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_promotion_requires_full_schema"
+predecessor = "T-61.10"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-61.12"
+title = "User-stated record promotes immediately"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_user_stated_promotes_immediately"
+predecessor = "T-61.11"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md"
+
+[[findings]]
+id = "T-61.13"
+title = "Corroboration threshold of 2 via dedicated counter"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_corroboration_threshold_of_two_via_dedicated_counter"
+predecessor = "T-61.12"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md"
+
+[[findings]]
+id = "T-61.14"
+title = "Single uncorroborated DERIVED record stays unpromoted"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_single_uncorroborated_derived_record_stays_unpromoted"
+predecessor = "T-61.13"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md"
+
+[[findings]]
+id = "T-61.15"
+title = "preference_store rows migrate with subject=preference"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/memory/preference_store.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_preference_store_rows_migrate_with_kind_preference"
+predecessor = "T-61.02"
+status = "completed"
+docs_owner = "docs/developer/architecture.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-61.16"
+title = "invariant_graph rows migrate with subject=architectural_decision"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/memory/invariant_graph.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_invariant_graph_rows_migrate_with_kind_architectural_decision"
+predecessor = "T-61.15"
+status = "completed"
+docs_owner = "docs/developer/architecture.md, docs/ARCHITECTURE.md"
+
+[[findings]]
+id = "T-61.17"
+title = "checkpoint_journal rows migrate as handoff family, corrupt evidence survives"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/memory/checkpoint_journal.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_checkpoint_journal_rows_migrate_as_handoff_family"
+predecessor = "T-61.16"
+status = "completed"
+docs_owner = "docs/developer/source-tree.md, docs/CLI_REFERENCE.md"
+
+[[findings]]
+id = "T-61.18"
+title = "failure_ledger rows migrate with subject=failure, fingerprint preserved"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/memory/failure_ledger.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_failure_ledger_rows_migrate_with_kind_failure"
+predecessor = "T-61.17"
+status = "completed"
+docs_owner = "docs/SAFETY.md"
+
+[[findings]]
+id = "T-61.19"
+title = "patch_memory rows migrate and pair with failure records via queryable join"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/patch/memory.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_patch_memory_rows_migrate_and_pair_with_failure_records"
+predecessor = "T-61.18"
+status = "completed"
+docs_owner = "docs/vibecoding/instant-fix-and-auto-remediation.md"
+
+[[findings]]
+id = "T-61.20"
+title = "flight_recorder JSONL migrates as episodic subject"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/tools/flight_recorder.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_flight_recorder_jsonl_migrates_as_episodic_subject"
+predecessor = "T-61.19"
+status = "completed"
+docs_owner = "docs/developer/source-tree.md"
+
+[[findings]]
+id = "T-61.21"
+title = "hook_signatures migrate; satellite file no longer canonical"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py, src/rush/hook/tamper_detector.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_hook_signatures_migrate_and_satellite_files_no_longer_canonical"
+predecessor = "T-61.20"
+status = "completed"
+docs_owner = "docs/SAFETY.md, docs/SECURITY.md"
+
+[[findings]]
+id = "T-61.22"
+title = "Migration is idempotent on a clean rerun"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_migration_is_idempotent"
+predecessor = "T-61.21"
+status = "completed"
+docs_owner = "docs/developer/versioning-and-compatibility.md"
+
+[[findings]]
+id = "T-61.23"
+title = "Episodic write path uses FlightRecorder redaction pattern"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.5.1"
+green_task = "P61.5.2"
+target_seam = "src/rush/session_memory.py, src/rush/tools/flight_recorder.py"
+test_file = "tests/test_phase61_episodic.py"
+test_function = "test_episodic_write_uses_flight_recorder_redaction_pattern"
+predecessor = "T-61.22"
+status = "completed"
+docs_owner = "docs/agentic-rush/patch-remediation-and-memory.md"
+
+[[findings]]
+id = "T-61.24"
+title = "receipts save/restore now backed by unified store"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.4.1"
+green_task = "P61.4.2"
+target_seam = "src/rush/continuity/receipts.py, src/rush/memory/checkpoint_journal.py"
+test_file = "tests/test_phase61_handoff.py"
+test_function = "test_receipts_save_restore_now_backed_by_unified_store"
+predecessor = "T-61.17"
+status = "completed"
+docs_owner = "docs/JSON_SCHEMA.md, docs/reference/result-reference.md"
+
+[[findings]]
+id = "T-61.25"
+title = "Quarantine flag replaced by trust_tier"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.4.1"
+green_task = "P61.4.2"
+target_seam = "src/rush/continuity/receipts.py"
+test_file = "tests/test_phase61_handoff.py"
+test_function = "test_quarantine_flag_replaced_by_trust_tier"
+predecessor = "T-61.24"
+status = "completed"
+docs_owner = "docs/AGENTIC_RUSH.md, docs/TROUBLESHOOTING.md"
+
+[[findings]]
+id = "T-61.26"
+title = "FTS5 lexical search returns BM25-ranked results"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.7.1"
+green_task = "P61.7.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_domain_knowledge.py"
+test_function = "test_fts5_lexical_search_returns_ranked_results"
+predecessor = "T-61.02 (P61.2.2)"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-61.27"
+title = "Skill candidate requires trust-store grant before execution path exists"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.8.1"
+green_task = "P61.8.2"
+target_seam = "src/rush/plugins/skills_generator.py"
+test_file = "tests/test_phase61_skill_pattern.py"
+test_function = "test_skill_candidate_requires_trust_store_grant_before_execution_path_exists"
+predecessor = "T-61.09 (P61.2.2)"
+status = "completed"
+docs_owner = "docs/agentic-rush/plugins-and-agent-skills.md"
+
+[[findings]]
+id = "T-61.28"
+title = "Native SDK tier selected when available"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.10.1"
+green_task = "P61.10.2"
+target_seam = "src/rush/memory/transport.py"
+test_file = "tests/test_phase61_transport.py"
+test_function = "test_native_sdk_tier_selected_when_available"
+predecessor = "T-61.02 (P61.2.2)"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md, docs/getting-started/glossary.md"
+
+[[findings]]
+id = "T-61.29"
+title = "ACP tier selected when no native SDK but ACP available"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.10.1"
+green_task = "P61.10.2"
+target_seam = "src/rush/memory/transport.py"
+test_file = "tests/test_phase61_transport.py"
+test_function = "test_acp_tier_selected_when_no_native_sdk_but_acp_available"
+predecessor = "T-61.28"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md"
+
+[[findings]]
+id = "T-61.30"
+title = "Dedicated-file fallback when neither native SDK nor ACP available"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.10.1"
+green_task = "P61.10.2"
+target_seam = "src/rush/memory/transport.py"
+test_file = "tests/test_phase61_transport.py"
+test_function = "test_dedicated_file_fallback_when_neither_available"
+predecessor = "T-61.29"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md"
+
+[[findings]]
+id = "T-61.31"
+title = "Dispatcher tier selection is per-tool, not global"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.10.1"
+green_task = "P61.10.2"
+target_seam = "src/rush/memory/transport.py"
+test_file = "tests/test_phase61_transport.py"
+test_function = "test_dispatcher_is_per_tool_not_global"
+predecessor = "T-61.30"
+status = "completed"
+docs_owner = "docs/GLOSSARY.md"
+
+[[findings]]
+id = "T-61.32"
+title = "MemoryTool registers as both CLI group and MCP tool"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.12.1"
+green_task = "P61.12.2"
+target_seam = "src/rush/tools/memory.py, src/rush/tools/__init__.py, src/rush/catalog.py, src/rush/cli.py"
+test_file = "tests/test_phase61_memory_tool.py"
+test_function = "test_memory_tool_registers_as_both_cli_and_mcp"
+predecessor = "T-61.31 (P61.10.2), ADR-0049 (P61.11.2)"
+status = "completed"
+docs_owner = "docs/CLI_REFERENCE.md, docs/MCP_REFERENCE.md, docs/TOOL_CATALOG.md"
+
+[[findings]]
+id = "T-61.33"
+title = "memory ask returns ToolResultV1 with status=skipped on denied"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.12.1"
+green_task = "P61.12.2"
+target_seam = "src/rush/tools/memory.py"
+test_file = "tests/test_phase61_memory_tool.py"
+test_function = "test_memory_ask_returns_tool_result_v1_with_skipped_on_denied"
+predecessor = "T-61.32"
+status = "completed"
+docs_owner = "docs/reference/mcp-tool-reference.md"
+
+[[findings]]
+id = "T-61.34"
+title = "ADR-0030 marked superseded and ADR-0049 exists"
+owner_phase = 61
+severity = "medium"
+release_blocker = false
+red_task = "P61.11.1"
+green_task = "P61.11.2"
+target_seam = "docs/adr/0049-typed-artifact-memory-schema-and-trust-tiers.md, docs/adr/0030-unified-dual-layer-agent-context-memory-subsystem.md"
+test_file = "tests/test_phase61_adr.py"
+test_function = "test_adr_0030_marked_superseded_and_0049_exists"
+predecessor = "P61.1.2 through P61.10.2"
+status = "completed"
+docs_owner = "docs/adr/README.md, docs/maintainers/adr/README.md"
+
+[[findings]]
+id = "T-61.35"
+title = "Promotion rejects fabricated symbol citation (grounding check)"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_promotion_rejects_fabricated_symbol_citation"
+predecessor = "T-61.14"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-61.36"
+title = "Conflicting fact against STATED record resolves delete/update correctly"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.2.1"
+green_task = "P61.2.2"
+target_seam = "src/rush/memory/trust.py, src/rush/memory/store.py"
+test_file = "tests/test_phase61_trust.py"
+test_function = "test_conflicting_fact_against_stated_record_resolves_delete"
+predecessor = "T-61.35"
+status = "completed"
+docs_owner = "docs/API_REFERENCE.md"
+
+[[findings]]
+id = "T-61.37"
+title = "Migration rerun after partial completion does not duplicate or drop rows"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.3.1"
+green_task = "P61.3.2"
+target_seam = "src/rush/memory/migration.py"
+test_file = "tests/test_phase61_migration.py"
+test_function = "test_migration_rerun_after_partial_completion_does_not_duplicate_or_drop_rows"
+predecessor = "T-61.22"
+status = "completed"
+docs_owner = "docs/maintainers/versioning-and-compatibility.md"
+
+[[findings]]
+id = "T-61.38"
+title = "recall() with empty allowlist fails closed"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.9.1"
+green_task = "P61.9.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_recall_with_empty_allowlist_fails_closed"
+predecessor = "T-61.01"
+status = "completed"
+docs_owner = "docs/developer/debugging-guide.md"
+
+[[findings]]
+id = "T-61.39"
+title = "recall() scopes results to session allowlist"
+owner_phase = 61
+severity = "high"
+release_blocker = false
+red_task = "P61.9.1"
+green_task = "P61.9.2"
+target_seam = "src/rush/memory/store.py"
+test_file = "tests/test_phase61_store.py"
+test_function = "test_recall_scopes_to_session_allowlist"
+predecessor = "T-61.38"
+status = "completed"
+docs_owner = "docs/developer/debugging-guide.md"

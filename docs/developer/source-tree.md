@@ -40,12 +40,19 @@ src/rush/
 │   ├── distillers/         # Output distillers (pytest, cargo, ruff, vitest)
 │   └── toon/               # TOON v4.1 table encoder and decoder
 ├── memory/                 # Persistent memory and history tracking
-│   ├── preference_store.py # Developer preferences (.rush/preferences.json)
-│   ├── checkpoint_journal.py # Session snapshots (.rush/sessions/)
-│   ├── merkle_invalidator.py # AST node hash tracking (.rush/cache/merkle.json)
-│   ├── invariant_graph.py  # Architectural decision graph (.rush/memory/invariants.json)
-│   ├── failure_ledger.py   # Negative knowledge failure ledger (.rush/memory/failures.db)
-│   └── mistake_miner.py    # Bi-temporal Git revert miner
+│   ├── store.py            # TypedArtifactStore, MemoryArtifact — unified SQLite WAL store (.rush/memory.db, Phase 61)
+│   ├── trust.py            # TrustTier, default_entry_tier, evaluate_promotion, evaluate_conflict (Phase 61)
+│   ├── migration.py        # Idempotent migration functions, one per absorbed source (Phase 61)
+│   ├── transport.py        # Per-tool cross-tool memory transport dispatcher (Phase 61)
+│   ├── preference_store.py # Developer preferences — thin view over TypedArtifactStore (formerly .rush/preferences.json)
+│   ├── checkpoint_journal.py # Session snapshots — thin view over TypedArtifactStore (family="handoff"); still writes .rush/sessions/*.json
+│   ├── merkle_invalidator.py # AST node hash tracking — thin view over TypedArtifactStore (formerly .rush/cache/merkle.json)
+│   ├── invariant_graph.py  # Architectural decision graph — thin view over TypedArtifactStore (formerly .rush/memory/invariants.json)
+│   ├── failure_ledger.py   # Negative knowledge failure ledger — thin view over TypedArtifactStore (formerly .rush/memory/failures.db)
+│   ├── mistake_miner.py    # Bi-temporal Git revert miner (pure; shapes failure candidates, does not persist)
+│   ├── maintenance.py      # run_maintenance_cycle() — promotion/staleness/skill-admission/expiry sweeps (Phase 62)
+│   ├── expiry.py           # ExpiryPolicy, DEFAULT_POLICIES, sweep_expired() — per-trust_tier TTL expiry (Phase 62)
+│   └── decision_schema.py  # DecisionRecordFields — remediation-shaped fields reused by mistake_miner.py (Phase 62)
 └── tools/
     ├── ship/               # Pre-flight ship vectors and 7-vector cockpit
     │   ├── cleaner.py      # Scratch directory cleaner
@@ -68,7 +75,8 @@ src/rush/
 │   ├── cache_aligner.py   # Prompt cache boundary aligner
 │   ├── telemetry.py       # SQLite token ledger (.rush/telemetry/tokens.db)
 │   ├── output_shaper.py   # Terse persona output filter
-│   └── tui_gain.py        # Rich terminal gain dashboard
+│   ├── tui_gain.py        # Rich terminal gain dashboard
+│   └── memory_cache_gate.py # check_memory_before_pack() — defended cache lookup wired into pack_context() (Phase 62)
 └── tools/
     ├── blast_radius.py    # Downstream reachability analyzer
     └── arch_guard.py       # Architectural layer boundary guard
@@ -107,7 +115,8 @@ src/rush/
 │   └── lock_manager.py    # Local file-based mutex client
 └── tools/
     ├── trace.py           # Spec-to-code traceability scanner
-    ├── flight_recorder.py # Session recorder & replayer
+    ├── flight_recorder.py # Session recorder & replayer — episodic writes via TypedArtifactStore (Phase 61)
+    ├── memory.py          # MemoryTool: ask|write|promote|list|recall|maintain (Phase 61)
     ├── swarm_merge.py     # 3-way AST merge solver
     └── simulate_ci.py     # Local GHA workflow emulator
 ```
@@ -200,9 +209,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

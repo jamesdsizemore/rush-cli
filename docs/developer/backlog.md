@@ -89,9 +89,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
@@ -108,3 +109,34 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 - [x] Deterministic engine support policy and fixed-PATH isolation (R-014).
 - [x] Mandatory non-skipped mypy release gate (R-014).
 - [x] All 14 release-blocking findings closed (R-001 - R-014, R-016).
+
+### Phase 60 (Completed)
+- [x] CLI support, MCP support, continuity, review, and runtime subsystems decomposed into focused, single-responsibility submodules (`src/rush/cli_support/`, `src/rush/mcp_support/`, `src/rush/continuity/`, `src/rush/review/`, `src/rush/runtime/`).
+- [x] Backwards-compatible re-export facades (`cli.py`, `tools/common.py`) preserve identity with extracted objects.
+- [x] Graph traversal, discovery, and rule modules extracted (`blast_radius_graph.py`, `discovery/workspace_graph.py`, `db_drift_rules.py`).
+- [x] McCabe cyclomatic complexity reduced to C901 <= 10 across all targets.
+- [x] Maintainability hotspot reduction and remediation program completion (R-015) — 16 of 16 `governance/remediation-contracts.toml` findings closed.
+- [x] 26 of 26 contract tests passed (`governance/remediation-phase-60.toml`).
+
+### Phase 61 (Completed)
+- [x] Unified typed-artifact schema (`src/rush/memory/store.py`'s `TypedArtifactStore`, `.rush/memory.db`, SQLite WAL, FTS5 lexical search) covering all 7 memory subjects.
+- [x] 4-tier trust taxonomy and write-promotion rule (`src/rush/memory/trust.py`) — new writes never enter at `STATED`; promotion requires an ALLOW/REDACT/BLOCK screen, regex pre-filter, schema-completeness check, grounding check, and corroboration >= 2 or direct user statement.
+- [x] All 8 satellite sources migrated idempotently (`src/rush/memory/migration.py`); old files renamed `.migrated`, never deleted.
+- [x] Recall-time defense: SHA-256 corruption-detection checksum re-verification, Trojan Source scanning, merkle staleness flagging, and a session-scoped read allowlist that fails closed on empty input.
+- [x] Per-tool cross-tool memory transport dispatcher (`src/rush/memory/transport.py`).
+- [x] `MemoryTool` (`ask`/`write`/`promote`/`list`/`recall`/`maintain`) registered as both `rush_memory` (MCP) and `@cli.group(name="memory")` (CLI).
+- [x] ADR-0049 supersedes ADR-0030; ADR-0018/0020/0041 carry superseded pointers.
+- [x] 39 of 39 contract tests passed (`governance/remediation-phase-61.toml`).
+- [x] 75 documentation files synchronized (§8.2 Groups A-D); this is a roadmap phase, closes no `R-xxx` finding.
+
+### Phase 62 (Completed)
+- [x] Token-savings cache gate (`src/rush/token_economy/memory_cache_gate.py`) wired into `pack_context()` — defended `search()`-then-`recall()` hit short-circuits the pack; `DERIVED` write-back gated on `granted.cache_write`.
+- [x] `rush.review`'s `ReviewTool.run()` cites prior `failure` and `architectural_decision` records before assembling results.
+- [x] Maintenance sub-agent (`src/rush/memory/maintenance.py`) — `run_maintenance_cycle()` with `MeshLockManager`-leased `promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep` tasks, batch-size bound, reachable via `MemoryTool`'s `maintain` operation.
+- [x] Cross-tool handoff diffs — second-and-later `save` to the same `target_provider` sends a delta, not a full snapshot, threaded through every `run()`-level caller.
+- [x] AI-attribution trail — a `GitTrailerParser`-classified fix commit links (by SHA, not full content) back to the failure record it resolved.
+- [x] API-diff staleness (`ApiDiffer.diff_symbol()`) flags `recall()` results stale independently of merkle staleness; unavailable `base_ref` reports `"unknown"`, never treated as evidence of freshness.
+- [x] Per-`trust_tier` expiry (`src/rush/memory/expiry.py`) — `STATED` never expires, `DERIVED` 14 days, `EXTERNAL_WRITE` 30 days, `IMPORTED` 90 days.
+- [x] Shared decision-record schema (`src/rush/memory/decision_schema.py`'s `DecisionRecordFields`) reused by `mistake_miner.py`'s candidate-shaping function.
+- [x] 26 of 26 contract tests passed (`governance/remediation-phase-62.toml`).
+- [x] 22 documentation files synchronized (§8.2/P62.9); this is a roadmap phase, closes no `R-xxx` finding.

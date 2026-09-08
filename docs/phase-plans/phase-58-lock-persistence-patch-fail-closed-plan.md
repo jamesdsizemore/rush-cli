@@ -457,7 +457,9 @@ class PatchVerificationResult:
 
 ---
 
-### P58.4 — Atomic Checkpoint Journals & Corrupt Evidence
+### P58.4 — Checkpoint Journal Atomicity & Corrupt-Evidence Retention
+
+> **Phase 61 note:** `transactions.py`'s `CASMapTransaction` (this phase's own predecessor primitive) is no longer the canonical store for `checkpoint_journal.py`'s data as of Phase 61 — `checkpoint_journal.py` is now a thin compatibility view over the unified `TypedArtifactStore` (`.rush/memory.db`); this is a historical build-plan record — content otherwise unchanged.
 
 #### P58.4.1 — RED: Define Atomic Journal & Corrupt Evidence Contract Tests
 - **Task ID:** P58.4.1

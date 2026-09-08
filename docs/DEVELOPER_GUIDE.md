@@ -67,6 +67,6 @@ For the completed Phases 01–30 implementations, read:
 
 ## Developing Context Intelligence & Ship Tools (Phases 41–43)
 * Token Economy modules reside in `src/rush/token_economy/` (`router.py`, `ast_skeletonizer.py`, `ccr_store.py`, `distillers/`, `toon/`).
-* Memory & Invariants reside in `src/rush/memory/` (`preference_store.py`, `checkpoint_journal.py`, `merkle_invalidator.py`, `invariant_graph.py`, `failure_ledger.py`, `mistake_miner.py`).
+* Memory & Invariants reside in `src/rush/memory/` (`store.py`, `trust.py`, `migration.py`, `transport.py` — Phase 61's unified `TypedArtifactStore`/`.rush/memory.db`, plus `preference_store.py`, `checkpoint_journal.py`, `merkle_invalidator.py`, `invariant_graph.py`, `failure_ledger.py`, all now thin compatibility views over it, and `mistake_miner.py`, still a pure git-log miner; Phase 62 adds `maintenance.py` (`run_maintenance_cycle()`), `expiry.py` (`ExpiryPolicy`/`sweep_expired()`), and `decision_schema.py` (`DecisionRecordFields`), plus `src/rush/token_economy/memory_cache_gate.py` (`check_memory_before_pack()`)). The query/write interface is `src/rush/tools/memory.py`'s `MemoryTool` (`rush memory ask|write|promote|list|recall|maintain`).
 * Release vectors reside in `src/rush/tools/ship/` (`cleaner.py`, `env_linter.py`, `docs_linter.py`, `migration_linter.py`, `semver_linter.py`, `package_linter.py`, `cockpit.py`).
 * Grounding verification resides in `src/rush/codegraph/grounding_verifier.py` and `src/rush/tools/hallu_guard.py`.

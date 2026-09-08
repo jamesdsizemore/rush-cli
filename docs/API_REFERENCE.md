@@ -391,9 +391,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
@@ -410,4 +411,40 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 
 ### Module `rush.engines.support_policy`
 - `EngineSupportPolicy`: Taxonomy loader and conformance validator.
+
+## `rush.memory` Module Reference (Phase 61)
+
+### Module `rush.memory.store`
+- `MemoryArtifact`: frozen dataclass, one row of the unified typed-artifact schema (`id`, `family`, `subject`, `trust_tier`, `content`, `source`, `created_at`, `symbol_ref`, `content_hash`, `corroboration_count`, `promoted_at`, `stale`, `signature`, `origin_kind`, `origin_id`, `expires_at`, `expired_at`, `expired_by`, `expired` — the last 4 added by Phase 62's per-type expiry).
+- `TypedArtifactStore`: `write()`, `recall(subject, query)`, `search(subject, query)` (FTS5, BM25-ranked; never returns `content` — use `recall()` for that). SQLite WAL, `.rush/memory.db`.
+
+### Module `rush.memory.trust`
+- `TrustTier` (`STATED`/`DERIVED`/`EXTERNAL_WRITE`/`IMPORTED`), `PromotionDenialReason`, `PromotionResult`.
+- `default_entry_tier(source_kind)`: never returns `"STATED"`.
+- `evaluate_promotion(artifact, *, user_stated)`: composed ALLOW/REDACT/BLOCK screen, regex pre-filter, schema-completeness check, grounding check (`resolve_symbol_ref`), corroboration threshold (`count_corroboration`).
+- `evaluate_conflict(new_artifact, existing_stated_artifact)`: `Literal["add","update","delete","none"]` reconciliation against an existing `STATED` row.
+
+### Module `rush.memory.migration`
+- One idempotent function per absorbed source: `migrate_preference_store`, `migrate_invariant_graph`, `migrate_checkpoint_journal`, `migrate_failure_ledger`, `migrate_patch_memory`, `migrate_flight_recorder`, `migrate_hook_signatures`, `migrate_session_memory`.
+
+### Module `rush.memory.transport`
+- Per-tool transport-tier dispatcher: native SDK → ACP → dedicated-file fallback, selected independently per tool.
+
+## `rush.memory` Module Reference (Phase 62)
+
+### Module `rush.memory.maintenance`
+- `run_maintenance_cycle(task, *, batch_size=500)`: dispatches to one of 4 `MaintenanceTask` variants (`promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep`); acquires/releases a `MeshLockManager` lease (`agent_id="memory-maintenance"`, try/finally); per-row failures isolated into `MaintenanceRunResult.errors` without aborting the cycle.
+
+### Module `rush.memory.expiry`
+- `ExpiryPolicy`, `DEFAULT_POLICIES`: first-match-wins `(subject, trust_tier)` TTL table (`"*"` subject wildcard) — `STATED` never expires, `DERIVED` 14 days, `EXTERNAL_WRITE` 30 days, `IMPORTED` 90 days.
+- `sweep_expired()`: stamps `expired_at`/`expired_by` on rows past their configured TTL; dispatched from `run_maintenance_cycle("expiry_sweep")`.
+
+### Module `rush.memory.decision_schema`
+- `DecisionRecordFields`: remediation-shaped fields (7 total) reused by `mistake_miner.py`'s pure candidate-shaping function; `status` defaults `"in_progress"`, accepts `"completed"`.
+
+### Module `rush.token_economy.memory_cache_gate`
+- `check_memory_before_pack(context_path, target_symbol, subject="domain_knowledge")`: defended `search()`-then-`recall()` cache lookup wired into `pack_context()` (`rush.continuity.context`) immediately before `ContextPacker.pack()`; on a miss, writes a `DERIVED` row back only when `granted.cache_write` is `True`, keyed exactly on `f"{context_path}:{target_symbol}"`.
+
+### Module `rush.tools.memory`
+- `MemoryTool(ToolFn)`: `name = "memory"`, operations `ask`/`write`/`promote`/`list`/`recall`/`maintain`, returns `ToolResultV1`. `maintain` dispatches to `rush.memory.maintenance.run_maintenance_cycle()` (Phase 62; previously a reserved, undispatched operation as of Phase 61).
 - `FixedPathEnvironment`: Context manager for isolated PATH execution.

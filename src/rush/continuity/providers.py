@@ -113,6 +113,7 @@ def provider_handoff(root: Path, name: str | None) -> dict[str, Any] | None:
         "current_goal": receipt.get("current_goal"),
         "open_work": receipt.get("open_work", []),
         "freshness": receipt.get("freshness", "unknown"),
+        "target_provider": receipt.get("target_provider"),
     }
 
 

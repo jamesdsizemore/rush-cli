@@ -30,7 +30,15 @@ A comprehensive reference for terms, architectural concepts, and acronyms used a
 
 **Subprocess Isolation** — Executing external tools with `stdin=DEVNULL`, `shell=False`, and timeout limits to protect the MCP transport from pollution or hanging.
 
+**Transport Dispatcher** (Phase 61) — `src/rush/memory/transport.py`'s per-tool tier selector for cross-tool memory handoff: native SDK → ACP → dedicated-file fallback, chosen independently for each tool in a run, never one global protocol for the whole session.
+
+**Trust Tier** (Phase 61) — The 4-value taxonomy (`STATED`/`DERIVED`/`EXTERNAL_WRITE`/`IMPORTED`) on every `MemoryArtifact` row; new writes never enter at `STATED` — only the write-promotion rule can promote a record to it.
+
+**Typed Artifact** (Phase 61) — `MemoryArtifact`, one row of the unified `TypedArtifactStore` schema (`src/rush/memory/store.py`), tagged with a `family` (`handoff`/`experience`/`memory`/`skill`) and a `subject` (one of 7 memory subjects), replacing eight prior satellite files/formats.
+
 **Vibecoder Guardrails** — Specialized quality checks (such as `sloppylint`, `markdown-unfluff`, `git-guard`, `safe-env`, `diff-cover`) designed to catch AI slop, hallucinations, and untracked code artifacts before shipping.
+
+**Write-Promotion Rule** (Phase 61) — `evaluate_promotion()` in `src/rush/memory/trust.py`: a candidate record is promoted to `STATED` only after passing an ALLOW/REDACT/BLOCK screen, a regex pre-filter, a full-schema-populated check, a grounding check, and either direct user statement or corroboration ≥ 2.
 
 See [Getting Started Glossary](getting-started/glossary.md) and [Result Reference](reference/result-reference.md).
 
@@ -133,9 +141,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

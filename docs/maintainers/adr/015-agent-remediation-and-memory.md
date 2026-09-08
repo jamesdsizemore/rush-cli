@@ -1,6 +1,9 @@
 # ADR-015: Closed-Loop AI Agent Patch Remediation and Session Context Memory
 
 ## Status
+Superseded by [ADR-0049](../../adr/0049-typed-artifact-memory-schema-and-trust-tiers.md)
+for its session-memory storage specifics; the patch-remediation decisions remain in
+force.
 Accepted
 
 ## Context

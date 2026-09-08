@@ -1,6 +1,9 @@
 # ADR-0020: Cryptographic HMAC Context Boundary Framing
 
 ## Status
+Superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md) for its
+`.rush/session_memory.db` storage detail; the HMAC boundary-framing decision remains in
+force.
 Accepted
 
 ## Context

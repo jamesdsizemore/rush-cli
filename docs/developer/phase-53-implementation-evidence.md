@@ -1,5 +1,7 @@
 # Phase 53 Implementation Evidence: Complete Sanitization & Diagnostic Write Boundaries
 
+> **Phase 61 note:** the memory/persistence files this phase's write-boundary audit covers have since migrated under Phase 61's unified `TypedArtifactStore` (`.rush/memory.db`); this evidence record is otherwise unchanged (point-in-time).
+
 **Phase:** 53
 **Status:** Completed
 **Branch:** `feat/phase-53-implementation`

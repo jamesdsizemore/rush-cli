@@ -2,7 +2,29 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 146
+total_operations = 152
+
+[[operations]]
+id = "admin.memory_promote"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory promote"
+mcp_tool = "rush_memory"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory promote --help"
+
+[[operations]]
+id = "admin.memory_write"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory write"
+mcp_tool = "rush_memory"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory write --help"
 
 [[operations]]
 id = "cli.api_diff"
@@ -383,6 +405,16 @@ input_contract = "ClickArguments"
 output_contract = "ClickExitCode"
 effect_class = "read-only"
 safe_probe = "rush mcp serve --help"
+
+[[operations]]
+id = "cli.memory_maintain"
+kind = "admin"
+canonical_impl = "rush.cli:memory"
+cli_command = "memory maintain"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush memory maintain --help"
 
 [[operations]]
 id = "cli.outline"
@@ -984,7 +1016,6 @@ safe_probe = "rush commit-msg --help"
 [[operations]]
 id = "tool.complexity"
 kind = "tool"
-pure = true
 canonical_impl = "rush.tools.complexity:ComplexityTool"
 cli_command = "complexity"
 mcp_tool = "rush_complexity"
@@ -1029,7 +1060,6 @@ safe_probe = "rush context pack --help"
 [[operations]]
 id = "tool.continuity"
 kind = "tool"
-pure = true
 canonical_impl = "rush.tools.continuity:SessionContinuityTool"
 cli_command = "continuity"
 mcp_tool = "rush_continuity"
@@ -1063,7 +1093,6 @@ safe_probe = "rush coverage --help"
 [[operations]]
 id = "tool.dead"
 kind = "tool"
-pure = true
 canonical_impl = "rush.tools.dead:DeadTool"
 cli_command = "dead"
 mcp_tool = "rush_dead"
@@ -1196,7 +1225,6 @@ safe_probe = "rush license-matrix --help"
 [[operations]]
 id = "tool.lint"
 kind = "tool"
-pure = true
 canonical_impl = "rush.tools.lint:LintTool"
 cli_command = "lint"
 mcp_tool = "rush_lint"
@@ -1248,6 +1276,39 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush mem-profile --help"
+
+[[operations]]
+id = "tool.memory_ask"
+kind = "tool"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory ask"
+mcp_tool = "rush_memory"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush memory ask --help"
+
+[[operations]]
+id = "tool.memory_list"
+kind = "tool"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory list"
+mcp_tool = "rush_memory"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush memory list --help"
+
+[[operations]]
+id = "tool.memory_recall"
+kind = "tool"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory recall"
+mcp_tool = "rush_memory"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush memory recall --help"
 
 [[operations]]
 id = "tool.mutation"
@@ -1362,7 +1423,6 @@ safe_probe = "rush security --help"
 [[operations]]
 id = "tool.semantic_drift"
 kind = "tool"
-pure = true
 canonical_impl = "rush.tools.semantic_drift:SemanticDriftTool"
 cli_command = "semantic-drift"
 mcp_tool = "rush_semantic_drift"
@@ -1495,7 +1555,6 @@ safe_probe = "rush tui-diff --help"
 [[operations]]
 id = "tool.typecheck"
 kind = "tool"
-pure = true
 canonical_impl = "rush.tools.typecheck:TypecheckTool"
 cli_command = "typecheck"
 mcp_tool = "rush_typecheck"

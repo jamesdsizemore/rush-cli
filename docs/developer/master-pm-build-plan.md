@@ -1,5 +1,7 @@
 # Master Product Management Build Plan: Rush Platform Evolution (Phases 21–30)
 
+> **Superseded by Phase 61** (2026-09-07): this plan's `session_memory`/`preference_store`/`invariant_graph`/`failure_ledger`/`checkpoint_journal`/ADR-0030 citations describe the pre-Phase-61 design. Phase 61 replaced them with `src/rush/memory/store.py`'s unified `TypedArtifactStore` (`.rush/memory.db`, 7-subject/4-tier-trust schema) and ADR-0049; Phase 62 wired 6 existing subsystems into it. This is a historical build-plan record — content otherwise unchanged.
+
 > **Document Version:** 3.0.0 (Hardened with Red Team Security Controls & Brooks-Sweep Architectural Refinements)
 > **Status:** Approved for Implementation
 > **Target App Versioning:** Rush v0.2.0 → v0.3.0 → v1.0.0

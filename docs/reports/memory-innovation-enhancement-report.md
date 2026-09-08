@@ -3,6 +3,8 @@
 **Target Architecture:** Rush (`rush-cli`), Python 3.12, FastMCP / CLI local runtime
 **Scope:** First-Principles Exploration of Grounded Repository Intelligence, Epistemic Memory, and Coding Agent Substrates
 
+> **Reconciled against Phase 61 (2026-09-07):** this report is an early first-principles brainstorm (50 raw candidate directions), predecessor to `docs/reports/cross-llm-memory-system-synthesis-2026-09-06.md`, the design authority Phase 61 actually implements. Phase 61 built `src/rush/memory/store.py`'s `TypedArtifactStore` (7-subject/4-tier-trust unified SQLite WAL schema), `trust.py`'s write-promotion rule, `migration.py`, `transport.py`, and `tools/memory.py`'s `MemoryTool` — see `docs/ARCHITECTURE.md`'s "Phase 61 Architecture" section and `docs/phase-plans/phase-61-cross-llm-memory-typed-artifact-schema-plan.md` §3.2.1 for exactly which of this report's own early directions landed in that build. Ideas from this report not yet covered by Phase 61 are unranked Phase 62+ candidates (same plan §3.2.3-3.2.4), not scheduled or tracked as a real artifact yet.
+
 ---
 
 # SECTION 1: Grounding & First-Principles Problem Framing

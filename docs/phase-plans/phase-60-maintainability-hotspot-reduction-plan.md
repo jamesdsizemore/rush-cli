@@ -163,7 +163,7 @@ Workstream P60.0.1 may start only when all of the following conditions are verif
    - `src/rush/continuity/context.py`: `pack_context()`, `retrieve_context()`.
    - `src/rush/continuity/coordination.py`: `check_coordination()`, `preview_merge()`, `recover_coordination()`.
    - `src/rush/continuity/providers.py`: `resume_provider()`, `resume_omniroute()`, `build_provider_command()`, `build_provider_prompt()`, `build_windows_cmd()`.
-   - `src/rush/continuity/receipts.py`: `save_receipt()`, `restore_receipt()`.
+   - `src/rush/continuity/receipts.py`: `save_receipt()`, `restore_receipt()`. **Phase 61 note:** these now write through the unified `TypedArtifactStore` (`.rush/memory.db`), `trust_tier` replacing the earlier binary quarantine flag; public signatures unchanged.
    - `src/rush/tools/continuity.py`: Retains `SessionContinuityTool` facade with `run()` delegating directly to submodules.
 4. **Review Pipeline**:
    - `src/rush/review/collection.py`: `collect_reviewable_files()`, `read_file_safely()`, heuristic filters (`check_file_heuristics`, `is_scaffold_file`).

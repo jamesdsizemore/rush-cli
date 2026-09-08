@@ -8,7 +8,7 @@ This guide addresses common error messages, unexpected behaviors, and troublesho
 
 ### Continuity restore reports `freshness: "stale"`
 - **Cause**: A declared handoff dependency changed, disappeared, or left the repository boundary after save.
-- **Solution**: Inspect the redacted `metadata.handoff.dependencies`, re-check the changed source, then save a new checkpoint. Do not treat a stale receipt or quarantined historic instruction as a current directive.
+- **Solution**: Inspect the redacted `metadata.handoff.dependencies`, re-check the changed source, then save a new checkpoint. Do not treat a stale receipt or an `EXTERNAL_WRITE`/`DERIVED`-tier historic instruction (Phase 61's unified typed-artifact schema — never `STATED` on entry) as a current directive.
 
 ### Continuity coordination is `skipped`
 - **Cause**: A different agent holds a lock, the lock is stale, merge edits overlap, or replay evidence is missing/corrupt.

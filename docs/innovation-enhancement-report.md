@@ -1,5 +1,7 @@
 # Rush CLI: Comprehensive Architectural Review & 28-Feature Innovation Blueprint
 
+> **Superseded by Phase 61** (2026-09-07): this report's `session_memory`/`preference_store`/`invariant_graph`/`failure_ledger`/`checkpoint_journal`/ADR-0030 citations describe the pre-Phase-61 design. Phase 61 replaced them with `src/rush/memory/store.py`'s unified `TypedArtifactStore` (`.rush/memory.db`, 7-subject/4-tier-trust schema) and ADR-0049; Phase 62 wired 6 existing subsystems into it. This is a historical research record — content otherwise unchanged.
+
 > **Document Name:** `innovation-enhancement-report`
 > **Status:** Strategic Research & Innovation Specification
 > **Scope:** Architecture Review, Competitive Analysis, and 28+ Custom-Built Value-Add Innovations

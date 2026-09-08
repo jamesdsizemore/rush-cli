@@ -1,5 +1,7 @@
 # Phase 43: Reversibility (CCR), Grounding Verification & Pre-Mortem Mistake Memory
 
+> **Superseded by Phase 61 for the memory/mistake-memory portions** (2026-09-07): this phase's mistake-memory persistence now lives in `src/rush/memory/store.py`'s unified `TypedArtifactStore` (`.rush/memory.db`, `subject="failure"`, `trust_tier="DERIVED"`); ADR-0030 (cited below) is itself superseded by ADR-0049. This is a historical build-plan record — content otherwise unchanged.
+
 ## Metadata
 - **Phase ID**: `PHASE-43` (Phase 43 of Innovation Roadmap)
 - **Phase Name**: Lossless CCR Reversible Chunk Store, AST Grounding & Pre-Mortem Mistake Memory
