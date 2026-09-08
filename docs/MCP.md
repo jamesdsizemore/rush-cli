@@ -10,7 +10,7 @@ MCP exposes the catalogued `rush_continuity` tool with `path`, `operation` (`sav
 
 ## Memory (Phase 61)
 
-MCP exposes the catalogued `rush_memory` tool (`MemoryTool`, registered the same two-part way `rush_continuity` is — `ALL_TOOLS`/`TOOL_SPECS`) with `operation` (`ask`, `write`, `promote`, `list`, `recall`, `maintain`) over the unified `TypedArtifactStore`. It returns `ToolResultV1` with `status="skipped"` for denied/absent cases, matching `rush_continuity`'s precedent. `maintain` is reserved (`status="skipped"`) until Phase 62.
+MCP exposes the catalogued `rush_memory` tool with `operation` (`ask`, `write`, `promote`, `list`, `recall`, `maintain`) over the unified `TypedArtifactStore`. `ask`, `list`, and `recall` require a non-empty `session_allowlist` and apply the same content defenses. `write`, `promote`, and `maintain` require `allow_cache_write: true`; denied calls return `status="skipped"`. Maintenance operates on the repository selected by `path`, including its lock and grounding checks.
 
 A compatible coding assistant can launch Rush as a local child process and ask it to run the same checks available in the terminal. MCP is the protocol; stdio is the local pipe used to carry requests and results.
 

@@ -142,8 +142,15 @@ def test_memory_tool_maintain_operation_dispatches_to_run_maintenance_cycle(
     )
     with patch.object(memory_module, "run_maintenance_cycle") as spy:
         spy.return_value = stub_result
-        result = MemoryTool()(tmp_path, operation="maintain", task="promotion_sweep")
+        result = MemoryTool()(
+            tmp_path,
+            operation="maintain",
+            task="promotion_sweep",
+            allow_cache_write=True,
+        )
 
-    spy.assert_called_once_with("promotion_sweep", batch_size=500)
+    spy.assert_called_once_with(
+        "promotion_sweep", batch_size=500, project_root=tmp_path.resolve()
+    )
     assert result["status"] == "ok"
     assert result["metadata"]["operation"] == "maintain"

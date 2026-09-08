@@ -60,12 +60,21 @@ def sweep_expired(project_root: Path | None = None, *, batch_size: int = 500) ->
     store = TypedArtifactStore(project_root)
     now = time.time()
     changed = 0
+    ttl_cases = []
+    parameters: list[object] = []
+    for policy in DEFAULT_POLICIES:
+        ttl_cases.append("WHEN trust_tier = ? AND (? = '*' OR subject = ?) THEN ?")
+        parameters.extend(
+            (policy.trust_tier, policy.subject, policy.subject, policy.ttl_seconds)
+        )
+    ttl_sql = "CASE " + " ".join(ttl_cases) + " END"
     with sqlite3.connect(str(store.db_path)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT id, subject, trust_tier, created_at FROM memory_artifacts "
-            "WHERE expired_at IS NULL ORDER BY created_at ASC LIMIT :batch_size",
-            {"batch_size": batch_size},
+            f"WHERE expired_at IS NULL AND created_at + ({ttl_sql}) <= ? "
+            "ORDER BY created_at ASC LIMIT ?",
+            (*parameters, now, batch_size),
         ).fetchall()
         for row in rows:
             policy = _policy_for(row["subject"], row["trust_tier"])

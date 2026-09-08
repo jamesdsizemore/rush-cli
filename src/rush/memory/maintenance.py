@@ -8,10 +8,8 @@ path, which would let a stale cycle delete a different, live cycle's reclaimed l
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import sqlite3
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -21,9 +19,9 @@ from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
     MemoryArtifact,
     TypedArtifactStore,
-    compute_content_signature,
+    promote_stored_artifact,
 )
-from rush.memory.trust import count_corroboration, evaluate_promotion
+from rush.memory.trust import count_corroboration
 from rush.plugins.trust_store import PluginTrustStore
 
 MaintenanceTask = Literal[
@@ -65,10 +63,11 @@ class MaintenanceRunResult:
 
 
 def run_maintenance_cycle(
-    task: MaintenanceTask, *, batch_size: int = 500
+    task: MaintenanceTask, *, batch_size: int = 500, project_root: Path | None = None
 ) -> MaintenanceRunResult:
     """Runs one bounded maintenance sweep under a capability-scoped lock lease (§6.2)."""
-    lock_manager = MeshLockManager()
+    root = (project_root or Path.cwd()).resolve()
+    lock_manager = MeshLockManager(root)
     acquired, capability = lock_manager.acquire(
         _LOCK_PATH,
         agent_id=_AGENT_ID,
@@ -84,12 +83,12 @@ def run_maintenance_cycle(
         if task == "expiry_sweep":
             from rush.memory.expiry import sweep_expired
 
-            changed = sweep_expired(batch_size=batch_size)
+            changed = sweep_expired(root, batch_size=batch_size)
             return MaintenanceRunResult(
                 task=task, processed=changed, changed=changed, errors=()
             )
 
-        store = TypedArtifactStore()
+        store = TypedArtifactStore(root)
         conn = sqlite3.connect(str(store.db_path))
         conn.row_factory = sqlite3.Row
         try:
@@ -102,10 +101,11 @@ def run_maintenance_cycle(
             errors: list[str] = []
             for index, row in enumerate(rows, start=1):
                 try:
-                    if _mutate_row(task, conn, row):
+                    if _mutate_row(task, conn, row, root):
                         changed += 1
                     processed += 1
                 except Exception:  # noqa: BLE001 - isolate row failure, cycle continues
+                    conn.rollback()
                     processed += 1
                     errors.append(row["id"])
 
@@ -125,14 +125,14 @@ def run_maintenance_cycle(
 
 
 def _mutate_row(
-    task: MaintenanceTask, conn: sqlite3.Connection, row: sqlite3.Row
+    task: MaintenanceTask, conn: sqlite3.Connection, row: sqlite3.Row, root: Path
 ) -> bool:
     if task == "promotion_sweep":
-        return _mutate_promotion_sweep(conn, row)
+        return _mutate_promotion_sweep(conn, row, root)
     if task == "staleness_sweep":
-        return _mutate_staleness_sweep(conn, row)
+        return _mutate_staleness_sweep(conn, row, root)
     if task == "skill_admission_check":
-        return _mutate_skill_admission_check(conn, row)
+        return _mutate_skill_admission_check(conn, row, root)
     raise NotImplementedError(f"no maintenance dispatch for task {task!r}")
 
 
@@ -165,40 +165,25 @@ def _candidate_sources(
     return [r["source"] for r in rows]
 
 
-def _promote_row(
-    conn: sqlite3.Connection, artifact: MemoryArtifact, corroboration_count: int
-) -> None:
-    conn.execute(
-        "UPDATE memory_artifacts SET trust_tier = ?, promoted_at = ?, signature = ?, "
-        "corroboration_count = ? WHERE id = ?",
-        (
-            "STATED",
-            time.time(),
-            compute_content_signature(artifact.content),
-            corroboration_count,
-            artifact.id,
-        ),
-    )
-    conn.commit()
-
-
-def _mutate_promotion_sweep(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+def _mutate_promotion_sweep(
+    conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+) -> bool:
     artifact = _artifact_from_row(row)
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
+    conn.execute("BEGIN IMMEDIATE")
+    _, decision = promote_stored_artifact(
+        conn,
+        artifact.id,
+        user_stated=False,
+        candidate_sources=candidate_sources,
+        project_root=root,
+    )
+    if decision.promoted:
+        conn.commit()
+        return True
     recomputed_count = count_corroboration(
         artifact.subject, artifact.symbol_ref, candidate_sources
     )
-    artifact = dataclasses.replace(artifact, corroboration_count=recomputed_count)
-
-    decision = evaluate_promotion(
-        artifact,
-        user_stated=False,
-        candidate_sources=candidate_sources,
-        project_root=Path.cwd(),
-    )
-    if decision.promoted:
-        _promote_row(conn, artifact, recomputed_count)
-        return True
     if recomputed_count != row["corroboration_count"]:
         conn.execute(
             "UPDATE memory_artifacts SET corroboration_count = ? WHERE id = ?",
@@ -206,16 +191,22 @@ def _mutate_promotion_sweep(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
         )
         conn.commit()
         return True
+    conn.commit()
     return False
 
 
-def _mutate_staleness_sweep(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+def _mutate_staleness_sweep(
+    conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+) -> bool:
     symbol_ref: str = row["symbol_ref"]
     path_part = symbol_ref.split("::", 1)[0]
-    file_path = (Path.cwd() / path_part).resolve()
-    current_hash = MerkleInvalidator(project_root=Path.cwd()).hash_content(
-        file_path.read_text(encoding="utf-8")
-    )
+    file_path = (root / path_part).resolve()
+    try:
+        current_hash = MerkleInvalidator(project_root=root).hash_content(
+            file_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError):
+        current_hash = None
     if current_hash != row["content_hash"]:
         conn.execute("UPDATE memory_artifacts SET stale = 1 WHERE id = ?", (row["id"],))
         conn.commit()
@@ -223,21 +214,23 @@ def _mutate_staleness_sweep(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     return False
 
 
-def _mutate_skill_admission_check(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+def _mutate_skill_admission_check(
+    conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+) -> bool:
     artifact = _artifact_from_row(row)
     plugin_name = artifact.content.get("plugin_name")
     closure_digest = artifact.content.get("closure_digest")
-    if not PluginTrustStore().is_trusted(plugin_name, closure_digest):
+    if not PluginTrustStore(repo_root=root).is_trusted(plugin_name, closure_digest):
         return False
 
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
-    decision = evaluate_promotion(
-        artifact,
+    conn.execute("BEGIN IMMEDIATE")
+    _, decision = promote_stored_artifact(
+        conn,
+        artifact.id,
         user_stated=False,
         candidate_sources=candidate_sources,
-        project_root=Path.cwd(),
+        project_root=root,
     )
-    if not decision.promoted:
-        return False
-    _promote_row(conn, artifact, decision.corroboration_count)
-    return True
+    conn.commit()
+    return decision.promoted

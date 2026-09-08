@@ -200,6 +200,13 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory promote --help",
             "admin",
         ),
+        "memory maintain": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory maintain --help",
+            "admin",
+        ),
     }
 
     # 3. Pair canonical tool specs first

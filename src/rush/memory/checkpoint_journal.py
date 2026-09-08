@@ -11,7 +11,7 @@ from typing import Any
 
 from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
 from rush.io.physical_paths import PhysicalRoot
-from rush.memory.migration import read_origin
+from rush.memory.migration import read_origin, read_origin_kind
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import SecretRedactor
@@ -97,12 +97,11 @@ class CheckpointJournal:
     def list_checkpoints(self) -> list[dict[str, Any]]:
         """Lists all saved session checkpoints, retaining and digesting corrupt records."""
         results = []
-        if not self.session_dir.exists():
-            return results
-
+        physical_names = set()
         for p in self.session_dir.glob("*.json"):
             if not p.is_file():
                 continue
+            physical_names.add(p.stem)
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
@@ -144,4 +143,10 @@ class CheckpointJournal:
                         "created_at": mtime,
                     }
                 )
+        seen = physical_names | {str(entry["checkpoint_id"]) for entry in results}
+        for entry in read_origin_kind(self.project_root, "checkpoint"):
+            identity = str(entry.get("checkpoint_id") or entry.get("name"))
+            if identity not in seen:
+                results.append(entry)
+                seen.add(identity)
         return sorted(results, key=lambda x: x.get("created_at", 0), reverse=True)

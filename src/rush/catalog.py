@@ -130,7 +130,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         description="Query, write, or promote cross-tool memory artifacts.",
         mcp_description=(
             "Query, write, or promote a cross-tool memory artifact in the typed artifact "
-            "store. Write/promote require explicit cache-write permission."
+            "store. Write/promote/maintain require explicit cache-write permission."
         ),
         engine_names=(),
         maturity="real_adapter",

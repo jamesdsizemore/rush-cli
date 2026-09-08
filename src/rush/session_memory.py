@@ -47,10 +47,9 @@ class SessionMemoryManager:
     def __init__(self, memory_file: Path | None = None, max_records: int = 50) -> None:
         self.memory_file = (memory_file or DEFAULT_MEMORY_FILE).resolve()
         self.max_records = max_records
-        # ponytail: project root for the forward-write TypedArtifactStore is derived from the
-        # memory file's own directory (not Path.cwd()) so callers that pass a bare tmp_path file
-        # (no ".rush" wrapper) stay isolated per-instance instead of sharing a real repo's store.
-        self._project_root = self.memory_file.parent
+        # Canonical .rush files share the repository store; bare custom paths stay isolated.
+        parent = self.memory_file.parent
+        self._project_root = parent.parent if parent.name == ".rush" else parent
 
     def load_records(self) -> list[SessionRecord]:
         """Load session records from disk."""
@@ -107,7 +106,7 @@ class SessionMemoryManager:
         # migrate_session_memory()'s origin_id derivation so a pre-existing legacy record already
         # forward-written here is never re-inserted when migration later runs over the same file.
         origin_id = hashlib.sha256(
-            f"{new_record.timestamp}{new_record.tool_name}{new_record.summary}".encode("utf-8")
+            f"{new_record.timestamp}{new_record.tool_name}{new_record.summary}".encode()
         ).hexdigest()
         artifact_content = sanitize_value(asdict(new_record)).value
         TypedArtifactStore(self._project_root).write(
@@ -135,7 +134,7 @@ class SessionMemoryManager:
 
         records = read_origin_kind(self._project_root, "session_memory")
         out = ["<rush_session_memory>"]
-        for r in records:
+        for r in records[-self.max_records :]:
             clean_summary = saxutils.escape(r["summary"])
             clean_tool = saxutils.escape(r["tool_name"])
             out.append(

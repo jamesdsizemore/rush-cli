@@ -1,5 +1,6 @@
 """Graph-pruned context packing and PageRank token budgeting engine."""
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,9 @@ class ContextPacker:
 
         return {
             "target_file": str(target_file),
+            "source_content_hash": hashlib.sha256(
+                full_code.encode("utf-8")
+            ).hexdigest(),
             "target_symbol": target_symbol,
             "max_tokens": max_tokens,
             "tokens": tokens,

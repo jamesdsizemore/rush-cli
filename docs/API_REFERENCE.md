@@ -415,8 +415,8 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 ## `rush.memory` Module Reference (Phase 61)
 
 ### Module `rush.memory.store`
-- `MemoryArtifact`: frozen dataclass, one row of the unified typed-artifact schema (`id`, `family`, `subject`, `trust_tier`, `content`, `source`, `created_at`, `symbol_ref`, `content_hash`, `corroboration_count`, `promoted_at`, `stale`, `signature`, `origin_kind`, `origin_id`, `expires_at`, `expired_at`, `expired_by`, `expired` — the last 4 added by Phase 62's per-type expiry).
-- `TypedArtifactStore`: `write()`, `recall(subject, query)`, `search(subject, query)` (FTS5, BM25-ranked; never returns `content` — use `recall()` for that). SQLite WAL, `.rush/memory.db`.
+- `MemoryArtifact`: frozen dataclass carrying `id`, `family`, `subject`, `trust_tier`, `content`, `source`, `created_at`, `symbol_ref`, `content_hash`, `corroboration_count`, `promoted_at`, `stale`, `signature`, `origin_kind`, `origin_id`, and `expired`. The database additionally stores `expires_at`, `expired_at`, and `expired_by`; hydration derives `expired` from `expired_at`.
+- `TypedArtifactStore`: `write()`, `promote(id, user_stated=..., candidate_sources=...)`, `recall(subject, query, session_allowlist)`, and `search(subject, query)`. `promote()` evaluates persisted sanitized content and returns the stored artifact plus `PromotionResult`; approval atomically persists the tier, checksum, timestamp, and corroboration count. `search()` provides raw FTS5 matches for internal existence/rank checks; callers consuming content must use defended `recall()`. SQLite WAL, `.rush/memory.db`.
 
 ### Module `rush.memory.trust`
 - `TrustTier` (`STATED`/`DERIVED`/`EXTERNAL_WRITE`/`IMPORTED`), `PromotionDenialReason`, `PromotionResult`.
@@ -428,12 +428,12 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 - One idempotent function per absorbed source: `migrate_preference_store`, `migrate_invariant_graph`, `migrate_checkpoint_journal`, `migrate_failure_ledger`, `migrate_patch_memory`, `migrate_flight_recorder`, `migrate_hook_signatures`, `migrate_session_memory`.
 
 ### Module `rush.memory.transport`
-- Per-tool transport-tier dispatcher: native SDK → ACP → dedicated-file fallback, selected independently per tool.
+- `dispatch(root, tool, source, content, granted, *, acp_command=None, timeout_seconds=30)`: per-tool native Claude SDK → ACP → dedicated-file selection. ACP requires the optional `acp` SDK and explicit adapter argv; no provider command is guessed. SDK/ACP delivery requires network permission, denies tool execution, and returns success only after a terminal protocol acknowledgement. Delivery errors and timeouts return `error`; capability absence uses the artifact-write-gated file fallback. Acknowledgement confirms delivery, not durable model memory. This synchronous API must be called outside an active event loop.
 
 ## `rush.memory` Module Reference (Phase 62)
 
 ### Module `rush.memory.maintenance`
-- `run_maintenance_cycle(task, *, batch_size=500)`: dispatches to one of 4 `MaintenanceTask` variants (`promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep`); acquires/releases a `MeshLockManager` lease (`agent_id="memory-maintenance"`, try/finally); per-row failures isolated into `MaintenanceRunResult.errors` without aborting the cycle.
+- `run_maintenance_cycle(task, *, batch_size=500, project_root=None)`: dispatches to one of 4 `MaintenanceTask` variants (`promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep`). The supplied root scopes the store, lock, expiry, and grounding checks. Acquires/releases a `MeshLockManager` lease; per-row failures enter `MaintenanceRunResult.errors`. Public CLI/MCP calls require cache-write permission before constructing resources.
 
 ### Module `rush.memory.expiry`
 - `ExpiryPolicy`, `DEFAULT_POLICIES`: first-match-wins `(subject, trust_tier)` TTL table (`"*"` subject wildcard) — `STATED` never expires, `DERIVED` 14 days, `EXTERNAL_WRITE` 30 days, `IMPORTED` 90 days.
@@ -443,8 +443,8 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 - `DecisionRecordFields`: remediation-shaped fields (7 total) reused by `mistake_miner.py`'s pure candidate-shaping function; `status` defaults `"in_progress"`, accepts `"completed"`.
 
 ### Module `rush.token_economy.memory_cache_gate`
-- `check_memory_before_pack(context_path, target_symbol, subject="domain_knowledge")`: defended `search()`-then-`recall()` cache lookup wired into `pack_context()` (`rush.continuity.context`) immediately before `ContextPacker.pack()`; on a miss, writes a `DERIVED` row back only when `granted.cache_write` is `True`, keyed exactly on `f"{context_path}:{target_symbol}"`.
+- `check_memory_before_pack(context_path, target_symbol, subject="domain_knowledge")`: defended `search()`-then-`recall()` cache lookup wired into `pack_context()` immediately before `ContextPacker.pack()`. On a miss, `pack_context()` separately writes a `DERIVED` row only with cache-write permission. Cache fills retain the file's content hash for symbol and whole-file packs; changed, missing, or unreadable files invalidate the cached content.
 
 ### Module `rush.tools.memory`
-- `MemoryTool(ToolFn)`: `name = "memory"`, operations `ask`/`write`/`promote`/`list`/`recall`/`maintain`, returns `ToolResultV1`. `maintain` dispatches to `rush.memory.maintenance.run_maintenance_cycle()` (Phase 62; previously a reserved, undispatched operation as of Phase 61).
+- `MemoryTool(ToolFn)`: `name = "memory"`, operations `ask`/`write`/`promote`/`list`/`recall`/`maintain`, returns canonical `ToolResult` dictionaries. All content queries require a session allowlist and apply recall defenses. Writes, promotions, and maintenance require cache-write permission; maintenance operates on the requested `path`.
 - `FixedPathEnvironment`: Context manager for isolated PATH execution.

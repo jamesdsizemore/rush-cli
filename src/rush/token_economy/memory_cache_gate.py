@@ -64,7 +64,7 @@ def check_memory_before_pack(
         return CacheGateResult(hit=False, artifact_id=None, content=None)
 
     for artifact in artifacts:
-        if artifact.stale:
+        if artifact.stale or not artifact.content_hash or not artifact.symbol_ref:
             continue
         # search()/recall() are coarse FTS matches, never an exact-key
         # guarantee; only a literal cache_key match counts as a real hit.
@@ -87,6 +87,11 @@ def write_cache_fill(
     Caller must already have confirmed `granted.cache_write is True` — this
     function performs no permission check of its own.
     """
+    # The producer hashes the same source read used to build packed_text. A later
+    # read here could pair changed source bytes with an already-obsolete payload.
+    content_hash = packed.get("source_content_hash")
+    if not isinstance(content_hash, str) or not content_hash:
+        return
     cache_key = _cache_key(context_path, target_symbol)
     store = TypedArtifactStore(project_root)
     store.write(
@@ -98,6 +103,7 @@ def write_cache_fill(
             content={**packed, _CACHE_KEY_FIELD: cache_key},
             source=_CACHE_SOURCE,
             created_at=time.time(),
-            symbol_ref=f"{context_path}::{target_symbol}" if target_symbol else None,
+            symbol_ref=f"{context_path}::{target_symbol}",
+            content_hash=content_hash,
         )
     )

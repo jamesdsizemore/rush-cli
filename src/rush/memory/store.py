@@ -10,12 +10,13 @@ import dataclasses
 import hashlib
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
-from rush.memory.trust import evaluate_conflict
+from rush.memory.trust import PromotionResult, evaluate_conflict, evaluate_promotion
 from rush.safety.redactor import sanitize_value
 
 MemoryFamily = Literal["handoff", "experience", "memory", "skill"]
@@ -262,6 +263,24 @@ class TypedArtifactStore:
             )
             conn.commit()
 
+    def promote(
+        self,
+        artifact_id: str,
+        *,
+        user_stated: bool,
+        candidate_sources: list[str] | None = None,
+    ) -> tuple[MemoryArtifact, PromotionResult]:
+        """Evaluate persisted bytes and atomically persist their signed promotion."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return promote_stored_artifact(
+                conn,
+                artifact_id,
+                project_root=self.project_root,
+                user_stated=user_stated,
+                candidate_sources=candidate_sources,
+            )
+
     def delete(self, artifact_id: str) -> None:
         """Delete a row by id, exercising the AFTER DELETE FTS trigger."""
         with self._connect() as conn:
@@ -323,12 +342,14 @@ class TypedArtifactStore:
             if artifact.symbol_ref is not None and artifact.content_hash is not None:
                 path_part = artifact.symbol_ref.split("::", 1)[0]
                 file_path = (self.project_root / path_part).resolve()
-                if file_path.is_file():
+                try:
                     current_hash = self._merkle.hash_content(
                         file_path.read_text(encoding="utf-8")
                     )
-                    if current_hash != artifact.content_hash:
-                        artifact = dataclasses.replace(artifact, stale=True)
+                except (OSError, UnicodeError):
+                    current_hash = None
+                if current_hash != artifact.content_hash:
+                    artifact = dataclasses.replace(artifact, stale=True)
 
             # API-diff staleness (§6.5 Invariant 5): independent baseline (git `base_ref`)
             # from the merkle check above (last-hashed content) — evaluated unconditionally,
@@ -349,3 +370,50 @@ class TypedArtifactStore:
 
             verified.append(artifact)
         return verified
+
+
+def promote_stored_artifact(
+    conn: sqlite3.Connection,
+    artifact_id: str,
+    *,
+    project_root: Path,
+    user_stated: bool,
+    candidate_sources: list[str] | None = None,
+) -> tuple[MemoryArtifact, PromotionResult]:
+    """Shared gate/update; caller owns transaction and commit."""
+    row = conn.execute(
+        "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+    ).fetchone()
+    if row is None:
+        raise KeyError(artifact_id)
+    artifact = _row_to_artifact(row)
+    artifact = dataclasses.replace(
+        artifact, content=sanitize_value(artifact.content).value
+    )
+    decision = evaluate_promotion(
+        artifact,
+        user_stated=user_stated,
+        candidate_sources=candidate_sources,
+        project_root=project_root,
+    )
+    if decision.promoted:
+        artifact = dataclasses.replace(
+            artifact,
+            trust_tier="STATED",
+            promoted_at=time.time(),
+            signature=compute_content_signature(artifact.content),
+            corroboration_count=decision.corroboration_count,
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, trust_tier = ?, promoted_at = ?, "
+            "signature = ?, corroboration_count = ? WHERE id = ?",
+            (
+                json.dumps(artifact.content),
+                artifact.trust_tier,
+                artifact.promoted_at,
+                artifact.signature,
+                artifact.corroboration_count,
+                artifact.id,
+            ),
+        )
+    return artifact, decision

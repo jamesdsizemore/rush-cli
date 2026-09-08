@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rush.codegraph.context_packer import ContextPacker
+from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.token_economy.memory_cache_gate import check_memory_before_pack
@@ -43,6 +44,7 @@ def _seed_cache_row(tmp_path: Path, target: Path, *, packed_text: str) -> None:
             source="context_pack",
             created_at=time.time(),
             symbol_ref="service.py::func",
+            content_hash=MerkleInvalidator(tmp_path).hash_content(target.read_text()),
         )
     )
 

@@ -137,7 +137,9 @@ Run configured plugins using `rush plugin run <name>`. Results are checked again
 
 ## Advanced Memory Queries (Phase 61)
 
-`rush memory ask|list|recall` support `--subject` (`active_context`/`episodic`/`preference`/`failure`/`architectural_decision`/`domain_knowledge`/`skill_pattern`) and a full-text `--query` against the unified `TypedArtifactStore`'s FTS5 index, BM25-ranked. `recall` is the only operation that returns `content` directly (with signature/staleness/Trojan-Source defense applied to every row); `ask`/`list` are cheaper existence/rank checks.
+`rush memory ask|list|recall SUBJECT QUERY --session SOURCE` searches the unified store with FTS5 and BM25 ranking. Subjects are `active_context`, `episodic`, `preference`, `failure`, `architectural_decision`, `domain_knowledge`, and `skill_pattern`. All three commands apply signature, staleness, and Trojan Source checks. Repeat `--session` to include more sources; omitting it returns `skipped` without content.
+
+For example, `rush memory list episodic authentication --session session_memory:record_turn --json` returns matching recorded turns from that source.
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 

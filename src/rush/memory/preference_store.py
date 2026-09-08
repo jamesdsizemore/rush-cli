@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rush.memory.migration import read_origin, read_origin_kind
+from rush.memory.migration import (
+    read_origin,
+    read_origin_kind,
+    replace_origin_content,
+)
+from rush.memory.store import TypedArtifactStore
 from rush.memory.transactions import CASMapTransaction
 
 
@@ -49,10 +54,19 @@ class PreferenceStore:
             return data
 
         self.tx.update(mutator, max_retries=20)
+        if read_origin(self.project_root, "preference", key) is not None:
+            self._update_migrated(key, {"key": key, "value": value})
+
+    def _update_migrated(self, key: str, content: dict[str, Any]) -> None:
+        replace_origin_content(
+            TypedArtifactStore(self.project_root), "preference", key, content
+        )
 
     def delete(self, key: str) -> bool:
         snapshot = self.tx.read(allow_missing=True)
-        if key not in snapshot.data:
+        migrated = read_origin(self.project_root, "preference", key)
+        has_migrated = migrated is not None and not migrated.get("deleted", False)
+        if key not in snapshot.data and not has_migrated:
             return False
 
         deleted = False
@@ -65,7 +79,10 @@ class PreferenceStore:
             return data
 
         self.tx.update(mutator, max_retries=20)
-        return deleted
+        if has_migrated:
+            # Retain the origin key so replaying the .migrated backup cannot resurrect it.
+            self._update_migrated(key, {"deleted": True})
+        return deleted or has_migrated
 
     def list_all(self) -> dict[str, Any]:
         data = dict(self._read())

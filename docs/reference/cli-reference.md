@@ -10,7 +10,7 @@
 
 ## Memory (Phase 61)
 
-`rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `write` never accepts `trust_tier=STATED` directly; `promote` is the only path to `STATED`. `recall` requires a non-empty session allowlist (fails closed on empty input) and applies signature/staleness/Trojan-Source defense to every returned row. `maintain` returns `status="skipped"` until Phase 62.
+`rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `ask`, `list`, and `recall` take positional `SUBJECT QUERY` and require `--session SOURCE`; all apply signature, staleness, and Trojan Source checks. `write`, `promote`, and `maintain` require `--allow-cache-write`. Approved promotions persist the `STATED` tier and checksum. For expiry maintenance, run `rush memory maintain --task expiry_sweep --allow-cache-write --json` from the repository.
 
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 

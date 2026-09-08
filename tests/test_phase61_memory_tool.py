@@ -57,16 +57,22 @@ def test_memory_ask_returns_tool_result_with_skipped_on_denied(tmp_path: Path) -
     assert result["status"] == "skipped"
 
 
-def test_memory_maintain_cli_runs_with_task_option(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_memory_maintain_cli_runs_with_task_option(tmp_path: Path, monkeypatch) -> None:
     """`rush memory maintain --task <valid task>` dispatches through to `MemoryTool`
     and succeeds (T028 gap: CLI path previously had no --task option and always
     returned status='error')."""
     monkeypatch.chdir(tmp_path)
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["memory", "maintain", "--task", "promotion_sweep", "--json"]
+        cli,
+        [
+            "memory",
+            "maintain",
+            "--task",
+            "promotion_sweep",
+            "--allow-cache-write",
+            "--json",
+        ],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

@@ -18,7 +18,7 @@ For `operation: "provider_resume"`, pass `name`, `provider_id`, and `allow_netwo
 
 ## `rush_memory` (Phase 61)
 
-Use `operation: "ask" | "write" | "promote" | "list" | "recall" | "maintain"` over the unified `TypedArtifactStore` (`.rush/memory.db`, 7 memory subjects, 4-tier trust taxonomy). `write` never accepts `trust_tier: "STATED"` directly — only `promote` (via `evaluate_promotion()`'s composed screen) can move a record to `STATED`. `recall` applies signature re-verification, Trojan Source scanning, and staleness checking to every returned row before it re-enters an LLM context, and requires a non-empty session allowlist (fails closed on empty input). `search` (used internally by `ask`) skips that per-row defense cost and never returns `content` directly. `maintain` is reserved (`status="skipped"`, `reason="not implemented until Phase 62"`). All responses are canonical `ToolResult` objects, matching `rush_continuity`'s shape — a denied or absent case is `status="skipped"`, never prose on stdio.
+Use `operation: "ask" | "write" | "promote" | "list" | "recall" | "maintain"` over the unified `TypedArtifactStore` (`.rush/memory.db`, 7 memory subjects, 4 trust tiers). `ask`, `list`, and `recall` require `subject`, `query`, and a non-empty `session_allowlist`; all run signature re-verification, Trojan Source scanning, and staleness checks before returning content. `write`, `promote`, and `maintain` require `allow_cache_write: true`. Approved promotions persist `STATED`, a checksum, and a promotion timestamp. Maintenance accepts `task` and `batch_size`, and uses the repository selected by `path`. Denied calls return a canonical `ToolResult` with `status="skipped"`, never prose on stdio.
 
 ## Common result
 

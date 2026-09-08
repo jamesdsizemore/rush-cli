@@ -6,7 +6,7 @@ Manages local session checkpoints through `save`, `list`, and `restore`. It is i
 
 ## `memory` — workflow, real adapter (Phase 61)
 
-Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through `ask`, `write`, `promote`, `list`, `recall`, and `maintain`. It is implemented by `MemoryTool`, has no external engine, and is registered the same two-part way `continuity` is — MCP `rush_memory` and `@cli.group(name="memory")`. `write`/`promote` are `stateful-mutation`; `ask`/`list`/`recall` are `read-only`.
+Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through `ask`, `write`, `promote`, `list`, `recall`, and `maintain`. It is implemented by `MemoryTool`, has no external engine, and is registered as MCP `rush_memory` and CLI `rush memory`. `write`/`promote`/`maintain` are `stateful-mutation` operations requiring cache-write permission. `ask`/`list`/`recall` require an explicit session allowlist and return content only after recall defenses pass.
 
 The catalog contains 53 user-visible tools. **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
 

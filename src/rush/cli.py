@@ -2100,12 +2100,26 @@ def memory_recall_cmd(
 @memory_group.command(name="list")
 @click.argument("subject")
 @click.argument("query")
+@click.option(
+    "--session",
+    "session_allowlist",
+    multiple=True,
+    help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def memory_list_cmd(subject: str, query: str, as_json: bool) -> None:
-    """List memory artifacts matching a query for a subject, unfiltered by session."""
+def memory_list_cmd(
+    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+) -> None:
+    """List defended memory artifacts scoped to explicit sessions."""
     from .tools.memory import MemoryTool
 
-    result = MemoryTool().run(Path.cwd(), operation="list", subject=subject, query=query)
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="list",
+        subject=subject,
+        query=query,
+        session_allowlist=list(session_allowlist) or None,
+    )
     _render_session_result(result.to_dict(), as_json)
 
 
@@ -2113,7 +2127,9 @@ def memory_list_cmd(subject: str, query: str, as_json: bool) -> None:
 @click.argument("subject")
 @click.argument("source")
 @click.option("--content", required=True, help="JSON-encoded content dict to persist.")
-@click.option("--symbol-ref", help="Optional 'path/to/file.py::Symbol' grounding reference.")
+@click.option(
+    "--symbol-ref", help="Optional 'path/to/file.py::Symbol' grounding reference."
+)
 @click.option(
     "--source-kind",
     type=click.Choice(["local_tool", "cross_tool_handoff", "human_derived"]),
@@ -2167,14 +2183,18 @@ def memory_write_cmd(
 @click.argument("subject")
 @click.argument("source")
 @click.option("--content", required=True, help="JSON-encoded content dict to evaluate.")
-@click.option("--symbol-ref", help="Optional 'path/to/file.py::Symbol' grounding reference.")
+@click.option(
+    "--symbol-ref", help="Optional 'path/to/file.py::Symbol' grounding reference."
+)
 @click.option(
     "--source-kind",
     type=click.Choice(["local_tool", "cross_tool_handoff", "human_derived"]),
     default="local_tool",
     help="Origin kind, determines the entry trust tier.",
 )
-@click.option("--user-stated", is_flag=True, help="This record was explicitly stated by the user.")
+@click.option(
+    "--user-stated", is_flag=True, help="This record was explicitly stated by the user."
+)
 @click.option(
     "--candidate-source",
     "candidate_sources",
@@ -2246,12 +2266,21 @@ def memory_promote_cmd(
     help="Max rows processed in one sweep.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
-def memory_maintain_cmd(task: str, batch_size: int, as_json: bool) -> None:
+@click.option(
+    "--allow-cache-write", is_flag=True, help="Allow memory maintenance writes."
+)
+def memory_maintain_cmd(
+    task: str, batch_size: int, as_json: bool, allow_cache_write: bool
+) -> None:
     """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(), operation="maintain", task=task, batch_size=batch_size
+        Path.cwd(),
+        operation="maintain",
+        task=task,
+        batch_size=batch_size,
+        permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
     _render_session_result(result.to_dict(), as_json)
 

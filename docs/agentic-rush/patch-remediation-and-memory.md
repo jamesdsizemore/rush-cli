@@ -67,13 +67,13 @@ AI coding agents often lose track of previous architectural decisions, file chan
 
 ```bash
 # Query episodic/session memory (FTS5 lexical search, BM25-ranked)
-rush memory ask --subject episodic --query "authentication refactor"
+rush memory ask episodic "authentication refactor" --session session_memory:record_turn
 
 # Recall matching records, with signature/staleness/Trojan-Source defense applied
-rush memory recall --subject episodic --query "authentication refactor"
+rush memory recall episodic "authentication refactor" --session session_memory:record_turn
 
-# List records for a subject
-rush memory list --subject episodic
+# List matching records from an explicitly allowed source
+rush memory list episodic authentication --session session_memory:record_turn
 ```
 
 ### Cryptographic Context Boundary Framing

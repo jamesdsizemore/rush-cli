@@ -216,10 +216,10 @@ Restore a saved session checkpoint by name.
 
 ### `rush memory ask|write|promote|list|recall|maintain` (Phase 61)
 Query and write the unified `TypedArtifactStore` (`.rush/memory.db`) — the same 7-subject/4-tier-trust store `rush session`'s checkpoints and every other memory-subsystem writer now persist through.
-* `ask`/`list`/`recall`: read operations; `recall` applies signature/staleness/Trojan-Source defense to every returned row and requires a non-empty session allowlist (fails closed on empty input).
-* `write`: never accepts `trust_tier=STATED` directly.
-* `promote`: the only path to `trust_tier=STATED`, via the composed ALLOW/REDACT/BLOCK + regex + schema + grounding + corroboration check.
-* `maintain`: reserved, returns `status="skipped"` until Phase 62.
+* `ask`/`list`/`recall`: use positional `SUBJECT QUERY` and at least one `--session SOURCE`. Every returned row passes signature, staleness, and Trojan Source checks. Missing session permission returns `skipped` without content.
+* `write`: requires `--allow-cache-write` and never accepts `trust_tier=STATED` directly.
+* `promote`: requires `--allow-cache-write`; approved candidates persist as `STATED` with a checksum and promotion timestamp after the screen, schema, grounding, and corroboration checks.
+* `maintain`: requires `--task promotion_sweep|staleness_sweep|skill_admission_check|expiry_sweep` and `--allow-cache-write`. Runs a bounded sweep in the selected repository; defaults to 500 rows via `--batch-size`.
 
 ### `rush ship clean`
 Purge temporary scratch directories, caches, and build artifacts.

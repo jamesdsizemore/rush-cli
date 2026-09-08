@@ -17,7 +17,7 @@ from ..memory.store import (
     TrojanSourceFoundError,
     TypedArtifactStore,
 )
-from ..memory.trust import default_entry_tier, evaluate_promotion
+from ..memory.trust import default_entry_tier
 from ..permissions import ExecutionPermissions, check_permissions
 from .base import ToolFn, ToolResult
 
@@ -62,7 +62,7 @@ class MemoryTool(ToolFn):
     def mcp_description(self) -> str:
         return (
             "Query, write, or promote a cross-tool memory artifact in the typed artifact "
-            "store. Returns {status, findings[], summary}; write/promote require explicit "
+            "store. Returns {status, findings[], summary}; write/promote/maintain require explicit "
             "cache-write permission."
         )
 
@@ -137,7 +137,9 @@ class MemoryTool(ToolFn):
             "recall": lambda: self._query(
                 started, root, subject, query, session_allowlist, "recall"
             ),
-            "list": lambda: self._list(started, root, subject, query),
+            "list": lambda: self._query(
+                started, root, subject, query, session_allowlist, "list"
+            ),
             "write": lambda: self._run_write(
                 started,
                 root,
@@ -160,7 +162,9 @@ class MemoryTool(ToolFn):
                 candidate_sources,
                 granted,
             ),
-            "maintain": lambda: self._run_maintain(started, task, batch_size),
+            "maintain": lambda: self._run_maintain(
+                started, root, task, batch_size, granted
+            ),
         }
         return dispatch_table[operation]()
 
@@ -198,30 +202,6 @@ class MemoryTool(ToolFn):
             "ok",
             f"Found {len(artifacts)} memory artifact(s) for '{query}'.",
             operation=operation,
-            raw=[self._artifact_dict(a) for a in artifacts],
-        )
-
-    def _list(
-        self,
-        started: float,
-        root: Path,
-        subject: MemorySubject | None,
-        query: str,
-    ) -> ToolResult:
-        if not subject or not query:
-            return self._result(
-                started,
-                "error",
-                "memory list requires subject and query.",
-                operation="list",
-            )
-        store = TypedArtifactStore(root)
-        artifacts = store.search(subject, query)
-        return self._result(
-            started,
-            "ok",
-            f"Listed {len(artifacts)} memory artifact(s) for '{query}'.",
-            operation="list",
             raw=[self._artifact_dict(a) for a in artifacts],
         )
 
@@ -294,18 +274,15 @@ class MemoryTool(ToolFn):
         artifact = self._build_artifact(
             subject, content, source, symbol_ref, source_kind
         )
-        decision = evaluate_promotion(
-            artifact,
-            user_stated=user_stated,
-            candidate_sources=candidate_sources,
-            project_root=root,
-        )
         store = TypedArtifactStore(root)
         stored = store.write(artifact)
+        stored, decision = store.promote(
+            stored.id,
+            user_stated=user_stated,
+            candidate_sources=candidate_sources,
+        )
         summary = (
-            f"Promotion approved for subject '{subject}' "
-            "(STATED-tier persistence pending — no store API elevates a stored row to "
-            "STATED yet; the underlying candidate is persisted at its entry trust tier)."
+            f"Promoted subject '{subject}' to STATED."
             if decision.promoted
             else f"Promotion denied for subject '{subject}': {decision.denial_reason}."
         )
@@ -326,8 +303,10 @@ class MemoryTool(ToolFn):
     def _run_maintain(
         self,
         started: float,
+        root: Path,
         task: MaintenanceTask | None,
         batch_size: int,
+        granted: ExecutionPermissions,
     ) -> ToolResult:
         if task is None:
             return self._result(
@@ -336,7 +315,15 @@ class MemoryTool(ToolFn):
                 "memory maintain requires task.",
                 operation="maintain",
             )
-        result = run_maintenance_cycle(task, batch_size=batch_size)
+        allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
+        if not allowed:
+            return self._result(
+                started,
+                "skipped",
+                f"Memory maintain requires {', '.join(missing)}.",
+                operation="maintain",
+            )
+        result = run_maintenance_cycle(task, batch_size=batch_size, project_root=root)
         return self._result(
             started,
             "ok",

@@ -16,8 +16,8 @@ a pure, unrenamed cache per Invariant 6 (its `hash_content()` computation cannot
 `read_origin`/`read_origin_kind`/`read_origin_kind_by_symbol` are the compatibility-view read
 fallback the 5 renamed-satellite modules (`preference_store.py`, `invariant_graph.py`,
 `checkpoint_journal.py`, `tools/flight_recorder.py`, `hook/tamper_detector.py`) call when their
-own physical file is missing (already renamed by a prior migration run) — the write paths of all
-8 modules stay unchanged.
+own physical file is missing (already renamed by a prior migration run). Preference mutations
+and replacement checkpoint migrations update existing origins without retaining old approvals.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from rush.memory.store import (
     TypedArtifactStore,
 )
 from rush.memory.trust import default_entry_tier
+from rush.safety.redactor import sanitize_value
 
 _LOCAL_TIER = default_entry_tier("local_tool")
 
@@ -83,6 +84,42 @@ def write_if_new(
             origin_id=origin_id,
         )
     )
+
+
+def replace_origin_content(
+    store: TypedArtifactStore,
+    origin_kind: str,
+    origin_id: str,
+    content: dict[str, Any],
+    *,
+    created_at: float | None = None,
+) -> bool:
+    """Replace changed compatibility content without inheriting approval of old bytes."""
+    clean_content = sanitize_value(content).value
+    with sqlite3.connect(str(store.db_path)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ?",
+            (origin_kind, origin_id),
+        ).fetchone()
+        if row is None or json.dumps(json.loads(row[0]), sort_keys=True) == json.dumps(
+            clean_content, sort_keys=True
+        ):
+            return False
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, trust_tier = ?, created_at = ?, "
+            "signature = NULL, promoted_at = NULL, corroboration_count = 0, "
+            "stale = 0, content_hash = NULL, expires_at = NULL, expired_at = NULL, "
+            "expired_by = NULL WHERE origin_kind = ? AND origin_id = ?",
+            (
+                json.dumps(clean_content),
+                _LOCAL_TIER,
+                created_at if created_at is not None else time.time(),
+                origin_kind,
+                origin_id,
+            ),
+        )
+    return True
 
 
 def read_origin(
@@ -257,7 +294,9 @@ def migrate_checkpoint_journal(project_root: Path) -> int:
             symbol_ref=origin_id,
             created_at=entry.get("created_at"),
         )
-        if result is not None:
+        if result is not None or replace_origin_content(
+            store, "checkpoint", origin_id, entry, created_at=entry.get("created_at")
+        ):
             migrated += 1
     for json_file in json_files:
         _rename_migrated(json_file)
@@ -363,7 +402,7 @@ def migrate_flight_recorder(project_root: Path) -> int:
             timestamp = event.get("timestamp")
             event_type = event.get("event_type", "")
             origin_id = hashlib.sha256(
-                f"{session_id}|{timestamp}|{event_type}".encode("utf-8")
+                f"{session_id}|{timestamp}|{event_type}".encode()
             ).hexdigest()
             result = write_if_new(
                 store,
@@ -432,7 +471,7 @@ def migrate_session_memory(project_root: Path) -> int:
     migrated = 0
     for record in records:
         origin_id = hashlib.sha256(
-            f"{record.timestamp}{record.tool_name}{record.summary}".encode("utf-8")
+            f"{record.timestamp}{record.tool_name}{record.summary}".encode()
         ).hexdigest()
         created_at = float(
             calendar.timegm(time.strptime(record.timestamp, "%Y-%m-%dT%H:%M:%SZ"))
