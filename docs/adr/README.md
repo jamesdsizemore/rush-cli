@@ -50,5 +50,6 @@
 | 0046 | `src/rush/tools/ship/` | `test_ship_clean_env_docs.py`, `test_ship_gate_cockpit.py` | 41, 42 |
 | 0047 | `src/rush/mcp_mesh/`, `src/rush/tools/swarm_merge.py` | `test_mcp_mesh.py`, `test_swarm_merge.py` | 49 |
 | 0048 | `src/rush/integrations/graft.py`, `src/rush/codegraph/` | `test_graft_integration.py`, `test_ast_skeletonizer.py` | 41–50 |
+| 0049 | `src/rush/memory/store.py`, `src/rush/memory/trust.py` | `test_phase61_store.py`, `test_phase61_trust.py`, `test_phase61_adr.py` | 61 |
 
 The pre-existing `docs/ARCHITECTURE.md` draft is deliberately not modified by this implementation program; this index provides its required mapping without mixing unrelated draft content into Phase 00 scope.

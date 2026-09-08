@@ -2,13 +2,13 @@
 
 ## Historical mistake guardrails
 
-Continuity recovery carries a small, redacted set of mined revert guardrails as historical evidence. It does not carry a failed patch, replay an earlier command, or promote old rationale into current instructions.
+Continuity recovery carries a small, redacted set of mined revert guardrails, stored as `subject="failure"`, `trust_tier="DERIVED"` candidate records in the unified typed-artifact store (`rush.memory.store.TypedArtifactStore`, `.rush/memory.db`, Phase 61). It does not carry a failed patch, replay an earlier command, or promote old rationale into current instructions.
 
 When AI coding assistants refactor code or fix bugs, they often produce multi-file unified diffs. If a diff contains syntax errors, fails linters, or breaks unit tests, applying it directly pollutes your git working directory and forces painful manual rollbacks.
 
 Rush’s **Patch Remediation Subsystem** (`rush patch`) and **Session Memory Engine** (`rush memory`) provide a closed-loop verification cycle and multi-turn conversational memory for agent interactions.
 
-`rush session` handoff is deliberately narrower than conversational memory: it persists a redacted goal/frontier receipt, dependency snapshots, and a receipt-only failure pointer. It excludes raw transcripts, provider credentials, historic-instruction text, and failed patches; historic instruction presence is quarantined as non-actionable evidence.
+`rush session` handoff is deliberately narrower than conversational memory: it persists a redacted goal/frontier receipt, dependency snapshots, and a receipt-only failure pointer. It excludes raw transcripts, provider credentials, historic-instruction text, and failed patches; historic instruction presence carries a `trust_tier` (`EXTERNAL_WRITE`/`DERIVED`, never `STATED` on entry) instead of the earlier binary quarantine flag — non-actionable evidence either way.
 
 Coordination recovery is equally narrow: a replay is an event-count receipt, and a known failure is a redacted receipt. Neither is a runnable command, a patch source, or approval to retry.
 
@@ -59,24 +59,26 @@ rush patch rollback
 
 ## 2. Multi-Turn Session Memory
 
-AI coding agents often lose track of previous architectural decisions, file changes, and test results across multiple chat turns. Rush provides a structured, multi-turn **Session Memory Ledger** (`rush memory`) that records key events in compact, token-efficient formats.
+AI coding agents often lose track of previous architectural decisions, file changes, and test results across multiple chat turns. Rush provides a structured, multi-turn **Session Memory Ledger** (`rush memory`) that records key events in compact, token-efficient formats. Episodic/session records now persist through the unified typed-artifact store (`subject="episodic"`, `family="experience"`) — `session_memory.py` and `FlightRecorder.record_event` both write through the same `TypedArtifactStore.write()` path (Phase 61); no separate `.rush/session_memory.json` or flights JSONL file is canonical after migration (both are retained read-only with a `.migrated` suffix).
 
 ### Storing and Inspecting Session Context
 
+`rush memory` (`MemoryTool`) registers as both a CLI command group and an MCP tool (`rush_memory`), the same two-part path `rush session` uses:
+
 ```bash
-# Inspect the active session memory ledger
-rush memory inspect
+# Query episodic/session memory (FTS5 lexical search, BM25-ranked)
+rush memory ask episodic "authentication refactor" --session session_memory:record_turn
 
-# Query session memories related to a specific topic
-rush memory inspect --query "authentication refactor"
+# Recall matching records, with signature/staleness/Trojan-Source defense applied
+rush memory recall episodic "authentication refactor" --session session_memory:record_turn
 
-# Clear the current session memory ledger
-rush memory clear
+# List matching records from an explicitly allowed source
+rush memory list episodic authentication --session session_memory:record_turn
 ```
 
 ### Cryptographic Context Boundary Framing
 
-To prevent prompt injection attacks where untrusted code comments attempt to hijack agent memory, Rush encapsulates all memory records within cryptographically signed XML boundaries:
+To prevent prompt injection attacks where untrusted code comments attempt to hijack agent memory, Rush encapsulates all memory records within cryptographically signed XML boundaries (`format_for_mcp()`'s `<rush_session_memory>` shape is unchanged by the Phase 61 storage migration — it now reads from `TypedArtifactStore` instead of the old JSON file, same output):
 
 ```xml
 <rush_session_memory turn="4" timestamp="2026-08-21T17:40:00Z">

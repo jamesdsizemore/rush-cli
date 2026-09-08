@@ -52,8 +52,69 @@ from rush.review.results import (
     build_error_review_result,
 )
 
+from ..memory.store import MemoryArtifact, MemorySubject, TypedArtifactStore
 from .base import Finding, ToolFn, ToolName, ToolResult
 from .common import now_ms
+
+# P62.2: recall() fails closed without a session_allowlist (Phase 61 §9 P61.9) — mirrors
+# `token_economy/memory_cache_gate.py`'s precedent of allowlisting the known writer(s) for
+# the subjects being read, rather than an open-ended source set. `failure`/`architectural_decision`
+# rows are currently produced only by `rush.memory.migration`'s absorb functions.
+_FAILURE_MEMORY_SOURCES = ["migration:failure_ledger", "migration:patch_memory"]
+_ARCHITECTURAL_DECISION_MEMORY_SOURCES = ["migration:invariant_graph"]
+
+
+def _format_memory_citation(
+    target: Path, subject: MemorySubject, artifact: MemoryArtifact
+) -> Finding:
+    """Format a recalled failure/architectural-decision artifact as a review Finding."""
+    if subject == "failure":
+        commit = artifact.content.get("fix_commit")
+        detail = (
+            f"this pattern already caused a fix in commit {commit}"
+            if commit
+            else "matches a recorded failure/mistake pattern"
+        )
+        rule = "memory-failure-citation"
+    else:
+        decision = artifact.content.get("decision") or artifact.content.get("rule_id", "")
+        detail = (
+            f"recorded architectural decision: {decision}"
+            if decision
+            else "matches a recorded architectural decision"
+        )
+        rule = "memory-architectural-decision-citation"
+    return Finding(
+        path=str(target),
+        rule=rule,
+        severity="info",
+        message=f"{target.name}: {detail} (memory artifact {artifact.id})",
+    )
+
+
+def _recall_memory_citations(targets: list[Path], root: Path) -> list[Finding]:
+    """Cite prior failure/architectural-decision memory matching each reviewed file's name."""
+    if not targets:
+        return []
+    store = TypedArtifactStore(root)
+    findings: list[Finding] = []
+    for target in targets:
+        query = f'"{target.name}"'
+        for subject, sources in (
+            ("failure", _FAILURE_MEMORY_SOURCES),
+            ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
+        ):
+            try:
+                if not store.search(subject, query):
+                    continue
+                artifacts = store.recall(subject, query, session_allowlist=sources)
+            except Exception:
+                continue
+            for artifact in artifacts:
+                if artifact.stale:
+                    continue
+                findings.append(_format_memory_citation(target, subject, artifact))
+    return findings
 
 
 def _extract_review_config(
@@ -168,6 +229,7 @@ class ReviewTool(ToolFn):
         findings = _evaluate_target_heuristics(
             targets, root, max_lines, markers, exclude
         )
+        findings.extend(_recall_memory_citations(targets, root))
 
         graft_findings, graft_state = _resolve_graft_findings(
             path, use_graft, graft_provider

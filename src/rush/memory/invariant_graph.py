@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from rush.memory.migration import read_origin_kind
 from rush.memory.transactions import CASMapTransaction
 
 
@@ -45,4 +46,9 @@ class InvariantGraph:
         self.tx.update(mutator, max_retries=20)
 
     def get_all(self) -> dict[str, Any]:
-        return self._read()
+        data = dict(self._read())
+        for entry in read_origin_kind(self.project_root, "invariant_graph"):
+            rule_id = entry.get("rule_id")
+            if rule_id is not None and rule_id not in data:
+                data[rule_id] = {k: v for k, v in entry.items() if k != "rule_id"}
+        return data

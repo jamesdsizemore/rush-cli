@@ -66,7 +66,7 @@ def build_operations_inventory() -> list[PublicOperation]:
     assigned_mcp: set[str] = set()
 
     # Explicit known pairings between Click command leaves and MCP tools
-    explicit_pairs: dict[str, tuple[str, str, str, str, str]] = {
+    explicit_pairs: dict[str, tuple[str | None, str, str, str, str]] = {
         "benchmark check": (
             "rush_benchmark",
             "rush.tools.benchmark:BenchmarkTool",
@@ -165,6 +165,48 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush attest --help",
             "tool",
         ),
+        "memory ask": (
+            "rush_memory",
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory ask --help",
+            "tool",
+        ),
+        "memory list": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory list --help",
+            "tool",
+        ),
+        "memory recall": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory recall --help",
+            "tool",
+        ),
+        "memory write": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory write --help",
+            "admin",
+        ),
+        "memory promote": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory promote --help",
+            "admin",
+        ),
+        "memory maintain": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory maintain --help",
+            "admin",
+        ),
     }
 
     # 3. Pair canonical tool specs first
@@ -199,7 +241,7 @@ def build_operations_inventory() -> list[PublicOperation]:
     for cli_cmd, (mcp_name, impl, effect, probe, kind_str) in sorted(
         explicit_pairs.items()
     ):
-        if cli_cmd in click_leaves and mcp_name in mcp_tools:
+        if cli_cmd in click_leaves and (mcp_name is None or mcp_name in mcp_tools):
             clean_id = cli_cmd.replace(" ", "_").replace("-", "_")
             op = PublicOperation(
                 id=f"{kind_str}.{clean_id}",
@@ -214,7 +256,8 @@ def build_operations_inventory() -> list[PublicOperation]:
             )
             inventory.append(op)
             assigned_cli.add(cli_cmd)
-            assigned_mcp.add(mcp_name)
+            if mcp_name is not None:
+                assigned_mcp.add(mcp_name)
 
     # 5. Remaining MCP tools (MCP-only routes / aliases)
     for mcp_name in sorted(mcp_tools):

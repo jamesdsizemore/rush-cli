@@ -1,6 +1,9 @@
 # ADR-0041: Bi-Temporal Git-Revert Mistake Memory Spine
 
 ## Status
+Superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md) for the
+shared `.rush/memory.db` storage layer this ADR's mistake-guard rows now live in; the
+mistake-mining decision itself remains in force.
 Accepted (v0.3.0 / Phase 43)
 
 ## Context

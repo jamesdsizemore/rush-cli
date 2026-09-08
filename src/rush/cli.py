@@ -1205,6 +1205,7 @@ for _catalog_tool in ALL_TOOLS:
         "sbom",
         "fix",
         "benchmark",
+        "memory",
     }:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
@@ -1911,6 +1912,12 @@ def session_group() -> None:
     multiple=True,
     help="Repository-local dependency path to snapshot for handoff freshness.",
 )
+@click.option(
+    "--provider",
+    "provider_id",
+    default=None,
+    help="Target provider this handoff is destined for; enables delta-only handoffs.",
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def session_save_cmd(
@@ -1921,6 +1928,7 @@ def session_save_cmd(
     historic_instruction: str | None,
     failure_fingerprint: str | None,
     dependencies: tuple[str, ...],
+    provider_id: str | None,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -1945,6 +1953,7 @@ def session_save_cmd(
             "failure_fingerprint": failure_fingerprint,
             "dependencies": list(dependencies),
         },
+        provider_id=provider_id,
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,
@@ -2024,6 +2033,256 @@ def session_resume_cmd(
         ),
     )
     _render_session_result(result, as_json)
+
+
+# -----------------------------------------------------------------------------
+# Phase 61: Cross-LLM Memory — Memory Query/Write Interface (MemoryTool, P61.12)
+# -----------------------------------------------------------------------------
+
+
+@cli.group(name="memory")
+def memory_group() -> None:
+    """Query, write, and promote cross-tool memory artifacts."""
+
+
+@memory_group.command(name="ask")
+@click.argument("subject")
+@click.argument("query")
+@click.option(
+    "--session",
+    "session_allowlist",
+    multiple=True,
+    help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_ask_cmd(
+    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+) -> None:
+    """Ask the memory store a question, scoped to an explicit session allowlist."""
+    from .tools.memory import MemoryTool
+
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="ask",
+        subject=subject,
+        query=query,
+        session_allowlist=list(session_allowlist) or None,
+    )
+    _render_session_result(result.to_dict(), as_json)
+
+
+@memory_group.command(name="recall")
+@click.argument("subject")
+@click.argument("query")
+@click.option(
+    "--session",
+    "session_allowlist",
+    multiple=True,
+    help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_recall_cmd(
+    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+) -> None:
+    """Recall memory artifacts, scoped to an explicit session allowlist."""
+    from .tools.memory import MemoryTool
+
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="recall",
+        subject=subject,
+        query=query,
+        session_allowlist=list(session_allowlist) or None,
+    )
+    _render_session_result(result.to_dict(), as_json)
+
+
+@memory_group.command(name="list")
+@click.argument("subject")
+@click.argument("query")
+@click.option(
+    "--session",
+    "session_allowlist",
+    multiple=True,
+    help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_list_cmd(
+    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+) -> None:
+    """List defended memory artifacts scoped to explicit sessions."""
+    from .tools.memory import MemoryTool
+
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="list",
+        subject=subject,
+        query=query,
+        session_allowlist=list(session_allowlist) or None,
+    )
+    _render_session_result(result.to_dict(), as_json)
+
+
+@memory_group.command(name="write")
+@click.argument("subject")
+@click.argument("source")
+@click.option("--content", required=True, help="JSON-encoded content dict to persist.")
+@click.option(
+    "--symbol-ref", help="Optional 'path/to/file.py::Symbol' grounding reference."
+)
+@click.option(
+    "--source-kind",
+    type=click.Choice(["local_tool", "cross_tool_handoff", "human_derived"]),
+    default="local_tool",
+    help="Origin kind, determines the entry trust tier.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_write_cmd(
+    subject: str,
+    source: str,
+    content: str,
+    symbol_ref: str | None,
+    source_kind: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Write a memory artifact. Requires --allow-cache-write."""
+    import json as _json
+
+    from .tools.memory import MemoryTool
+
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="write",
+        subject=subject,
+        content=_json.loads(content),
+        source=source,
+        symbol_ref=symbol_ref,
+        source_kind=source_kind,  # type: ignore[arg-type]
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(result.to_dict(), as_json)
+
+
+@memory_group.command(name="promote")
+@click.argument("subject")
+@click.argument("source")
+@click.option("--content", required=True, help="JSON-encoded content dict to evaluate.")
+@click.option(
+    "--symbol-ref", help="Optional 'path/to/file.py::Symbol' grounding reference."
+)
+@click.option(
+    "--source-kind",
+    type=click.Choice(["local_tool", "cross_tool_handoff", "human_derived"]),
+    default="local_tool",
+    help="Origin kind, determines the entry trust tier.",
+)
+@click.option(
+    "--user-stated", is_flag=True, help="This record was explicitly stated by the user."
+)
+@click.option(
+    "--candidate-source",
+    "candidate_sources",
+    multiple=True,
+    help="Corroborating source id; repeat for multiple.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_promote_cmd(
+    subject: str,
+    source: str,
+    content: str,
+    symbol_ref: str | None,
+    source_kind: str,
+    user_stated: bool,
+    candidate_sources: tuple[str, ...],
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Evaluate and persist a candidate memory artifact for STATED promotion. Requires
+    --allow-cache-write."""
+    import json as _json
+
+    from .tools.memory import MemoryTool
+
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="promote",
+        subject=subject,
+        content=_json.loads(content),
+        source=source,
+        symbol_ref=symbol_ref,
+        source_kind=source_kind,  # type: ignore[arg-type]
+        user_stated=user_stated,
+        candidate_sources=list(candidate_sources) or None,
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(result.to_dict(), as_json)
+
+
+@memory_group.command(name="maintain")
+@click.option(
+    "--task",
+    type=click.Choice(
+        ["promotion_sweep", "staleness_sweep", "skill_admission_check", "expiry_sweep"]
+    ),
+    required=True,
+    help="Which maintenance sweep to run.",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=500,
+    show_default=True,
+    help="Max rows processed in one sweep.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@click.option(
+    "--allow-cache-write", is_flag=True, help="Allow memory maintenance writes."
+)
+def memory_maintain_cmd(
+    task: str, batch_size: int, as_json: bool, allow_cache_write: bool
+) -> None:
+    """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""
+    from .tools.memory import MemoryTool
+
+    result = MemoryTool().run(
+        Path.cwd(),
+        operation="maintain",
+        task=task,
+        batch_size=batch_size,
+        permissions=ExecutionPermissions(cache_write=allow_cache_write),
+    )
+    _render_session_result(result.to_dict(), as_json)
 
 
 @cli.group(name="ship")

@@ -6,7 +6,7 @@
 
 > **Phase 1 continuity:** `rush session` and MCP `rush_continuity` share one local checkpoint contract. Save is denied unless the caller explicitly grants cache-write permission; list and restore are read-only and return canonical `ToolResult` data.
 
-> **Phase 2 handoff:** save may carry a redacted current goal, open-work frontier, dependency hashes, and a failure receipt. Historic instructions are recorded only as quarantined `historical_evidence`, never as current authority.
+> **Phase 2 handoff:** save may carry a redacted current goal, open-work frontier, dependency hashes, and a failure receipt. Historic instructions are recorded with a `trust_tier` (`EXTERNAL_WRITE`/`DERIVED`/`IMPORTED` — never `STATED` on entry, Phase 61's unified typed-artifact schema, replacing the earlier binary `historical_evidence`/`quarantined` flag pair), never as current authority.
 
 > **Phase 4 coordination:** continuity reports held or stale ownership, merge-preview conflicts, and replay/failure receipts as non-executable evidence. It never releases a lock, merges source, or retries a failed patch.
 

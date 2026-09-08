@@ -15,7 +15,7 @@
   - Accepted Phase 54 ToolResultV1 schema kernel, finding models, legacy adapters, and operation taxonomy (`src/rush/contracts/`, `governance/remediation-phase-54.toml`).
 - **Successors:**
   - Phase 56: Consumes `VerifierRecord` and `AtomicFile` for plugin trust ledger and snapshots.
-  - Phase 58: Migrates lock acquisition (`src/rush/mcp_mesh/`), persistent journals (`src/rush/session_memory.py`, `src/rush/memory/`), and worktree sandboxes (`src/rush/core/git_sandbox.py`) to `AtomicFile` and `PhysicalRoot`.
+  - Phase 58: Migrates lock acquisition (`src/rush/mcp_mesh/`), persistent journals (`src/rush/session_memory.py`, `src/rush/memory/`), and worktree sandboxes (`src/rush/core/git_sandbox.py`) to `AtomicFile` and `PhysicalRoot`. **Phase 61 note:** "Phase 58 owns memory-writer migration" is still true but incomplete — Phase 61 also touches these writers, reducing them to thin compatibility views over the unified `TypedArtifactStore` (`.rush/memory.db`).
 - **Scope Boundary:** Establish the single authoritative file I/O primitives package `src/rush/io/`:
   - `PhysicalRoot`: Strict physical path boundary containment defeating symlinks, traversal (`..`), Windows reparse points, and target swaps.
   - `AtomicFile`: Same-directory atomic file replacement, permission preservation, fsync durability, and manager-owned fault cleanup accepting only sanitized contracts.

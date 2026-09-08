@@ -16,6 +16,10 @@ Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the cont
 
 For `operation: "provider_resume"`, pass `name`, `provider_id`, and `allow_network: true`. `claude_code`, `codex_cli`, and `antigravity_cli` use an existing local authenticated profile; `9router_cli` runs Codex through fixed local 9Router with `RUSH_9ROUTER_API_KEY` copied only to the child process and no model argument; `omniroute_api` uses one fixed loopback OpenAI-compatible request with `model: "auto"` and semantic response validation. The response exposes only `metadata.provider_route` and never model output or credentials. `zai` is deferred; direct `9router_api` remains unavailable.
 
+## `rush_memory` (Phase 61)
+
+Use `operation: "ask" | "write" | "promote" | "list" | "recall" | "maintain"` over the unified `TypedArtifactStore` (`.rush/memory.db`, 7 memory subjects, 4 trust tiers). `ask`, `list`, and `recall` require `subject`, `query`, and a non-empty `session_allowlist`; all run signature re-verification, Trojan Source scanning, and staleness checks before returning content. `write`, `promote`, and `maintain` require `allow_cache_write: true`. Approved promotions persist `STATED`, a checksum, and a promotion timestamp. Maintenance accepts `task` and `batch_size`, and uses the repository selected by `path`. Denied calls return a canonical `ToolResult` with `status="skipped"`, never prose on stdio.
+
 ## Common result
 
 Every tool returns canonical ToolResult data documented in [Result reference](reference/result-reference.md). A missing optional engine is a structured `skipped` result, not an installation request.
@@ -154,9 +158,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

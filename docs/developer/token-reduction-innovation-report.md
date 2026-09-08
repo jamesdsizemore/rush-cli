@@ -1,6 +1,8 @@
 # Rush CLI: Token Reduction & Context Intelligence Innovation Report
 ## Transforming Token Optimization into a Flagship Context Intelligence System for Modern Developers & Autonomous Coding Agents
 
+> **Superseded by Phase 61** (2026-09-07): this report's `session_memory`/`preference_store`/`invariant_graph`/`failure_ledger`/`checkpoint_journal`/ADR-0030 citations describe the pre-Phase-61 design. Phase 61 replaced them with `src/rush/memory/store.py`'s unified `TypedArtifactStore` (`.rush/memory.db`, 7-subject/4-tier-trust schema) and ADR-0049; Phase 62 wired 6 existing subsystems into it. This is a historical research record — content otherwise unchanged.
+
 > **Document Title:** `token-reduction-innovation-report.md`
 > **Author:** Senior AI Systems Architect, Product Strategist & Research Engineer
 > **Target Audience:** Platform Architects, AI Agent Developers, Vibecoders & Core Maintainers

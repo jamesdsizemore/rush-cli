@@ -259,11 +259,12 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 2. **CAS Map Transactions & Persistent Memory (`rush.memory`)**:
    - `CASMapTransaction` enforces optimistic concurrency with monotonic version numbers and atomic file replacement (`rush.io.AtomicFile`) using sanitized JSON payloads (`SanitizedJsonValue`).
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
-   - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
+   - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks. As of Phase 61, all three are thin compatibility views over `TypedArtifactStore` (`.rush/memory.db`) — public signatures unchanged, but canonical data no longer lives in a per-store `CASMapTransaction`-backed JSON file; see the Phase 61 section below.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
@@ -313,3 +314,28 @@ Phase 60 decomposes central transport, orchestration, and graph traversal hotspo
    - `src/rush/tools/blast_radius_graph.py`: Owns reverse import graph construction (`build_reverse_import_graph`) and impact traversal (`walk_impacted_paths`), reducing `BlastRadiusAnalyzer.analyze` from 15 to 4.
    - `src/rush/discovery/workspace_graph.py`: Owns polyglot package discovery (`discover_workspace_packages`) and topological dependency sorting (`topological_sort_workspace_packages`), reducing `discover_workspaces` from 23 to 5.
    - `src/rush/tools/db_drift_rules.py`: Owns ORM model AST collection (`collect_models`), migration history parsing (`collect_migrations`), and drift rule evaluation (`evaluate_drift`), reducing `DbDriftAuditor.audit_drift` from 21 to 5.
+
+## Phase 61 Architecture: Unified Typed-Artifact Memory Store, Trust Tiers, and Transport Dispatcher
+
+Phase 61 replaces eight satellite memory files/formats with one SQLite WAL database and a 4-tier trust taxonomy orthogonal to the 7-subject taxonomy, superseding ADR-0030's never-built Working/Policy/World/Skills design:
+
+1. **Unified Typed-Artifact Store (`src/rush/memory/store.py`)**:
+   - `TypedArtifactStore` — one `memory_artifacts` SQLite WAL table plus an FTS5 `memory_fts` virtual table (BM25-ranked lexical search), at `.rush/memory.db`.
+   - `MemoryArtifact` rows carry `family` (`handoff`/`experience`/`memory`/`skill`), `subject` (`active_context`/`episodic`/`preference`/`failure`/`architectural_decision`/`domain_knowledge`/`skill_pattern`), `trust_tier`, `content`, `symbol_ref`, `content_hash`, `signature`, `origin_kind`/`origin_id`.
+   - Every write passes through `sanitize_value()` inside `write()` itself; every `STATED` recall re-verifies its SHA-256 checksum and scans for Trojan Source characters before returning; a `symbol_ref`+`content_hash` mismatch flags `stale=True` rather than serving silently-fresh content.
+2. **Trust Tier & Write-Promotion Rule (`src/rush/memory/trust.py`)**: `STATED`/`DERIVED`/`EXTERNAL_WRITE`/`IMPORTED`; new writes never enter at `STATED` — promotion requires an ALLOW/REDACT/BLOCK screen, a regex pre-filter, a full-schema check, a grounding check (`resolve_symbol_ref`), and either direct user statement or corroboration ≥ 2 (dedicated `count_corroboration()`, not `MultiModelConsensusReconciler`). `evaluate_conflict()` reconciles a new record against an existing `STATED` row (`add`/`update`/`delete`/`none`).
+3. **Migration (`src/rush/memory/migration.py`)**: absorbs `PreferenceStore`, `InvariantGraph`, `MerkleInvalidator` (all `CASMapTransaction`-backed), `checkpoint_journal.py`, `failure_ledger.py`, `PatchMemoryStore` (`.rush/cache.db`'s `patch_memory` table, file left in place — shared with `ResultCache`), `FlightRecorder`'s flights JSONL, `HookTamperDetector`'s `.rush/hook_signatures.json`, and `session_memory.py`'s `.rush/session_memory.json` — 9 sources total, each migration idempotent, old satellite files renamed `.migrated`, never deleted.
+4. **Transport Dispatcher (`src/rush/memory/transport.py`)**: per-tool tier selection (native SDK → ACP → dedicated-file fallback), never one global protocol for a session.
+5. **`MemoryTool` (`src/rush/tools/memory.py`)**: `ask`/`write`/`promote`/`list`/`recall`/`maintain` operations, registered the same two-part CLI+MCP way `SessionContinuityTool` is (`ALL_TOOLS`/`TOOL_SPECS` for MCP + `@cli.group(name="memory")` for CLI) — `make_tool_wrapper` alone is MCP-only.
+
+### Phase 62 Addendum: Memory Integration Layer
+
+Phase 62 wires the Phase 61 store into 6 existing subsystems (token-savings cache, review/dev citation, a maintenance sub-agent, cross-tool handoff diffs, AI-attribution trail, API-diff staleness) and adds per-type expiry plus a shared decision-record schema — no new storage engine, all additive to `TypedArtifactStore`.
+
+1. **Cache gate (`src/rush/token_economy/memory_cache_gate.py`)**: `check_memory_before_pack()` — a `search()`-then-`recall()` defended lookup wired into `pack_context()` (`src/rush/continuity/context.py`) immediately before `ContextPacker.pack()`; hits short-circuit the pack; misses write back a `DERIVED`, `subject="domain_knowledge"` row only when `granted.cache_write` is `True`.
+2. **Maintenance (`src/rush/memory/maintenance.py`)**: `run_maintenance_cycle(task, batch_size=500)` — 4 `MaintenanceTask` variants (`promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep`), `MeshLockManager` lease acquire/release (fixed `agent_id="memory-maintenance"`), reachable via `MemoryTool`'s `maintain` operation.
+3. **Expiry (`src/rush/memory/expiry.py`)**: `ExpiryPolicy`/`DEFAULT_POLICIES`/`sweep_expired()` — per-`trust_tier` TTL (`STATED` never expires, `DERIVED` 14 days, `EXTERNAL_WRITE` 30 days, `IMPORTED` 90 days); `store.py` gains `expires_at`/`expired_at`/`expired_by` columns and a `MemoryArtifact.expired: bool` field, computed independently of merkle/API-diff staleness.
+4. **Decision-record schema (`src/rush/memory/decision_schema.py`)**: `DecisionRecordFields` — reused by `mistake_miner.py`'s existing pure candidate-shaping function to populate `architectural_decision`/`failure` writes with remediation-shaped fields (`status` defaults `"in_progress"`).
+5. **Handoff diffs**: `SessionContinuityTool.run()`'s `"save"` dispatch merges `provider_id` into `handoff` as `target_provider` before persisting; `continuity/receipts.py` sends a delta (not a full snapshot) on the second-and-later handoff to the same `target_provider`.
+6. **API-diff staleness**: `ApiDiffer.diff_symbol(file_path, symbol, base_ref="main")` returns the one breaking-change dict for a cited symbol (or `None`, or `"unknown"` when `base_ref` is unavailable); `TypedArtifactStore.recall()` flags `stale=True` from this check independently of the existing merkle check.
+7. **Attribution trail**: `provenance_ai.py` + `session_memory.py` link a `GitTrailerParser`-classified fix commit's SHA (not its full content) back to the failure record it resolved.

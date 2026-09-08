@@ -10,7 +10,7 @@ Provider resume returns canonical `ToolResult`: `ok` only for a successful suppo
 
 ## Continuity outcome rules
 
-The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` as quarantined `historical_evidence`, dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
+The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` carrying a `trust_tier` (Phase 61's unified typed-artifact schema — never `STATED` on entry, replacing the earlier binary quarantine flag), dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
 
 Context operations use `ok` for a bounded pack or recovered handle and `skipped` for insufficient budget or a missing handle. Their `metadata.context_envelope` identifies selected evidence, local token values, omissions, and recovery state.
 
@@ -154,9 +154,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

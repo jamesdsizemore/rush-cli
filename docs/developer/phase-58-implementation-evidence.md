@@ -1,5 +1,7 @@
 # Phase 58 Implementation Evidence: Capability Locks, Contained Persistence, and Fail-Closed Patch Verification
 
+> **Phase 61 note:** the memory/persistence files this phase's audit covers (`CASMapTransaction`-backed `preference_store.py`/`invariant_graph.py`/`merkle_invalidator.py`, `checkpoint_journal.py`) have since migrated under Phase 61's unified `TypedArtifactStore` (`.rush/memory.db`); this evidence record is otherwise unchanged (point-in-time).
+
 ## 1. Admission Gate & Baseline Status
 
 - **Branch:** `phase-58-lock-persistence-patch-fail-closed`

@@ -1,5 +1,7 @@
 # Phase 60 Implementation Evidence: Non-Release Maintainability Hotspot Reduction and Remediation Program Completion
 
+> **Phase 61 note:** `continuity/receipts.py`'s `save_receipt`/`restore_receipt` (built by this phase) now writes through Phase 61's unified `TypedArtifactStore` (`.rush/memory.db`), `trust_tier` replacing the earlier binary quarantine flag; this evidence record is otherwise unchanged (point-in-time).
+
 ## 1. Admission Gate & Baseline Status
 
 - **Branch:** `phase-60-maintainability-hotspot-reduction`

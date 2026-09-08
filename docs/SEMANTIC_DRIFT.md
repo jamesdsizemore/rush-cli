@@ -36,9 +36,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
@@ -51,3 +52,11 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
 ### Phase 59 Semantic Drift Reconciled
 - **R-013 Reconciled:** Default attestation output is strictly an unsigned draft (`assurance: unsigned_draft`); real artifact package digests used as subjects; strict parser rejects duplicate keys; signed policy verifier added.
 - **R-014 Reconciled:** Pinned engine taxonomy in `engine-support.toml`; fixed-PATH isolation; supported engines prohibited from passing all-skipped; mandatory non-skipped `mypy` release gate.
+
+### Phase 61 Semantic Drift Reconciled
+- **Drift 1:** `transactions.py`'s `CASMapTransaction` was already CAS-versioned, not primitive flat JSON — Phase 61's `TypedArtifactStore` supersedes it with one SQLite WAL database, not "primitive JSON files" as an earlier synthesis-doc draft implied.
+- **Drift 2:** `session_memory.py` lives at `src/rush/session_memory.py`, one level up from the other memory-subsystem files under `src/rush/memory/` — no `engine.py` exists or ever existed.
+- **Drift 3:** A SQLite WAL precedent already existed (`src/rush/cache.py`'s `ResultCache`) before Phase 61's `TypedArtifactStore` — not the first WAL-mode connection in the codebase; `_init_db()` reuses `ResultCache`'s initialization/failure-policy pattern, not its schema.
+- **Drift 4:** ADR-0030 (`Accepted`, Phase 41A-41B) described a Working/Policy/World/Skills taxonomy and `src/rush/memory/engine.py` that were never built. Phase 61 supersedes ADR-0030 with ADR-0049, describing the actually-built 7-subject/4-tier-trust design.
+- **Drift 5:** The mesh lock manager the earlier synthesis doc cited as `continuity/coordination.py`'s is actually implemented in `src/rush/mcp_mesh/lock_manager.py` (`MeshLockManager`); `coordination.py` is only a consumer.
+- **Drift 6:** `src/rush/continuity/providers.py`'s `provider_command()` dict is bounded, permission-gated session-resume CLI dispatch, not cross-LLM memory transport — Phase 61's `src/rush/memory/transport.py` is wholly new code and never touches `provider_command()`'s call sites.

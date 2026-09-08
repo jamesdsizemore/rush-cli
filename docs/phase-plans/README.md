@@ -35,6 +35,8 @@ Each phase plan defines its authority, prerequisites, outcomes, exact writes, te
 | 58 | [Locks, persistence, and patch verification](./phase-58-lock-persistence-patch-fail-closed-plan.md) | R-009-R-011 and R-016 | Phases 53-57 | Fail-closed state and output migration |
 | 59 | [Provenance and engine conformance](./phase-59-provenance-engine-conformance-plan.md) | R-013 and R-014 | Phases 52-54 | Truthful provenance/engine evidence |
 | 60 | [Maintainability hotspot reduction](./phase-60-maintainability-hotspot-reduction-plan.md) | R-015 non-release program | Release-ready Phases 52-59 | Completed: Remediation-program completion (all 26 tests passed) |
+| 61 | [Cross-LLM memory typed-artifact schema, trust tiers, transport dispatcher](./phase-61-cross-llm-memory-typed-artifact-schema-plan.md) | Roadmap phase — unified `TypedArtifactStore`, 4-tier trust taxonomy, ADR-0049 | Phase 60 | Completed: unified memory store, `MemoryTool`, all 39 tests passed (not an `R-xxx` finding) |
+| 62 | [Cross-LLM memory integration layer](./phase-62-memory-integration-layer-plan.md) | Roadmap phase — wires `TypedArtifactStore` into cache, review, maintenance, handoff, attribution, and API-diff staleness; per-type expiry; decision-record schema | Phase 61 | Completed: 6 subsystems integrated, per-type expiry, `DecisionRecordFields`, all 26 tests passed (not an `R-xxx` finding) |
 
 ## Remediation-cycle continuity
 

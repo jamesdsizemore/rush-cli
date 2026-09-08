@@ -13,6 +13,7 @@ from ..permissions import (
 )
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
+from ..token_economy.memory_cache_gate import check_memory_before_pack, write_cache_fill
 from .results import _WRITE_PERMISSION, build_continuity_result
 
 if TYPE_CHECKING:
@@ -94,9 +95,15 @@ def pack_context(
             granted=granted,
             as_v1=as_v1,
         )
-    packed = ContextPacker(project_root).pack(
-        target, target_symbol=target_symbol, max_tokens=1_000_000
-    )
+    gate = check_memory_before_pack(context_path, target_symbol, project_root=project_root)
+    if gate.hit:
+        packed = gate.content
+    else:
+        packed = ContextPacker(project_root).pack(
+            target, target_symbol=target_symbol, max_tokens=1_000_000
+        )
+        if granted.cache_write:
+            write_cache_fill(project_root, context_path, target_symbol, packed)
     estimated = int(packed.get("tokens", 0))
     selected_evidence = [{"path": context_path, "selection": "target_file"}]
     if estimated > token_budget:

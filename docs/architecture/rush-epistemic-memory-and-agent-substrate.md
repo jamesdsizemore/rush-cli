@@ -2,7 +2,7 @@
 
 ## Bounded recovery references
 
-Context omissions are stored only after redaction as local CCR chunks and exposed by a stable handle. Coordination recovery can add mined git-revert guardrails as `historical_evidence`; these are context for judgment, never executable instructions or a trigger for retry.
+Context omissions are stored only after redaction as local CCR chunks and exposed by a stable handle. Coordination recovery can add mined git-revert guardrails as a `subject="failure"`, `trust_tier="DERIVED"` candidate record (Phase 61's unified typed-artifact schema, `src/rush/memory/store.py` — superseding the earlier binary `historical_evidence`/`quarantined` flag pair); these are context for judgment, never executable instructions or a trigger for retry.
 
 ## 1. Why Existing Agent Memory Fails
 
@@ -11,7 +11,7 @@ Current agent memory implementations (chat history summaries, vector databases, 
 * **No invalidation when code changes:** When code is refactored, past memories about function signatures, API behavior, or test assumptions become silently toxic, poisoning future agent turns with stale information.
 * **Context pollution:** Dumping memory files into every prompt burns token budgets and dilutes the model's focus on the active task.
 
-The continuity receipt therefore carries only selected current goal/open work, hashes for declared dependencies, and bounded failure evidence. A historic instruction is explicitly `historical_evidence` and `quarantined`, never an executable authority; restore marks mismatched snapshots stale instead of silently reusing them.
+The continuity receipt therefore carries only selected current goal/open work, hashes for declared dependencies, and bounded failure evidence. A historic instruction is explicitly stored at `trust_tier="EXTERNAL_WRITE"` or `"DERIVED"` (never `"STATED"` on entry, per Phase 61's write-promotion rule), never an executable authority; restore marks mismatched snapshots `stale=True` (the unified store's merkle content-hash staleness flag) instead of silently reusing them. Promoted (`STATED`) records additionally carry a SHA-256 integrity checksum re-verified on every recall, raising on mismatch rather than silently serving corrupted content.
 
 ---
 

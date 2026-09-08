@@ -1,5 +1,7 @@
 # Runtime State, Vertical Coherence, and Agent Memory in Rush
 
+> **Reconciled against Phase 61 (2026-09-07):** this report is a speculative future-design proposal, not an implemented subsystem. `src/rush/memory/runtime_state.py`, `vertical_obligations.py`, and `state_snapshots.py` do not exist. Phase 61 built the real, current memory subsystem: `src/rush/memory/store.py`'s `TypedArtifactStore` (one SQLite WAL database, `.rush/memory.db`, 7-subject/4-tier-trust schema — `docs/ARCHITECTURE.md`'s "Phase 61 Architecture" section). None of this report's three module names collide with Phase 61's real files, but any future implementation of this report's ideas should persist through `TypedArtifactStore` (a new `subject` value, e.g. `"runtime_state"`, rather than a fifth satellite file) instead of inventing separate storage.
+
 ## 1. The Core Problem: Why Chat Memory & Static AST Memory Fail
 
 Traditional coding agent "memory" systems fail because they only store **static text transcripts** or **static code summaries**.

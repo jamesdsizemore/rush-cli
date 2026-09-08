@@ -82,10 +82,10 @@ def test_cli_catalog_options_rendering_characterization(tmp_path: Path) -> None:
 def test_mcp_registration_characterization() -> None:
     """T-60.02: Freeze FastMCP tool registration and parameter schema."""
     tools = mcp_server._tool_manager._tools
-    assert len(tools) == 73
+    assert len(tools) == 74
 
-    # 1. Assert all 52 catalog tools are registered with exact descriptions and path property
-    assert len(ALL_TOOLS) == 52
+    # 1. Assert all 53 catalog tools are registered with exact descriptions and path property
+    assert len(ALL_TOOLS) == 53
     for tool in ALL_TOOLS:
         tool_name = f"rush_{tool.name.replace('-', '_')}"
         assert tool_name in tools, f"Catalog tool {tool_name} missing from MCP server"
@@ -207,7 +207,7 @@ def test_mcp_registration_characterization() -> None:
     # 3. Test _register_tools on an isolated server
     fresh_server = FastMCP("test-mcp-server")
     _register_tools(fresh_server)
-    assert len(fresh_server._tool_manager._tools) == 73
+    assert len(fresh_server._tool_manager._tools) == 74
 
 
 def test_continuity_dispatch_provider_receipt_characterization(

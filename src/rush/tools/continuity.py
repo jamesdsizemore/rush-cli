@@ -177,6 +177,8 @@ class SessionContinuityTool(ToolFn):
                 granted=granted,
             )
 
+        handoff = {**(handoff or {}), "target_provider": provider_id}
+
         dispatch_table = {
             "context_pack": lambda: self._context_pack(
                 started, root, context_path, target_symbol, token_budget, granted
@@ -327,28 +329,31 @@ class SessionContinuityTool(ToolFn):
                 operation="restore",
                 granted=granted,
             )
-        session_dir = root / ".rush" / "sessions"
-        if not session_dir.exists():
-            return self._result(
-                started,
-                "skipped",
-                f"Session checkpoint '{name}' was not found.",
-                operation="restore",
-                granted=granted,
-            )
-        session_file = session_dir / f"{name}.json"
-        if not session_file.exists():
-            return self._result(
-                started,
-                "skipped",
-                f"Session checkpoint '{name}' was not found.",
-                operation="restore",
-                granted=granted,
-            )
         data = CheckpointJournal(root).restore_checkpoint(name or "")
         if data is None:
+            # CheckpointJournal.restore_checkpoint() is the sole existence authority (its physical
+            # `.json` file may already be renamed `.migrated` by migration.migrate_checkpoint_journal(),
+            # in which case a store-backed checkpoint would already have been returned above). Only
+            # consult the physical file here to distinguish "never existed" (skipped) from "corrupt
+            # bytes on disk" (error), never to gate existence itself.
+            session_dir = root / ".rush" / "sessions"
+            session_file = session_dir / f"{name}.json"
+            migrated_file = session_dir / f"{name}.json.migrated"
+            evidence_file = (
+                session_file
+                if session_file.exists()
+                else (migrated_file if migrated_file.exists() else None)
+            )
+            if evidence_file is None:
+                return self._result(
+                    started,
+                    "skipped",
+                    f"Session checkpoint '{name}' was not found.",
+                    operation="restore",
+                    granted=granted,
+                )
             try:
-                raw_bytes = session_file.read_bytes()
+                raw_bytes = evidence_file.read_bytes()
                 digest = hashlib.sha256(raw_bytes).hexdigest()
             except OSError:
                 digest = ""

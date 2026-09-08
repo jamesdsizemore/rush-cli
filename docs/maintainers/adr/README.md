@@ -17,6 +17,7 @@ ADRs explain durable choices and their consequences.
 - [ADR-013: local web dashboard and TUI](013-local-web-dashboard-and-tui.md)
 - [ADR-014: composite workflow suites and watcher](014-composite-workflow-suites-and-watcher.md)
 - [ADR-015: agent remediation and memory](015-agent-remediation-and-memory.md)
+- [ADR-0049: typed-artifact memory schema and trust tiers](../../adr/0049-typed-artifact-memory-schema-and-trust-tiers.md) (program ADR index) — supersedes [ADR-015](015-agent-remediation-and-memory.md)'s session-memory storage decision.
 
 The implementation program also maintains detailed phase and evidence ADRs in
 the [program ADR index](../../adr/README.md). Those records complement rather

@@ -1,7 +1,9 @@
 # Maintainers/Architecture Lifecycle
 
-## Invariant Graph & Failure Ledger (Phase 43)
-Maintain project architectural rules in `.rush/memory/invariants.json` using `InvariantGraph`. Record failed patch attempts in `.rush/memory/failures.db` using `FailureLedger`.
+## Invariant Graph & Failure Ledger (Phase 43, migrated Phase 61)
+Maintain project architectural rules via `InvariantGraph` and record failed patch attempts via `FailureLedger`. Both were migrated onto the Phase 61 `TypedArtifactStore` (`.rush/memory.db`), the canonical durable store other tools (including cross-LLM/MCP memory queries) read from:
+- `InvariantGraph` (`.rush/memory/invariants.json`) is a thin compatibility view: `get_all()` merges any live entries in `invariants.json` with rows already migrated into the store. After a one-shot migration run the file is renamed `invariants.json.migrated` and the store's copy becomes the sole source for pre-migration rules; new invariants added afterward still land in a fresh `invariants.json` until migrated again.
+- `FailureLedger` (`.rush/memory/failures.db`) keeps writing and reading `failures.db` directly and unchanged for its own duplicate-error-loop checks; `.rush/memory/failures.db` is never renamed. `migration.py`'s `migrate_failure_ledger()` additionally copies its rows into the store, so the store — not `failures.db` — is the canonical source other tools query for failure history.
 
 ## Architectural Layer Matrix Governance (Phase 46)
 Define and maintain layer matrices in `rush.toml` under `[architecture.layers]` and enforce via `rush arch-guard` in CI.

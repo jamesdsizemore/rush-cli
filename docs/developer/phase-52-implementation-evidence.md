@@ -1,5 +1,7 @@
 # Phase 52 Implementation Evidence: Package Identity, Installed Artifacts, and Version Authority
 
+> **Phase 61 note:** the memory/persistence files this phase's package-identity audit covers have since migrated under Phase 61's unified `TypedArtifactStore` (`.rush/memory.db`); this evidence record is otherwise unchanged (point-in-time).
+
 ## Executive Summary
 
 Phase 52 successfully closes remediation findings **R-001** (Installed artifacts cannot start reliably) and **R-012** (Package metadata, entry points, and version sources diverge).

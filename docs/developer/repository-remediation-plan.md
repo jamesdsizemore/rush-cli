@@ -156,6 +156,7 @@ The review used graph traversal, targeted inspection, call-path tracing, clean-w
 
 - `invariant_graph.py`, `preference_store.py`, and `merkle_invalidator.py` perform unlocked read-modify-write and return empty state on failures.
 - `checkpoint_journal.py` writes individual records directly, relies on callers for name validation, and skips corrupt records while listing.
+- **Phase 61 update:** this evidence describes each file's pre-Phase-58 shape. Phase 58 (below) closed R-010 by moving all four onto `CASMapTransaction`/`rush.io.AtomicFile`. As of Phase 61, all four are further reduced to thin compatibility views over the unified `TypedArtifactStore` (`.rush/memory.db`) — public signatures unchanged, canonical data no longer lives in a per-store JSON/journal file; `checkpoint_journal.py`'s `save_checkpoint()` still returns a real, existing `Path` for backwards compatibility.
 
 **Impact:** Shared maps can lose updates; journals, temporary files, backups, and lock records can be substituted through file/directory links, junctions, or races, then be falsely reported absent.
 

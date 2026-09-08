@@ -1,6 +1,8 @@
 # Rush CLI: Master Innovation, Functionality & Strategic Workflow Blueprint
 ## Comprehensive Integration of 28 Innovation Features, Dual-Layer Memory, 4-Pillar Pre-Flight Cockpit & Curated Ecosystem Repositories
 
+> **Superseded by Phase 61** (2026-09-07): this report's `session_memory`/`preference_store`/`invariant_graph`/`failure_ledger`/`checkpoint_journal`/ADR-0030 citations describe the pre-Phase-61 design. Phase 61 replaced them with `src/rush/memory/store.py`'s unified `TypedArtifactStore` (`.rush/memory.db`, 7-subject/4-tier-trust schema) and ADR-0049; Phase 62 wired 6 existing subsystems into it. This is a historical research record — content otherwise unchanged.
+
 > **Document Title:** `innovation-enhancement-funcionality-report` / `innovation-enhancement-functionality-report`
 > **Target Audience:** Modern Developers, Vibecoders, Autonomous AI Coding Agents & Platform Architects
 > **Core Focus:** Complete Integration of all 28 Innovation Features, Dual-Layer Memory System (Traditional + Cognitive), 4-Pillar Pre-Flight Cockpit (`rush ship`), 6 End-to-End Workflows, Complete Command Catalog, and 6-Phase Engineering Roadmap (Phases 41–46).

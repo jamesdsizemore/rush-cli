@@ -8,7 +8,7 @@ Supported continuation CLIs use typed argv, a timeout, and discarded stdout/stde
 
 Rush protects source files, Git history, credentials, MCP protocol integrity, local machine resources, network targets, release artifacts, and report paths.
 
-The continuity trust boundary accepts explicit CLI/MCP handoff fields only at `SessionContinuityTool`; save needs cache-write permission. Historic instructions are reduced to quarantined evidence, and failed attempts are surfaced only as redacted receipts/tombstones so a resumed agent cannot treat retained text as authority.
+The continuity trust boundary accepts explicit CLI/MCP handoff fields only at `SessionContinuityTool`; save needs cache-write permission. Historic instructions carry a `trust_tier` (`EXTERNAL_WRITE`/`DERIVED`/`IMPORTED` — never `STATED` on entry, Phase 61's unified typed-artifact schema, replacing the earlier binary quarantine flag), and failed attempts are surfaced only as redacted receipts/tombstones so a resumed agent cannot treat retained text as authority. Promoted (`STATED`) records additionally carry a SHA-256 integrity checksum re-verified on every recall — a corruption-detection checksum, not tamper evidence against a database-level attacker (the signature lives in the same row as the content it hashes).
 
 Coordination inputs are bounded to repository-local targets and single session identifiers. Lock/replay inspection is read-only; stale ownership, merge conflicts, and malformed evidence resolve to structured non-authoritative states rather than a mutation or retry.
 
@@ -83,9 +83,10 @@ Rush implements closed-loop resilience, fail-closed security, and physical conta
    - Store states are truthfully separated into distinct typed exceptions: `StoreNotFoundError`, `StoreCorruptionError` (retaining raw bytes and SHA-256 digest), `StoreValidationError`, `StoreIOError`, and `CASConflictError` (exhausted retries fail closed).
    - `PreferenceStore`, `InvariantGraph`, and `MerkleInvalidator` eliminate silent empty dict fallbacks.
 
-3. **Atomic Checkpoint Journals & Corrupt Evidence (`rush.memory.checkpoint_journal`)**:
-   - Session checkpoints are written via `rush.io.AtomicFile` using explicit schema version `1.0.0`.
-   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt`.
+3. **Atomic Checkpoint Journals & Unified Store Persistence (`rush.memory.checkpoint_journal`)**:
+   - `checkpoint_journal.py` is a thin compatibility view over `TypedArtifactStore` (`rush.memory.store`, Phase 61): `save_checkpoint()`/`restore_checkpoint()` write/read each checkpoint as one `MemoryArtifact` row (`family="handoff"`, `subject="active_context"`); canonical data lives in `.rush/memory.db`, not a per-checkpoint JSON file.
+   - `save_checkpoint()` still writes a physical `.json` artifact via `rush.io.AtomicFile` and returns its `Path` (`dest.exists()` holds), preserving the pre-Phase-61 contract for existing callers; explicit schema version `1.0.0` is unchanged.
+   - Corrupted or unparseable checkpoint files are preserved on disk, cryptographically digested with SHA-256, and surfaced in `list_checkpoints()` with status `corrupt` — unchanged by the Phase 61 migration.
 
 4. **Contained Patch Verification & Atomic Rollback (`rush.patch`)**:
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).

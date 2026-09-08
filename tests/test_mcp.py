@@ -23,6 +23,11 @@ from rush.permissions import ExecutionPermissions
 from rush.tools import ALL_TOOLS
 from rush.tools.continuity import SessionContinuityTool
 
+# Imported after rush.tools to avoid a circular import (rush.memory.trust ->
+# rush.hook -> rush.tools -> ... -> rush.continuity.providers -> rush.memory.checkpoint_journal
+# -> ... -> rush.memory.trust) that only manifests when rush.memory.trust loads first.
+from rush.memory.trust import default_entry_tier
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {f"rush_{tool.name.replace('-', '_')}" for tool in ALL_TOOLS} | {
     "rush_ship_clean",
@@ -288,8 +293,7 @@ def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
         "Finish the redacted handoff"
     )
     assert continuity_payloads[3]["metadata"]["handoff"]["historic_instruction"] == {
-        "authority": "historical_evidence",
-        "state": "quarantined",
+        "trust_tier": default_entry_tier("local_tool"),
         "present": True,
     }
     assert (

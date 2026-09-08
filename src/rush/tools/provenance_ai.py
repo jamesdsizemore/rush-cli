@@ -81,6 +81,24 @@ class GitTrailerParser:
             )
         return commits
 
+    @staticmethod
+    def link_fix_commits_to_failure(
+        commits: list[dict[str, Any]], failure_id: str, project_root: Path
+    ) -> list[str]:
+        """Links every `is_fix=True` commit's SHA to the failure record it fixed.
+
+        Stores only the commit SHA (Phase 62 §6.5 Invariant 4) — never the commit body/diff.
+        Returns the SHAs of the commits linked.
+        """
+        from ..session_memory import record_fix_attribution
+
+        linked = []
+        for commit in commits:
+            if commit["is_fix"]:
+                record_fix_attribution(project_root, commit, failure_id)
+                linked.append(commit["hash"])
+        return linked
+
 
 class LineSurvivalEngine:
     """Computes empirical line survival rates and defect correlation using git blame."""

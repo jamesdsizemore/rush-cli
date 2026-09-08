@@ -1,5 +1,7 @@
 # Phase 53 implementation plan — complete sanitization and failure diagnostics
 
+> **Phase 61 note:** the memory files this plan enumerates (`checkpoint_journal.py`/`failure_ledger.py`/`invariant_graph.py`/`merkle_invalidator.py`/`preference_store.py`) are now thin compatibility views over Phase 61's unified `TypedArtifactStore` (`.rush/memory.db`); this is a historical build-plan record — content otherwise unchanged.
+
 ## 1. Purpose and status
 
 - **Operation:** Create the implementation plan for remediation Phase 2.
