@@ -516,11 +516,15 @@ def _check_contracts(actual: dict[str, Any], recorded: Any) -> list[str]:
                 item["name"]: item
                 for item in expected_commands[command].get("parameters", [])
             }
-            saved_params = {
-                item.get("name"): item
-                for item in saved_parameters
-                if isinstance(item, dict) and item.get("name")
-            }
+            saved_params: dict[str, dict[str, Any]] = {}
+            for position, item in enumerate(saved_parameters):
+                if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                    errors.append(
+                        f"contracts.{surface}.{command}.parameters[{position}]: "
+                        "parameter must be an object with string name"
+                    )
+                    continue
+                saved_params[item["name"]] = item
             for name in sorted(set(expected_params) - set(saved_params)):
                 errors.append(
                     f"contracts.{surface}.{command}: missing parameter {name}"

@@ -450,6 +450,30 @@ def test_malformed_contract_receipt_fails_closed(tmp_path: Path) -> None:
     assert main(["--check"], repo_root=root, contracts=CONTRACTS) == 1
 
 
+def test_malformed_contract_parameter_list_fails_closed(tmp_path: Path) -> None:
+    root = _fixture(tmp_path)
+    no_parameter_contracts = json.loads(json.dumps(CONTRACTS))
+    no_parameter_contracts["cli"] = {"rush status": {"parameters": []}}
+    malformed = json.loads(json.dumps(no_parameter_contracts))
+    malformed["cli"]["rush status"]["parameters"] = ["bad", {"name": []}]
+    _write_report(
+        root,
+        [_entry(root, "docs/index.md"), _entry(root, "docs/nested/guide.md")],
+        malformed,
+    )
+
+    errors = check_docs(root, contracts=no_parameter_contracts)
+
+    assert (
+        "contracts.cli.rush status.parameters[0]: parameter must be an object with string name"
+        in errors
+    )
+    assert (
+        "contracts.cli.rush status.parameters[1]: parameter must be an object with string name"
+        in errors
+    )
+
+
 def test_ignored_document_file_is_retained_without_referrer(tmp_path: Path) -> None:
     root = _fixture(tmp_path)
     ignored = root / "docs/.DS_Store"
