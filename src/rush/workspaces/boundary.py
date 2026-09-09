@@ -45,7 +45,7 @@ class WorkspaceBoundaryGuard:
                                     "line": line_idx,
                                     "column": 1,
                                     "rule": "workspace-boundary-violation",
-                                    "severity": "fail",
+                                    "severity": "error",
                                     "message": f"Illegal cross-workspace relative import in '{src_file.name}' violates modular encapsulation.",
                                 }
                             )

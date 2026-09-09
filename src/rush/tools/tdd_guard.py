@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms
 
 
@@ -81,13 +81,13 @@ class TddGuardTool(ToolFn):
                     path=str(path),
                     line=1,
                     rule="tdd/missing-tests",
-                    severity="fail",
+                    severity="error",
                     message="No corresponding automated test suite discovered for target path.",
                     remediation="Author test cases in tests/ defining expected behavior before modifying implementation.",
                 )
             )
 
-        status = "fail" if findings else "ok"
+        status: ToolStatus = "fail" if findings else "ok"
         summary = (
             f"tdd: {len(findings)} TDD compliance finding(s)"
             if findings

@@ -96,6 +96,7 @@ def test_boundary_guard_illegal_relative_import(tmp_path: Path) -> None:
     assert res["status"] == "fail"
     assert len(res["findings"]) == 1
     assert res["findings"][0]["rule"] == "workspace-boundary-violation"
+    assert res["findings"][0]["severity"] == "error"
 
 
 def test_workspace_matrix_generator() -> None:

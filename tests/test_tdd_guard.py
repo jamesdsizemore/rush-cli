@@ -30,3 +30,4 @@ def test_tdd_guard_missing_tests(tmp_path: Path) -> None:
     assert res["status"] == "fail"
     assert len(res["findings"]) == 1
     assert res["findings"][0]["rule"] == "tdd/missing-tests"
+    assert res["findings"][0]["severity"] == "error"
