@@ -2632,16 +2632,64 @@ def arch_guard_cmd() -> None:
 
 @cli.command(name="test-heal")
 @click.option("--target", "-t", required=True, help="Target test path to diagnose.")
-@click.option("--runs", "-r", default=5, type=int, help="Number of perturbation runs.")
-def test_heal_cmd(target: str, runs: int) -> None:
+@click.option(
+    "--runs",
+    "-r",
+    default=20,
+    type=click.IntRange(1, 1000),
+    show_default=True,
+    help="Number of perturbation runs.",
+)
+@click.option("--seed", default=0, type=int, show_default=True)
+@click.option(
+    "--dry-run/--apply",
+    default=True,
+    help="Propose a verified repair or explicitly apply it.",
+)
+@click.option(
+    "--allow-slow", is_flag=True, help="Allow perturbation and verification runs."
+)
+@click.option(
+    "--allow-artifact-write",
+    is_flag=True,
+    help="Allow isolated verification artifacts.",
+)
+@click.option(
+    "--allow-build",
+    is_flag=True,
+    help="Allow builds only when target verification requires them.",
+)
+def test_heal_cmd(
+    target: str,
+    runs: int,
+    seed: int,
+    dry_run: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_build: bool,
+) -> None:
     """Diagnose flaky test race conditions and suggest stabilization fixes."""
     from rush.tools.test_heal import TestHealer
 
     healer = TestHealer()
-    res = healer.diagnose_and_heal(target, runs=runs)
-    if "error" in res:
-        click.echo(f"Error: {res['error']}", err=True)
+    res = healer(
+        target,
+        runs=runs,
+        seed=seed,
+        dry_run=dry_run,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_build=allow_build,
+    )
+    if "error" in res or res.get("status") == "error":
+        click.echo(
+            f"Error: {res.get('error', res.get('summary', 'test healing failed'))}",
+            err=True,
+        )
         sys.exit(1)
+    if res.get("status") == "skipped":
+        click.echo(res.get("summary", res.get("diagnosis", "Test healing skipped")))
+        return
     click.echo(f"Test Heal Diagnostic: {res['test_path']}")
     click.echo(
         f"  Runs: {res['runs']} (Passes: {res['passes']}, Failures: {res['failures']})"

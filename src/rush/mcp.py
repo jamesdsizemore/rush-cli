@@ -180,13 +180,29 @@ def rush_arch_guard() -> str:
 
 
 # Phase 47 Tools
-def rush_test_heal(target: str, runs: int = 5) -> str:
+def rush_test_heal(
+    target: str,
+    runs: int = 20,
+    seed: int = 0,
+    dry_run: bool = True,
+    allow_slow: bool = False,
+    allow_artifact_write: bool = False,
+    allow_build: bool = False,
+) -> str:
     import json
 
     from rush.tools.test_heal import TestHealer
 
     healer = TestHealer()
-    res = healer.diagnose_and_heal(target, runs=runs)
+    res = healer(
+        target,
+        runs=runs,
+        seed=seed,
+        dry_run=dry_run,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_build=allow_build,
+    )
     return json.dumps(res, indent=2)
 
 
