@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -13,11 +14,44 @@ from tests.fixtures.live_polyglot_generator import create_polyglot_test_repo
 
 def test_all_tools_execute_live_on_polyglot_repo(tmp_path: Path) -> None:
     repo_dir = create_polyglot_test_repo(tmp_path)
+    (repo_dir / "test_app.py").write_text(
+        "from src.app import calculate_total\n"
+        "def test_total():\n    assert calculate_total(10, 0.1) == 11\n",
+        encoding="utf-8",
+    )
+    patch_file = repo_dir / "fix.diff"
+    patch_file.write_text(
+        "--- a/src/app.py\n+++ b/src/app.py\n@@ -1,3 +1,2 @@\n"
+        " def calculate_total(price: float, tax: float) -> float:\n"
+        "-    # Deliberate slop comment: In this function we meticulously calculate the total price\n"
+        "     return price + (price * tax)\n",
+        encoding="utf-8",
+    )
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    ):
+        subprocess.run(["git", *args], cwd=repo_dir, check=True, capture_output=True)
 
     results = {}
-    for tool in ALL_TOOLS:
+    # Patch verification requires the committed fixture before other tools write.
+    for tool in sorted(
+        ALL_TOOLS, key=lambda candidate: candidate.name != "patch-apply"
+    ):
         try:
-            res = tool.run(repo_dir)
+            if tool.name == "patch-apply":
+                res = tool.run(repo_dir, patch_file=patch_file)
+            else:
+                res = tool.run(repo_dir)
             results[tool.name] = res
             assert "tool" in res
             assert "status" in res
@@ -37,6 +71,10 @@ def test_all_tools_execute_live_on_polyglot_repo(tmp_path: Path) -> None:
     assert results["templates"]["status"] in ("ok", "warn", "skipped")
     assert results["markdown"]["status"] in ("ok", "warn", "skipped")
     assert results["doctor"]["status"] in ("ok", "warn")
+    assert results["patch-apply"]["status"] == "ok", results["patch-apply"]["summary"]
+    assert results["patch-apply"]["metadata"]["verified"] is True
+    assert results["patch-apply"]["metadata"]["promoted"] is False
+    assert results["patch-apply"]["metadata"]["executed_commands"] == 1
 
 
 def test_cli_live_scans_on_polyglot_repo(tmp_path: Path) -> None:
