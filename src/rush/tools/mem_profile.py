@@ -168,6 +168,22 @@ class MemProfileTool(ToolFn):
         start = now_ms()
         p = Path(path)
         granted_perms = permissions or ExecutionPermissions()
+        if dynamic is None and config is None:
+            from ..config import RushConfigError, load_config
+
+            try:
+                config = load_config(start=p)
+            except RushConfigError:
+                return ToolResult(
+                    tool=self.name,
+                    engine="mem-profile",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="mem-profile: Invalid Rush configuration.",
+                    findings=[],
+                    raw=None,
+                )
         if dynamic is None:
             tool_config = getattr(config, "tools", {}).get(self.name)
             dynamic = getattr(tool_config, "options", {}).get("dynamic", False)
