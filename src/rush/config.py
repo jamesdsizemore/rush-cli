@@ -47,7 +47,7 @@ class ProjectConfig:
 class ToolConfig:
     engine_args: list[str] = field(default_factory=list)
     check: bool = False
-    options: dict[str, ToolOptionValue] = field(default_factory=dict)
+    options: Mapping[str, ToolOptionValue] = field(default_factory=dict)
 
 
 @dataclass

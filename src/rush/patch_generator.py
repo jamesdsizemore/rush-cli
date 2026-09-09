@@ -57,7 +57,7 @@ def _is_file_header(lines: list[str], position: int) -> bool:
 
 def _parse_patch(
     patch_str: str,
-) -> list[tuple[str, list[tuple[int, int, list[str]]]]] | None:
+) -> list[tuple[str, list[tuple[int, int, int, int, list[str]]]]] | None:
     if not patch_str or "GIT binary patch" in patch_str or "Binary files " in patch_str:
         return None
     lines = patch_str.splitlines(keepends=True)

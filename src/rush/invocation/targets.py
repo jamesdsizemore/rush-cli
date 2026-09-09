@@ -41,7 +41,7 @@ def resolve_target(
 
     # Extract target metadata if already a PhysicalTarget
     if isinstance(target_path, PhysicalTarget):
-        raw_path = target_path.relative_path
+        raw_path: Path | str = target_path.relative_path
         prov = (
             target_path.provenance
             if provenance == "explicit" and target_path.provenance != "explicit"

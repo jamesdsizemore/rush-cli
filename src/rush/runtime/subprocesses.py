@@ -43,7 +43,7 @@ def run_subprocess(
     argv: list[str],
     *,
     cwd: Path | None = None,
-    timeout: int = 120,
+    timeout: float = 120,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a list-only local child process without inheriting stdin.
