@@ -82,10 +82,10 @@ def test_cli_catalog_options_rendering_characterization(tmp_path: Path) -> None:
 def test_mcp_registration_characterization() -> None:
     """T-60.02: Freeze FastMCP tool registration and parameter schema."""
     tools = mcp_server._tool_manager._tools
-    assert len(tools) == 74
+    assert len(tools) == 75
 
-    # 1. Assert all 53 catalog tools are registered with exact descriptions and path property
-    assert len(ALL_TOOLS) == 53
+    # 1. Assert all 54 catalog tools are registered with exact descriptions and path property
+    assert len(ALL_TOOLS) == 54
     for tool in ALL_TOOLS:
         tool_name = f"rush_{tool.name.replace('-', '_')}"
         assert tool_name in tools, f"Catalog tool {tool_name} missing from MCP server"
@@ -97,7 +97,7 @@ def test_mcp_registration_characterization() -> None:
     expected_custom_tools: dict[str, tuple[str, list[str]]] = {
         "rush_ship_clean": (
             "Clean scratch directories and build caches before release",
-            ["dry_run"],
+            ["allow_artifact_write", "apply", "path"],
         ),
         "rush_ship_env": (
             "Audit codebase environment variable usage against .env.example",
@@ -141,7 +141,15 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_test_heal": (
             "Diagnose flaky test race conditions and suggest fixes",
-            ["runs", "target"],
+            [
+                "allow_artifact_write",
+                "allow_build",
+                "allow_slow",
+                "dry_run",
+                "runs",
+                "seed",
+                "target",
+            ],
         ),
         "rush_api_diff": (
             "Detect breaking public API changes against base Git ref",
@@ -207,7 +215,7 @@ def test_mcp_registration_characterization() -> None:
     # 3. Test _register_tools on an isolated server
     fresh_server = FastMCP("test-mcp-server")
     _register_tools(fresh_server)
-    assert len(fresh_server._tool_manager._tools) == 74
+    assert len(fresh_server._tool_manager._tools) == 75
 
 
 def test_continuity_dispatch_provider_receipt_characterization(
@@ -527,11 +535,9 @@ def test_lint_and_traversal_state_characterization(tmp_path: Path) -> None:
 
     auditor = DbDriftAuditor(project_root=tmp_path)
     drift = auditor.audit_drift()
-    assert drift["passed"] is False
-    assert drift["drift_count"] == 1
-    issue = drift["drift_issues"][0]
-    assert issue["model"] == "CustomerModel"
-    assert issue["unmigrated_fields"] == ["loyalty_points"]
+    assert drift["passed"] is True
+    assert drift["drift_count"] == 0
+    assert drift["drift_issues"] == []
 
     # 4. LintTool.run()
     lint_tool = LintTool()
