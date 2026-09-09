@@ -33,12 +33,18 @@ class ShipCockpit:
 
     def run_clean_vector(self) -> VectorVerdict:
         cleaner = ScratchCleaner(self.project_root)
-        res = cleaner.clean(dry_run=True)
+        res = cleaner.clean()
+        details = (
+            f"Clean check: {res['preview_count']} registered artifacts pending."
+            if res["status"] == "preview"
+            else f"Clean check {res['status']}: "
+            + (res.get("error") or f"{res['refused_count']} refused artifacts.")
+        )
         return VectorVerdict(
             name="clean",
-            passed=res["removed_count"] == 0,
+            passed=res["status"] == "preview" and res["preview_count"] == 0,
             duration_ms=5.0,
-            details=f"Clean check: {res['removed_count']} uncommitted scratch files.",
+            details=details,
         )
 
     def run_env_vector(self) -> VectorVerdict:

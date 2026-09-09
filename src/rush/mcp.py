@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .catalog import TOOL_SPECS
 from .logging import get_logger
+from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
 
 SERVER_NAME = "rush"
@@ -49,12 +50,17 @@ def build_server():
 
 
 # Phase 41 Tools
-def rush_ship_clean(dry_run: bool = False) -> str:
+def rush_ship_clean(
+    path: Path = Path("."),
+    apply: bool = False,
+    allow_artifact_write: bool = False,
+) -> dict[str, object]:
     from rush.tools.ship.cleaner import ScratchCleaner
 
-    cleaner = ScratchCleaner()
-    res = cleaner.clean(dry_run=dry_run)
-    return f"Cleaned {res['removed_count']} items ({res['bytes_freed']} bytes freed)."
+    return ScratchCleaner(path).clean(
+        apply=apply,
+        permissions=ExecutionPermissions(artifact_write=allow_artifact_write),
+    )
 
 
 def rush_ship_env() -> str:

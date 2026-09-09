@@ -9,6 +9,7 @@ remain clean on stdout; any human/log output there would corrupt the transport.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -19,9 +20,11 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+# isort: off
 from rush.permissions import ExecutionPermissions
 from rush.tools import ALL_TOOLS
 from rush.tools.continuity import SessionContinuityTool
+# isort: on
 
 # Imported after rush.tools to avoid a circular import (rush.memory.trust ->
 # rush.hook -> rush.tools -> ... -> rush.continuity.providers -> rush.memory.checkpoint_journal
@@ -350,6 +353,98 @@ def test_mcp_catalog_names_normalize_toolfn_hyphens_to_underscores() -> None:
         assert "-" not in name, (
             f"MCP tool name {name!r} contains hyphens; must use underscores"
         )
+
+
+def test_registered_mcp_ship_clean_preview_and_authorized_apply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush import mcp
+
+    owned = tmp_path / ".rush" / "runs" / "report.pyc"
+    owned.parent.mkdir(parents=True)
+    owned.write_bytes(b"owned")
+    stat_result = os.lstat(owned)
+    receipt = tmp_path / ".rush" / "cleanup.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "artifacts": [
+                    {
+                        "path": ".rush/runs/report.pyc",
+                        "sha256": hashlib.sha256(b"owned").hexdigest(),
+                        "length": 5,
+                        "producer": "mcp-test",
+                        "device": stat_result.st_dev,
+                        "inode": stat_result.st_ino,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, str, str]] = []
+
+        def add_tool(self, *, fn, name: str, description: str) -> None:
+            self.calls.append((fn, name, description))
+
+    server = FakeServer()
+    mcp._register_tools(server)
+    registered = {name: fn for fn, name, _description in server.calls}
+    wrapper = registered["rush_ship_clean"]
+    monkeypatch.chdir(tmp_path)
+
+    preview = wrapper()
+
+    assert owned.read_bytes() == b"owned"
+    assert preview["status"] == "preview"
+    assert preview["preview_items"] == [".rush/runs/report.pyc"]
+    signature = inspect.signature(wrapper)
+    assert signature.parameters["apply"].default is False
+    assert signature.parameters["allow_artifact_write"].default is False
+
+    denied = wrapper(path=tmp_path, apply=True)
+    assert denied["status"] == "skipped"
+    assert "--allow-artifact-write" in denied["error"]
+    assert owned.read_bytes() == b"owned"
+
+    granted = wrapper(path=tmp_path, apply=True, allow_artifact_write=True)
+    assert granted["status"] == "ok"
+    assert granted["removed_items"] == [".rush/runs/report.pyc"]
+    assert not owned.exists()
+
+
+def test_registered_mcp_ship_clean_propagates_registry_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush import mcp
+
+    receipt = tmp_path / ".rush" / "cleanup.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{malformed", encoding="utf-8")
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, str, str]] = []
+
+        def add_tool(self, *, fn, name: str, description: str) -> None:
+            self.calls.append((fn, name, description))
+
+    server = FakeServer()
+    mcp._register_tools(server)
+    registered = {name: fn for fn, name, _description in server.calls}
+    monkeypatch.chdir(tmp_path)
+
+    result = registered["rush_ship_clean"](
+        path=tmp_path, apply=True, allow_artifact_write=True
+    )
+
+    assert result["status"] == "error"
+    assert "malformed" in result["error"]
+    assert result["removed_count"] == 0
 
 
 def test_phase50_mcp_registration_has_one_object_per_tool_and_only_attest_alias() -> (

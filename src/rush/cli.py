@@ -2292,17 +2292,31 @@ def ship_group() -> None:
 
 @ship_group.command(name="clean")
 @click.option(
-    "--dry-run", is_flag=True, help="Preview files to be removed without deleting."
+    "--apply", is_flag=True, help="Delete unchanged registered Rush-owned artifacts."
 )
-def ship_clean_cmd(dry_run: bool) -> None:
-    """Purge temporary scratch, tmp, and cache directories."""
+@click.option(
+    "--allow-artifact-write",
+    is_flag=True,
+    help="Grant permission to delete registered Rush-owned artifacts.",
+)
+def ship_clean_cmd(apply: bool, allow_artifact_write: bool) -> None:
+    """Preview registered Rush-owned artifacts, or explicitly delete them."""
     from rush.tools.ship.cleaner import ScratchCleaner
 
     cleaner = ScratchCleaner()
-    res = cleaner.clean(dry_run=dry_run)
-    mode = "DRY RUN: Would remove" if dry_run else "Removed"
+    res = cleaner.clean(
+        apply=apply,
+        permissions=ExecutionPermissions(artifact_write=allow_artifact_write),
+    )
+    if res["status"] in {"error", "skipped", "warn"}:
+        detail = res.get("error") or f"refused {res['refused_count']} artifacts"
+        click.echo(f"Ship Clean: {res['status']}: {detail}", err=True)
+        raise click.exceptions.Exit(1)
+    mode = "Removed" if apply else "Would remove"
     click.echo(
-        f"Ship Clean: {mode} {res['removed_count']} items ({res['bytes_freed']} bytes freed)."
+        f"Ship Clean: {mode} "
+        f"{res['removed_count'] if apply else res['preview_count']} items "
+        f"({res['bytes_freed'] if apply else res['preview_bytes']} bytes)."
     )
 
 
