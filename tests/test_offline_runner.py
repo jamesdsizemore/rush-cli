@@ -46,6 +46,69 @@ def test_missing_runner_returns_structured_skipped(tmp_path: Path) -> None:
     assert res["findings"] == []
 
 
+def test_offline_discovery_is_project_relative(tmp_path: Path) -> None:
+    prompts = []
+    results = []
+    for parent in ("ordinary", ".hidden"):
+        project = tmp_path / parent / "project"
+        project.mkdir(parents=True)
+        (project / "app.py").write_text("x = 1\n")
+        for child in (".hidden", "venv", "node_modules"):
+            excluded = project / child
+            excluded.mkdir()
+            (excluded / "ignored.py").write_text("excluded_marker\n")
+        with (
+            patch(
+                "rush.tools.offline_runner.discover_local_runner",
+                return_value={"type": "ollama", "path": "/usr/bin/ollama"},
+            ),
+            patch(
+                "rush.tools.offline_runner.run_subprocess",
+                return_value=MagicMock(returncode=0, stdout="", stderr=""),
+            ) as runner,
+        ):
+            results.append(OfflineReviewTool().run(project))
+            assert runner.call_count == 1
+            prompts.append(runner.call_args.args[0][-1])
+    assert prompts[0] == prompts[1]
+    assert "--- File: app.py ---" in prompts[0]
+    assert "excluded_marker" not in prompts[0]
+    for result in results:
+        assert result["status"] == "ok"
+        assert result["metrics"]["files_evaluated"] == 1
+
+
+def test_offline_read_denial_does_not_invoke_runner(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("x = 1\n")
+    with (
+        patch(
+            "rush.tools.offline_runner.discover_local_runner",
+            return_value={"type": "ollama", "path": "/usr/bin/ollama"},
+        ),
+        patch.object(Path, "read_text", side_effect=PermissionError),
+        patch("rush.tools.offline_runner.run_subprocess") as runner,
+    ):
+        result = OfflineReviewTool().run(tmp_path)
+    assert result["status"] == "error"
+    assert "read" in result["summary"].lower()
+    runner.assert_not_called()
+
+
+def test_offline_discovery_denial_is_error(tmp_path: Path) -> None:
+    with (
+        patch(
+            "rush.tools.offline_runner.discover_local_runner",
+            return_value={"type": "ollama", "path": "/usr/bin/ollama"},
+        ),
+        patch("os.scandir", side_effect=PermissionError),
+        patch("rush.tools.offline_runner.run_subprocess") as runner,
+    ):
+        result = OfflineReviewTool().run(tmp_path)
+    assert result["status"] == "error"
+    assert "read" in result["summary"].lower()
+    runner.assert_not_called()
+
+
 def test_query_local_runner_and_parse_findings(tmp_path: Path) -> None:
     code_file = tmp_path / "vulnerable.py"
     code_file.write_text("eval(user_input)\n", encoding="utf-8")

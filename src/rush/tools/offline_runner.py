@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from .base import Finding, ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, now_ms, run_subprocess
+from .common import elapsed_ms, error_result, now_ms, run_subprocess
+from .routing import collect_files
 
 
 def _is_ollama_ready() -> bool:
@@ -201,19 +202,23 @@ class OfflineReviewTool(ToolFn):
             )
 
         # Collect code files for review
-        code_files: list[Path] = []
-        if p.is_file():
-            code_files.append(p)
-        elif p.is_dir():
-            for ext in ("*.py", "*.ts", "*.js", "*.go", "*.rs"):
-                for cf in sorted(p.rglob(ext)):
-                    # Avoid hidden and vendor dirs
-                    if not any(part.startswith(".") for part in cf.parts):
-                        code_files.append(cf)
-                        if len(code_files) >= 20:
-                            break
-                if len(code_files) >= 20:
-                    break
+        try:
+            code_files = [
+                file
+                for file in collect_files(
+                    p, {"py", "ts", "js", "go", "rs"}, strict=True
+                )
+                if not any(
+                    part.startswith(".") for part in file.relative_to(target_dir).parts
+                )
+            ][:20]
+        except OSError:
+            return error_result(
+                self.name,
+                None,
+                "Cannot read project files",
+                duration_ms=elapsed_ms(start),
+            )
 
         if not code_files:
             return ToolResult(
@@ -242,8 +247,13 @@ class OfflineReviewTool(ToolFn):
             try:
                 snippet = cf.read_text(encoding="utf-8", errors="replace")[:1000]
                 code_snippets.append(f"--- File: {rel} ---\n{snippet}")
-            except Exception:  # noqa: BLE001, S112
-                continue
+            except OSError:
+                return error_result(
+                    self.name,
+                    None,
+                    "Cannot read source for offline review",
+                    duration_ms=elapsed_ms(start),
+                )
 
         prompt = (
             "Review the following code for potential security bugs or syntax errors. "

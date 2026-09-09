@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from rush.permissions import ExecutionPermissions
 from rush.tools.iam_audit import IamAuditTool, IamPolicySynthesizer
@@ -14,6 +15,46 @@ def test_iam_audit_metadata() -> None:
     assert tool.name == "iam-audit"
     assert "iam" in tool.mcp_description.lower()
     assert len(tool.mcp_description) < 200
+
+
+def test_iam_discovery_is_project_relative(tmp_path: Path) -> None:
+    results = []
+    for parent in ("ordinary", ".hidden"):
+        project = tmp_path / parent / "project"
+        project.mkdir(parents=True)
+        (project / "app.py").write_text(
+            'import boto3\ns3 = boto3.client("s3")\ns3.get_object()\n'
+        )
+        for child in (".hidden", "venv", "node_modules"):
+            excluded = project / child
+            excluded.mkdir()
+            (excluded / "ignored.py").write_text("s3.delete_object()\n")
+            (excluded / "ignored.tf").write_text('resource "aws_iam_policy" "bad" {}')
+        results.append(IamAuditTool().run(project))
+    for result in results:
+        assert result["status"] == "ok"
+        assert result["metrics"]["files_scanned"] == 1
+        assert result["raw"]["actions"] == ["s3:GetObject"]
+    assert results[0]["metrics"] == results[1]["metrics"]
+    assert results[0]["findings"] == results[1]["findings"]
+
+
+def test_iam_read_denial_is_error(tmp_path: Path) -> None:
+    for suffix in ("py", "tf"):
+        project = tmp_path / suffix
+        project.mkdir()
+        (project / f"app.{suffix}").write_text("x = 1\n")
+        with patch.object(Path, "read_text", side_effect=PermissionError):
+            result = IamAuditTool().run(project)
+        assert result["status"] == "error"
+        assert "read" in result["summary"].lower()
+
+
+def test_iam_discovery_denial_is_error(tmp_path: Path) -> None:
+    with patch("os.scandir", side_effect=PermissionError):
+        result = IamAuditTool().run(tmp_path)
+    assert result["status"] == "error"
+    assert "read" in result["summary"].lower()
 
 
 def test_iam_audit_parses_boto3_s3_and_dynamodb_calls(tmp_path: Path) -> None:

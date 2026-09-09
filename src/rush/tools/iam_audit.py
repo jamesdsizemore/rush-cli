@@ -14,10 +14,12 @@ from .base import Finding, ToolFn, ToolResult
 from .common import (
     atomic_write_bytes,
     elapsed_ms,
+    error_result,
     finding_fingerprint,
     now_ms,
     skipped_result,
 )
+from .routing import collect_files
 from .schemas import IamAuditMetrics
 
 _RESOURCES_DIR = Path(__file__).resolve().parent.parent / "resources" / "iam"
@@ -172,6 +174,8 @@ def _scan_terraform_ast(
     try:
         content = tf_file.read_text(encoding="utf-8", errors="ignore")
         parsed = hcl2.loads(content)
+    except OSError:
+        raise
     except Exception:  # noqa: BLE001
         return 0, 0, 0
 
@@ -313,14 +317,20 @@ class IamAuditTool(ToolFn):
         findings: list[Finding] = []
         files_scanned = 0
 
-        # Scan python files
-        py_files = (
-            list(target_dir.glob("**/*.py")) if target_dir.is_dir() else [target_dir]
-        )
+        try:
+            project_files = collect_files(path.resolve(), {"py", "tf"}, strict=True)
+        except OSError:
+            return error_result(
+                self.name,
+                None,
+                "Cannot read project files",
+                duration_ms=elapsed_ms(start),
+            )
+        py_files = [file for file in project_files if file.suffix.lower() == ".py"]
         for py_file in py_files:
             if any(
                 part.startswith(".") or part in ("venv", "node_modules")
-                for part in py_file.parts
+                for part in py_file.relative_to(target_dir).parts
             ):
                 continue
             try:
@@ -352,6 +362,13 @@ class IamAuditTool(ToolFn):
                         )
                     )
                 files_scanned += 1
+            except OSError:
+                return error_result(
+                    self.name,
+                    None,
+                    "Cannot read Python source",
+                    duration_ms=elapsed_ms(start),
+                )
             except Exception:  # noqa: BLE001, S110
                 pass
 
@@ -360,20 +377,23 @@ class IamAuditTool(ToolFn):
         wildcard_count = 0
         escalation_count = 0
 
-        if path.is_file() and path.suffix == ".tf":
-            tf_files = [path]
-        elif target_dir.is_dir():
-            tf_files = list(target_dir.glob("**/*.tf"))
-        else:
-            tf_files = []
+        tf_files = [file for file in project_files if file.suffix.lower() == ".tf"]
         for tf_file in tf_files:
             if any(
                 part.startswith(".") or part in ("venv", "node_modules", ".terraform")
-                for part in tf_file.parts
+                for part in tf_file.relative_to(target_dir).parts
             ):
                 continue
             rel_tf = str(tf_file.relative_to(target_dir))
-            stmts, wild, esc = _scan_terraform_ast(tf_file, rel_tf, findings)
+            try:
+                stmts, wild, esc = _scan_terraform_ast(tf_file, rel_tf, findings)
+            except OSError:
+                return error_result(
+                    self.name,
+                    None,
+                    "Cannot read Terraform source",
+                    duration_ms=elapsed_ms(start),
+                )
             total_statements += stmts
             wildcard_count += wild
             escalation_count += esc

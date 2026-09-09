@@ -65,7 +65,12 @@ def test_cli_cold_start_json_output(tmp_path: Path) -> None:
     assert isinstance(data["findings"], list)
 
 
-def test_cli_offline_review_json_output(tmp_path: Path) -> None:
+def test_cli_offline_review_json_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "rush.tools.offline_runner.discover_local_runner", lambda *_: None
+    )
     (tmp_path / "code.py").write_text("a = 1", encoding="utf-8")
     runner = CliRunner()
     result = runner.invoke(cli, ["offline-review", str(tmp_path), "--json"])

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from rush.tools.coverage import CoverageTool
 
 
@@ -71,3 +73,51 @@ def test_coverage_rejects_missing_malformed_and_outside_reports(tmp_path: Path) 
         "error",
         "error",
     ]
+
+
+@pytest.mark.parametrize("value", [-1, 101, float("inf"), float("nan")])
+def test_coverage_rejects_nonfinite_or_out_of_range_percentages(
+    tmp_path: Path, value: float
+) -> None:
+    report = tmp_path / "coverage.json"
+    report.write_text(json.dumps({"totals": {"percent_covered": value}}))
+    assert CoverageTool().run(tmp_path, report_path=report)["status"] == "error"
+
+
+@pytest.mark.parametrize("value", [0, 100])
+def test_coverage_accepts_finite_boundary_percentages(
+    tmp_path: Path, value: int
+) -> None:
+    report = tmp_path / "coverage.json"
+    report.write_text(json.dumps({"totals": {"percent_covered": value}}))
+    expected = "ok" if value == 100 else "warn"
+    assert CoverageTool().run(tmp_path, report_path=report)["status"] == expected
+
+
+def test_coverage_rejects_inconsistent_cobertura_counts(tmp_path: Path) -> None:
+    report = tmp_path / "cobertura.xml"
+    report.write_text('<coverage line-rate="0.5" lines-valid="10" lines-covered="4"/>')
+    assert CoverageTool().run(tmp_path, report_path=report)["status"] == "error"
+
+
+def test_coverage_rejects_nonzero_rate_with_zero_cobertura_counts(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "cobertura.xml"
+    report.write_text('<coverage line-rate="0.5" lines-valid="0" lines-covered="0"/>')
+    assert CoverageTool().run(tmp_path, report_path=report)["status"] == "error"
+
+
+def test_coverage_accepts_rounded_cobertura_rate(tmp_path: Path) -> None:
+    report = tmp_path / "cobertura.xml"
+    report.write_text(
+        '<coverage line-rate="0.6667" lines-valid="3" lines-covered="2"/>'
+    )
+    assert CoverageTool().run(tmp_path, report_path=report)["status"] == "warn"
+
+
+@pytest.mark.parametrize("rate", ["-0.1", "1.1", "NaN", "Infinity"])
+def test_coverage_rejects_invalid_cobertura_rate(tmp_path: Path, rate: str) -> None:
+    report = tmp_path / "cobertura.xml"
+    report.write_text(f'<coverage line-rate="{rate}"/>')
+    assert CoverageTool().run(tmp_path, report_path=report)["status"] == "error"

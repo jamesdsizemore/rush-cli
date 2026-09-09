@@ -47,7 +47,9 @@ def combine_status(left: str, right: str) -> str:
     return left if _STATUS_RANK.get(left, -1) >= _STATUS_RANK.get(right, -1) else right
 
 
-def collect_files(path: Path, extensions: set[str]) -> list[Path]:
+def collect_files(
+    path: Path, extensions: set[str], *, strict: bool = False
+) -> list[Path]:
     """Collect supported files in deterministic order without generated trees."""
     normalized_extensions = {extension.lower().lstrip(".") for extension in extensions}
     if path.is_file():
@@ -57,9 +59,24 @@ def collect_files(path: Path, extensions: set[str]) -> list[Path]:
     if not path.is_dir():
         return []
 
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    candidates = path.rglob("*")
+    if strict:
+        strict_candidates = []
+        for directory, subdirs, filenames in path.walk(on_error=raise_walk_error):
+            subdirs[:] = [
+                name
+                for name in subdirs
+                if name not in _SKIP_DIRS and not name.startswith(".")
+            ]
+            strict_candidates.extend(directory / name for name in filenames)
+        candidates = iter(strict_candidates)
+
     files = [
         candidate
-        for candidate in path.rglob("*")
+        for candidate in candidates
         if candidate.is_file()
         and candidate.suffix.lower().lstrip(".") in normalized_extensions
         and not any(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -219,7 +220,25 @@ def _coverage_percent(report: Path, report_text: str) -> tuple[float, str]:
         root = ElementTree.fromstring(report_text)
         if root.tag != "coverage":
             raise ValueError("unsupported XML coverage report")
-        return 100 * float(root.attrib["line-rate"]), "cobertura"
+        rate = float(root.attrib["line-rate"])
+        if not math.isfinite(rate) or not 0 <= rate <= 1:
+            raise ValueError("Cobertura line-rate out of range")
+        valid = root.attrib.get("lines-valid")
+        covered = root.attrib.get("lines-covered")
+        if valid is not None or covered is not None:
+            if valid is None or covered is None:
+                raise ValueError("Cobertura counts incomplete")
+            valid_count, covered_count = int(valid), int(covered)
+            if valid_count < 0 or covered_count < 0 or covered_count > valid_count:
+                raise ValueError("Cobertura counts inconsistent")
+            if valid_count == 0 and rate not in (0.0, 1.0):
+                raise ValueError("Cobertura zero counts inconsistent with line-rate")
+            if valid_count and abs(rate - covered_count / valid_count) > 0.00005:
+                raise ValueError("Cobertura counts inconsistent with line-rate")
+        return 100 * rate, "cobertura"
 
     payload = json.loads(report_text)
-    return float(payload["totals"]["percent_covered"]), "coverage.py-json"
+    percent = float(payload["totals"]["percent_covered"])
+    if not math.isfinite(percent) or not 0 <= percent <= 100:
+        raise ValueError("coverage percentage out of range")
+    return percent, "coverage.py-json"
