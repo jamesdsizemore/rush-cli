@@ -82,6 +82,32 @@ jobs:
         run: uv run pytest tests/test_phase59_engine_conformance.py tests/test_phase59_engines.py -q
 
 
+  engine-contracts:
+    name: Executed workload contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Install test dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Install mutation acceptance engine
+        run: uv pip install mutmut==3.7.0
+
+      - name: Run real workload contracts
+        env:
+          RUSH_REQUIRE_REAL_ENGINES: "1"
+        run: uv run --no-sync pytest tests/test_executed_modes.py -q -k real_workload
+
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

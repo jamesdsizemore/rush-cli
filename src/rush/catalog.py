@@ -308,8 +308,29 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "mutation",
         "quality",
         "Run configured mutation tests.",
-        "Run mutation tests only with --allow-slow.",
+        "Run isolated mutation tests with build, slow and artifact-write permissions.",
         (),
+        option_specs=(
+            ToolOptionSpec(
+                name="source_paths",
+                value_type=tuple,
+                default=(),
+                description="Contained source files or directories to mutate.",
+            ),
+            ToolOptionSpec(
+                name="test_paths",
+                value_type=tuple,
+                default=(),
+                description="Contained pytest files or directories to execute.",
+            ),
+            ToolOptionSpec(
+                name="timeout_seconds",
+                value_type=int,
+                default=300,
+                minimum=1,
+                description="Maximum seconds allowed for each mutation subprocess.",
+            ),
+        ),
     ),
     "e2e": ToolSpec(
         "e2e",

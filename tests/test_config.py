@@ -22,6 +22,35 @@ def test_rejects_unknown_tool_configuration(tmp_path) -> None:
         _parse({"tools": {"typo-tool": {}}}, tmp_path / "rush.toml")
 
 
+def test_mutation_workload_options_preserve_paths_and_deadline(tmp_path) -> None:
+    config = _parse(
+        {
+            "tools": {
+                "mutation": {
+                    "source_paths": ["src/arithmetic.py"],
+                    "test_paths": ["tests/test_arithmetic.py"],
+                    "timeout_seconds": 17,
+                }
+            }
+        },
+        tmp_path / "rush.toml",
+    )
+    assert dict(config.tools["mutation"].options) == {
+        "source_paths": ("src/arithmetic.py",),
+        "test_paths": ("tests/test_arithmetic.py",),
+        "timeout_seconds": 17,
+    }
+
+
+@pytest.mark.parametrize("deadline", [0, -1, True, "slow"])
+def test_mutation_rejects_invalid_deadline(tmp_path, deadline) -> None:
+    with pytest.raises(RushConfigError, match="timeout_seconds"):
+        _parse(
+            {"tools": {"mutation": {"timeout_seconds": deadline}}},
+            tmp_path / "rush.toml",
+        )
+
+
 def test_parses_review_source_policy_markers_and_exclusions(tmp_path) -> None:
     config = _parse(
         {

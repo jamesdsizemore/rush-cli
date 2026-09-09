@@ -16,6 +16,11 @@ source_policy_exclude = ["tests/fixtures/**"]
 [tools.lint]
 engine_args = []
 
+[tools.mutation]
+source_paths = ["src"]
+test_paths = ["tests"]
+timeout_seconds = 300
+
 [tools.attest]
 # Select the actual built artifact through the current CLI:
 # rush attest . --artifact-path dist/RELEASE.whl
