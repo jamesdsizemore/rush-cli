@@ -1796,22 +1796,19 @@ def hook_run_cmd() -> None:
     deleted_count = sum(entry.status == "deleted" for entry in entries)
     ast_errs = FastIncrementalAstLinter.lint_staged_entries(staged)
     if ast_errs:
-        for e in ast_errs:
-            click.echo(f"[AST ERROR] {e}", err=True)
+        click.echo("\n".join(f"[AST ERROR] {e}" for e in ast_errs), err=True)
         sys.exit(1)
 
     for entry in staged:
-        trojans = TrojanSourceDetector.inspect_content(entry.path, entry.content)
-        if trojans:
-            for t in trojans:
-                click.echo(f"[SECURITY ERROR] {t}", err=True)
-            sys.exit(1)
-
-        conflicts = ConflictMarkerGuard.inspect_content(entry.path, entry.content)
-        if conflicts:
-            for c in conflicts:
-                click.echo(f"[CONFLICT ERROR] {c}", err=True)
-            sys.exit(1)
+        assert entry.content is not None, "staged entry has no index blob"
+        for detector, label in (
+            (TrojanSourceDetector, "SECURITY"),
+            (ConflictMarkerGuard, "CONFLICT"),
+        ):
+            errors = detector.inspect_content(entry.path, entry.content)
+            if errors:
+                click.echo("\n".join(f"[{label} ERROR] {e}" for e in errors), err=True)
+                sys.exit(1)
 
     click.echo(
         f"Pre-commit checks passed across {len(staged)} staged files "
