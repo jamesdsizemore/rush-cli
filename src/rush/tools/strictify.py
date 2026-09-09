@@ -127,7 +127,7 @@ class TypeSynthesizer:
         found_sum = False
         asserted_types: set[str] = set()
         arithmetic: set[str] = set()
-        pending = list(function.body)
+        pending: list[ast.AST] = list(function.body)
         while pending:
             child = pending.pop()
             if isinstance(

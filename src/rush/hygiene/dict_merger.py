@@ -10,7 +10,7 @@ class AstDictMerger:
 
     @staticmethod
     def merge_dicts(dict_a: ast.Dict, dict_b: ast.Dict) -> ast.Dict:
-        keys: list[ast.expr] = []
+        keys: list[ast.expr | None] = []
         values: list[ast.expr] = []
 
         seen_keys = set()

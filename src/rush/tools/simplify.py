@@ -56,7 +56,7 @@ class _FunctionComplexityVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.score = 1
 
-    def visit_If(self, node: ast.If) -> None:
+    def visit_If(self, node: ast.AST) -> None:
         self.score += 1
         self.generic_visit(node)
 

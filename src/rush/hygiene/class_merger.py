@@ -22,7 +22,7 @@ class AstClassMerger:
         }
 
         all_method_names = sorted(set(methods_a.keys()) | set(methods_b.keys()))
-        merged_body: list[ast.AST] = []
+        merged_body: list[ast.stmt] = []
 
         docstring = ast.get_docstring(class_a) or ast.get_docstring(class_b)
         if docstring:
@@ -47,5 +47,6 @@ class AstClassMerger:
             keywords=class_a.keywords,
             body=merged_body,
             decorator_list=class_a.decorator_list,
+            type_params=class_a.type_params,
         )
         return new_class

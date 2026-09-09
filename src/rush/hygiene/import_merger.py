@@ -11,7 +11,7 @@ class AstImportMerger:
     @staticmethod
     def merge_import_blocks(base_imports: str, branch_a: str, branch_b: str) -> str:
         def extract_imports(source: str) -> tuple[set[str], dict[str, set[str]]]:
-            direct = set()
+            direct: set[str] = set()
             from_imports: dict[str, set[str]] = {}
             try:
                 tree = ast.parse(source)

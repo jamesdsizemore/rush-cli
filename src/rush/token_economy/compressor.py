@@ -18,7 +18,7 @@ class PythonAstOutlineCompressor:
         class OutlineTransformer(ast.NodeTransformer):
             def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
                 docstring = ast.get_docstring(node)
-                new_body = []
+                new_body: list[ast.stmt] = []
                 if docstring:
                     new_body.append(ast.Expr(value=ast.Constant(value=docstring)))
                 new_body.append(ast.Expr(value=ast.Constant(value=...)))
@@ -27,7 +27,7 @@ class PythonAstOutlineCompressor:
 
             def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
                 docstring = ast.get_docstring(node)
-                new_body = []
+                new_body: list[ast.stmt] = []
                 if docstring:
                     new_body.append(ast.Expr(value=ast.Constant(value=docstring)))
                 new_body.append(ast.Expr(value=ast.Constant(value=...)))
@@ -36,7 +36,7 @@ class PythonAstOutlineCompressor:
 
             def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
                 docstring = ast.get_docstring(node)
-                new_body = []
+                new_body: list[ast.stmt] = []
                 if docstring:
                     new_body.append(ast.Expr(value=ast.Constant(value=docstring)))
                 for item in node.body:

@@ -49,6 +49,21 @@ def test_ast_dict_merger() -> None:
     assert keys == ["a", "b", "c"]
 
 
+def test_ast_class_merger_preserves_generic_parameters() -> None:
+    branch_a = "class Worker[T]:\n    def first(self, value: T) -> T: return value\n"
+    branch_b = "class Worker[T]:\n    def second(self) -> None: pass\n"
+
+    success, merged = ASTConflictMerger.merge_source_files("", branch_a, branch_b)
+
+    assert success is True
+    module = ast.parse(merged)
+    worker = module.body[0]
+    assert isinstance(worker, ast.ClassDef)
+    assert [parameter.name for parameter in worker.type_params] == ["T"]
+    assert [method.name for method in worker.body] == ["first", "second"]
+    compile(module, "<merged>", "exec")
+
+
 def test_ast_list_merger() -> None:
     list_a = ast.parse("['x', 'y']").body[0].value
     list_b = ast.parse("['y', 'z']").body[0].value
