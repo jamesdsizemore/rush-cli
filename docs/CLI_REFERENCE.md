@@ -138,7 +138,7 @@ The following explicit permission flags are available across tools:
 | `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
-| `fix PATH` | Attempts formatting/lint remediation; current rollback can destroy unrelated work. | `--dry-run`, `--force` | `--dry-run` is not safe preview; P64-01 remains planned |
+| `fix PATH` | Formats and lints Ruff-selected Python targets. | `--dry-run`, `--force`, `--allow-artifact-write` | Dry run is non-mutating. Apply requires artifact-write permission and restores invocation-owned targets on covered failure paths. |
 | `setup PATH` | Reports detected stacks and recommended engines. | `--non-interactive` (default true; no false CLI spelling) | Current CLI cannot enter installation branch; installer planned in P65-02 |
 | `init PATH` | Generate tailored `rush.toml` for detected project stacks. | `--overwrite` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
@@ -149,6 +149,14 @@ The following explicit permission flags are available across tools:
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
+
+### `rush fix PATH`
+
+Status: P64-01 implements bounded target restoration for this route; Phase 64 remains in progress. Run `rush fix PATH --dry-run --force` to inspect native Ruff-selected files with `check --show-files --no-cache`, then read-only `format --diff --no-cache`, `check --diff --no-cache`, and ordinary `check --no-cache`. The ordinary check catches unfixable lint findings that diff output can miss. A no-change run returns `ok`; proposed formatting or any lint finding returns `warn`; invalid Python, Ruff process/config errors, failed AST validation, or snapshot/restore failures return `error`; unavailable Ruff returns `skipped`.
+
+Prerequisite: Ruff must be discoverable. Dry run does not snapshot or write target files. Apply requires `--allow-artifact-write`; `--force` only bypasses the dirty-tree guard. Before any write, apply snapshots bytes and modes for selected regular Python targets. It refuses missing, redirected, symlink, and non-regular targets; it preserves Ruff excludes. On process/config/AST/cancellation/unexpected-exception paths, it restores invocation-owned targets or reports a bounded, redacted restore failure. Unrelated staged, unstaged, and untracked files remain outside its write set.
+
+Evidence: `tests/test_fix.py::test_dry_run_preserves_index_and_unrelated_files` and `test_fix_cli_and_direct_dry_run_preserve_same_dirty_fixture` exercised real Ruff 0.16.3. The latter uses direct `FixTool.run` and the in-process Click `rush fix` route against one dirty fixture. A real-Ruff apply test preserves excluded `.venv/vendor.py`. Registered MCP reaches `rush_fix`; its `allow_artifact_write: bool = False` parameter denies apply without a grant and applies with `True`. No external installed `rush` binary ran.
 
 ## Advanced Autonomous Agent, Hygiene & Governance Commands (Phases 29–40)
 

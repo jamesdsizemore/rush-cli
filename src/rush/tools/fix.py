@@ -9,7 +9,6 @@ from __future__ import annotations
 import ast
 import difflib
 import json
-import shutil
 import subprocess
 import time
 import tomllib
@@ -19,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from rush.config import RushConfig
-from rush.io.physical_paths import PhysicalRoot
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolFn, ToolName, ToolResult
@@ -38,32 +36,65 @@ class SnapshotJournal:
     """In-memory byte snapshot journal ensuring zero-loss atomic rollbacks."""
 
     def __init__(self) -> None:
-        self._snapshots: dict[Path, bytes] = {}
+        self._snapshots: dict[Path, tuple[bytes, int]] = {}
         self._metadata: dict[Path, float] = {}
 
-    def capture(self, paths: Sequence[Path]) -> None:
+    def capture(self, paths: Sequence[Path]) -> list[str]:
         """Record initial byte states of all target files."""
+        errors: list[str] = []
         for p in paths:
-            if p.is_file():
+            try:
+                if p.is_symlink():
+                    errors.append(f"{p}: snapshot refused; target is a symbolic link")
+                    continue
                 resolved = p.resolve()
-                self._snapshots[resolved] = p.read_bytes()
+                if resolved != p:
+                    errors.append(f"{p}: snapshot refused; target path is redirected")
+                    continue
+                if not p.exists():
+                    errors.append(f"{p}: snapshot refused; target is missing")
+                    continue
+                if not p.is_file():
+                    errors.append(
+                        f"{p}: snapshot refused; target is not a regular file"
+                    )
+                    continue
+                self._snapshots[resolved] = (p.read_bytes(), p.stat().st_mode)
                 self._metadata[resolved] = time.time()
+            except OSError as exc:
+                errors.append(f"{p}: snapshot failed: {exc}")
+        return errors
 
-    def rollback_all(self) -> None:
+    def rollback_all(self) -> list[str]:
         """Restore all captured files to their exact pre-fix bytes."""
-        for path, original_bytes in self._snapshots.items():
-            if path.is_file() or not path.exists():
-                try:
-                    path.write_bytes(original_bytes)
-                except OSError:
-                    pass
+        errors: list[str] = []
+        for path, (original_bytes, original_mode) in self._snapshots.items():
+            try:
+                if path.is_symlink():
+                    errors.append(f"{path}: restore refused; target is a symbolic link")
+                    continue
+                if path.resolve() != path:
+                    errors.append(f"{path}: restore refused; target path is redirected")
+                    continue
+                if path.exists() and not path.is_file():
+                    errors.append(
+                        f"{path}: restore refused; target is not a regular file"
+                    )
+                    continue
+                path.write_bytes(original_bytes)
+                path.chmod(original_mode)
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+        return errors
 
     def rollback_file(self, path: Path) -> bool:
         """Restore a single target file to its pre-fix state."""
         resolved = path.resolve()
         if resolved in self._snapshots:
             try:
-                resolved.write_bytes(self._snapshots[resolved])
+                original_bytes, original_mode = self._snapshots[resolved]
+                resolved.write_bytes(original_bytes)
+                resolved.chmod(original_mode)
                 return True
             except OSError:
                 return False
@@ -76,7 +107,7 @@ class SnapshotJournal:
             return ""
 
         original_lines = (
-            self._snapshots[resolved]
+            self._snapshots[resolved][0]
             .decode("utf-8", errors="replace")
             .splitlines(keepends=True)
         )
@@ -99,7 +130,11 @@ class SnapshotJournal:
         if resolved not in self._snapshots or not resolved.is_file():
             return False
         try:
-            return resolved.read_bytes() != self._snapshots[resolved]
+            original_bytes, original_mode = self._snapshots[resolved]
+            return (
+                resolved.read_bytes() != original_bytes
+                or resolved.stat().st_mode != original_mode
+            )
         except OSError:
             return False
 
@@ -143,13 +178,23 @@ class FixTool(ToolFn):
         path: Path = Path("."),
         dry_run: bool = False,
         force: bool = False,
+        allow_artifact_write: bool = False,
     ) -> ToolResult:
-        return self.run(path, dry_run=dry_run, force=force)
+        return self.run(
+            path,
+            dry_run=dry_run,
+            force=force,
+            permissions=ExecutionPermissions(artifact_write=allow_artifact_write),
+        )
 
     def validate_ast(self, path: Path) -> tuple[bool, str | None]:
         """Validate syntax integrity of modified file using language AST and config parsers."""
+        if path.is_symlink():
+            return False, "target became a symbolic link"
+        if not path.exists():
+            return False, "target is missing"
         if not path.is_file():
-            return True, None
+            return False, "target is not a regular file"
 
         content = path.read_text(encoding="utf-8", errors="replace")
 
@@ -180,6 +225,25 @@ class FixTool(ToolFn):
 
         return True, None
 
+    @staticmethod
+    def _restore_owned_targets(
+        journal: SnapshotJournal, result: ToolResult
+    ) -> ToolResult:
+        errors = journal.rollback_all()
+        if not errors:
+            return result
+        from rush.tools.common import _bounded_redacted_output
+
+        evidence = [_bounded_redacted_output(error) for error in errors]
+        result["summary"] = (
+            f"{result['summary']}; rollback failed: {'; '.join(evidence)}"
+        )
+        result["metadata"] = {
+            **(result.get("metadata") or {}),
+            "rollback_errors": evidence,
+        }
+        return result
+
     def run(
         self,
         path: Path | None = None,
@@ -189,6 +253,14 @@ class FixTool(ToolFn):
         force: bool = False,
         **kwargs: Any,
     ) -> ToolResult:
+        from rush.tools.common import (
+            _bounded_redacted_output,
+            elapsed_ms,
+            now_ms,
+            resolve_binary,
+            run_subprocess,
+        )
+
         repo_root = (path or Path.cwd()).resolve()
         if repo_root.is_file():
             target_path = repo_root
@@ -209,7 +281,6 @@ class FixTool(ToolFn):
             )
 
         # 2. Check Git status (abort on dirty tree unless force=True)
-        pre_patch_head: str | None = None
         if not force and not dry_run:
             try:
                 res = subprocess.run(
@@ -220,6 +291,15 @@ class FixTool(ToolFn):
                     check=False,
                     stdin=subprocess.DEVNULL,
                 )
+                if res.returncode != 0:
+                    safe_error = _bounded_redacted_output(res.stderr)
+                    return ToolResult(
+                        tool=self.name,
+                        status="error",
+                        duration_ms=0,
+                        summary=f"fix: Git status failed: {safe_error or 'no stderr'}",
+                        findings=[],
+                    )
                 if res.returncode == 0 and res.stdout.strip():
                     log_subsystem(
                         "fix",
@@ -233,140 +313,279 @@ class FixTool(ToolFn):
                         summary="fix: Uncommitted changes detected. Commit, stash, or pass --force to run auto-fix.",
                         findings=[],
                     )
-            except Exception:  # noqa: BLE001, S110
-                pass
-
-        try:
-            head_proc = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                check=False,
-                stdin=subprocess.DEVNULL,
-            )
-            if head_proc.returncode == 0:
-                pre_patch_head = head_proc.stdout.strip()
-        except Exception:  # noqa: BLE001, S110
-            pass
-
-        # 3. Snapshot journal capture
-        journal = SnapshotJournal()
-        targets = (
-            [target_path] if target_path.is_file() else list(target_path.rglob("*.py"))
-        )
-        journal.capture(targets)
-
-        # 4. Dispatch engine fixes
-        result = self._run_engine_fixes(
-            target_path=target_path,
-            repo_root=repo_root,
-            permissions=permissions or ExecutionPermissions(),
-            dry_run=dry_run,
-        )
-
-        # 5. Post-Fix AST Verification
-        for t in targets:
-            valid, err = self.validate_ast(t)
-            if not valid:
-                journal.rollback_all()
-                if pre_patch_head:
-                    subprocess.run(
-                        ["git", "reset", "--hard", pre_patch_head],
-                        cwd=str(repo_root),
-                        capture_output=True,
-                        check=False,
-                        stdin=subprocess.DEVNULL,
-                    )
-                    subprocess.run(
-                        ["git", "clean", "-fd"],
-                        cwd=str(repo_root),
-                        capture_output=True,
-                        check=False,
-                        stdin=subprocess.DEVNULL,
-                    )
-                self._cleanup_sandboxes(repo_root)
+            except Exception as exc:  # noqa: BLE001
+                safe_error = _bounded_redacted_output(str(exc))
                 return ToolResult(
                     tool=self.name,
-                    status="fail",
+                    status="error",
                     duration_ms=0,
-                    summary=f"Atomic Rollback: Syntax error in '{t.name}': {err}",
+                    summary=f"fix: Git status failed: {safe_error}",
                     findings=[],
                 )
 
-        if dry_run:
-            journal.rollback_all()
-            if pre_patch_head:
-                subprocess.run(
-                    ["git", "reset", "--hard", pre_patch_head],
-                    cwd=str(repo_root),
-                    capture_output=True,
-                    check=False,
-                    stdin=subprocess.DEVNULL,
+        granted = permissions or ExecutionPermissions()
+        if not dry_run:
+            from rush.permissions import check_permissions
+
+            allowed, missing = check_permissions(
+                ExecutionPermissions(artifact_write=True), granted
+            )
+            if not allowed:
+                return ToolResult(
+                    tool=self.name,
+                    engine="ruff",
+                    status="skipped",
+                    duration_ms=0,
+                    summary=f"skipped: fix apply requires {', '.join(missing)}",
+                    findings=[],
                 )
 
-        return result
-
-    def _cleanup_sandboxes(self, repo_root: Path) -> None:
-        """Clean up worktrees under PhysicalRoot."""
+        # 3. Ask Ruff for its exact eligible files so native excludes remain active.
+        started = now_ms()
+        ruff = resolve_binary("ruff")
+        if ruff is None:
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="skipped",
+                duration_ms=elapsed_ms(started),
+                summary="skipped: Ruff is not installed",
+                findings=[],
+            )
         try:
-            phys = PhysicalRoot(repo_root)
-            worktrees_dir = phys.root_path / ".rush" / "worktrees"
-            if worktrees_dir.exists():
-                for item in list(worktrees_dir.iterdir()):
-                    if item.is_dir():
-                        subprocess.run(
-                            ["git", "worktree", "remove", "--force", str(item)],
-                            cwd=str(repo_root),
-                            capture_output=True,
-                            check=False,
-                        )
-                        if item.exists():
-                            shutil.rmtree(item, ignore_errors=True)
-        except Exception:  # noqa: BLE001, S110
-            pass
+            discovery = run_subprocess(
+                [ruff, "check", "--show-files", "--no-cache", str(target_path)],
+                cwd=repo_root,
+            )
+        except KeyboardInterrupt:
+            raise
+        except (OSError, subprocess.SubprocessError) as exc:
+            safe_error = _bounded_redacted_output(str(exc))
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="error",
+                duration_ms=elapsed_ms(started),
+                summary=f"fix: Ruff target discovery failed: {safe_error}",
+                findings=[],
+            )
+        discovery_stderr = _bounded_redacted_output(discovery.stderr)
+        if discovery.returncode != 0:
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="error",
+                duration_ms=elapsed_ms(started),
+                summary=f"fix: Ruff target discovery failed ({discovery.returncode}): {discovery_stderr or 'no stderr'}",
+                findings=[],
+                raw={"stderr": discovery_stderr},
+            )
+
+        targets: list[Path] = []
+        for line in discovery.stdout.splitlines():
+            candidate = Path(line)
+            if candidate.suffix not in {".py", ".pyi"}:
+                continue
+            if not candidate.is_absolute():
+                candidate = repo_root / candidate
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(repo_root)
+            except ValueError:
+                return ToolResult(
+                    tool=self.name,
+                    engine="ruff",
+                    status="error",
+                    duration_ms=0,
+                    summary=f"fix: Python target outside repository: {candidate}",
+                    findings=[],
+                )
+            targets.append(candidate)
+        targets = sorted(set(targets))
+        journal = SnapshotJournal()
+        if not dry_run:
+            capture_errors = journal.capture(targets)
+            if capture_errors:
+                evidence = [_bounded_redacted_output(error) for error in capture_errors]
+                return ToolResult(
+                    tool=self.name,
+                    engine="ruff",
+                    status="error",
+                    duration_ms=elapsed_ms(started),
+                    summary=f"fix: snapshot failed: {'; '.join(evidence)}",
+                    findings=[],
+                    metadata={"snapshot_errors": evidence},
+                )
+
+        # 4. Dispatch engine fixes and validate every mutation exit.
+        try:
+            result = self._run_engine_fixes(
+                ruff=ruff,
+                targets=targets,
+                repo_root=repo_root,
+                permissions=granted,
+                dry_run=dry_run,
+                started=started,
+                initial_stderr=discovery_stderr,
+            )
+            if result["status"] == "error":
+                return (
+                    self._restore_owned_targets(journal, result)
+                    if not dry_run
+                    else result
+                )
+            if result["status"] == "skipped":
+                return result
+
+            for target in targets:
+                valid, error = self.validate_ast(target)
+                if not valid:
+                    result = ToolResult(
+                        tool=self.name,
+                        engine="ruff",
+                        status="error",
+                        duration_ms=elapsed_ms(started),
+                        summary=f"fix: invalid AST in '{target.name}': {error}",
+                        findings=[],
+                    )
+                    return (
+                        self._restore_owned_targets(journal, result)
+                        if not dry_run
+                        else result
+                    )
+            return result
+        except KeyboardInterrupt as exc:
+            if not dry_run:
+                errors = journal.rollback_all()
+                if errors:
+                    exc.add_note(
+                        "fix rollback failed: "
+                        + "; ".join(_bounded_redacted_output(error) for error in errors)
+                    )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            safe_error = _bounded_redacted_output(str(exc))
+            result = ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="error",
+                duration_ms=elapsed_ms(started),
+                summary=f"fix: Ruff execution or AST validation failed: {safe_error}",
+                findings=[],
+            )
+            return (
+                self._restore_owned_targets(journal, result) if not dry_run else result
+            )
 
     def _run_engine_fixes(
         self,
-        target_path: Path,
+        ruff: str,
+        targets: Sequence[Path],
         repo_root: Path,
         permissions: ExecutionPermissions,
         dry_run: bool = False,
+        started: int = 0,
+        initial_stderr: str = "",
     ) -> ToolResult:
+        from rush.tools.common import (
+            _bounded_redacted_output,
+            elapsed_ms,
+            run_subprocess,
+        )
+
         log_subsystem(
             "fix",
             "INFO",
-            f"Running automated code remediation on {target_path} (dry_run={dry_run})",
+            f"Running automated code remediation on {len(targets)} Python files (dry_run={dry_run})",
         )
-        from rush.tools.common import run_subprocess
+        if not targets:
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="skipped",
+                duration_ms=elapsed_ms(started),
+                summary="skipped: no Python targets",
+                findings=[],
+            )
 
-        files_fixed = 0
-        summary_parts = []
-
-        fmt_cmd = (
-            ["ruff", "format", "--diff", str(target_path)]
-            if dry_run
-            else ["ruff", "format", str(target_path)]
-        )
+        target_args = [str(path) for path in targets]
+        fmt_cmd = [
+            ruff,
+            "format",
+            *(["--diff"] if dry_run else []),
+            "--no-cache",
+            *target_args,
+        ]
         proc_fmt = run_subprocess(fmt_cmd, cwd=repo_root)
-        if proc_fmt.returncode == 0:
-            files_fixed += 1
-            summary_parts.append("ruff-format")
-
-        chk_cmd = (
-            ["ruff", "check", "--diff", str(target_path)]
-            if dry_run
-            else ["ruff", "check", "--fix", str(target_path)]
+        stderr = _bounded_redacted_output(
+            "\n".join(filter(None, [initial_stderr, proc_fmt.stderr]))
         )
-        proc_chk = run_subprocess(chk_cmd, cwd=repo_root)
-        if proc_chk.returncode == 0:
-            summary_parts.append("ruff-check")
+        format_changed = dry_run and proc_fmt.returncode == 1
+        if proc_fmt.returncode != 0 and not format_changed:
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="error",
+                duration_ms=elapsed_ms(started),
+                summary=f"fix: Ruff format failed ({proc_fmt.returncode}): {stderr or 'no stderr'}",
+                findings=[],
+                raw={"stderr": stderr},
+            )
 
+        chk_cmd = [
+            ruff,
+            "check",
+            *(["--diff"] if dry_run else ["--fix"]),
+            "--no-cache",
+            *target_args,
+        ]
+        proc_chk = run_subprocess(chk_cmd, cwd=repo_root)
+        stderr = _bounded_redacted_output(
+            "\n".join(filter(None, [stderr, proc_chk.stderr]))
+        )
+        if proc_chk.returncode not in {0, 1}:
+            return ToolResult(
+                tool=self.name,
+                engine="ruff",
+                status="error",
+                duration_ms=elapsed_ms(started),
+                summary=f"fix: Ruff check failed ({proc_chk.returncode}): {stderr or 'no stderr'}",
+                findings=[],
+                raw={"stderr": stderr},
+            )
+
+        remaining_findings = proc_chk.returncode == 1
+        if dry_run:
+            proc_verify = run_subprocess(
+                [ruff, "check", "--no-cache", *target_args], cwd=repo_root
+            )
+            stderr = _bounded_redacted_output(
+                "\n".join(filter(None, [stderr, proc_verify.stderr]))
+            )
+            if proc_verify.returncode not in {0, 1}:
+                return ToolResult(
+                    tool=self.name,
+                    engine="ruff",
+                    status="error",
+                    duration_ms=elapsed_ms(started),
+                    summary=f"fix: Ruff read-only check failed ({proc_verify.returncode}): {stderr or 'no stderr'}",
+                    findings=[],
+                    raw={"stderr": stderr},
+                )
+            remaining_findings = remaining_findings or proc_verify.returncode == 1
+
+        status = "warn" if format_changed or remaining_findings else "ok"
         mode_str = " (dry run)" if dry_run else ""
         return ToolResult(
             tool=self.name,
-            status="ok",
-            duration_ms=20,
-            summary=f"fix: automated fixes applied via {', '.join(summary_parts) or 'engines'}{mode_str}",
+            engine="ruff",
+            status=status,
+            duration_ms=elapsed_ms(started),
+            summary=(
+                f"fix: Ruff format/check completed{mode_str}"
+                if status == "ok"
+                else f"fix: Ruff format completed; lint findings remain{mode_str}"
+            ),
             findings=[],
+            raw={"stderr": stderr},
         )
