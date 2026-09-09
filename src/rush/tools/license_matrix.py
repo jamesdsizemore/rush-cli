@@ -8,7 +8,15 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from license_expression import ExpressionError, LicenseSymbol, Licensing
+from license_expression import (
+    AND,
+    OR,
+    ExpressionError,
+    LicenseSymbol,
+    LicenseWithExceptionSymbol,
+    Licensing,
+    get_spdx_licensing,
+)
 
 from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, finding_fingerprint, now_ms
@@ -58,6 +66,25 @@ STRONG_COPYLEFT_LICENSES: set[str] = {
     "EUPL-1.2",
     "OSL-3.0",
 }
+KNOWN_EXCEPTIONS = frozenset(
+    symbol.key.upper()
+    for symbol in get_spdx_licensing().known_symbols.values()
+    if symbol.is_exception
+)
+_CATEGORY_RANK = {
+    "permissive": 0,
+    "manual-review": 1,
+    "weak-copyleft": 2,
+    "strong-copyleft": 3,
+    "proprietary": 4,
+}
+_CATEGORY_RISK = {
+    "permissive": "LOW",
+    "manual-review": "MEDIUM",
+    "weak-copyleft": "MEDIUM",
+    "strong-copyleft": "HIGH",
+    "proprietary": "HIGH",
+}
 
 
 def _classify_symbol(symbol_name: str) -> str:
@@ -67,11 +94,35 @@ def _classify_symbol(symbol_name: str) -> str:
         return "permissive"
     if sym_upper in WEAK_COPYLEFT_LICENSES:
         return "weak-copyleft"
-    if sym_upper in STRONG_COPYLEFT_LICENSES or sym_upper.startswith(("GPL-", "AGPL-")):
+    if sym_upper in STRONG_COPYLEFT_LICENSES:
         return "strong-copyleft"
-    if "PROPRIETARY" in sym_upper or "COMMERCIAL" in sym_upper:
+    if sym_upper in {"PROPRIETARY", "COMMERCIAL"}:
         return "proprietary"
     return "unclassified"
+
+
+def _evaluate_license_node(node: Any, allowed_set: set[str]) -> tuple[str, bool]:
+    if isinstance(node, LicenseWithExceptionSymbol):
+        if node.exception_symbol.key.upper() not in KNOWN_EXCEPTIONS:
+            return "manual-review", True
+        # No exception waiver policy exists; retain the base obligation.
+        return _evaluate_license_node(node.license_symbol, allowed_set)
+    if isinstance(node, (AND, OR)):
+        children = [_evaluate_license_node(arg, allowed_set) for arg in node.args]
+        if not children or any(unknown for _, unknown in children):
+            return "manual-review", True
+        select = max if isinstance(node, AND) else min
+        return select(
+            (category for category, _ in children), key=_CATEGORY_RANK.__getitem__
+        ), False
+    if isinstance(node, LicenseSymbol):
+        category = _classify_symbol(node.key)
+        if category == "unclassified":
+            return "manual-review", True
+        if category == "permissive" and node.key.upper() not in allowed_set:
+            return "manual-review", False
+        return category, False
+    return "manual-review", True
 
 
 def evaluate_spdx_expression(
@@ -91,53 +142,14 @@ def evaluate_spdx_expression(
     try:
         parsed = licensing.parse(clean_expr)
     except ExpressionError:
-        # Fallback for simple non-SPDX strings
-        clean_upper = clean_expr.upper()
-        if clean_upper in allowed_set:
-            return "permissive", "LOW", [clean_expr]
-        if any(marker in clean_upper for marker in ("GPL", "AGPL")):
-            return "strong-copyleft", "HIGH", [clean_expr]
         return "manual-review", "MEDIUM", [clean_expr]
 
     if parsed is None:
         return "unspecified", "MEDIUM", []
 
-    symbols: list[LicenseSymbol] = licensing.license_symbols(parsed)
-    symbol_names = [s.key for s in symbols]
-
-    # Check for permissive exceptions (e.g., Classpath-exception-2.0 or linking exceptions)
-    has_linking_exception = any(
-        "classpath" in name.lower()
-        or "linking" in name.lower()
-        or "exception" in name.lower()
-        for name in symbol_names
-    )
-    if has_linking_exception:
-        return "permissive", "LOW", symbol_names
-
-    tiers = [_classify_symbol(name) for name in symbol_names]
-    expr_repr = repr(parsed)
-
-    # Boolean OR resolution: developer can choose the permissive alternative
-    if (" OR " in clean_expr.upper() or expr_repr.startswith("OR(")) and any(
-        t == "permissive" and name.upper() in allowed_set
-        for t, name in zip(tiers, symbol_names, strict=False)
-    ):
-        return "permissive", "LOW", symbol_names
-
-    if any(t == "strong-copyleft" for t in tiers):
-        return "strong-copyleft", "HIGH", symbol_names
-    if any(t == "weak-copyleft" for t in tiers):
-        return "weak-copyleft", "MEDIUM", symbol_names
-    if any(t == "proprietary" for t in tiers):
-        return "proprietary", "HIGH", symbol_names
-    if all(
-        t == "permissive" and name.upper() in allowed_set
-        for t, name in zip(tiers, symbol_names, strict=False)
-    ):
-        return "permissive", "LOW", symbol_names
-
-    return "manual-review", "MEDIUM", symbol_names
+    symbol_names = [symbol.key for symbol in licensing.license_symbols(parsed)]
+    category, _ = _evaluate_license_node(parsed, allowed_set)
+    return category, _CATEGORY_RISK[category], symbol_names
 
 
 def _lookup_python_pkg_license(pkg_name: str) -> str:
@@ -348,19 +360,24 @@ class LicenseMatrixTool(ToolFn):
 
             is_copyleft = category in ("strong-copyleft", "weak-copyleft")
 
-            if category == "strong-copyleft":
-                msg = f"Dependency '{pkg}' uses strong copyleft license '{raw_lic}'."
+            if category in {"strong-copyleft", "proprietary"}:
+                rule = (
+                    "license-copyleft-risk"
+                    if is_copyleft
+                    else "license-proprietary-risk"
+                )
+                msg = f"Dependency '{pkg}' uses {category} license '{raw_lic}'."
                 findings.append(
                     Finding(
                         path=manifest_rel if manifest_rel != "explicit" else str(path),
                         line=1,
                         column=1,
-                        rule="license-copyleft-risk",
-                        rule_id="license-copyleft-risk",
+                        rule=rule,
+                        rule_id=rule,
                         severity="error",
                         message=msg,
                         fingerprint=finding_fingerprint(
-                            manifest_rel, 1, 1, "license-copyleft-risk", "error", msg
+                            manifest_rel, 1, 1, rule, "error", msg
                         ),
                     )
                 )
@@ -395,6 +412,11 @@ class LicenseMatrixTool(ToolFn):
 
         total_pkgs = len(packages_report)
         copyleft_count = sum(1 for p in packages_report if p["is_copyleft"])
+        incompatible_count = sum(
+            1
+            for p in packages_report
+            if p["is_copyleft"] or p["category"] == "proprietary"
+        )
         unresolved_count = sum(
             1
             for p in packages_report
@@ -409,7 +431,7 @@ class LicenseMatrixTool(ToolFn):
         )
 
         status = "ok"
-        if copyleft_count > 0:
+        if incompatible_count > 0:
             status = "fail"
         elif unresolved_count > 0:
             status = "warn"
@@ -417,7 +439,7 @@ class LicenseMatrixTool(ToolFn):
         metrics_obj = LicenseMatrixMetrics(
             compliance_score=compliance_score,
             packages_audited=total_pkgs,
-            incompatible_count=copyleft_count,
+            incompatible_count=incompatible_count,
             unresolved_count=unresolved_count,
         )
 

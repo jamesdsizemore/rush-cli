@@ -7,33 +7,81 @@ dimension verification, and raster image optimization guarded by --allow-artifac
 from __future__ import annotations
 
 import re
+import stat
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
 
+from ..io.atomic_file import AtomicFile, SanitizedBytes
+from ..io.physical_paths import PhysicalRoot
 from .base import Finding, ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms
 
-# Regex patterns for SVG security auditing
-_SCRIPT_TAG_PATTERN = re.compile(
-    r"<script[\s\S]*?</script>|<script[^>]*/>", re.IGNORECASE
+_DTD_ENTITY_PATTERN = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
+_ACTIVE_ELEMENT_NAMES = frozenset({"script", "iframe", "object", "embed"})
+_URI_ATTRIBUTE_NAMES = frozenset(
+    {"href", "src", "action", "formaction", "poster", "data", "cite", "background"}
 )
-_EVENT_HANDLER_PATTERN = re.compile(
-    r"\bon[a-z]+\s*=\s*['\"][^'\"]*['\"]", re.IGNORECASE
-)
-_JS_URI_PATTERN = re.compile(
-    r"""(href|src|xlink:href)\s*=\s*['"]\s*javascript:[^'"]*['"]""", re.IGNORECASE
-)
+_URI_ANIMATION_VALUE_NAMES = frozenset({"values", "from", "to", "by"})
 
 # Regex pattern for HTML <img> without width/height
 _IMG_TAG_PATTERN = re.compile(r"<img\b([^>]*)>", re.IGNORECASE)
 
 
-def _sanitize_svg_content(content: str) -> str:
-    """Strip script tags, inline event handlers, and javascript: URIs from SVG."""
-    sanitized = _SCRIPT_TAG_PATTERN.sub("", content)
-    sanitized = _EVENT_HANDLER_PATTERN.sub("", sanitized)
-    sanitized = _JS_URI_PATTERN.sub("", sanitized)
-    return sanitized
+def _local_name(name: str) -> str:
+    return name.rsplit("}", 1)[-1].casefold()
+
+
+def _is_javascript_uri(value: str) -> bool:
+    return "".join(value.split()).casefold().startswith("javascript:")
+
+
+def _has_javascript_animation_value(element: ET.Element) -> bool:
+    target_name = next(
+        (
+            value.rsplit(":", 1)[-1].casefold()
+            for name, value in element.attrib.items()
+            if _local_name(name) == "attributename"
+        ),
+        "",
+    )
+    if target_name not in _URI_ATTRIBUTE_NAMES:
+        return False
+    return any(
+        _is_javascript_uri(part)
+        for name, value in element.attrib.items()
+        if _local_name(name) in _URI_ANIMATION_VALUE_NAMES
+        for part in value.split(";")
+    )
+
+
+def _parse_svg(content: bytes) -> tuple[bytes, bool]:
+    """Parse SVG without declarations and remove decoded executable content."""
+    if _DTD_ENTITY_PATTERN.search(content.replace(b"\x00", b"")):
+        raise ValueError("DTD and entity declarations are forbidden")
+    root = ET.fromstring(content)
+    if _local_name(root.tag) in _ACTIVE_ELEMENT_NAMES:
+        raise ValueError("active root element is forbidden")
+    changed = False
+    for parent in root.iter():
+        for child in list(parent):
+            child_name = _local_name(child.tag)
+            if child_name in _ACTIVE_ELEMENT_NAMES or (
+                child_name in {"animate", "set"}
+                and _has_javascript_animation_value(child)
+            ):
+                parent.remove(child)
+                changed = True
+        for name, value in list(parent.attrib.items()):
+            local_name = _local_name(name)
+            if (local_name.startswith("on") and len(local_name) > 2) or (
+                local_name in _URI_ATTRIBUTE_NAMES and _is_javascript_uri(value)
+            ):
+                del parent.attrib[name]
+                changed = True
+    sanitized = ET.tostring(root, encoding="utf-8")
+    ET.fromstring(sanitized)
+    return sanitized, changed
 
 
 class MediaOptTool(ToolFn):
@@ -128,20 +176,28 @@ class MediaOptTool(ToolFn):
 
         findings: list[Finding] = []
         sanitized_svg_count = 0
+        invalid_svg = False
+        pending_svg_writes: list[tuple[AtomicFile, Path, bytes]] = []
 
         # 1. Audit SVGs
         for svg_path in svg_files:
             try:
-                content = svg_path.read_text(encoding="utf-8", errors="replace")
-                has_script = bool(_SCRIPT_TAG_PATTERN.search(content))
-                has_events = bool(_EVENT_HANDLER_PATTERN.search(content))
-                has_js_uri = bool(_JS_URI_PATTERN.search(content))
+                root_path = p if p.is_dir() else p.parent
+                relative_path = svg_path.relative_to(root_path)
+                physical_root = PhysicalRoot(root_path)
+                contained_path = physical_root.open_contained(
+                    relative_path, purpose="read"
+                )
+                if not stat.S_ISREG(contained_path.stat(follow_symlinks=False).st_mode):
+                    raise ValueError("SVG is not an ordinary file")
+                content = contained_path.read_bytes()
+                cleaned, has_active_content = _parse_svg(content)
 
-                if has_script or has_events or has_js_uri:
+                if has_active_content:
                     if sanitize and getattr(granted_perms, "artifact_write", False):
-                        cleaned = _sanitize_svg_content(content)
-                        svg_path.write_text(cleaned, encoding="utf-8")
-                        sanitized_svg_count += 1
+                        pending_svg_writes.append(
+                            (AtomicFile(physical_root), relative_path, cleaned)
+                        )
                     else:
                         findings.append(
                             Finding(
@@ -153,8 +209,37 @@ class MediaOptTool(ToolFn):
                                 remediation="Sanitize SVG by stripping active scripts, or run with --allow-artifact-write to sanitize.",
                             )
                         )
-            except Exception:  # noqa: BLE001, S112
-                continue
+            except Exception:  # noqa: BLE001
+                invalid_svg = True
+                findings.append(
+                    Finding(
+                        path=str(svg_path),
+                        line=1,
+                        rule="media-opt/invalid-svg",
+                        severity="error",
+                        message=f"SVG could not be safely parsed: {svg_path.name}",
+                        remediation="Provide well-formed SVG without DTD or entity declarations.",
+                    )
+                )
+
+        if not invalid_svg:
+            for writer, relative_path, cleaned in pending_svg_writes:
+                try:
+                    writer.write_bytes(relative_path, SanitizedBytes(data=cleaned))
+                    sanitized_svg_count += 1
+                except Exception:  # noqa: BLE001
+                    invalid_svg = True
+                    findings.append(
+                        Finding(
+                            path=str(relative_path),
+                            line=1,
+                            rule="media-opt/svg-write-error",
+                            severity="error",
+                            message="Sanitized SVG could not be written safely.",
+                            remediation="Check target containment and file permissions.",
+                        )
+                    )
+                    break
 
         # 2. Audit CLS Image Dimensions in Markup
         for html_path in html_files:
@@ -182,7 +267,11 @@ class MediaOptTool(ToolFn):
 
         # 3. Raster Image Optimization
         optimized_images_count = 0
-        if optimize and getattr(granted_perms, "artifact_write", False):
+        if (
+            not invalid_svg
+            and optimize
+            and getattr(granted_perms, "artifact_write", False)
+        ):
             try:
                 from PIL import Image
 
@@ -198,7 +287,9 @@ class MediaOptTool(ToolFn):
                 pass
 
         has_errors = any(f.get("severity") in ("error", "fail") for f in findings)
-        if has_errors:
+        if invalid_svg:
+            status = "error"
+        elif has_errors:
             status = "fail"
         elif findings:
             status = "warn"

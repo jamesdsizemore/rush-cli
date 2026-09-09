@@ -5,7 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rush.tools.license_matrix import LicenseMatrixScanner, LicenseMatrixTool
+from license_expression import Licensing
+
+from rush.tools.license_matrix import (
+    LicenseMatrixScanner,
+    LicenseMatrixTool,
+    evaluate_spdx_expression,
+)
 from rush.tools.schemas import LicenseMatrixMetrics
 
 
@@ -188,3 +194,68 @@ dependencies = [
     assert res["total_packages"] == 1
     assert res["copyleft_violations_count"] == 0
     assert "packages" in res
+
+
+def test_license_matrix_resolves_boolean_spdx_ast_and_exceptions() -> None:
+    licensing = Licensing()
+    allowed = {"MIT", "APACHE-2.0"}
+    assert evaluate_spdx_expression("(MIT OR Apache-2.0)", licensing, allowed)[:2] == (
+        "permissive",
+        "LOW",
+    )
+    assert evaluate_spdx_expression("MIT AND GPL-3.0-only", licensing, allowed)[:2] == (
+        "strong-copyleft",
+        "HIGH",
+    )
+    assert evaluate_spdx_expression("MIT OR GPL-3.0-only", licensing, allowed)[:2] == (
+        "permissive",
+        "LOW",
+    )
+    assert evaluate_spdx_expression(
+        "GPL-3.0-only WITH Classpath-exception-2.0", licensing, allowed
+    )[:2] == ("strong-copyleft", "HIGH")
+    assert evaluate_spdx_expression("not-a-license", licensing, allowed)[:2] == (
+        "manual-review",
+        "MEDIUM",
+    )
+    assert evaluate_spdx_expression("MIT OR NotReal-1.0", licensing, allowed)[:2] == (
+        "manual-review",
+        "MEDIUM",
+    )
+    assert evaluate_spdx_expression(
+        "GPL-3.0-only WITH Unknown-exception-1.0", licensing, allowed
+    )[:2] == ("manual-review", "MEDIUM")
+
+
+def test_license_expression_classification_and_status(tmp_path: Path) -> None:
+    cases = [
+        ("(MIT OR Apache-2.0) AND GPL-3.0-only", "strong-copyleft", "HIGH", "fail"),
+        ("((MIT OR Apache-2.0) AND (GPL-3.0-only))", "strong-copyleft", "HIGH", "fail"),
+        ("MIT OR (Apache-2.0 AND GPL-3.0-only)", "permissive", "LOW", "ok"),
+        ("MIT OR GPL-3.0-only", "permissive", "LOW", "ok"),
+        (
+            "GPL-3.0-only WITH Classpath-exception-2.0",
+            "strong-copyleft",
+            "HIGH",
+            "fail",
+        ),
+        ("(GPL-3.0-only WITH LLVM-exception) OR MIT", "permissive", "LOW", "ok"),
+        ("GPL-3.0-only WITH Unknown-exception-1.0", "manual-review", "MEDIUM", "warn"),
+        ("MIT OR NotReal-1.0", "manual-review", "MEDIUM", "warn"),
+        ("GPL-NotReal-1.0", "manual-review", "MEDIUM", "warn"),
+        ("GPL-3.0-only AND (", "manual-review", "MEDIUM", "warn"),
+        ("Proprietary AND MIT", "proprietary", "HIGH", "fail"),
+    ]
+    for expression, category, risk, status in cases:
+        result = LicenseMatrixTool().run(
+            tmp_path, package_licenses={"example": expression}
+        )
+        package = result["raw"]["packages"][0]
+        assert (package["category"], package["risk"], result["status"]) == (
+            category,
+            risk,
+            status,
+        ), expression
+        if status == "warn":
+            assert result["metrics"]["unresolved_count"] == 1
+            assert result["findings"][0]["rule_id"] == "license-manual-review"
