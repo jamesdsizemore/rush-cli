@@ -41,10 +41,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
-    """T-58.21 (R-011 Governance Test): Probes all 152 operations from public-operations.toml with malformed payloads."""
+    """T-58.21 (R-011 Governance Test): Probes all 153 operations from public-operations.toml with malformed payloads."""
     registry = get_operation_registry()
     assert isinstance(registry, OperationRegistry)
-    assert len(registry._adapters) == 152
+    assert len(registry._adapters) == 153
 
     # Verify adapter registration and boundary validation across all operations
     tool_count = 0
@@ -148,10 +148,10 @@ def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
             with pytest.raises(ValidationErrorV1):
                 registry.validate_output(op_id, sample_valid_tool_result)
 
-    assert tool_count == 70
+    assert tool_count == 71
     assert admin_count == 65
     assert service_count == 17
-    assert tool_count + admin_count + service_count == 152
+    assert tool_count + admin_count + service_count == 153
 
 
 # ---------------------------------------------------------------------------

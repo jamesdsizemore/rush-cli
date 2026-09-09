@@ -110,18 +110,18 @@ def test_service_liveness_is_not_wrapped_as_tool_result() -> None:
 
 
 def test_every_manifest_operation_has_one_adapter() -> None:
-    """T-54.11: 100% of the 152 operations in public-operations.toml are reconciled into adapters."""
+    """T-54.11: 100% of the 153 operations in public-operations.toml are reconciled into adapters."""
     with open(MANIFEST_PATH, "rb") as f:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 152
+    assert len(operations) == 153
 
     registry = OperationRegistry()
     report = registry.reconcile_manifest(MANIFEST_PATH)
 
-    assert report["total"] == 152
-    assert report["tool_count"] == 70
+    assert report["total"] == 153
+    assert report["tool_count"] == 71
     assert report["admin_count"] == 65
     assert report["service_count"] == 17
     assert len(report["unmapped"]) == 0
