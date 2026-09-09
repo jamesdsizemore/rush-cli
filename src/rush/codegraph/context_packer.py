@@ -18,7 +18,9 @@ class ContextPacker:
         self.project_root = project_root or Path.cwd()
         self.skeletonizer = AstSkeletonizer()
         try:
-            self.encoder = tiktoken.get_encoding(model_encoding)
+            self.encoder: tiktoken.Encoding | None = tiktoken.get_encoding(
+                model_encoding
+            )
         except Exception:  # noqa: BLE001
             self.encoder = None
 

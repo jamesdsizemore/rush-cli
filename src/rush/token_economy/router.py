@@ -19,7 +19,9 @@ class ContentRouter:
     def __init__(self, default_encoding: str = "cl100k_base"):
         self.default_encoding = default_encoding
         try:
-            self._tokenizer = tiktoken.get_encoding(default_encoding)
+            self._tokenizer: tiktoken.Encoding | None = tiktoken.get_encoding(
+                default_encoding
+            )
         except Exception:  # noqa: BLE001
             self._tokenizer = None
 

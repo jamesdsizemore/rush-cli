@@ -181,7 +181,7 @@ class LineSurvivalEngine:
             unavailable_reason = "no-history-at-observation-end"
         current = (
             None
-            if unavailable_reason
+            if unavailable_reason or end_revision is None
             else cls._tree_line_origins(target_dir, end_revision)
         )
         results: dict[str, dict[str, Any]] = {}
@@ -201,7 +201,12 @@ class LineSurvivalEngine:
                         reason = "historical-cohort-unavailable"
 
             original = sum(cohort.values()) if cohort is not None else 0
-            if reason is None and current is not None and original > 0:
+            if (
+                reason is None
+                and current is not None
+                and cohort is not None
+                and original > 0
+            ):
                 surviving = sum(
                     min(count, current.get(origin, 0))
                     for origin, count in cohort.items()
@@ -376,7 +381,7 @@ class ProvenanceAiTool(ToolFn):
                 cohort_origins = {origin[0] for origin in cohort}
 
         linked_origins: set[str] = set()
-        if unavailable_reason is None:
+        if unavailable_reason is None and end_revision is not None:
             log_format = "%H%x00%an%x00%ae%x00%at%x00%B%x01"
             fixes_res = run_subprocess(
                 [

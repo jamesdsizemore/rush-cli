@@ -14,7 +14,9 @@ class CacheAligner:
         self.min_prefix_tokens = min_prefix_tokens
         self.model_encoding = model_encoding
         try:
-            self.encoder = tiktoken.get_encoding(model_encoding)
+            self.encoder: tiktoken.Encoding | None = tiktoken.get_encoding(
+                model_encoding
+            )
         except Exception:  # noqa: BLE001
             self.encoder = None
 
