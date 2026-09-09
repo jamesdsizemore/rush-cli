@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .catalog import TOOL_SPECS
+from .contracts.results import ToolResultV1
 from .logging import get_logger
 from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
@@ -99,9 +100,10 @@ def rush_token_outline(path: str, focus_symbol: str = "") -> str:
 def rush_context_retrieve(chunk_hash: str, path: str = ".") -> dict:
     from rush.tools.continuity import SessionContinuityTool
 
-    return SessionContinuityTool().run(
+    result = SessionContinuityTool().run(
         Path(path), operation="context_retrieve", context_handle=chunk_hash
     )
+    return result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
 
 
 def rush_hallu_guard(path: str = "") -> str:
@@ -138,7 +140,7 @@ def rush_context_pack(
     from rush.tools.continuity import SessionContinuityTool
 
     target = Path(path)
-    return SessionContinuityTool().run(
+    result = SessionContinuityTool().run(
         target.parent if target.is_absolute() else Path.cwd(),
         operation="context_pack",
         context_path=target.name if target.is_absolute() else path,
@@ -146,6 +148,7 @@ def rush_context_pack(
         token_budget=budget,
         permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
+    return result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
 
 
 # Phase 45 Tools
@@ -277,7 +280,7 @@ def rush_mesh_acquire_lock(
     return bool(res[0] if isinstance(res, tuple) else res)
 
 
-rush_mesh_acquire_lock._sensitive_params = ("capability",)
+rush_mesh_acquire_lock.__dict__["_sensitive_params"] = ("capability",)
 
 
 def rush_mesh_release_lock(
@@ -298,7 +301,7 @@ def rush_mesh_release_lock(
     return mgr.release(Path(path), capability=cap_input, agent_id=agent_id)
 
 
-rush_mesh_release_lock._sensitive_params = ("capability",)
+rush_mesh_release_lock.__dict__["_sensitive_params"] = ("capability",)
 
 
 def rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:

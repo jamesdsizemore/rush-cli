@@ -11,10 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from rush.permissions import ExecutionPermissions
+from rush.workflows import suites
 from rush.workflows.suites import (
     AUDIT_SUITE,
     CHECK_SUITE,
     GATE_SUITE,
+    WorkflowSuite,
     run_workflow_suite,
 )
 
@@ -43,3 +45,35 @@ def test_run_workflow_suite_mock(tmp_path: Path) -> None:
     assert res["tool"] == "check"
     assert res["status"] in {"ok", "skipped", "warn", "fail"}
     assert "check:" in res["summary"]
+
+
+def test_workflow_suite_uses_public_tool_call(tmp_path: Path, monkeypatch) -> None:
+    calls = 0
+
+    class PublicTool:
+        name = "probe"
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            return {
+                "tool": "probe",
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": "public call",
+                "findings": [],
+            }
+
+        def run(self, *_args, **_kwargs) -> None:
+            raise AssertionError("private run path used")
+
+    monkeypatch.setattr(suites, "ALL_TOOLS", [PublicTool()])
+    workflow = WorkflowSuite("probe-suite", "probe", ("probe",))
+
+    result = run_workflow_suite(
+        workflow, tmp_path, ExecutionPermissions(), fail_fast=False
+    )
+
+    assert result["status"] == "ok"
+    assert result["summary"] == "probe-suite: executed 1 tool(s) with status 'ok'"
+    assert calls == 1

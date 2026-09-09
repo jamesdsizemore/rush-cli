@@ -3,9 +3,11 @@
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from rush.cli import cli
+from rush.cli_support import rendering
 from rush.governance.synchronizer import AgentsMdSynchronizer
 
 
@@ -60,6 +62,30 @@ def test_memory_subject_rejects_unknown_runtime_binding() -> None:
     assert result.exit_code == 2
     assert "Invalid value for" in result.output
     assert "'unknown' is not one of" in result.output
+
+
+def test_shared_cli_runner_uses_public_tool_call_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls = 0
+
+    class PublicTool:
+        name = "probe"
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            raise TypeError("internal probe failure")
+
+        def run(self, *_args, **_kwargs) -> None:
+            raise AssertionError("private run path used")
+
+    monkeypatch.setattr(rendering, "ALL_TOOLS", [PublicTool()])
+
+    with pytest.raises(TypeError, match="internal probe failure"):
+        rendering._run_tool("probe", tmp_path, as_json=False)
+
+    assert calls == 1
 
 
 def test_bus_factor_command_reports_actual_ownership(tmp_path: Path, monkeypatch):

@@ -9,7 +9,7 @@ abstract base that all tool subclasses inherit from.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
 # --- String literal unions --------------------------------------------------
@@ -99,14 +99,8 @@ class ToolFn(ABC):
         """
         ...
 
-    @abstractmethod
-    def __call__(self, path: Path) -> ToolResult | ToolResultV1:
-        """Run the tool on `path` (file or directory).
-
-        Implementations must NEVER raise — return a ToolResult with
-        status='error' if anything goes wrong.
-        """
-        ...
+    # Argument schemas are tool-specific and remain visible to Click/FastMCP.
+    __call__: Callable[..., ToolResult | ToolResultV1]
 
 
 __all__ = [

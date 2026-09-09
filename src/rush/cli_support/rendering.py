@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import click
 
 from rush.config import RushConfigError, load_config
+from rush.contracts.results import ToolResultV1
 from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.permissions import ExecutionPermissions
 from rush.theme import render_result
@@ -96,17 +98,9 @@ def _run_tool(
     except RushConfigError as e:
         click.echo(str(e), err=True)
         sys.exit(2)
-    kwargs = dict(extra_kwargs or {})
-
     executor = InvocationExecutor()
-
-    def tool_invocation_handler(ctx: Any) -> Any:
-        try:
-            return tool.run(path, config=config, permissions=permissions, **kwargs)
-        except TypeError:
-            return tool.run(path, config=config, **kwargs)
-
-    executor.register(tool_name, tool_invocation_handler)
+    executor.register(tool_name, tool.__call__)
+    kwargs = dict(extra_kwargs or {})
     target_p = path.resolve()
     workspace_root = target_p if target_p.is_dir() else target_p.parent
     req = {
@@ -133,11 +127,14 @@ def _run_tool(
     )
 
 
-def _render_session_result(result: dict[str, Any], as_json: bool) -> None:
+def _render_session_result(
+    result: Mapping[str, object] | ToolResultV1, as_json: bool
+) -> None:
+    rendered = result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json.dumps(rendered, indent=2, default=str))
     else:
-        render_result(result)
+        render_result(rendered)
     from rush.tools.common import exit_code_for as session_exit_code_for
 
-    raise click.exceptions.Exit(session_exit_code_for(result))
+    raise click.exceptions.Exit(session_exit_code_for(rendered))

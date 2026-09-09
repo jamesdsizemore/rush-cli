@@ -35,7 +35,7 @@ def make_tool_wrapper(
         context = resolve_invocation(req, transport="mcp", workspace_root=root)
         return exec_instance.execute(context)
 
-    tool_mcp_wrapper.__self__ = tool
+    tool_mcp_wrapper.__dict__["__self__"] = tool
     return tool_mcp_wrapper
 
 

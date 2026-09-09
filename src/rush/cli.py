@@ -904,10 +904,18 @@ def watch_cmd(
             tools_map = {t.name: t for t in ALL_TOOLS}
             t = tools_map.get(tool_name)
             if t:
-                try:
-                    res = t.run(path.resolve(), permissions=perms)
-                except TypeError:
-                    res = t.run(path.resolve())
+                from .invocation import InvocationExecutor, resolve_invocation
+
+                target = path.resolve()
+                executor = InvocationExecutor()
+                executor.register(t.name, t.__call__)
+                context = resolve_invocation(
+                    {"operation_id": t.name, "path": str(target)},
+                    transport="cli",
+                    workspace_root=target if target.is_dir() else target.parent,
+                    permissions=perms,
+                )
+                res = executor.execute(context)
                 click.echo(res.get("summary", "Done."))
         else:
             suite = suite_map.get(suite_name, CHECK_SUITE)

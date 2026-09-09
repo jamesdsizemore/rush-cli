@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rush.config import RushConfig
+from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
 from rush.tools import ALL_TOOLS
@@ -71,10 +72,17 @@ def run_workflow_suite(
 
         log_subsystem("workflow", "INFO", f"[{suite.name}] Running step: {tool_name}")
         try:
-            try:
-                res: ToolResult = tool.run(path, config=config, permissions=permissions)
-            except TypeError:
-                res = tool.run(path, config=config)
+            executor = InvocationExecutor()
+            executor.register(tool_name, tool.__call__)
+            target = path.resolve()
+            context = resolve_invocation(
+                {"operation_id": tool_name, "path": str(target)},
+                transport="cli",
+                workspace_root=target if target.is_dir() else target.parent,
+                config=config,
+                permissions=permissions,
+            )
+            res: ToolResult = executor.execute(context)
 
             statuses.append(res["status"])
             findings.extend(res.get("findings") or [])

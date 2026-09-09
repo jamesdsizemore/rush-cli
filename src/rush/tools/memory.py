@@ -44,15 +44,6 @@ def _family_for_subject(subject: MemorySubject) -> MemoryFamily:
     return _SUBJECT_FAMILY.get(subject, "memory")
 
 
-class _MemoryResult(dict):
-    """Dict-shaped `ToolResult`, matching every other `ALL_TOOLS` member (`ContinuityResult`
-    precedent in `continuity/results.py`). `to_dict()` is a self-return escape hatch for
-    `cli.py`'s memory command handlers, which call `result.to_dict()` unconditionally."""
-
-    def to_dict(self) -> dict[str, Any]:
-        return dict(self)
-
-
 class MemoryTool(ToolFn):
     """Query, write, and promote cross-LLM memory artifacts through one result contract."""
 
@@ -365,7 +356,7 @@ class MemoryTool(ToolFn):
         operation: str,
         raw: Any = None,
     ) -> ToolResult:
-        return _MemoryResult(
+        return ToolResult(
             tool=self.name,
             engine=None,
             engine_version=None,
