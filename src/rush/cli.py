@@ -10,7 +10,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, get_args
 
 import click
 
@@ -25,8 +25,15 @@ from .cli_support.rendering import (
 )
 from .config import RushConfigError, load_config
 from .logging import setup_logging
+from .memory.store import MemorySubject
 from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
+
+if TYPE_CHECKING:
+    from .memory.maintenance import MaintenanceTask
+    from .tools.memory import SourceKind
+
+_MEMORY_SUBJECTS = get_args(MemorySubject)
 
 __all__ = [
     "_extract_permissions",
@@ -2109,7 +2116,7 @@ def memory_group() -> None:
 
 
 @memory_group.command(name="ask")
-@click.argument("subject")
+@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("query")
 @click.option(
     "--session",
@@ -2119,7 +2126,10 @@ def memory_group() -> None:
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_ask_cmd(
-    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+    subject: MemorySubject,
+    query: str,
+    session_allowlist: tuple[str, ...],
+    as_json: bool,
 ) -> None:
     """Ask the memory store a question, scoped to an explicit session allowlist."""
     from .tools.memory import MemoryTool
@@ -2131,11 +2141,11 @@ def memory_ask_cmd(
         query=query,
         session_allowlist=list(session_allowlist) or None,
     )
-    _render_session_result(result.to_dict(), as_json)
+    _render_session_result(dict(result), as_json)
 
 
 @memory_group.command(name="recall")
-@click.argument("subject")
+@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("query")
 @click.option(
     "--session",
@@ -2145,7 +2155,10 @@ def memory_ask_cmd(
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_recall_cmd(
-    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+    subject: MemorySubject,
+    query: str,
+    session_allowlist: tuple[str, ...],
+    as_json: bool,
 ) -> None:
     """Recall memory artifacts, scoped to an explicit session allowlist."""
     from .tools.memory import MemoryTool
@@ -2157,11 +2170,11 @@ def memory_recall_cmd(
         query=query,
         session_allowlist=list(session_allowlist) or None,
     )
-    _render_session_result(result.to_dict(), as_json)
+    _render_session_result(dict(result), as_json)
 
 
 @memory_group.command(name="list")
-@click.argument("subject")
+@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("query")
 @click.option(
     "--session",
@@ -2171,7 +2184,10 @@ def memory_recall_cmd(
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_list_cmd(
-    subject: str, query: str, session_allowlist: tuple[str, ...], as_json: bool
+    subject: MemorySubject,
+    query: str,
+    session_allowlist: tuple[str, ...],
+    as_json: bool,
 ) -> None:
     """List defended memory artifacts scoped to explicit sessions."""
     from .tools.memory import MemoryTool
@@ -2183,11 +2199,11 @@ def memory_list_cmd(
         query=query,
         session_allowlist=list(session_allowlist) or None,
     )
-    _render_session_result(result.to_dict(), as_json)
+    _render_session_result(dict(result), as_json)
 
 
 @memory_group.command(name="write")
-@click.argument("subject")
+@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("source")
 @click.option("--content", required=True, help="JSON-encoded content dict to persist.")
 @click.option(
@@ -2202,11 +2218,11 @@ def memory_list_cmd(
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_write_cmd(
-    subject: str,
+    subject: MemorySubject,
     source: str,
     content: str,
     symbol_ref: str | None,
-    source_kind: str,
+    source_kind: SourceKind,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -2228,7 +2244,7 @@ def memory_write_cmd(
         content=_json.loads(content),
         source=source,
         symbol_ref=symbol_ref,
-        source_kind=source_kind,  # type: ignore[arg-type]
+        source_kind=source_kind,
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,
@@ -2239,11 +2255,11 @@ def memory_write_cmd(
             allow_browser=allow_browser,
         ),
     )
-    _render_session_result(result.to_dict(), as_json)
+    _render_session_result(dict(result), as_json)
 
 
 @memory_group.command(name="promote")
-@click.argument("subject")
+@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("source")
 @click.option("--content", required=True, help="JSON-encoded content dict to evaluate.")
 @click.option(
@@ -2267,11 +2283,11 @@ def memory_write_cmd(
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_promote_cmd(
-    subject: str,
+    subject: MemorySubject,
     source: str,
     content: str,
     symbol_ref: str | None,
-    source_kind: str,
+    source_kind: SourceKind,
     user_stated: bool,
     candidate_sources: tuple[str, ...],
     allow_network: bool,
@@ -2296,7 +2312,7 @@ def memory_promote_cmd(
         content=_json.loads(content),
         source=source,
         symbol_ref=symbol_ref,
-        source_kind=source_kind,  # type: ignore[arg-type]
+        source_kind=source_kind,
         user_stated=user_stated,
         candidate_sources=list(candidate_sources) or None,
         permissions=_extract_permissions(
@@ -2309,7 +2325,7 @@ def memory_promote_cmd(
             allow_browser=allow_browser,
         ),
     )
-    _render_session_result(result.to_dict(), as_json)
+    _render_session_result(dict(result), as_json)
 
 
 @memory_group.command(name="maintain")
@@ -2333,7 +2349,10 @@ def memory_promote_cmd(
     "--allow-cache-write", is_flag=True, help="Allow memory maintenance writes."
 )
 def memory_maintain_cmd(
-    task: str, batch_size: int, as_json: bool, allow_cache_write: bool
+    task: MaintenanceTask,
+    batch_size: int,
+    as_json: bool,
+    allow_cache_write: bool,
 ) -> None:
     """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""
     from .tools.memory import MemoryTool
@@ -2345,7 +2364,7 @@ def memory_maintain_cmd(
         batch_size=batch_size,
         permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
-    _render_session_result(result.to_dict(), as_json)
+    _render_session_result(dict(result), as_json)
 
 
 @cli.group(name="ship")
@@ -2605,10 +2624,10 @@ def context_persona_cmd(set_persona: str | None) -> None:
 
     prefs = PreferenceStore()
     if set_persona:
-        prefs.set_preference("persona_style", set_persona)
+        prefs.set("persona_style", set_persona)
         click.echo(f"Persona style set to: {set_persona}")
     else:
-        current = prefs.get_preference("persona_style", "terse")
+        current = prefs.get("persona_style", "terse")
         click.echo(f"Current persona style: {current}")
 
 

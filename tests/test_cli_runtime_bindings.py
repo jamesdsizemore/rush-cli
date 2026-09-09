@@ -41,6 +41,27 @@ def test_governance_check_reports_real_parity_results(tmp_path, monkeypatch):
     assert ".cursorrules: Rule file out of sync with AGENTS.md SHA." in drift.output
 
 
+def test_context_persona_uses_preference_store_api(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+
+    updated = runner.invoke(cli, ["context", "persona", "--set", "default"])
+    assert updated.exit_code == 0, updated.exception
+    assert updated.output == "Persona style set to: default\n"
+
+    current = runner.invoke(cli, ["context", "persona"])
+    assert current.exit_code == 0, current.exception
+    assert current.output == "Current persona style: default\n"
+
+
+def test_memory_subject_rejects_unknown_runtime_binding() -> None:
+    result = CliRunner().invoke(cli, ["memory", "ask", "unknown", "query"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for" in result.output
+    assert "'unknown' is not one of" in result.output
+
+
 def test_bus_factor_command_reports_actual_ownership(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     hooks = tmp_path / "disabled-hooks"
