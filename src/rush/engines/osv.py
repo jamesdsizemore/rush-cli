@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class OsvScannerEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings: list[dict[str, object]] = []
+        findings: list[Finding] = []
         parsed = raw.get("parsed")
         if isinstance(parsed, dict):
             for result in parsed.get("results", []):
@@ -90,7 +90,7 @@ class OsvScannerEngine(Engine):
                         )
         exit_code = raw.get("exit_code", 0)
         if findings:
-            status = "fail"
+            status: ToolStatus = "fail"
             summary = f"osv-scanner: {len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}"
         elif exit_code == 0 and parsed is not None:
             status = "ok"

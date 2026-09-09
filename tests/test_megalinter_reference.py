@@ -58,4 +58,5 @@ def test_megalinter_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "megalinter/SPELL_CSPELL" in failing["findings"][0]["rule"]

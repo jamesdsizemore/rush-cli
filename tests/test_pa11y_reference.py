@@ -58,4 +58,5 @@ def test_pa11y_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> Non
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "pa11y/WCAG2AA" in failing["findings"][0]["rule"]

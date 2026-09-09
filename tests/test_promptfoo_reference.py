@@ -69,4 +69,5 @@ def test_promptfoo_normalizes_clean_and_failures(monkeypatch, tmp_path: Path) ->
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert failing["findings"][0]["rule"] == "promptfoo-assertion"

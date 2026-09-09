@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class PyreflyEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(
                 {
@@ -58,7 +58,7 @@ class PyreflyEngine(Engine):
                     "line": item.get("line", 0),
                     "column": item.get("column", 0),
                     "rule": f"pyrefly/{item.get('name', 'type-error')}",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": item.get("description", "Python type mismatch"),
                     "fix": None,
                     "remediation": "Update type annotation or value to satisfy typechecker.",
@@ -66,7 +66,9 @@ class PyreflyEngine(Engine):
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = "fail" if findings else ("ok" if exit_code == 0 else "error")
+        status: ToolStatus = (
+            "fail" if findings else ("ok" if exit_code == 0 else "error")
+        )
 
         return ToolResult(
             tool=tool_name,

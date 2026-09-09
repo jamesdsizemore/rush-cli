@@ -9,7 +9,7 @@ from pathlib import Path
 from ..io.atomic_file import AtomicFile
 from ..io.physical_paths import PhysicalRoot
 from ..safety.redactor import sanitize_value
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -98,7 +98,7 @@ class PromptfooEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             grading = item.get("gradingResult", {})
             message = grading.get("reason") or item.get(
@@ -110,13 +110,13 @@ class PromptfooEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": "promptfoo-assertion",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": message,
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = (
+        status: ToolStatus = (
             "fail"
             if (findings or exit_code == 100)
             else ("ok" if exit_code == 0 else "error")

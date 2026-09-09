@@ -60,4 +60,5 @@ def test_pagespeed_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) ->
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "pagespeed/cumulative-layout-shift" in failing["findings"][0]["rule"]

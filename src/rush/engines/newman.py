@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -63,7 +63,7 @@ class NewmanEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             error_meta = item.get("error", {})
             test_name = error_meta.get("test", "Postman Test")
@@ -74,13 +74,13 @@ class NewmanEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": f"newman/{test_name.lower().replace(' ', '-')}",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": message,
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = "fail" if (findings or exit_code != 0) else "ok"
+        status: ToolStatus = "fail" if (findings or exit_code != 0) else "ok"
 
         return ToolResult(
             tool=tool_name,

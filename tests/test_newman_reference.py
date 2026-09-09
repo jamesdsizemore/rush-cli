@@ -64,4 +64,5 @@ def test_newman_normalizes_clean_and_failures(monkeypatch, tmp_path: Path) -> No
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "newman/status-code-is-200" in failing["findings"][0]["rule"]
