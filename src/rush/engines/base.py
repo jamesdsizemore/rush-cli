@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
 
-from ..tools.base import Finding, ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 
 
@@ -94,7 +94,7 @@ class Engine(ABC):
         exit_code = raw.get("exit_code", 0)
         # Engines return non-zero on findings. That's "fail" or "warn", not "error".
         # "error" is reserved for engine crashes — those are caught upstream.
-        status = "ok" if exit_code == 0 else "warn"
+        status: ToolStatus = "ok" if exit_code == 0 else "warn"
         return ToolResult(
             tool=tool_name,
             engine=self.name,

@@ -34,7 +34,7 @@ PromotionDenialReason = Literal[
 @dataclass(frozen=True)
 class PromotionResult:
     promoted: bool
-    new_tier: "TrustTier"
+    new_tier: TrustTier
     denial_reason: PromotionDenialReason | None = None
     corroboration_count: int = 0
 
@@ -60,7 +60,7 @@ _REQUIRED_FIELDS = (
 
 def default_entry_tier(
     source_kind: Literal["local_tool", "cross_tool_handoff", "human_derived"],
-) -> "TrustTier":
+) -> TrustTier:
     """Maps a write's origin to its entry trust tier. Never returns `STATED` (T-61.08)."""
     if source_kind == "cross_tool_handoff":
         return "IMPORTED"
@@ -92,7 +92,7 @@ def _fails_regex_prefilter(content: dict) -> bool:
     return any(pattern.search(text) for pattern in _INSTRUCTION_OVERRIDE_PATTERNS)
 
 
-def _incomplete_schema(artifact: "MemoryArtifact") -> bool:
+def _incomplete_schema(artifact: MemoryArtifact) -> bool:
     """True if any non-optional `MemoryArtifact` field is unset/empty."""
     for field_name in _REQUIRED_FIELDS:
         value = getattr(artifact, field_name)
@@ -128,7 +128,7 @@ def resolve_symbol_ref(symbol_ref: str, project_root: Path) -> bool:
 
 
 def count_corroboration(
-    subject: "MemorySubject",
+    subject: MemorySubject,
     symbol_ref: str | None,
     candidate_sources: list[str],
 ) -> int:
@@ -147,7 +147,7 @@ def count_corroboration(
 
 
 def evaluate_promotion(
-    artifact: "MemoryArtifact",
+    artifact: MemoryArtifact,
     *,
     user_stated: bool,
     candidate_sources: list[str] | None = None,
@@ -219,7 +219,7 @@ def _is_explicit_contradiction(new_content: dict, existing_content: dict) -> boo
 
 
 def evaluate_conflict(
-    new_artifact: "MemoryArtifact", existing_stated_artifact: "MemoryArtifact"
+    new_artifact: MemoryArtifact, existing_stated_artifact: MemoryArtifact
 ) -> Literal["add", "update", "delete", "none"]:
     """LLM-free reconciliation of a new record against an existing `STATED` row (§3.2.2 item 2)."""
     if new_artifact.content == existing_stated_artifact.content:

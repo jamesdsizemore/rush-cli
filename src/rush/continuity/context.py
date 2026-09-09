@@ -95,7 +95,9 @@ def pack_context(
             granted=granted,
             as_v1=as_v1,
         )
-    gate = check_memory_before_pack(context_path, target_symbol, project_root=project_root)
+    gate = check_memory_before_pack(
+        context_path, target_symbol, project_root=project_root
+    )
     if gate.hit:
         packed = gate.content
     else:

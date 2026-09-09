@@ -69,9 +69,13 @@ def last_handoff_for_provider(
         return None
     for checkpoint in CheckpointJournal(project_root).list_checkpoints():
         handoff = checkpoint.get("metadata", {}).get("handoff")
-        if isinstance(handoff, dict) and handoff.get("target_provider") == target_provider:
+        if (
+            isinstance(handoff, dict)
+            and handoff.get("target_provider") == target_provider
+        ):
             return handoff
     return None
+
 
 def save_receipt(project_root: Path, handoff: dict[str, Any]) -> dict[str, Any]:
     """Create and persist a sanitized handoff receipt.

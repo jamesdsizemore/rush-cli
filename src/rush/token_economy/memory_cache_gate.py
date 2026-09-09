@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,9 @@ def check_memory_before_pack(
     """Defended `search()`-then-`recall()` read. Never mutates state, never raises."""
     cache_key = _cache_key(context_path, target_symbol)
     store = TypedArtifactStore(project_root)
-    try:
+    artifacts: list[MemoryArtifact] = []
+    # Failed defended reads are cache misses; never reuse unverified content.
+    with suppress(Exception):
         # FTS5 query syntax treats a bare ":" as a column filter and a bare
         # "/" outside quotes as a syntax error; quoting makes cache_key a
         # literal phrase match instead of a malformed query expression.
@@ -60,9 +63,6 @@ def check_memory_before_pack(
         if not store.search(subject, query):
             return CacheGateResult(hit=False, artifact_id=None, content=None)
         artifacts = store.recall(subject, query, session_allowlist=[_CACHE_SOURCE])
-    except Exception:
-        return CacheGateResult(hit=False, artifact_id=None, content=None)
-
     for artifact in artifacts:
         if artifact.stale or not artifact.content_hash or not artifact.symbol_ref:
             continue

@@ -58,7 +58,9 @@ class FlightRecorder:
         if not flight_file.exists():
             # Already renamed `.migrated` by migration.migrate_flight_recorder(); fall back to
             # the TypedArtifactStore rows sharing this session's symbol_ref.
-            return read_origin_kind_by_symbol(self.project_root, "flight_event", session_id)
+            return read_origin_kind_by_symbol(
+                self.project_root, "flight_event", session_id
+            )
         events = []
         with open(flight_file, "r", encoding="utf-8") as f:
             for line in f:

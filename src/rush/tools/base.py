@@ -100,8 +100,8 @@ class ToolFn(ABC):
         ...
 
     @abstractmethod
-    def __call__(self, path: Path, config: Any) -> ToolResult:
-        """Run the tool on `path` (file or directory) under `config`.
+    def __call__(self, path: Path) -> ToolResult:
+        """Run the tool on `path` (file or directory).
 
         Implementations must NEVER raise — return a ToolResult with
         status='error' if anything goes wrong.

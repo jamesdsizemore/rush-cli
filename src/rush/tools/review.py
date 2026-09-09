@@ -15,6 +15,7 @@ Heuristics only — no LLM call unless --llm=True AND env key set.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,9 @@ def _format_memory_citation(
         )
         rule = "memory-failure-citation"
     else:
-        decision = artifact.content.get("decision") or artifact.content.get("rule_id", "")
+        decision = artifact.content.get("decision") or artifact.content.get(
+            "rule_id", ""
+        )
         detail = (
             f"recorded architectural decision: {decision}"
             if decision
@@ -104,12 +107,12 @@ def _recall_memory_citations(targets: list[Path], root: Path) -> list[Finding]:
             ("failure", _FAILURE_MEMORY_SOURCES),
             ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
         ):
-            try:
+            artifacts: list[MemoryArtifact] = []
+            # Optional citations must never expose content from a failed recall.
+            with suppress(Exception):
                 if not store.search(subject, query):
                     continue
                 artifacts = store.recall(subject, query, session_allowlist=sources)
-            except Exception:
-                continue
             for artifact in artifacts:
                 if artifact.stale:
                     continue

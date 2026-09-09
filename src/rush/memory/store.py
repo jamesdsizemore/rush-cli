@@ -11,9 +11,10 @@ import hashlib
 import json
 import sqlite3
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.trust import PromotionResult, evaluate_conflict, evaluate_promotion
@@ -323,13 +324,13 @@ class TypedArtifactStore:
         for artifact in self.search(subject, query):
             if artifact.source not in allowed_sources:
                 continue
-            if artifact.trust_tier == "STATED":
-                if artifact.signature is None or (
-                    compute_content_signature(artifact.content) != artifact.signature
-                ):
-                    raise SignatureMismatchError(
-                        f"signature mismatch for STATED artifact {artifact.id}"
-                    )
+            if artifact.trust_tier == "STATED" and (
+                artifact.signature is None
+                or compute_content_signature(artifact.content) != artifact.signature
+            ):
+                raise SignatureMismatchError(
+                    f"signature mismatch for STATED artifact {artifact.id}"
+                )
 
             findings = _inspect_text_for_trojan_chars(
                 json.dumps(artifact.content, ensure_ascii=False)

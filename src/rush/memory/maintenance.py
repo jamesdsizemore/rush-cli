@@ -109,10 +109,11 @@ def run_maintenance_cycle(
                     processed += 1
                     errors.append(row["id"])
 
-                if index % _RENEW_EVERY == 0:
-                    if not lock_manager.renew(_LOCK_PATH, capability, ttl_s=60.0):
-                        lock_lost = True
-                        break
+                if index % _RENEW_EVERY == 0 and not lock_manager.renew(
+                    _LOCK_PATH, capability, ttl_s=60.0
+                ):
+                    lock_lost = True
+                    break
 
             return MaintenanceRunResult(
                 task=task, processed=processed, changed=changed, errors=tuple(errors)
