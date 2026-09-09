@@ -146,6 +146,8 @@ def normalize_findings(
             evidence=raw_finding.get("evidence"),
             provenance=raw_finding.get("provenance"),
             freshness=raw_finding.get("freshness"),
+            patch=raw_finding.get("patch"),
+            suggested_fix=raw_finding.get("suggested_fix"),
         )
         normalized["fingerprint"] = finding_fingerprint(
             normalized["path"],

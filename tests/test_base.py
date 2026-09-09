@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from rush.engines.base import Engine, EngineResult
 from rush.tools import ALL_TOOLS
 from rush.tools.base import (
     Severity,
@@ -137,6 +140,59 @@ def test_normalize_findings_severity_fallback():
     raw = [{"filename": "x.py", "message": "hi", "severity": "bogus"}]
     out = normalize_findings(raw)
     assert out[0]["severity"] == "warn"  # falls back
+
+
+def test_default_engine_normalizes_native_findings_to_canonical_result() -> None:
+    class DefaultEngine(Engine):
+        name = "default"
+        binary = "default"
+        file_extensions = ("py",)
+
+        def run(
+            self,
+            path: Path,
+            args: list[str],
+            cwd: Path | None = None,
+        ) -> EngineResult:
+            return {}
+
+    result = DefaultEngine().normalize(
+        {
+            "exit_code": 1,
+            "findings": [
+                {
+                    "path": "sample.py",
+                    "line": 4,
+                    "column": 2,
+                    "rule": "X001",
+                    "severity": "error",
+                    "message": "token=secret-value",
+                    "fix": {"replacement": "safe"},
+                    "remediation": "replace value",
+                    "evidence": "observed",
+                    "provenance": "engine",
+                    "freshness": "current",
+                    "patch": "@@ -1 +1 @@",
+                    "suggested_fix": "apply patch",
+                }
+            ],
+        },
+        Path("."),
+        "lint",
+    )
+
+    finding = result["findings"][0]
+    assert result["status"] == "warn"
+    assert finding["message"] == "token=[REDACTED]"
+    assert finding["rule_id"] == "X001"
+    assert finding["fix"] == {"replacement": "safe"}
+    assert finding["remediation"] == "replace value"
+    assert finding["evidence"] == "observed"
+    assert finding["provenance"] == "engine"
+    assert finding["freshness"] == "current"
+    assert finding["patch"] == "@@ -1 +1 @@"
+    assert finding["suggested_fix"] == "apply patch"
+    assert finding["fingerprint"]
 
 
 def test_now_ms_and_elapsed_ms():

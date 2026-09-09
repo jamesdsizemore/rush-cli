@@ -23,9 +23,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..tools.base import Finding, ToolResult, ToolStatus
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, RawFinding
 
 
 class PrettierEngine(Engine):
@@ -70,7 +70,7 @@ class PrettierEngine(Engine):
             if ln.strip() and not ln.startswith("[warn]")
         ]
 
-        findings_raw: list[Finding] = [
+        findings_raw: list[RawFinding] = [
             {
                 "path": p,
                 "rule": "formatting",

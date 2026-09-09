@@ -10,8 +10,10 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
 
-from ..tools.base import Finding, ToolResult, ToolStatus
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
+
+RawFinding = dict[str, Any]
 
 
 class EngineResult(TypedDict, total=False):
@@ -19,7 +21,7 @@ class EngineResult(TypedDict, total=False):
     stdout: str
     stderr: str
     parsed: Any | None  # engine-native JSON if available, else None
-    findings: list[Finding]  # normalized from parsed
+    findings: list[RawFinding]  # engine-native records; normalize before ToolResult
     summary: str
     duration_ms: int
 
@@ -89,7 +91,7 @@ class Engine(ABC):
         Default impl is conservative — subclasses override for richer
         normalization (e.g. ruff's structured JSON output).
         """
-        from ..tools.common import now_ms
+        from ..tools.common import normalize_findings, now_ms
 
         exit_code = raw.get("exit_code", 0)
         # Engines return non-zero on findings. That's "fail" or "warn", not "error".
@@ -102,6 +104,6 @@ class Engine(ABC):
             status=status,
             duration_ms=raw.get("duration_ms", now_ms()),
             summary=raw.get("summary", "") or f"{self.name} exit {exit_code}",
-            findings=raw.get("findings", []),
+            findings=normalize_findings(raw.get("findings", [])),
             raw=raw.get("parsed"),
         )
