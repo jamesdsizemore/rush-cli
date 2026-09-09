@@ -76,6 +76,7 @@ def test_attest_export_requires_artifact_write_permission(tmp_path: Path) -> Non
         permissions=ExecutionPermissions(artifact_write=False),
     )
     assert res_skipped["status"] == "skipped"
+    assert res_skipped["metadata"]["execution"]["mode"] == "executed"
     assert (
         "artifact-write" in res_skipped["summary"]
         or "artifact_write" in res_skipped["summary"]

@@ -471,7 +471,7 @@ class LicenseMatrixTool(ToolFn):
                 f"compliance_score: {compliance_score})"
             ),
             findings=findings,
-            metrics=metrics,
+            metrics=dict(metrics),
             raw={"packages": packages_report},
             metadata={"packages": packages_report, "execution": exec_meta},
         )

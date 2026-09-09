@@ -213,6 +213,8 @@ s3.get_object(Bucket="b", Key="k")
         permissions=ExecutionPermissions(artifact_write=False),
     )
     assert res_skipped["status"] == "skipped"
+    assert res_skipped["metadata"]["execution"]["mode"] == "executed"
+    assert not (tmp_path / "policy.json").exists()
 
     # With artifact_write permission
     res_ok = tool.run(

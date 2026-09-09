@@ -306,7 +306,7 @@ class AttestationTool(ToolFn):
                     duration_ms=elapsed_ms(start),
                     metadata={
                         "execution": build_execution_metadata(
-                            "skipped",
+                            "executed",
                             requested=required_perms,
                             granted=permissions,
                             producer="rush-attest",

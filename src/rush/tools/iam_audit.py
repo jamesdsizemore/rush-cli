@@ -436,7 +436,7 @@ class IamAuditTool(ToolFn):
                     duration_ms=elapsed_ms(start),
                     metadata={
                         "execution": build_execution_metadata(
-                            "skipped",
+                            "executed",
                             requested=required_perms,
                             granted=permissions,
                             producer="rush-iam-audit",
@@ -505,7 +505,7 @@ class IamAuditTool(ToolFn):
                 f"({wildcard_count} wildcards, {escalation_count} escalation paths, risk_score: {risk_score})"
             ),
             findings=findings,
-            metrics=metrics,
+            metrics=dict(metrics),
             artifacts=artifacts if artifacts else None,
             raw={"actions": sorted(all_actions), "policy": policy},
             metadata={"policy": policy, "execution": exec_meta},
