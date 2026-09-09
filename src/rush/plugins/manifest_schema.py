@@ -107,5 +107,7 @@ class PluginManifestValidator:
             from rush.contracts.results import ValidationErrorV1
 
             raise ValidationErrorV1(
-                f"Plugin '{name}' manifest validation failed: {'; '.join(res.errors)}"
+                code="INVALID_PLUGIN_MANIFEST",
+                message=f"Plugin '{name}' manifest validation failed: {'; '.join(res.errors)}",
+                path=f"plugins.{name}",
             )

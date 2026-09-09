@@ -2,7 +2,29 @@
 
 from __future__ import annotations
 
+from io import StringIO
+
+from rich.console import Console
+
+from rush import theme
 from rush.theme import render_dashboard, render_result
+
+
+def test_findings_table_omits_empty_fix_column(monkeypatch):
+    output = StringIO()
+    monkeypatch.setattr(theme, "_shared_console", Console(file=output, width=120))
+    finding = {"path": "app.py", "line": 1, "rule": "E1", "message": "Problem"}
+    result = {"tool": "lint", "status": "warn", "findings": [finding]}
+
+    render_result(result)
+    assert "fix" not in output.getvalue()
+
+    output.seek(0)
+    output.truncate()
+    finding["fix"] = "replacement"
+    render_result(result)
+    assert "fix" in output.getvalue()
+    assert "replacement" in output.getvalue()
 
 
 def test_render_result():

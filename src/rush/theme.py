@@ -87,11 +87,9 @@ def render_result(result: dict) -> None:
         t.add_column("rule")
         t.add_column("severity")
         t.add_column("message")
-        t.add_column("fix", style="italic dim")
-
         has_any_fix = any(bool(f.get("fix")) for f in findings)
-        if not has_any_fix:
-            t.columns[5].visible = False
+        if has_any_fix:
+            t.add_column("fix", style="italic dim")
 
         for f in findings[:50]:  # cap render at 50
             sev = f.get("severity", "info")
@@ -103,7 +101,7 @@ def render_result(result: dict) -> None:
                 str(f.get("rule", "")),
                 f"[severity.{sev}]{sev}[/]",
                 str(f.get("message", ""))[:120],
-                fix_str,
+                *([fix_str] if has_any_fix else []),
             )
         c.print(t)
         if len(findings) > 50:

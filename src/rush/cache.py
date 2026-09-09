@@ -171,7 +171,7 @@ class ResultCache:
             result_dict = result.to_dict()
         elif isinstance(result, dict):
             if "schema_version" not in result:
-                result_dict = adapt_legacy_tool_result(result).to_dict()
+                result_dict = adapt_legacy_tool_result(dict(result)).to_dict()
             else:
                 result_dict = dict(result)
         else:

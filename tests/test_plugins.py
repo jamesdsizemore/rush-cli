@@ -18,6 +18,17 @@ from rush.plugins.loader import CustomPlugin, execute_plugin
 from rush.plugins.validator import validate_plugin_output
 
 
+def test_invalid_manifest_raises_structured_validation_error() -> None:
+    from rush.contracts.results import ValidationErrorV1
+    from rush.plugins.manifest_schema import PluginManifestValidator
+
+    with pytest.raises(ValidationErrorV1) as failure:
+        PluginManifestValidator.validate_spec_or_raise("example", {})
+    assert failure.value.code == "INVALID_PLUGIN_MANIFEST"
+    assert failure.value.path == "plugins.example"
+    assert "non-empty 'command'" in failure.value.message
+
+
 def test_validate_plugin_output_success() -> None:
     valid_payload = json.dumps(
         {
