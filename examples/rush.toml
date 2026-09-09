@@ -35,6 +35,11 @@ vus = 1
 duration_seconds = 10
 timeout_seconds = 60
 
+[tools.contract]
+pact_files = ["pacts/consumer.json"]
+provider_url = "http://127.0.0.1:8000/"
+timeout_seconds = 60
+
 [tools.attest]
 # Select the actual built artifact through the current CLI:
 # rush attest . --artifact-path dist/RELEASE.whl

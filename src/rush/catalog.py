@@ -419,6 +419,11 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Run existing contract suites.",
         "Run contract tests without provider deployment.",
         (),
+        option_specs=(
+            ToolOptionSpec("pact_files", tuple, (), path_kind="file"),
+            ToolOptionSpec("provider_url", str, ""),
+            ToolOptionSpec("timeout_seconds", int, 60, minimum=1),
+        ),
     ),
     "commit-msg": ToolSpec(
         "commit-msg",

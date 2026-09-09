@@ -78,6 +78,33 @@ def test_fuzz_rejects_unsafe_paths_and_limits(tmp_path, options) -> None:
         _parse({"tools": {"fuzz": options}}, tmp_path / "rush.toml")
 
 
+def test_contract_options_preserve_pacts_provider_and_timeout(tmp_path) -> None:
+    options = {
+        "pact_files": ["pacts/consumer.json", "pacts/second.json"],
+        "provider_url": "http://127.0.0.1:18965/",
+        "timeout_seconds": 8,
+    }
+    config = _parse({"tools": {"contract": options}}, tmp_path / "rush.toml")
+    assert dict(config.tools["contract"].options) == {
+        **options,
+        "pact_files": tuple(options["pact_files"]),
+    }
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"pact_files": [False]},
+        {"provider_url": True},
+        {"timeout_seconds": 0},
+        {"timeout_seconds": True},
+    ],
+)
+def test_contract_rejects_invalid_config(tmp_path, options) -> None:
+    with pytest.raises(RushConfigError):
+        _parse({"tools": {"contract": options}}, tmp_path / "rush.toml")
+
+
 def test_load_options_preserve_target_and_limits(tmp_path) -> None:
     options = {
         "script": "load/scenario.js",

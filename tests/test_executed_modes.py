@@ -1152,3 +1152,439 @@ def test_codeql_executed_mode_requires_build_permission(tmp_path: Path) -> None:
     perms = ExecutionPermissions(build=True)
     res_granted = tool.run(tmp_path, permissions=perms)
     assert res_granted["metadata"]["execution"]["mode"] == "executed"
+
+
+def _write_pact(path: Path, descriptions: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "consumer": {"name": "Rush consumer"},
+                "provider": {"name": "Rush provider"},
+                "interactions": [
+                    {
+                        "description": description,
+                        "request": {"method": "GET", "path": f"/{index}"},
+                        "response": {"status": 200},
+                    }
+                    for index, description in enumerate(descriptions)
+                ],
+                "metadata": {"pactSpecification": {"version": "3.0.0"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _contract_permissions() -> ExecutionPermissions:
+    return ExecutionPermissions(network=True, slow=True, artifact_write=True)
+
+
+def test_contract_verifies_provider_interactions(monkeypatch, tmp_path: Path) -> None:
+    first = tmp_path / "pacts" / "first.json"
+    second = tmp_path / "pacts" / "second.json"
+    _write_pact(first, ["ready interaction"])
+    _write_pact(second, ["value interaction"])
+    originals = {path: path.read_bytes() for path in (first, second)}
+    import rush.tools.contract as contract_mod
+
+    monkeypatch.setattr(contract_mod, "engine_on_path", lambda _name: True)
+    monkeypatch.setattr(
+        contract_mod,
+        "run_subprocess",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 0, stdout="1.39.1", stderr=""
+        ),
+    )
+    calls = []
+
+    def fake_run(argv, *, cwd, timeout, env, stdout, **_kwargs):
+        calls.append((argv, Path(cwd), timeout, env))
+        copied_pact = Path(cwd) / argv[1]
+        assert (
+            copied_pact.read_bytes()
+            == originals[first if argv[1].endswith("first.json") else second]
+        )
+        failed = argv[1].endswith("second.json")
+        stdout.write(
+            json.dumps(
+                {
+                    "version": "3.13.6",
+                    "examples": [
+                        {
+                            "interaction_index": 0,
+                            "description": "has a matching response",
+                            "full_description": "provider response matches",
+                            "status": "failed" if failed else "passed",
+                            "mismatches": (
+                                [{"message": "wrong value"}] if failed else []
+                            ),
+                            "pact_url": argv[1],
+                        }
+                    ],
+                    "summary": {
+                        "example_count": 1,
+                        "failure_count": int(failed),
+                        "pending_count": 0,
+                        "errors_outside_of_examples_count": 0,
+                    },
+                }
+            ).encode()
+        )
+        return subprocess.CompletedProcess(argv, 1 if failed else 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setenv("PACT_BROKER_BASE_URL", "https://broker.invalid")
+    monkeypatch.setenv("PACT_BROKER_PUBLISH_VERIFICATION_RESULTS", "true")
+
+    result = ContractTool().run(
+        tmp_path,
+        pact_files=["pacts/first.json", "pacts/second.json"],
+        provider_url="http://127.0.0.1:8765",
+        timeout_seconds=11,
+        permissions=_contract_permissions(),
+    )
+
+    assert result["status"] == "fail"
+    assert result["engine_version"] == "1.39.1"
+    assert result["metrics"] == {
+        "total_interactions": 2,
+        "passed_interactions": 1,
+        "failed_interactions": 1,
+        "pending_interactions": 0,
+        "examples": 2,
+    }
+    assert [item["name"] for item in result["raw"]["interactions"]] == [
+        "ready interaction",
+        "value interaction",
+    ]
+    assert len(result["artifacts"]) == 2
+    assert all(Path(path).is_file() for path in result["artifacts"])
+    assert [call[0][0] for call in calls] == [
+        "pact-provider-verifier",
+        "pact-provider-verifier",
+    ]
+    assert all(
+        call[0][2:6]
+        == ["--provider-base-url", "http://127.0.0.1:8765", "--format", "json"]
+        for call in calls
+    )
+    assert all(call[0][-2] == "--log-dir" for call in calls)
+    assert all(call[2] == 11 for call in calls)
+    assert all("PACT_BROKER_BASE_URL" not in call[3] for call in calls)
+    assert all(
+        "PACT_BROKER_PUBLISH_VERIFICATION_RESULTS" not in call[3] for call in calls
+    )
+    assert {path: path.read_bytes() for path in originals} == originals
+
+
+def test_contract_groups_rspec_examples_by_interaction(
+    monkeypatch, tmp_path: Path
+) -> None:
+    pact = tmp_path / "pact.json"
+    _write_pact(pact, ["passed interaction", "combined checks"])
+    import rush.tools.contract as contract_mod
+
+    monkeypatch.setattr(contract_mod, "engine_on_path", lambda _name: True)
+    monkeypatch.setattr(
+        contract_mod,
+        "run_subprocess",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 0, stdout="1.39.1", stderr=""
+        ),
+    )
+
+    def fake_run(argv, *, stdout, **_kwargs):
+        statuses = ["passed", "passed", "failed"]
+        stdout.write(
+            json.dumps(
+                {
+                    "examples": [
+                        {
+                            "interaction_index": 0 if index == 0 else 1,
+                            "description": f"check {index}",
+                            "full_description": f"full check {index}",
+                            "status": status,
+                            "mismatches": (
+                                [{"message": "secret=private-value"}]
+                                if status == "failed"
+                                else []
+                            ),
+                            "pact_url": argv[1],
+                        }
+                        for index, status in enumerate(statuses)
+                    ],
+                    "summary": {
+                        "example_count": 3,
+                        "failure_count": 1,
+                        "pending_count": 0,
+                        "errors_outside_of_examples_count": 0,
+                    },
+                }
+            ).encode()
+        )
+        return subprocess.CompletedProcess(argv, 1, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = ContractTool().run(
+        tmp_path,
+        pact_files=["pact.json"],
+        provider_url="http://127.0.0.1:8765",
+        permissions=_contract_permissions(),
+    )
+
+    assert result["status"] == "fail"
+    assert result["metrics"]["total_interactions"] == 2
+    assert result["metrics"]["failed_interactions"] == 1
+    assert result["metrics"]["passed_interactions"] == 1
+    assert result["metrics"]["pending_interactions"] == 0
+    assert result["raw"]["interactions"][0]["status"] == "passed"
+    assert result["raw"]["interactions"][1]["status"] == "failed"
+    assert "private-value" not in json.dumps(result)
+
+
+def test_contract_rejects_missing_denied_and_escaping_inputs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import rush.tools.contract as contract_mod
+
+    monkeypatch.setattr(
+        contract_mod,
+        "engine_on_path",
+        lambda _name: pytest.fail("engine discovered before validation"),
+    )
+    missing = ContractTool().run(tmp_path, permissions=_contract_permissions())
+    assert missing["status"] == "skipped"
+    assert missing["metadata"]["requires_input"] == "pact_files"
+
+    outside = tmp_path.parent / "outside-pact.json"
+    _write_pact(outside, ["outside secret"])
+    escaped = ContractTool().run(
+        tmp_path,
+        pact_files=["../outside-pact.json"],
+        provider_url="http://127.0.0.1:8765",
+        permissions=_contract_permissions(),
+    )
+    assert escaped["status"] == "error"
+
+    _write_pact(tmp_path / "pact.json", ["safe"])
+    denied = ContractTool().run(
+        tmp_path,
+        pact_files=["pact.json"],
+        provider_url="http://127.0.0.1:8765",
+    )
+    assert denied["status"] == "skipped"
+    assert "network" in denied["summary"]
+    assert "slow" in denied["summary"]
+    assert "artifact-write" in denied["summary"]
+
+    link = tmp_path / "linked-pact.json"
+    link.symlink_to(outside)
+    linked = ContractTool().run(
+        tmp_path,
+        pact_files=["linked-pact.json"],
+        provider_url="http://127.0.0.1:8765",
+        permissions=_contract_permissions(),
+    )
+    assert linked["status"] == "error"
+    assert "outside secret" not in json.dumps(linked)
+
+
+def test_contract_pending_zero_and_invalid_reports(monkeypatch, tmp_path: Path) -> None:
+    pact = tmp_path / "pact.json"
+    _write_pact(pact, ["interaction"])
+    import rush.tools.contract as contract_mod
+
+    monkeypatch.setattr(contract_mod, "engine_on_path", lambda _name: True)
+    monkeypatch.setattr(
+        contract_mod,
+        "run_subprocess",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 0, stdout="1.39.1", stderr=""
+        ),
+    )
+    current = {}
+
+    def fake_run(argv, *, stdout, **_kwargs):
+        stdout.write(json.dumps(current["payload"]).encode())
+        return subprocess.CompletedProcess(argv, current["returncode"], b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    def invoke(payload, returncode=0):
+        current.update(payload=payload, returncode=returncode)
+        return ContractTool().run(
+            tmp_path,
+            pact_files=["pact.json"],
+            provider_url="http://127.0.0.1:8765",
+            permissions=_contract_permissions(),
+        )
+
+    def report(status: str | None) -> dict:
+        examples = []
+        if status is not None:
+            examples.append(
+                {
+                    "interaction_index": 0,
+                    "description": "check",
+                    "full_description": "full check",
+                    "status": status,
+                    "mismatches": [],
+                    "pact_url": "pact.json",
+                }
+            )
+        return {
+            "examples": examples,
+            "summary": {
+                "example_count": len(examples),
+                "failure_count": int(status == "failed"),
+                "pending_count": int(status == "pending"),
+                "errors_outside_of_examples_count": 0,
+            },
+        }
+
+    pending = invoke(report("pending"))
+    assert pending["status"] == "warn"
+    assert pending["metadata"]["incomplete"] is True
+
+    zero = invoke(report(None))
+    assert zero["status"] == "skipped"
+    assert zero["metadata"]["incomplete"] is True
+
+    invalid_count = report("passed")
+    invalid_count["summary"]["example_count"] = True
+    assert invoke(invalid_count)["status"] == "error"
+
+    outside_error = report("passed")
+    outside_error["summary"]["errors_outside_of_examples_count"] = 1
+    assert invoke(outside_error)["status"] == "error"
+    assert invoke(report("passed"), returncode=2)["status"] == "error"
+
+    _write_pact(pact, ["interaction", "unverified interaction"])
+    assert invoke(report("passed"))["status"] == "error"
+
+
+def test_contract_rejects_report_symlink(monkeypatch, tmp_path: Path) -> None:
+    _write_pact(tmp_path / "pact.json", ["interaction"])
+    outside = tmp_path.parent / "contract-secret.json"
+    outside.write_text("password=private-contract-value", encoding="utf-8")
+    import rush.tools.contract as contract_mod
+
+    monkeypatch.setattr(contract_mod, "engine_on_path", lambda _name: True)
+    monkeypatch.setattr(
+        contract_mod,
+        "run_subprocess",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 0, stdout="1.39.1", stderr=""
+        ),
+    )
+
+    def fake_run(argv, *, stdout, **_kwargs):
+        report = Path(stdout.name)
+        report.unlink()
+        report.symlink_to(outside)
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = ContractTool().run(
+        tmp_path,
+        pact_files=["pact.json"],
+        provider_url="http://127.0.0.1:8765",
+        permissions=_contract_permissions(),
+    )
+    assert result["status"] == "error"
+    assert outside.read_text(encoding="utf-8") == "password=private-contract-value"
+    assert "private-contract-value" not in json.dumps(result)
+
+
+def test_contract_real_workload(tmp_path: Path) -> None:
+    _require_real_engine("pact-provider-verifier")
+    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
+        pytest.skip("real contract engine acceptance disabled")
+
+    class Handler(BaseHTTPRequestHandler):
+        corrected = False
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            value = "expected" if self.corrected or self.path == "/ready" else "wrong"
+            self.wfile.write(json.dumps({"value": value}).encode())
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        pact = tmp_path / "provider.json"
+        pact.write_text(
+            json.dumps(
+                {
+                    "consumer": {"name": "Rush consumer"},
+                    "provider": {"name": "Rush provider"},
+                    "interactions": [
+                        {
+                            "description": "GET /ready",
+                            "request": {"method": "GET", "path": "/ready"},
+                            "response": {
+                                "status": 200,
+                                "headers": {"Content-Type": "application/json"},
+                                "body": {"value": "expected"},
+                            },
+                        },
+                        {
+                            "description": "GET /value",
+                            "request": {"method": "GET", "path": "/value"},
+                            "response": {
+                                "status": 200,
+                                "headers": {"Content-Type": "application/json"},
+                                "body": {"value": "expected"},
+                            },
+                        },
+                    ],
+                    "metadata": {"pactSpecification": {"version": "3.0.0"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        original = pact.read_bytes()
+        kwargs = {
+            "pact_files": ["provider.json"],
+            "provider_url": f"http://127.0.0.1:{server.server_port}",
+            "timeout_seconds": 30,
+            "permissions": _contract_permissions(),
+        }
+        failed = ContractTool().run(tmp_path, **kwargs)
+        assert failed["status"] == "fail"
+        assert failed["metrics"]["total_interactions"] == 2
+        assert failed["metrics"]["passed_interactions"] == 1
+        assert failed["metrics"]["failed_interactions"] == 1
+        assert failed["engine_version"] == "1.39.1"
+        import hashlib
+
+        for artifact in failed["artifacts"]:
+            assert (
+                failed["metadata"]["raw_artifact_sha256"][artifact]
+                == hashlib.sha256(Path(artifact).read_bytes()).hexdigest()
+            )
+        assert [item["name"] for item in failed["raw"]["interactions"]] == [
+            "GET /ready",
+            "GET /value",
+        ]
+        assert pact.read_bytes() == original
+        assert all(
+            Path(path).is_relative_to(tmp_path.resolve() / ".rush" / "runs")
+            for path in failed["artifacts"]
+        )
+
+        Handler.corrected = True
+        passed = ContractTool().run(tmp_path, **kwargs)
+        assert passed["status"] == "ok"
+        assert passed["metrics"]["passed_interactions"] == 2
+        assert passed["metrics"]["failed_interactions"] == 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
