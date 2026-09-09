@@ -143,7 +143,7 @@ class FuzzTool(ToolFn):
                 summary=f"fuzz: {failures} crash(es) or timeout(s) in imported report",
                 findings=[],
                 raw=None,
-                metrics=metrics,
+                metrics=dict(metrics),
                 artifacts=[str(effective_report)],
                 metadata={
                     "evidence_source": "imported-local-report",
@@ -448,7 +448,7 @@ class FuzzTool(ToolFn):
                 summary=f"fuzz: {iterations} iteration(s), {len(crash_files)} crash(es)",
                 findings=[],
                 raw=proc.stderr,
-                metrics=metrics,
+                metrics=dict(metrics),
                 artifacts=[*(str(p) for p in crash_files), str(report)],
                 metadata=metadata,
             )

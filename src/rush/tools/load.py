@@ -148,7 +148,7 @@ class LoadTool(ToolFn):
                 summary=f"load: {metrics['failed_requests']} failed request(s) in imported report",
                 findings=[],
                 raw=None,
-                metrics=metrics,
+                metrics=dict(metrics),
                 artifacts=[str(effective_report)],
                 metadata={
                     "evidence_source": "imported-local-report",
@@ -497,7 +497,7 @@ class LoadTool(ToolFn):
             summary=f"load: {failed_requests} failed of {total_requests} requests",
             findings=[],
             raw=sanitize_value(payload).value,
-            metrics=metrics,
+            metrics=dict(metrics),
             artifacts=[str(report)],
             metadata=metadata,
         )

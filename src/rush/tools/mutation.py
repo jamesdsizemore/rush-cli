@@ -132,7 +132,7 @@ class MutationTool(ToolFn):
                 summary=f"mutation: {escaped} mutant(s) survived or timed out",
                 findings=[],
                 raw=None,
-                metrics=metrics,
+                metrics=dict(metrics),
                 artifacts=[str(effective_report)],
                 metadata={
                     "evidence_source": "imported-local-report",
@@ -428,7 +428,7 @@ class MutationTool(ToolFn):
                 summary=f"mutation: {metrics['generated']} generated, {escaped} escaped",
                 findings=[],
                 raw=payload,
-                metrics=metrics,
+                metrics=dict(metrics),
                 artifacts=[str(report)],
                 metadata={
                     "evidence_source": "executed-workload",

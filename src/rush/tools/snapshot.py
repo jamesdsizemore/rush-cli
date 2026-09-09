@@ -120,7 +120,7 @@ class SnapshotTool(ToolFn):
                 summary=f"snapshot: {metrics['mismatched']} mismatch(es) in imported comparison",
                 findings=[],
                 raw=None,
-                metrics=metrics,
+                metrics=dict(metrics),
                 artifacts=[str(effective_report)],
                 metadata={
                     "evidence_source": "imported-local-report",
