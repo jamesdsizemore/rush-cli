@@ -23,9 +23,11 @@ class CheckpointJournal:
     def __init__(self, project_root: Path | None = None) -> None:
         self.project_root = (project_root or Path.cwd()).resolve()
         self.project_root.mkdir(parents=True, exist_ok=True)
-        self.session_dir = self.project_root / ".rush" / "sessions"
-        self.session_dir.mkdir(parents=True, exist_ok=True)
         self.physical_root = PhysicalRoot(self.project_root)
+        self.session_dir = self.physical_root.open_contained(
+            Path(".rush") / "sessions", purpose="write"
+        )
+        self.session_dir.mkdir(parents=True, exist_ok=True)
 
     def save_checkpoint(
         self, name: str, metadata: dict[str, Any], files: list[str]
@@ -80,15 +82,21 @@ class CheckpointJournal:
         `migration.migrate_checkpoint_journal`), falls back to the `TypedArtifactStore` row so this
         method stays the sole existence authority `continuity.py`'s `_run_restore` relies on.
         """
-        target = self.session_dir / f"{name}.json"
+        target = self.physical_root.open_contained(
+            Path(".rush") / "sessions" / f"{name}.json", purpose="read"
+        )
         if target.exists():
             try:
+                target = self.physical_root.open_contained(
+                    Path(".rush") / "sessions" / f"{name}.json", purpose="read"
+                )
                 data = json.loads(target.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
                     return None
                 return data
             except (OSError, json.JSONDecodeError, UnicodeDecodeError):
                 return None
+        self.physical_root.open_contained(Path(".rush") / "memory.db", purpose="read")
         migrated = read_origin(self.project_root, "checkpoint", name)
         if migrated is None or migrated.get("status") == "corrupt":
             return None
@@ -98,7 +106,13 @@ class CheckpointJournal:
         """Lists all saved session checkpoints, retaining and digesting corrupt records."""
         results = []
         physical_names = set()
-        for p in self.session_dir.glob("*.json"):
+        session_dir = self.physical_root.open_contained(
+            Path(".rush") / "sessions", purpose="read"
+        )
+        for candidate in session_dir.glob("*.json"):
+            p = self.physical_root.open_contained(
+                Path(".rush") / "sessions" / candidate.name, purpose="read"
+            )
             if not p.is_file():
                 continue
             physical_names.add(p.stem)
@@ -123,6 +137,9 @@ class CheckpointJournal:
                 ValueError,
             ) as exc:
                 try:
+                    p = self.physical_root.open_contained(
+                        Path(".rush") / "sessions" / p.name, purpose="read"
+                    )
                     raw_bytes = p.read_bytes()
                     digest = hashlib.sha256(raw_bytes).hexdigest()
                 except OSError:
@@ -130,6 +147,9 @@ class CheckpointJournal:
                     digest = hashlib.sha256(b"").hexdigest()
                 mtime = 0
                 try:
+                    p = self.physical_root.open_contained(
+                        Path(".rush") / "sessions" / p.name, purpose="read"
+                    )
                     mtime = int(p.stat().st_mtime)
                 except OSError:
                     pass
@@ -144,6 +164,7 @@ class CheckpointJournal:
                     }
                 )
         seen = physical_names | {str(entry["checkpoint_id"]) for entry in results}
+        self.physical_root.open_contained(Path(".rush") / "memory.db", purpose="read")
         for entry in read_origin_kind(self.project_root, "checkpoint"):
             identity = str(entry.get("checkpoint_id") or entry.get("name"))
             if identity not in seen:

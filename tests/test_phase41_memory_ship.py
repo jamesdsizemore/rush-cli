@@ -59,6 +59,112 @@ def test_checkpoint_journal(tmp_path: Path):
     assert len(checkpoints) == 1
 
 
+def _outside_checkpoint(secret: str) -> str:
+    return json.dumps(
+        {
+            "schema_version": "1.0.0",
+            "checkpoint_id": "escape",
+            "name": "escape",
+            "status": "ok",
+            "created_at": 1,
+            "metadata": {"secret": secret},
+            "files": [],
+        }
+    )
+
+
+def test_checkpoint_restore_and_list_reject_symlink_file(tmp_path: Path) -> None:
+    secret = "sk-test-checkpoint-file-synthetic-secret"
+    journal = CheckpointJournal(project_root=tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text(_outside_checkpoint(secret), encoding="utf-8")
+    target = journal.session_dir / "escape.json"
+    target.symlink_to(outside)
+    tool = SessionContinuityTool()
+
+    restored = tool.run(tmp_path, operation="restore", name="escape")
+    listed = tool.run(tmp_path, operation="list")
+
+    assert restored["status"] == "error"
+    assert listed["status"] == "error"
+    assert secret not in str(restored)
+    assert secret not in str(listed)
+    assert outside.read_text(encoding="utf-8") == _outside_checkpoint(secret)
+
+
+def test_checkpoint_restore_and_list_reject_symlink_parent(tmp_path: Path) -> None:
+    secret = "sk-test-checkpoint-parent-synthetic-secret"
+    journal = CheckpointJournal(project_root=tmp_path)
+    outside_dir = tmp_path / "outside-sessions"
+    outside_dir.mkdir()
+    outside = outside_dir / "escape.json"
+    outside.write_text(_outside_checkpoint(secret), encoding="utf-8")
+    journal.session_dir.rmdir()
+    journal.session_dir.symlink_to(outside_dir, target_is_directory=True)
+    tool = SessionContinuityTool()
+
+    restored = tool.run(tmp_path, operation="restore", name="escape")
+    listed = tool.run(tmp_path, operation="list")
+
+    assert restored["status"] == "error"
+    assert listed["status"] == "error"
+    assert secret not in str(restored)
+    assert secret not in str(listed)
+    assert outside.read_text(encoding="utf-8") == _outside_checkpoint(secret)
+
+
+def test_checkpoint_restore_rejects_traversal(tmp_path: Path) -> None:
+    secret = "sk-test-checkpoint-traversal-synthetic-secret"
+    journal = CheckpointJournal(project_root=tmp_path)
+    outside = tmp_path / "escape.json"
+    outside.write_text(_outside_checkpoint(secret), encoding="utf-8")
+
+    with pytest.raises(ContainmentError):
+        journal.restore_checkpoint("../../escape")
+
+    assert outside.read_text(encoding="utf-8") == _outside_checkpoint(secret)
+
+
+def test_checkpoint_restore_rejects_symlinked_fallback_store(tmp_path: Path) -> None:
+    secret = "sk-test-checkpoint-fallback-synthetic-secret"
+    CheckpointJournal(project_root=tmp_path)
+    outside = tmp_path / "outside.db"
+    outside.write_text(secret, encoding="utf-8")
+    (tmp_path / ".rush" / "memory.db").symlink_to(outside)
+    tool = SessionContinuityTool()
+
+    result = tool.run(tmp_path, operation="restore", name="missing")
+
+    assert result["status"] == "error"
+    assert secret not in str(result)
+    assert outside.read_text(encoding="utf-8") == secret
+
+
+def test_checkpoint_list_revalidates_corrupt_fallback_before_read(
+    tmp_path: Path,
+) -> None:
+    secret = "sk-test-checkpoint-corrupt-fallback-synthetic-secret"
+    journal = CheckpointJournal(project_root=tmp_path)
+    target = journal.session_dir / "swap.json"
+    target.write_text(_outside_checkpoint("safe"), encoding="utf-8")
+    outside = tmp_path / "outside-corrupt.json"
+    outside.write_text(secret, encoding="utf-8")
+    outside_digest = hashlib.sha256(outside.read_bytes()).hexdigest()
+
+    def swap_then_fail(value: str, *args: object, **kwargs: object) -> object:
+        target.unlink()
+        target.symlink_to(outside)
+        raise json.JSONDecodeError("synthetic parse failure", value, 0)
+
+    with patch("rush.memory.checkpoint_journal.json.loads", side_effect=swap_then_fail):
+        result = SessionContinuityTool().run(tmp_path, operation="list")
+
+    assert result["status"] == "error"
+    assert secret not in str(result)
+    assert outside_digest not in str(result)
+    assert outside.read_text(encoding="utf-8") == secret
+
+
 def test_continuity_handoff_is_redacted_quarantined_and_stale_aware(
     tmp_path: Path,
 ):

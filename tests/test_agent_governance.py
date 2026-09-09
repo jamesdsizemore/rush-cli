@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rush.governance.audit_manifest import AuditManifestGenerator
 from rush.governance.boundary_guard import WorkspaceBoundaryGuard
 from rush.governance.mcp_configs import McpConfigGenerator
@@ -13,6 +15,8 @@ from rush.governance.subagent_guard import (
     SubagentInvocation,
 )
 from rush.governance.synchronizer import AgentsMdSynchronizer
+from rush.io.atomic_file import AtomicFile
+from rush.io.physical_paths import ContainmentError
 
 
 def test_agents_md_synchronizer(tmp_path: Path) -> None:
@@ -26,6 +30,114 @@ def test_agents_md_synchronizer(tmp_path: Path) -> None:
     cursorrules = tmp_path / ".cursorrules"
     assert cursorrules.exists()
     assert "# Project Invariants" in cursorrules.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("escape_kind", ["file", "parent", "traversal"])
+def test_sync_rejects_escape_before_any_write(
+    tmp_path: Path, monkeypatch, escape_kind
+) -> None:
+    from rush.governance import synchronizer
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("# Rules", encoding="utf-8")
+    first = root / ".cursorrules"
+    first.write_bytes(b"original\xff")
+    first.chmod(0o640)
+    before_mode = first.stat().st_mode
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = "sk-ant-api03-abcdef123456789012345678"
+    victim = outside / "rules.md"
+    victim.write_text(secret, encoding="utf-8")
+    if escape_kind == "file":
+        (root / ".windsurfrules").symlink_to(victim)
+        second = ".windsurfrules"
+    elif escape_kind == "parent":
+        (root / ".github").symlink_to(outside, target_is_directory=True)
+        second = ".github/rules.md"
+    else:
+        second = "../outside/rules.md"
+    monkeypatch.setattr(
+        synchronizer, "IDE_TARGETS", {".cursorrules": "first", second: "second"}
+    )
+
+    with pytest.raises(ContainmentError) as failure:
+        AgentsMdSynchronizer(root).sync_all()
+
+    assert secret not in str(failure.value)
+    assert first.read_bytes() == b"original\xff"
+    assert first.stat().st_mode == before_mode
+    assert victim.read_text(encoding="utf-8") == secret
+
+
+@pytest.mark.parametrize("existing", [True, False])
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_sync_second_write_failure_restores_first(
+    tmp_path: Path, monkeypatch, existing, cancelled
+) -> None:
+    from rush.governance import synchronizer
+
+    (tmp_path / "AGENTS.md").write_text("# New rules", encoding="utf-8")
+    first = tmp_path / ".cursorrules"
+    if existing:
+        first.write_bytes(b"original\xff")
+        first.chmod(0o640)
+    original_mode = first.stat().st_mode if existing else None
+    second = tmp_path / ".windsurfrules"
+    second.write_bytes(b"second original")
+    neighbor = tmp_path / "notes.txt"
+    neighbor.write_bytes(b"unrelated")
+    monkeypatch.setattr(
+        synchronizer, "IDE_TARGETS", {first.name: "first", second.name: "second"}
+    )
+    original_write = AtomicFile.write_bytes
+    original_text_write = Path.write_text
+    secret = "sk-ant-api03-abcdef123456789012345678"
+
+    def fail_second(writer, relative_path, content):
+        if str(relative_path) == second.name:
+            if cancelled:
+                raise KeyboardInterrupt()
+            raise OSError(secret)
+        return original_write(writer, relative_path, content)
+
+    def fail_legacy_second(path, *args, **kwargs):
+        if path == second:
+            if cancelled:
+                raise KeyboardInterrupt()
+            raise OSError(secret)
+        return original_text_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(AtomicFile, "write_bytes", fail_second)
+    monkeypatch.setattr(Path, "write_text", fail_legacy_second)
+    with pytest.raises(KeyboardInterrupt if cancelled else OSError) as failure:
+        AgentsMdSynchronizer(tmp_path).sync_all()
+
+    if existing:
+        assert first.read_bytes() == b"original\xff"
+        assert first.stat().st_mode == original_mode
+    else:
+        assert not first.exists()
+    assert second.read_bytes() == b"second original"
+    assert neighbor.read_bytes() == b"unrelated"
+    assert secret not in str(failure.value)
+
+
+def test_sync_rejects_symlinked_canonical_file(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "outside.md"
+    secret = "sk-ant-api03-abcdef123456789012345678"
+    outside.write_text(secret, encoding="utf-8")
+    (root / "AGENTS.md").symlink_to(outside)
+
+    with pytest.raises(ContainmentError) as failure:
+        AgentsMdSynchronizer(root).sync_all()
+
+    assert secret not in str(failure.value)
+    assert list(root.iterdir()) == [root / "AGENTS.md"]
+    assert outside.read_text(encoding="utf-8") == secret
 
 
 def test_mcp_config_generator(tmp_path: Path) -> None:

@@ -29,6 +29,7 @@ from ..continuity.results import (
     valid_name,
 )
 from ..contracts.results import ToolResultV1
+from ..io.physical_paths import ContainmentError, PhysicalRoot
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..permissions import (
     ExecutionPermissions,
@@ -268,10 +269,23 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
     ) -> ToolResult | ToolResultV1:
-        session_dir = root / ".rush" / "sessions"
-        sessions = (
-            CheckpointJournal(root).list_checkpoints() if session_dir.exists() else []
-        )
+        try:
+            session_dir = PhysicalRoot(root).open_contained(
+                Path(".rush") / "sessions", purpose="read"
+            )
+            sessions = (
+                CheckpointJournal(root).list_checkpoints()
+                if session_dir.exists()
+                else []
+            )
+        except ContainmentError:
+            return self._result(
+                started,
+                "error",
+                "Session checkpoint path failed physical containment validation.",
+                operation="list",
+                granted=granted,
+            )
         corrupt_count = sum(1 for s in sessions if s.get("status") == "corrupt")
         findings: list[Finding] = []
         for s in sessions:
@@ -329,21 +343,43 @@ class SessionContinuityTool(ToolFn):
                 operation="restore",
                 granted=granted,
             )
-        data = CheckpointJournal(root).restore_checkpoint(name or "")
+        try:
+            data = CheckpointJournal(root).restore_checkpoint(name or "")
+        except ContainmentError:
+            return self._result(
+                started,
+                "error",
+                "Session checkpoint path failed physical containment validation.",
+                operation="restore",
+                granted=granted,
+            )
         if data is None:
             # CheckpointJournal.restore_checkpoint() is the sole existence authority (its physical
             # `.json` file may already be renamed `.migrated` by migration.migrate_checkpoint_journal(),
             # in which case a store-backed checkpoint would already have been returned above). Only
             # consult the physical file here to distinguish "never existed" (skipped) from "corrupt
             # bytes on disk" (error), never to gate existence itself.
-            session_dir = root / ".rush" / "sessions"
-            session_file = session_dir / f"{name}.json"
-            migrated_file = session_dir / f"{name}.json.migrated"
-            evidence_file = (
-                session_file
-                if session_file.exists()
-                else (migrated_file if migrated_file.exists() else None)
-            )
+            physical_root = PhysicalRoot(root)
+            session_rel = Path(".rush") / "sessions" / f"{name}.json"
+            migrated_rel = Path(".rush") / "sessions" / f"{name}.json.migrated"
+            try:
+                session_file = physical_root.open_contained(session_rel, purpose="read")
+                migrated_file = physical_root.open_contained(
+                    migrated_rel, purpose="read"
+                )
+                evidence_file = (
+                    session_file
+                    if session_file.exists()
+                    else (migrated_file if migrated_file.exists() else None)
+                )
+            except ContainmentError:
+                return self._result(
+                    started,
+                    "error",
+                    "Session checkpoint path failed physical containment validation.",
+                    operation="restore",
+                    granted=granted,
+                )
             if evidence_file is None:
                 return self._result(
                     started,
@@ -353,8 +389,19 @@ class SessionContinuityTool(ToolFn):
                     granted=granted,
                 )
             try:
+                evidence_file = physical_root.open_contained(
+                    evidence_file.relative_to(root), purpose="read"
+                )
                 raw_bytes = evidence_file.read_bytes()
                 digest = hashlib.sha256(raw_bytes).hexdigest()
+            except ContainmentError:
+                return self._result(
+                    started,
+                    "error",
+                    "Session checkpoint path failed physical containment validation.",
+                    operation="restore",
+                    granted=granted,
+                )
             except OSError:
                 digest = ""
             return self._result(
