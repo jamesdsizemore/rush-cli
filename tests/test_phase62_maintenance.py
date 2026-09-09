@@ -20,6 +20,16 @@ from rush.tools.memory import MemoryTool
 _LOCK_PATH = Path(".rush/memory-maintenance.lock")
 
 
+def test_maintenance_rejects_missing_lock_capability(tmp_path: Path) -> None:
+    with (
+        patch.object(MeshLockManager, "acquire", return_value=False),
+        pytest.raises(
+            RuntimeError, match="memory-maintenance: failed to acquire maintenance lock"
+        ),
+    ):
+        run_maintenance_cycle("promotion_sweep", project_root=tmp_path)
+
+
 def _seed_candidate_rows(root: Path, count: int) -> None:
     store = TypedArtifactStore(root)
     for i in range(count):

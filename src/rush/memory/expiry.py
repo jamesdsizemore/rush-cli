@@ -77,10 +77,10 @@ def sweep_expired(project_root: Path | None = None, *, batch_size: int = 500) ->
             (*parameters, now, batch_size),
         ).fetchall()
         for row in rows:
-            policy = _policy_for(row["subject"], row["trust_tier"])
-            if policy is None or policy.ttl_seconds is None:
+            row_policy = _policy_for(row["subject"], row["trust_tier"])
+            if row_policy is None or row_policy.ttl_seconds is None:
                 continue
-            expires_at = row["created_at"] + policy.ttl_seconds
+            expires_at = row["created_at"] + row_policy.ttl_seconds
             if now >= expires_at:
                 conn.execute(
                     "UPDATE memory_artifacts SET expires_at = ?, expired_at = ?, "

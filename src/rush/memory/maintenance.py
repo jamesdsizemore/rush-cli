@@ -68,15 +68,16 @@ def run_maintenance_cycle(
     """Runs one bounded maintenance sweep under a capability-scoped lock lease (§6.2)."""
     root = (project_root or Path.cwd()).resolve()
     lock_manager = MeshLockManager(root)
-    acquired, capability = lock_manager.acquire(
+    lease = lock_manager.acquire(
         _LOCK_PATH,
         agent_id=_AGENT_ID,
         timeout_s=5.0,
         ttl_s=60.0,
         return_capability=True,
     )
-    if not acquired or capability is None:
+    if not isinstance(lease, tuple) or not lease[0] or lease[1] is None:
         raise RuntimeError("memory-maintenance: failed to acquire maintenance lock")
+    capability = lease[1]
 
     lock_lost = False
     try:
@@ -221,6 +222,8 @@ def _mutate_skill_admission_check(
     artifact = _artifact_from_row(row)
     plugin_name = artifact.content.get("plugin_name")
     closure_digest = artifact.content.get("closure_digest")
+    if not isinstance(plugin_name, str) or not isinstance(closure_digest, str):
+        return False
     if not PluginTrustStore(repo_root=root).is_trusted(plugin_name, closure_digest):
         return False
 
