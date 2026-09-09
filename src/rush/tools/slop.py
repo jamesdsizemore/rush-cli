@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, engine_on_path, now_ms, run_engine
 from .routing import collect_files
 
@@ -25,7 +25,7 @@ class SlopTool(ToolFn):
         start = now_ms()
         python_files = collect_files(path, {"py", "pyi"})
         js_files = collect_files(path, {"js", "jsx", "mjs", "cjs", "ts", "tsx"})
-        findings = []
+        findings: list[Finding] = []
         if js_files:
             for file in js_files:
                 for number, line in enumerate(

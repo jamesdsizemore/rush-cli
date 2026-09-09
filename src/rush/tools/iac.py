@@ -24,7 +24,7 @@ class IacTool(ContentTool):
         del config
         from ..engines import ENGINES
 
-        files = collect_files(path, self.extensions)
+        files = collect_files(path, set(self.extensions))
         if not files:
             return super().run(path)
         args = [str(file) for file in files]

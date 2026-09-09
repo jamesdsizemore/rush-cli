@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree
 
-from .base import ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult
 from .common import (
     elapsed_ms,
     engine_on_path,
@@ -105,12 +105,12 @@ class FlakyTool(ToolFn):
             duplicates = sorted(
                 name for name, count in Counter(identities).items() if count > 1
             )
-            findings = [
+            findings: list[Finding] = [
                 {
                     "path": str(effective_report),
                     "line": 0,
                     "rule": "flaky-duplicate-case",
-                    "severity": "warning",
+                    "severity": "warn",
                     "message": f"JUnit report repeats test case {identity}",
                 }
                 for identity in duplicates

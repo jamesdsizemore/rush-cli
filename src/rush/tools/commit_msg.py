@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, now_ms
 
 _PATTERN = re.compile(
@@ -66,7 +66,7 @@ class CommitMsgTool(ToolFn):
 
         first_line = msg_to_check.splitlines()[0] if msg_to_check else ""
         valid = bool(_PATTERN.fullmatch(first_line))
-        findings = (
+        findings: list[Finding] = (
             []
             if valid
             else [

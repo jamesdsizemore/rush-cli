@@ -21,6 +21,7 @@ def test_flaky_imports_duplicate_junit_cases_without_running_tests(
     assert result["status"] == "warn"
     assert result["engine"] == "junit-report"
     assert result["findings"][0]["rule"] == "flaky-duplicate-case"
+    assert result["findings"][0]["severity"] == "warn"
     assert result["metadata"]["evidence_source"] == "imported-local-report"
 
 

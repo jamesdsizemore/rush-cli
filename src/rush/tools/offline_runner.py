@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
+from .base import Finding, Severity, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, error_result, now_ms, run_subprocess
 from .routing import collect_files
 
@@ -99,7 +99,7 @@ def parse_review_findings(raw_output: str, base_dir: Path) -> list[Finding]:
         line_num = int(match.group("line"))
         col_num = int(match.group("col") or 1)
         sev_raw = (match.group("sev") or "WARN").lower()
-        severity = "error" if sev_raw == "error" else "warn"
+        severity: Severity = "error" if sev_raw == "error" else "warn"
         message = match.group("msg").strip()
 
         findings.append(

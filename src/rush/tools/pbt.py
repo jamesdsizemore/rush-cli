@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .base import ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult
 from .common import (
     elapsed_ms,
     engine_on_path,
@@ -101,7 +101,7 @@ class PbtTool(ToolFn):
                     duration_ms=elapsed_ms(start),
                 )
 
-            findings = [
+            findings: list[Finding] = [
                 {
                     "path": str(effective_report),
                     "line": 0,

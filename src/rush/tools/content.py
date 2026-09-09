@@ -22,7 +22,7 @@ class ContentTool(ToolFn):
         from ..engines import ENGINES
 
         start = now_ms()
-        files = collect_files(path, self.extensions)
+        files = collect_files(path, set(self.extensions))
         if not files:
             return ToolResult(
                 tool=self.name,

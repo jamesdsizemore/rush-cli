@@ -91,9 +91,11 @@ class SbomTool(ToolFn):
         )
         result["artifacts"] = [str(output)] if result["status"] != "skipped" else []
         result["duration_ms"] = elapsed_ms(start)
-        if "metadata" not in result or result["metadata"] is None:
-            result["metadata"] = {}
-        result["metadata"]["execution"] = build_execution_metadata(
+        metadata = result.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            result["metadata"] = metadata
+        metadata["execution"] = build_execution_metadata(
             "artifact",
             requested=required_perms,
             granted=permissions,
