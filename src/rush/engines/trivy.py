@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -66,7 +66,7 @@ class TrivyEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             sev = item.get("severity", "").upper()
             findings.append(
@@ -81,7 +81,7 @@ class TrivyEngine(Engine):
 
         exit_code = raw.get("exit_code", 0)
         has_critical = any(f["severity"] == "error" for f in findings)
-        status = (
+        status: ToolStatus = (
             "fail"
             if has_critical
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))

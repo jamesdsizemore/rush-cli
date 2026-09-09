@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -68,7 +68,7 @@ class TachEngine(Engine):
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = (
+        status: ToolStatus = (
             "fail"
             if any(f["severity"] == "fail" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))

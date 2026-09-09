@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -72,7 +72,7 @@ class ScorecardEngine(Engine):
             if isinstance(raw.get("parsed"), dict)
             else 10
         )
-        status = (
+        status: ToolStatus = (
             "warn"
             if (findings or overall_score < 7)
             else ("ok" if exit_code == 0 else "error")

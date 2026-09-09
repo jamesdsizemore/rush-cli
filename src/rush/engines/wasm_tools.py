@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -62,7 +62,7 @@ class WasmToolsEngine(Engine):
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = "fail" if (findings or exit_code != 0) else "ok"
+        status: ToolStatus = "fail" if (findings or exit_code != 0) else "ok"
 
         return ToolResult(
             tool=tool_name,

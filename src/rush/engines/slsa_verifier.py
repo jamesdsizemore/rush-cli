@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -63,7 +63,9 @@ class SlsaVerifierEngine(Engine):
                 }
             )
 
-        status = "fail" if findings else ("ok" if exit_code == 0 else "error")
+        status: ToolStatus = (
+            "fail" if findings else ("ok" if exit_code == 0 else "error")
+        )
 
         return ToolResult(
             tool=tool_name,
