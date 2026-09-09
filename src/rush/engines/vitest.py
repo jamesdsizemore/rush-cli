@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -66,27 +67,26 @@ class VitestEngine(Engine):
             duration_ms=0,
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms
 
         # Count outcomes
         n_pass = n_fail = n_skip = 0
         failure_messages: list[str] = []
         for t in raw.get("findings", []):
-            status = t.get("status", "unknown")
-            if status == "passed":
+            test_status = t.get("status", "unknown")
+            if test_status == "passed":
                 n_pass += 1
-            elif status == "failed":
+            elif test_status == "failed":
                 n_fail += 1
                 msgs = t.get("failureMessages", [])
                 if msgs:
                     failure_messages.append(msgs[0] if msgs else t.get("name", ""))
-            elif status == "skipped":
+            elif test_status == "skipped":
                 n_skip += 1
 
         # Build findings from failures
-        findings = []
+        findings: list[Finding] = []
         for t in raw.get("findings", []):
             if t.get("status") == "failed":
                 findings.append(
@@ -107,7 +107,7 @@ class VitestEngine(Engine):
 
         exit_code = raw.get("exit_code", 0)
         if exit_code >= 2:
-            status = "error"
+            status: ToolStatus = "error"
             summary = f"vitest error (exit {exit_code})"
         elif n_fail:
             status = "fail"

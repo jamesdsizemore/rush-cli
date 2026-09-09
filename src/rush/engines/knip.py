@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -24,11 +25,9 @@ class KnipEngine(Engine):
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
-
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         pattern = re.compile(r"^\s*(?P<name>.+?)\s{2,}(?P<path>.+?):(?P<line>\d+)\s*$")
-        findings = []
+        findings: list[Finding] = []
         for line in raw.get("stdout", "").splitlines():
             match = pattern.match(line)
             if match:

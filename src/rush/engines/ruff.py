@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -89,9 +90,8 @@ class RuffEngine(Engine):
             duration_ms=0,  # stamped by run_engine()
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         """Convert ruff JSON to canonical ToolResult."""
-        from ..tools.base import ToolResult
         from ..tools.common import elapsed_ms, normalize_findings
 
         exit_code = raw.get("exit_code", 0)
@@ -114,7 +114,7 @@ class RuffEngine(Engine):
 
         # ruff exit 0 = clean, 1 = findings, 2+ = config/crash
         if exit_code not in (0, 1):
-            status = "error"
+            status: ToolStatus = "error"
             summary = f"ruff config error: {raw.get('stderr', '').strip().splitlines()[0] if raw.get('stderr') else 'unknown'}"
         elif findings:
             status = (

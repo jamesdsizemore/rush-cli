@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -69,7 +70,7 @@ class PrettierEngine(Engine):
             if ln.strip() and not ln.startswith("[warn]")
         ]
 
-        findings_raw = [
+        findings_raw: list[Finding] = [
             {
                 "path": p,
                 "rule": "formatting",
@@ -93,14 +94,13 @@ class PrettierEngine(Engine):
             duration_ms=0,
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms, normalize_findings
 
-        findings = normalize_findings(raw.get("findings", []))
+        findings = normalize_findings([dict(f) for f in raw.get("findings", [])])
         exit_code = raw.get("exit_code", 0)
         if exit_code >= 2:
-            status = "error"
+            status: ToolStatus = "error"
             summary = f"prettier error (exit {exit_code})"
         elif findings:
             status = "warn"

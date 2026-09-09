@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -74,8 +75,7 @@ class PipAuditEngine(Engine):
             duration_ms=0,
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms, normalize_findings
 
         all_vulns: list[dict] = []
@@ -105,7 +105,7 @@ class PipAuditEngine(Engine):
         #   1 = vulns found (findings is non-empty)
         #   >= 2 = actual error (config, network, etc.)
         if raw.get("stdout", "").strip() and raw.get("parsed") is None:
-            status = "error"
+            status: ToolStatus = "error"
             summary = "pip-audit returned malformed JSON"
         elif exit_code == 0:
             status = "ok"

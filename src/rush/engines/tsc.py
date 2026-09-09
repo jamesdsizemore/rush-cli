@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -24,14 +25,12 @@ class TscEngine(Engine):
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
-
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         text = "\n".join((raw.get("stdout", ""), raw.get("stderr", "")))
         pattern = re.compile(
             r"^(?P<path>.+?)\((?P<line>\d+),(?P<column>\d+)\): error (?P<rule>TS\d+): (?P<message>.*)$"
         )
-        findings = []
+        findings: list[Finding] = []
         for line in text.splitlines():
             match = pattern.match(line)
             if match:

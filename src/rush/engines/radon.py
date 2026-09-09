@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -24,14 +25,12 @@ class RadonEngine(Engine):
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
-
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         try:
             parsed = json.loads(raw.get("stdout", "{}"))
         except json.JSONDecodeError:
             parsed = {}
-        findings = [
+        findings: list[Finding] = [
             {
                 "path": file,
                 "line": item.get("lineno"),

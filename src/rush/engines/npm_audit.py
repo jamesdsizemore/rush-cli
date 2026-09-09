@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -81,8 +82,7 @@ class NpmAuditEngine(Engine):
             duration_ms=0,
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms, normalize_findings
 
         # Each "finding" is a dict {pkg_data, name, severity, via, ...}
@@ -122,7 +122,7 @@ class NpmAuditEngine(Engine):
         exit_code = raw.get("exit_code", 0)
         # npm exits 0 = clean, 1 = vulns found, >1 = error
         if raw.get("stdout", "").strip() and raw.get("parsed") is None:
-            status = "error"
+            status: ToolStatus = "error"
             summary = "npm audit returned malformed JSON"
         elif exit_code == 0:
             status = "ok"

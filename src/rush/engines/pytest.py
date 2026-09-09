@@ -29,6 +29,7 @@ import re
 import sys
 from pathlib import Path
 
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import run_subprocess
 from .base import Engine, EngineResult
 
@@ -81,8 +82,7 @@ class PytestEngine(Engine):
             duration_ms=0,
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms
 
         exit_code = raw.get("exit_code", 0)
@@ -91,14 +91,14 @@ class PytestEngine(Engine):
             summary = f"pytest exit {exit_code}"
 
         if exit_code == 0 or exit_code == 5:
-            status = "ok"
+            status: ToolStatus = "ok"
         elif exit_code == 2:  # pytest: interrupted / collection error
             status = "error"
         else:
             status = "fail"
 
         # Build findings from parsed json-report or from exit code alone
-        findings = []
+        findings: list[Finding] = []
         for f in raw.get("findings", []):
             findings.append(
                 {

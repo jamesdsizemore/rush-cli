@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -91,8 +92,7 @@ class EslintEngine(Engine):
             duration_ms=0,
         )
 
-    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> dict:
-        from ..tools.base import ToolResult
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms, normalize_findings
 
         # No-config case: return skipped (don't crash, don't count as error)
@@ -129,7 +129,7 @@ class EslintEngine(Engine):
 
         exit_code = raw.get("exit_code", 0)
         if exit_code >= 2:
-            status = "error"
+            status: ToolStatus = "error"
             summary = f"eslint config error (exit {exit_code})"
         elif findings:
             status = (
