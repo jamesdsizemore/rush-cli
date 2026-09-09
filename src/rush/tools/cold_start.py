@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_subprocess
 
 HEAVY_PACKAGES: frozenset[str] = frozenset(
@@ -313,7 +313,7 @@ class ColdStartTool(ToolFn):
                 )
             dynamic_measured = True
 
-        status = "warn" if findings else "ok"
+        status: ToolStatus = "warn" if findings else "ok"
         summary = (
             f"cold-start: Audited {len(py_files)} file(s), {total_imports} import(s), "
             f"{len(heavy_imports_found)} heavy top-level import(s)"

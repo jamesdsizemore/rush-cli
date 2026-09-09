@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_subprocess
 
 
@@ -312,7 +312,7 @@ class MemProfileTool(ToolFn):
                     metadata={"terminal_reason": "incomplete"},
                 )
 
-        status = "warn" if findings else "ok"
+        status: ToolStatus = "warn" if findings else "ok"
         summary = f"mem-profile: Audited {len(py_files)} file(s), {len(findings)} unclosed resource finding(s)"
         if dynamic:
             summary += f", peak memory: {peak_memory_bytes / 1024:.1f} KB"

@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, error_result, now_ms, run_subprocess
 from .routing import collect_files
 
@@ -349,7 +349,7 @@ class OfflineReviewTool(ToolFn):
             )
 
         has_errors = any(f.get("severity") == "error" for f in findings)
-        status = "fail" if has_errors else ("warn" if findings else "ok")
+        status: ToolStatus = "fail" if has_errors else ("warn" if findings else "ok")
         summary = (
             f"offline-review: Evaluated {len(code_files)} file(s) via {runner['type']} ({model}), "
             f"found {len(findings)} issue(s)."

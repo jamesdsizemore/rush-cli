@@ -10,7 +10,7 @@ from typing import Any
 
 import hcl2
 
-from .base import Finding, ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult, ToolStatus
 from .common import (
     atomic_write_bytes,
     elapsed_ms,
@@ -469,7 +469,7 @@ class IamAuditTool(ToolFn):
         risk_score = round(min(1.0, max(0.0, base_risk)), 2)
 
         has_errors = any(f.get("severity") == "error" for f in findings)
-        status = "fail" if has_errors else ("warn" if findings else "ok")
+        status: ToolStatus = "fail" if has_errors else ("warn" if findings else "ok")
 
         metrics_obj = IamAuditMetrics(
             risk_score=risk_score,

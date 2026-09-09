@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_subprocess
 
 
@@ -143,7 +143,7 @@ class TuiDiffTool(ToolFn):
         git_res = run_subprocess(["git", "diff", "--stat", base_ref], cwd=root)
         diff_stat = git_res.stdout.strip() if git_res.returncode == 0 else ""
 
-        status = "warn" if new_findings else "ok"
+        status: ToolStatus = "warn" if new_findings else "ok"
         summary = (
             f"tui-diff: {len(new_findings)} new regression(s), {len(resolved_keys)} resolved, "
             f"{len(unchanged_keys)} unchanged finding(s)"

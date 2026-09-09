@@ -9,7 +9,7 @@ from math import sqrt
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_subprocess
 
 AI_TRAILER_PATTERNS = (
@@ -580,7 +580,7 @@ class ProvenanceAiTool(ToolFn):
             "shallow_history": is_shallow,
         }
 
-        status = "warn" if findings or history_reason is not None else "ok"
+        status: ToolStatus = "warn" if findings or history_reason is not None else "ok"
         exec_meta = build_execution_metadata(
             mode="executed",
             requested=permissions,

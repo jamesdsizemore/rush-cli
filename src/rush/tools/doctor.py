@@ -16,7 +16,7 @@ from typing import Any
 from rush.config import RushConfig
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
-from rush.tools.base import ToolFn, ToolName, ToolResult
+from rush.tools.base import ToolFn, ToolName, ToolResult, ToolStatus
 
 logger = get_logger("tools.doctor")
 
@@ -181,7 +181,7 @@ class DoctorTool(ToolFn):
 
         installed_count = sum(1 for e in report["engines"].values() if e["installed"])
         total_count = len(report["engines"])
-        status = "warn" if report["warnings"] else "ok"
+        status: ToolStatus = "warn" if report["warnings"] else "ok"
 
         summary = (
             f"doctor: {installed_count}/{total_count} engines installed. "

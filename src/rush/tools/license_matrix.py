@@ -18,7 +18,7 @@ from license_expression import (
     get_spdx_licensing,
 )
 
-from .base import Finding, ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult, ToolStatus
 from .common import elapsed_ms, finding_fingerprint, now_ms
 from .schemas import LicenseMatrixMetrics
 
@@ -430,7 +430,7 @@ class LicenseMatrixTool(ToolFn):
             round(compliant_count / total_pkgs, 4) if total_pkgs > 0 else 1.0
         )
 
-        status = "ok"
+        status: ToolStatus = "ok"
         if incompatible_count > 0:
             status = "fail"
         elif unresolved_count > 0:

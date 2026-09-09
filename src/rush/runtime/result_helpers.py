@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import time
-from typing import Any
 
 from ..safety.redactor import SecretRedactor
-from ..tools.base import Finding, ToolResult
+from ..tools.base import Finding, Severity, ToolResult
 
 
 def skipped_result(
@@ -88,7 +87,7 @@ def finding_fingerprint(
 def normalize_findings(
     raw_findings: list[dict],
     *,
-    default_severity: str = "warn",
+    default_severity: Severity = "warn",
     path_prefix: str = "",
 ) -> list[Finding]:
     """Normalize, redact, identify, and deterministically order engine findings.
@@ -110,7 +109,7 @@ def normalize_findings(
         if not message:
             continue
         message = _redact_finding_message(message)
-        severity = raw_finding.get("severity") or default_severity
+        severity: Severity = raw_finding.get("severity") or default_severity
         if severity not in ("info", "warn", "error"):
             severity = default_severity
         line = (
@@ -170,8 +169,9 @@ def normalize_findings(
     )
 
 
-def exit_code_for(result: ToolResult | Any) -> int:
+def exit_code_for(result: object) -> int:
     """Map canonical statuses to CLI process exit codes."""
+    status: object
     if isinstance(result, str):
         status = result
     elif hasattr(result, "status"):

@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 
 from ..io.atomic_file import AtomicFile, SanitizedBytes
 from ..io.physical_paths import PhysicalRoot
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms
 
 _DTD_ENTITY_PATTERN = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
@@ -287,6 +287,7 @@ class MediaOptTool(ToolFn):
                 pass
 
         has_errors = any(f.get("severity") in ("error", "fail") for f in findings)
+        status: ToolStatus
         if invalid_svg:
             status = "error"
         elif has_errors:

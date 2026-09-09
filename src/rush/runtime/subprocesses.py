@@ -238,10 +238,12 @@ def run_engine(
 
     result.setdefault("duration_ms", _elapsed(start))
     tool_res = engine.normalize(result, path, tool_name)
-    if "metadata" not in tool_res or tool_res["metadata"] is None:
-        tool_res["metadata"] = {}
-    if "execution" not in tool_res["metadata"]:
-        tool_res["metadata"]["execution"] = build_execution_metadata(
+    metadata = tool_res.get("metadata")
+    if metadata is None:
+        metadata = {}
+        tool_res["metadata"] = metadata
+    if "execution" not in metadata:
+        metadata["execution"] = build_execution_metadata(
             "executed",
             requested=required_permissions,
             granted=permissions,
