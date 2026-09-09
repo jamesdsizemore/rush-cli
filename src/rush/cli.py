@@ -1764,31 +1764,55 @@ def hook_run_cmd() -> None:
         sys.exit(1)
 
     scanner = StagedFileScanner(Path.cwd())
-    staged = scanner.get_staged_files()
-    if not staged:
+    try:
+        entries = scanner.get_staged_entries()
+    except RuntimeError:
+        click.echo("[INDEX ERROR] Cannot read staged index.", err=True)
+        sys.exit(1)
+    if not entries:
         click.echo("No staged files to check.")
         return
 
-    ast_errs = FastIncrementalAstLinter.lint_staged_python(staged)
+    invalid = [
+        entry for entry in entries if entry.status in {"error", "unmerged_index"}
+    ]
+    if invalid:
+        for entry in invalid:
+            stages = ", ".join(
+                f"stage {stage.stage}: {stage.mode} {stage.object_id}"
+                for stage in entry.stages
+            )
+            click.echo(
+                f"[INDEX ERROR] {entry.status}: {entry.relative_path} ({stages})",
+                err=True,
+            )
+        sys.exit(1)
+
+    staged = [entry for entry in entries if entry.status == "staged"]
+    deleted_count = sum(entry.status == "deleted" for entry in entries)
+    ast_errs = FastIncrementalAstLinter.lint_staged_entries(staged)
     if ast_errs:
         for e in ast_errs:
             click.echo(f"[AST ERROR] {e}", err=True)
         sys.exit(1)
 
-    for p in staged:
-        trojans = TrojanSourceDetector.inspect_file(p)
+    for entry in staged:
+        trojans = TrojanSourceDetector.inspect_content(entry.path, entry.content)
         if trojans:
             for t in trojans:
                 click.echo(f"[SECURITY ERROR] {t}", err=True)
             sys.exit(1)
 
-        conflicts = ConflictMarkerGuard.inspect_file(p)
+        conflicts = ConflictMarkerGuard.inspect_content(entry.path, entry.content)
         if conflicts:
             for c in conflicts:
                 click.echo(f"[CONFLICT ERROR] {c}", err=True)
             sys.exit(1)
 
-    click.echo(f"Pre-commit checks passed across {len(staged)} staged files.")
+    click.echo(
+        f"Pre-commit checks passed across {len(staged)} staged files "
+        f"({deleted_count} staged deletions)."
+    )
 
 
 @cli.group(name="score")

@@ -20,10 +20,14 @@ class ConflictMarkerGuard:
         if not file_path.exists() or not file_path.is_file():
             return []
         try:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
+            content = file_path.read_bytes()
         except OSError:
             return []
+        return ConflictMarkerGuard.inspect_content(file_path, content)
 
+    @staticmethod
+    def inspect_content(file_path: Path, content: bytes) -> list[str]:
+        text = content.decode("utf-8", errors="replace")
         findings = []
         for idx, line in enumerate(text.splitlines(), start=1):
             for pat in CONFLICT_MARKERS:
