@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+from types import SimpleNamespace
+
 import pytest
 
 from rush.providers import (
@@ -156,6 +160,9 @@ def test_continuity_provider_resume_uses_a_user_owned_claude_cli_profile(
     calls = []
     monkeypatch.setattr("shutil.which", lambda binary: "C:/tools/claude.cmd")
     monkeypatch.setattr(
+        "rush.continuity.providers.os", SimpleNamespace(name="nt", environ=os.environ)
+    )
+    monkeypatch.setattr(
         "subprocess.run",
         lambda command, **kwargs: calls.append((command, kwargs)) or Process(),
     )
@@ -197,7 +204,9 @@ def test_continuity_cmd_provider_keeps_checkpoint_text_out_of_command_line(
     )
     calls = []
     monkeypatch.setattr("shutil.which", lambda _binary: "C:/tools/claude.cmd")
-    monkeypatch.setattr("rush.tools.continuity.os.name", "nt")
+    monkeypatch.setattr(
+        "rush.continuity.providers.os", SimpleNamespace(name="nt", environ=os.environ)
+    )
     monkeypatch.setattr(
         "subprocess.run",
         lambda command, **kwargs: (
@@ -216,6 +225,30 @@ def test_continuity_cmd_provider_keeps_checkpoint_text_out_of_command_line(
     assert result["status"] == "ok"
     assert injection not in str(calls[0][0])
     assert injection in calls[0][1]["env"]["RUSH_CONTINUITY_PROMPT"]
+
+
+def test_run_subprocess_uses_direct_argv_on_posix(monkeypatch, tmp_path):
+    from rush.runtime import subprocesses
+
+    calls = []
+    monkeypatch.setattr("rush.runtime.subprocesses.os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(
+        "rush.tools.common.resolve_binary", lambda _binary: "/usr/local/bin/claude"
+    )
+    monkeypatch.setattr(
+        subprocesses.subprocess,
+        "run",
+        lambda command, **kwargs: (
+            calls.append((command, kwargs))
+            or subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        ),
+    )
+
+    result = subprocesses.run_subprocess(["claude", "-p", "prompt"], cwd=tmp_path)
+
+    assert result.returncode == 0
+    assert calls[0][0] == ["/usr/local/bin/claude", "-p", "prompt"]
+    assert calls[0][1]["shell"] is False
 
 
 def test_continuity_provider_resume_defers_zai_without_starting_a_process(

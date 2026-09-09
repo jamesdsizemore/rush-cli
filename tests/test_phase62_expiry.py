@@ -21,15 +21,15 @@ _DAY = 86400
 
 
 def _artifact(**overrides) -> MemoryArtifact:
-    defaults = dict(
-        id=str(uuid.uuid4()),
-        family="memory",
-        subject="domain_knowledge",
-        trust_tier="DERIVED",
-        content={"note": "default content"},
-        source="test",
-        created_at=time.time(),
-    )
+    defaults = {
+        "id": str(uuid.uuid4()),
+        "family": "memory",
+        "subject": "domain_knowledge",
+        "trust_tier": "DERIVED",
+        "content": {"note": "default content"},
+        "source": "test",
+        "created_at": time.time(),
+    }
     defaults.update(overrides)
     return MemoryArtifact(**defaults)
 

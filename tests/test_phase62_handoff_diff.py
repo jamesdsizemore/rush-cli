@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import rush.hook.tamper_detector  # noqa: F401 -- import first, breaks a pre-existing circular
-
 # import (memory.store -> hook -> tools -> continuity -> memory.checkpoint_journal ->
 # memory.migration -> memory.store) that otherwise fires when a continuity module is the
 # first module of this cycle touched in the process. See tests/test_phase61_handoff.py.
-
+import rush.hook.tamper_detector  # noqa: F401 -- import first, breaks a pre-existing circular
 from rush.permissions import ExecutionPermissions
 from rush.tools.continuity import SessionContinuityTool
 

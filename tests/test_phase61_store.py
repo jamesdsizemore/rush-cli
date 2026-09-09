@@ -23,15 +23,15 @@ from rush.memory.store import (
 
 
 def _artifact(**overrides) -> MemoryArtifact:
-    defaults = dict(
-        id=str(uuid.uuid4()),
-        family="memory",
-        subject="domain_knowledge",
-        trust_tier="DERIVED",
-        content={"note": "default content"},
-        source="test",
-        created_at=time.time(),
-    )
+    defaults = {
+        "id": str(uuid.uuid4()),
+        "family": "memory",
+        "subject": "domain_knowledge",
+        "trust_tier": "DERIVED",
+        "content": {"note": "default content"},
+        "source": "test",
+        "created_at": time.time(),
+    }
     defaults.update(overrides)
     return MemoryArtifact(**defaults)
 
@@ -124,7 +124,7 @@ def test_recall_rescans_stated_signature_and_raises_on_mismatch(tmp_path: Path):
 
 def test_recall_scans_content_for_trojan_source_chars(tmp_path: Path):
     store = TypedArtifactStore(project_root=tmp_path)
-    artifact = _artifact(content={"note": "trojanmarker ‮ reversed text"})
+    artifact = _artifact(content={"note": "trojanmarker \u202e reversed text"})
     store.write(artifact)
 
     with pytest.raises(TrojanSourceFoundError):

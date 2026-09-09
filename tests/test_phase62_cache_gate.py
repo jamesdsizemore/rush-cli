@@ -89,7 +89,7 @@ def test_cache_miss_falls_through_to_pack(tmp_path: Path):
 
 def test_cache_hit_with_failed_recall_defense_falls_through_to_pack(tmp_path: Path):
     target = _write_target(tmp_path)
-    _seed_cache_row(tmp_path, target, packed_text="‮TROJAN PAYLOAD")
+    _seed_cache_row(tmp_path, target, packed_text="\u202eTROJAN PAYLOAD")
 
     original_pack = ContextPacker.pack
     with patch.object(ContextPacker, "pack", autospec=True) as spy_pack:

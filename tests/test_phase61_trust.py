@@ -17,15 +17,15 @@ from rush.memory.trust import default_entry_tier, evaluate_conflict, evaluate_pr
 
 
 def _artifact(**overrides) -> MemoryArtifact:
-    defaults = dict(
-        id=str(uuid.uuid4()),
-        family="memory",
-        subject="domain_knowledge",
-        trust_tier="DERIVED",
-        content={"note": "default content"},
-        source="test",
-        created_at=time.time(),
-    )
+    defaults = {
+        "id": str(uuid.uuid4()),
+        "family": "memory",
+        "subject": "domain_knowledge",
+        "trust_tier": "DERIVED",
+        "content": {"note": "default content"},
+        "source": "test",
+        "created_at": time.time(),
+    }
     defaults.update(overrides)
     return MemoryArtifact(**defaults)
 
@@ -60,7 +60,7 @@ def test_default_entry_tier_never_returns_stated(source_kind):
 
 
 def test_promotion_requires_allow_redact_block_pass():
-    artifact = _artifact(content={"note": "danger ‮ reversed text"})
+    artifact = _artifact(content={"note": "danger \u202e reversed text"})
     result = evaluate_promotion(artifact, user_stated=True)
     assert result.promoted is False
     assert result.denial_reason == "failed_allow_redact_block_screen"

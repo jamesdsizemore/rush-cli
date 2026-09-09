@@ -86,7 +86,7 @@ def test_wheel_and_sdist_pass_every_safe_probe(tmp_path: Path) -> None:
     assert sdist_result.import_clean is True
 
 
-def test_artifact_imports_never_resolve_to_checkout_or_src() -> None:
+def test_artifact_imports_never_resolve_to_checkout_or_src(tmp_path: Path) -> None:
     """Verify that verify_package_origin strictly rejects in-tree origins."""
     assert (
         verify_package_origin(
@@ -106,8 +106,8 @@ def test_artifact_imports_never_resolve_to_checkout_or_src() -> None:
     )
 
     # External paths must be verified as valid out-of-tree origins
-    external_site_packages = Path(
-        "C:/arbitrary/venv/Lib/site-packages/rush/__init__.py"
+    external_site_packages = (
+        tmp_path / "venv" / "lib" / "site-packages" / "rush" / "__init__.py"
     )
     assert verify_package_origin(external_site_packages, PROJECT_ROOT) is True
 
