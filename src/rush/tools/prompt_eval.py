@@ -35,6 +35,11 @@ class PromptEvalTool(ToolFn):
         allow_slow: bool = False,
         allow_artifact_write: bool = False,
         allow_browser: bool = False,
+        golden_path: Path | str | None = None,
+        pass_rate_threshold: float = 1.0,
+        max_cost_threshold: float | None = None,
+        max_tokens_threshold: int | None = None,
+        records: list[dict[str, Any]] | None = None,
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions
@@ -48,7 +53,16 @@ class PromptEvalTool(ToolFn):
             artifact_write=allow_artifact_write,
             browser=allow_browser,
         )
-        return self.run(path, permissions=permissions, **options)
+        return self.run(
+            path,
+            permissions=permissions,
+            golden_path=golden_path,
+            pass_rate_threshold=pass_rate_threshold,
+            max_cost_threshold=max_cost_threshold,
+            max_tokens_threshold=max_tokens_threshold,
+            records=records,
+            **options,
+        )
 
     def _load_records(
         self, path: Path, records_arg: list[dict[str, Any]] | None

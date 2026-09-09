@@ -48,6 +48,11 @@ class BenchmarkTool(ToolFn):
         allow_slow: bool = False,
         allow_artifact_write: bool = False,
         allow_browser: bool = False,
+        samples: list[float] | None = None,
+        threshold_percent: float = 5.0,
+        record: bool = False,
+        operation: str = "check",
+        baseline_name: str = "default",
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions
@@ -61,7 +66,16 @@ class BenchmarkTool(ToolFn):
             artifact_write=allow_artifact_write,
             browser=allow_browser,
         )
-        return self.run(path, permissions=permissions, **options)
+        return self.run(
+            path,
+            permissions=permissions,
+            samples=samples,
+            threshold_percent=threshold_percent,
+            record=record,
+            operation=operation,
+            baseline_name=baseline_name,
+            **options,
+        )
 
     def run(
         self,
@@ -160,7 +174,7 @@ class BenchmarkTool(ToolFn):
                 duration_ms=elapsed_ms(start),
                 summary=f"benchmark: Baseline '{baseline_name}' recorded successfully in .rush/baselines.json.",
                 findings=[],
-                metrics=stats,
+                metrics=dict(stats),
                 raw={"recorded": stats},
                 metadata={
                     "execution": build_execution_metadata(

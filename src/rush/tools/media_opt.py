@@ -105,6 +105,8 @@ class MediaOptTool(ToolFn):
         allow_slow: bool = False,
         allow_artifact_write: bool = False,
         allow_browser: bool = False,
+        sanitize: bool = False,
+        optimize: bool = False,
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions
@@ -118,7 +120,13 @@ class MediaOptTool(ToolFn):
             artifact_write=allow_artifact_write,
             browser=allow_browser,
         )
-        return self.run(path, permissions=permissions, **options)
+        return self.run(
+            path,
+            permissions=permissions,
+            sanitize=sanitize,
+            optimize=optimize,
+            **options,
+        )
 
     def run(
         self,
@@ -244,8 +252,8 @@ class MediaOptTool(ToolFn):
         # 2. Audit CLS Image Dimensions in Markup
         for html_path in html_files:
             try:
-                content = html_path.read_text(encoding="utf-8", errors="replace")
-                for line_idx, line in enumerate(content.splitlines(), 1):
+                markup = html_path.read_text(encoding="utf-8", errors="replace")
+                for line_idx, line in enumerate(markup.splitlines(), 1):
                     for match in _IMG_TAG_PATTERN.finditer(line):
                         attrs = match.group(1).lower()
                         has_width = "width=" in attrs or "width:" in attrs

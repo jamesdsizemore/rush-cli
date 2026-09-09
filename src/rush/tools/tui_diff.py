@@ -45,6 +45,9 @@ class TuiDiffTool(ToolFn):
         allow_slow: bool = False,
         allow_artifact_write: bool = False,
         allow_browser: bool = False,
+        base_findings: list[dict[str, Any]] | None = None,
+        current_findings: list[dict[str, Any]] | None = None,
+        base_ref: str = "HEAD~1",
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions
@@ -58,7 +61,14 @@ class TuiDiffTool(ToolFn):
             artifact_write=allow_artifact_write,
             browser=allow_browser,
         )
-        return self.run(path, permissions=permissions, **options)
+        return self.run(
+            path,
+            permissions=permissions,
+            base_findings=base_findings,
+            current_findings=current_findings,
+            base_ref=base_ref,
+            **options,
+        )
 
     def render_table(
         self,
