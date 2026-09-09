@@ -245,17 +245,19 @@ def build_operations_inventory() -> list[PublicOperation]:
             assigned_mcp.add(mcp_name)
 
     # 4. Pair explicit routes
-    for cli_cmd, (mcp_name, impl, effect, probe, kind_str) in sorted(
+    for cli_cmd, (paired_mcp_name, impl, effect, probe, kind_str) in sorted(
         explicit_pairs.items()
     ):
-        if cli_cmd in click_leaves and (mcp_name is None or mcp_name in mcp_tools):
+        if cli_cmd in click_leaves and (
+            paired_mcp_name is None or paired_mcp_name in mcp_tools
+        ):
             clean_id = cli_cmd.replace(" ", "_").replace("-", "_")
             op = PublicOperation(
                 id=f"{kind_str}.{clean_id}",
                 kind=kind_str,
                 canonical_impl=impl,
                 cli_command=cli_cmd,
-                mcp_tool=mcp_name,
+                mcp_tool=paired_mcp_name,
                 input_contract="ToolInputOptions",
                 output_contract="ToolResult" if kind_str == "tool" else "RawResult",
                 effect_class=effect,
@@ -263,8 +265,8 @@ def build_operations_inventory() -> list[PublicOperation]:
             )
             inventory.append(op)
             assigned_cli.add(cli_cmd)
-            if mcp_name is not None:
-                assigned_mcp.add(mcp_name)
+            if paired_mcp_name is not None:
+                assigned_mcp.add(paired_mcp_name)
 
     # 5. Remaining MCP tools (MCP-only routes / aliases)
     for mcp_name in sorted(mcp_tools):

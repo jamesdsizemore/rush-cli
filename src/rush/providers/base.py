@@ -10,13 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-try:
-    from ..invocation.models import ProviderEgressError
-except ImportError:  # pragma: no cover
-
-    class ProviderEgressError(Exception):
-        """Raised when external provider egress violates execution policy."""
-
+from ..invocation.models import ProviderEgressError
 
 _ORIGINAL_URLOPEN = urllib.request.urlopen
 
@@ -137,10 +131,9 @@ def safe_provider_post(
     )
 
     if opener is not None:
+        handlers: list[urllib.request.BaseHandler] = vars(opener)["handlers"]
         effective_handlers = [
-            h
-            for h in opener.handlers
-            if not isinstance(h, urllib.request.HTTPRedirectHandler)
+            h for h in handlers if not isinstance(h, urllib.request.HTTPRedirectHandler)
         ]
         effective_handlers.append(SafeRedirectHandler(initial_origin, allowed_origins))
         effective_opener = urllib.request.build_opener(*effective_handlers)
