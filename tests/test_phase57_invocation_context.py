@@ -12,6 +12,7 @@ import asyncio
 import json
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -321,6 +322,40 @@ def test_mcp_request_never_receives_mutable_config(tmp_path: Path) -> None:
     )
     assert ctx_subsequent.effective_config_digest != initial_digest
     assert ctx.effective_config_digest == initial_digest
+
+
+def test_invocation_accepts_immutable_typed_tool_config(tmp_path: Path) -> None:
+    options = {
+        "dynamic": True,
+        "limit": 3,
+        "nullable": None,
+        "paths": ("src", "tests"),
+    }
+    frozen_options = MappingProxyType(options)
+
+    frozen_context = resolve_invocation(
+        {"operation_id": "mem-profile"},
+        transport="cli",
+        workspace_root=tmp_path,
+        config=frozen_options,
+    )
+    mutable_context = resolve_invocation(
+        {"operation_id": "mem-profile"},
+        transport="cli",
+        workspace_root=tmp_path,
+        config=options,
+    )
+
+    assert (
+        frozen_context.effective_config_digest
+        == mutable_context.effective_config_digest
+    )
+    assert options == {
+        "dynamic": True,
+        "limit": 3,
+        "nullable": None,
+        "paths": ("src", "tests"),
+    }
 
 
 def test_dual_transport_parity_across_transports(tmp_path: Path) -> None:

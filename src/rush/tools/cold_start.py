@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -167,7 +168,7 @@ class ColdStartTool(ToolFn):
         *,
         config: Any = None,
         permissions: Any = None,
-        dynamic: bool = False,
+        dynamic: bool | None = None,
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions, build_execution_metadata
@@ -175,6 +176,9 @@ class ColdStartTool(ToolFn):
         start = now_ms()
         p = Path(path)
         granted_perms = permissions or ExecutionPermissions()
+        if dynamic is None:
+            tool_config = getattr(config, "tools", {}).get(self.name)
+            dynamic = getattr(tool_config, "options", {}).get("dynamic", False)
 
         if dynamic and not getattr(granted_perms, "slow", False):
             return ToolResult(
@@ -242,13 +246,43 @@ class ColdStartTool(ToolFn):
         if dynamic and getattr(granted_perms, "slow", False) and py_files:
             target_file = py_files[0]
             # Run python -X importtime on target
-            res = run_subprocess(
-                [sys.executable, "-X", "importtime", str(target_file)],
-                cwd=p if p.is_dir() else p.parent,
-            )
+            try:
+                res = run_subprocess(
+                    [sys.executable, "-X", "importtime", str(target_file.resolve())],
+                    cwd=p if p.is_dir() else p.parent,
+                    timeout=int(options.get("timeout_seconds", 120)),
+                )
+            except subprocess.TimeoutExpired:
+                return ToolResult(
+                    tool=self.name,
+                    engine="cold-start",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="cold-start: Target timed out during dynamic measurement.",
+                    findings=findings,
+                    metrics={"completed": False, "import_time_measured": False},
+                    raw=None,
+                    metadata={"terminal_reason": "timeout"},
+                )
             # stderr contains import timings e.g.:
             # import time: self [us] | cumulative [us] | imported_module
-            dynamic_measured = True
+            if res.returncode != 0:
+                return ToolResult(
+                    tool=self.name,
+                    engine="cold-start",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="cold-start: Target failed during dynamic measurement.",
+                    findings=findings,
+                    metrics={"completed": False, "import_time_measured": False},
+                    raw=None,
+                    metadata={
+                        "terminal_reason": "target_failed",
+                        "target_exit_code": res.returncode,
+                    },
+                )
             for line in res.stderr.splitlines():
                 m = re.search(
                     r"import time:\s+(\d+)\s+\|\s+(\d+)\s+\|\s+([a-zA-Z0-9_\.]+)", line
@@ -264,6 +298,20 @@ class ColdStartTool(ToolFn):
                             "cumulative_us": cum_us,
                         }
                     )
+            if not slowest_imports:
+                return ToolResult(
+                    tool=self.name,
+                    engine="cold-start",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="cold-start: Dynamic measurement produced no import trace.",
+                    findings=findings,
+                    metrics={"completed": False, "import_time_measured": False},
+                    raw=None,
+                    metadata={"terminal_reason": "incomplete"},
+                )
+            dynamic_measured = True
 
         status = "warn" if findings else "ok"
         summary = (
@@ -282,6 +330,8 @@ class ColdStartTool(ToolFn):
         }
         if dynamic:
             metrics["import_time_measured"] = dynamic_measured
+            metrics["measured_import_count"] = len(slowest_imports)
+        metrics["completed"] = not dynamic or dynamic_measured
 
         return ToolResult(
             tool=self.name,

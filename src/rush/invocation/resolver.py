@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 import sys
+from collections.abc import Mapping
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -55,6 +57,24 @@ def _compute_config_digest(config: dict[str, Any]) -> str:
     """Compute deterministic SHA-256 digest of config dictionary."""
     serialized = json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _snapshot_config(value: Any) -> Any:
+    """Copy dataclass and mapping config without mutating typed values."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _snapshot_config(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {
+            copy.deepcopy(key): _snapshot_config(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_snapshot_config(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_snapshot_config(item) for item in value)
+    return copy.deepcopy(value)
 
 
 def _compute_environment_digest() -> str:
@@ -199,7 +219,7 @@ def resolve_invocation(
     request: dict[str, Any] | Any,
     transport: Literal["cli", "mcp"],
     workspace_root: Path | None = None,
-    config: dict[str, Any] | None = None,
+    config: Any = None,
     permissions: list[str] | tuple[str, ...] | ExecutionPermissions | None = None,
 ) -> InvocationContext:
     """Resolve an invocation request into a canonical, immutable InvocationContext.
@@ -223,7 +243,7 @@ def resolve_invocation(
 
     # Resolve and deepcopy declared configuration
     if config is not None:
-        cfg: dict[str, Any] = copy.deepcopy(config)
+        cfg: dict[str, Any] = _snapshot_config(config)
     elif "config" in req and isinstance(req["config"], dict):
         cfg = copy.deepcopy(req["config"])
     else:

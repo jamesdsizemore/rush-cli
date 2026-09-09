@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +151,7 @@ class MemProfileTool(ToolFn):
         *,
         config: Any = None,
         permissions: Any = None,
-        dynamic: bool = False,
+        dynamic: bool | None = None,
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions, build_execution_metadata
@@ -157,6 +159,9 @@ class MemProfileTool(ToolFn):
         start = now_ms()
         p = Path(path)
         granted_perms = permissions or ExecutionPermissions()
+        if dynamic is None:
+            tool_config = getattr(config, "tools", {}).get(self.name)
+            dynamic = getattr(tool_config, "options", {}).get("dynamic", False)
 
         if dynamic and not getattr(granted_perms, "slow", False):
             return ToolResult(
@@ -215,26 +220,97 @@ class MemProfileTool(ToolFn):
                 continue
 
         peak_memory_bytes = 0
+        dynamic_measured = False
         if dynamic and getattr(granted_perms, "slow", False) and py_files:
             # Run dynamic tracemalloc probe on target
             target_py = py_files[0]
+            target_literal = json.dumps(str(target_py.resolve()))
+            report_prefix = f"rush-memory-{uuid.uuid4().hex}:"
             code = (
                 "import tracemalloc, runpy, json, sys\n"
                 "tracemalloc.start()\n"
-                f"runpy.run_path(r'{target_py}', run_name='__main__')\n"
+                f"runpy.run_path({target_literal}, run_name='__main__')\n"
                 "current, peak = tracemalloc.get_traced_memory()\n"
                 "tracemalloc.stop()\n"
-                "print(json.dumps({'peak_bytes': peak, 'current_bytes': current}))\n"
+                f"print('\\n' + {report_prefix!r} + json.dumps({{'peak_bytes': peak, 'current_bytes': current}}))\n"
             )
-            res = run_subprocess(
-                [sys.executable, "-c", code], cwd=p if p.is_dir() else p.parent
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                try:
-                    data = json.loads(res.stdout.strip().splitlines()[-1])
-                    peak_memory_bytes = int(data.get("peak_bytes") or 0)
-                except (json.JSONDecodeError, ValueError, IndexError):
-                    peak_memory_bytes = 0
+            try:
+                res = run_subprocess(
+                    [sys.executable, "-c", code],
+                    cwd=p if p.is_dir() else p.parent,
+                    timeout=int(options.get("timeout_seconds", 120)),
+                )
+            except subprocess.TimeoutExpired:
+                return ToolResult(
+                    tool=self.name,
+                    engine="mem-profile",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="mem-profile: Target timed out during dynamic measurement.",
+                    findings=findings,
+                    metrics={"completed": False, "peak_memory_bytes": None},
+                    raw=None,
+                    metadata={"terminal_reason": "timeout"},
+                )
+            if res.returncode != 0:
+                return ToolResult(
+                    tool=self.name,
+                    engine="mem-profile",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="mem-profile: Target failed during dynamic measurement.",
+                    findings=findings,
+                    metrics={
+                        "completed": False,
+                        "peak_memory_bytes": None,
+                        "target_exit_code": res.returncode,
+                    },
+                    raw=None,
+                    metadata={
+                        "terminal_reason": "target_failed",
+                        "target_exit_code": res.returncode,
+                    },
+                )
+            if not res.stdout.strip():
+                return ToolResult(
+                    tool=self.name,
+                    engine="mem-profile",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="mem-profile: Dynamic measurement produced no report.",
+                    findings=findings,
+                    metrics={"completed": False, "peak_memory_bytes": None},
+                    raw=None,
+                    metadata={"terminal_reason": "incomplete"},
+                )
+            try:
+                report = res.stdout.strip().splitlines()[-1]
+                if not report.startswith(report_prefix):
+                    raise ValueError("missing profiler report")
+                data = json.loads(report.removeprefix(report_prefix))
+                if not isinstance(data, dict):
+                    raise TypeError("invalid memory report")
+                peak = data.get("peak_bytes")
+                if isinstance(peak, bool) or not isinstance(peak, int) or peak < 0:
+                    raise ValueError("invalid peak bytes")
+                peak_memory_bytes = peak
+                dynamic_measured = True
+            except (json.JSONDecodeError, ValueError, TypeError, IndexError):
+                return ToolResult(
+                    tool=self.name,
+                    engine="mem-profile",
+                    engine_version="1.0.0",
+                    status="error",
+                    duration_ms=elapsed_ms(start),
+                    summary="mem-profile: Dynamic measurement report was invalid.",
+                    findings=findings,
+                    metrics={"completed": False, "peak_memory_bytes": None},
+                    raw=None,
+                    metadata={"terminal_reason": "incomplete"},
+                )
 
         status = "warn" if findings else "ok"
         summary = f"mem-profile: Audited {len(py_files)} file(s), {len(findings)} unclosed resource finding(s)"
@@ -253,6 +329,7 @@ class MemProfileTool(ToolFn):
                 "files_audited": len(py_files),
                 "unclosed_resources_count": len(findings),
                 "peak_memory_bytes": peak_memory_bytes,
+                "completed": not dynamic or dynamic_measured,
             },
             raw={"unclosed_resources": len(findings)},
             metadata={
