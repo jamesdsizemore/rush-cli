@@ -18,10 +18,9 @@ import os
 import signal
 import subprocess
 import time
-from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Never
 
 from rush.io.atomic_file import AtomicFile, SanitizedBytes
 from rush.io.physical_paths import PhysicalRoot
@@ -121,6 +120,7 @@ def dispatch(
         if tier == "native_sdk":
             _send_native(root, payload, timeout_seconds)
         else:
+            assert acp_command is not None
             asyncio.run(_send_acp(root, payload, acp_command, timeout_seconds))
     except Exception as exc:  # noqa: BLE001 - optional SDK errors must not expose payloads
         # Provider exception text may include credentials or the private handoff.
@@ -221,12 +221,11 @@ async def _query_native(payload: str, options) -> None:
     options.can_use_tool = deny_tool
     options.stderr = lambda line: None
     acknowledged = False
-    async with aclosing(query(prompt=payload, options=options)) as messages:
-        async for message in messages:
-            if isinstance(message, ResultMessage):
-                if message.is_error or message.subtype != "success":
-                    raise RuntimeError("Native handoff failed.")
-                acknowledged = True
+    async for message in query(prompt=payload, options=options):
+        if isinstance(message, ResultMessage):
+            if message.is_error or message.subtype != "success":
+                raise RuntimeError("Native handoff failed.")
+            acknowledged = True
     if not acknowledged or denied:
         raise RuntimeError("Native handoff lacks successful acknowledgement.")
 
@@ -234,18 +233,107 @@ async def _query_native(payload: str, options) -> None:
 async def _send_acp(
     root: Path, payload: str, command: tuple[str, ...], timeout: float
 ) -> None:
-    from acp import PROTOCOL_VERSION, spawn_agent_process, text_block
+    from acp import (
+        PROTOCOL_VERSION,
+        spawn_agent_process,
+        text_block,
+    )
     from acp.interfaces import Client
+    from acp.schema import DeniedOutcome, RequestPermissionResponse
 
     class HandoffClient(Client):
         denied = False
 
-        async def request_permission(self, session_id, tool_call, options, **kwargs):
+        def _deny(self) -> Never:
             self.denied = True
-            return {"outcome": {"outcome": "cancelled"}}
+            raise PermissionError("ACP handoff does not authorize client operations.")
 
-        async def session_update(self, session_id, update, **kwargs):
-            pass
+        async def request_permission(
+            self,
+            session_id: str,
+            tool_call: object,
+            options: object,
+            **kwargs: object,
+        ) -> RequestPermissionResponse:
+            self.denied = True
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+        async def session_update(
+            self, session_id: str, update: object, **kwargs: object
+        ) -> None:
+            return None
+
+        async def write_text_file(
+            self,
+            session_id: str,
+            path: str,
+            content: str,
+            **kwargs: object,
+        ) -> Never:
+            self._deny()
+
+        async def read_text_file(
+            self,
+            session_id: str,
+            path: str,
+            line: int | None = None,
+            limit: int | None = None,
+            **kwargs: object,
+        ) -> Never:
+            self._deny()
+
+        async def create_terminal(
+            self,
+            session_id: str,
+            command: str,
+            args: list[str] | None = None,
+            env: object = None,
+            cwd: str | None = None,
+            output_byte_limit: int | None = None,
+            **kwargs: object,
+        ) -> Never:
+            self._deny()
+
+        async def terminal_output(
+            self, session_id: str, terminal_id: str, **kwargs: object
+        ) -> Never:
+            self._deny()
+
+        async def release_terminal(
+            self, session_id: str, terminal_id: str, **kwargs: object
+        ) -> Never:
+            self._deny()
+
+        async def wait_for_terminal_exit(
+            self, session_id: str, terminal_id: str, **kwargs: object
+        ) -> Never:
+            self._deny()
+
+        async def kill_terminal(
+            self, session_id: str, terminal_id: str, **kwargs: object
+        ) -> Never:
+            self._deny()
+
+        async def create_elicitation(
+            self, message: str, mode: object, **kwargs: object
+        ) -> Never:
+            self._deny()
+
+        async def complete_elicitation(
+            self, elicitation_id: str, **kwargs: object
+        ) -> Never:
+            self._deny()
+
+        async def ext_method(self, method: str, params: dict[str, object]) -> Never:
+            self._deny()
+
+        async def ext_notification(
+            self, method: str, params: dict[str, object]
+        ) -> Never:
+            self._deny()
+
+        def on_connect(self, conn: object) -> None:
+            return None
 
     client = HandoffClient()
     async with spawn_agent_process(

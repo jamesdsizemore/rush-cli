@@ -222,6 +222,12 @@ for line in sys.stdin:
                 send({"jsonrpc":"2.0", "id":"permission", "method":"session/request_permission", "params":{"sessionId":"local-session","toolCall":{"toolCallId":"tool","title":"Shell","kind":"execute","status":"pending"},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]}})
                 permission = json.loads(sys.stdin.readline())
                 Path("permission.json").write_text(json.dumps(permission))
+            if outcome == "filesystem":
+                send({"jsonrpc":"2.0", "id":"filesystem", "method":"fs/read_text_file", "params":{"sessionId":"local-session","path":"outside-secret.txt"}})
+                Path("filesystem.json").write_text(sys.stdin.readline())
+            if outcome == "terminal":
+                send({"jsonrpc":"2.0", "id":"terminal", "method":"terminal/create", "params":{"sessionId":"local-session","command":"cat","args":["outside-secret.txt"]}})
+                Path("terminal.json").write_text(sys.stdin.readline())
             response = {"stopReason": "cancelled" if outcome == "cancelled" else "end_turn"}
         else:
             continue
@@ -257,13 +263,17 @@ for line in sys.stdin:
             "timeout",
             "permission",
             "cancelled",
+            "filesystem",
+            "terminal",
         )
-        if protocol == "acp" or outcome != "cancelled"
+        if protocol == "acp" or outcome not in {"cancelled", "filesystem", "terminal"}
     ],
 )
 def test_real_sdk_local_peer(monkeypatch, tmp_path, protocol, outcome):
     sdk = pytest.importorskip("claude_agent_sdk" if protocol == "native_sdk" else "acp")
     peer = _peer(tmp_path, "claude" if protocol == "native_sdk" else "acp", outcome)
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("synthetic-secret")
     if protocol == "native_sdk":
         options_type = sdk.ClaudeAgentOptions
 
@@ -316,6 +326,11 @@ def test_real_sdk_local_peer(monkeypatch, tmp_path, protocol, outcome):
             assert permission["result"]["outcome"]["outcome"] == "cancelled"
         else:
             assert permission["response"]["response"]["behavior"] == "deny"
+    if outcome in {"filesystem", "terminal"}:
+        denial = json.loads((tmp_path / f"{outcome}.json").read_text())
+        assert denial["id"] == outcome
+        assert "error" in denial
+        assert outside.read_text() == "synthetic-secret"
     pid = int((tmp_path / "peer.pid").read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
