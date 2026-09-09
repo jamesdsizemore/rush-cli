@@ -5,8 +5,13 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import rush.continuity.context as continuity_context
+from rush.continuity.coordination import check_coordination
+from rush.continuity.results import ContinuityResult
 from rush.contracts.results import ToolResultV1, validate_tool_result
+from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.permissions import ExecutionPermissions
+from rush.token_economy.memory_cache_gate import CacheGateResult
 from rush.tools.continuity import SessionContinuityTool
 
 
@@ -130,3 +135,69 @@ def test_continuity_as_v1_mode_returns_tool_result_v1_directly(tmp_path: Path) -
     assert v1_result.tool == "continuity"
     assert v1_result.status == "ok"
     assert validate_tool_result(v1_result).status == "ok"
+
+
+def test_continuity_public_call_preserves_both_result_formats(tmp_path: Path) -> None:
+    tool = SessionContinuityTool()
+
+    legacy = tool(tmp_path)
+    assert isinstance(legacy, ContinuityResult)
+    assert legacy["tool"] == "continuity"
+    assert legacy["status"] == "ok"
+    assert legacy["findings"] == []
+
+    v1 = tool(tmp_path, as_v1=True)
+    assert isinstance(v1, ToolResultV1)
+    assert v1.tool == "continuity"
+    assert v1.status == "ok"
+    assert v1.findings == []
+
+
+def test_coordination_malformed_held_lock_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target = tmp_path / "owned.py"
+    target.write_text("pass\n", encoding="utf-8")
+    monkeypatch.setattr(
+        MeshLockManager,
+        "inspect",
+        lambda *_args: {"state": "held", "owner": "agent", "acquired_at": "bad"},
+    )
+
+    result = check_coordination(
+        0.0,
+        tmp_path,
+        target.name,
+        "agent",
+        300.0,
+        ExecutionPermissions(),
+    )
+
+    assert result["status"] == "skipped"
+    assert result["metadata"]["coordination"]["state"] == "unavailable"
+
+
+def test_context_cache_hit_without_content_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target = tmp_path / "sample.py"
+    target.write_text("pass\n", encoding="utf-8")
+    monkeypatch.setattr(
+        continuity_context,
+        "check_memory_before_pack",
+        lambda *_args, **_kwargs: CacheGateResult(
+            hit=True, artifact_id="missing", content=None
+        ),
+    )
+
+    result = continuity_context.pack_context(
+        0.0,
+        tmp_path,
+        target.name,
+        "",
+        100,
+        ExecutionPermissions(),
+    )
+
+    assert result["status"] == "error"
+    assert result["summary"] == "Cached context payload was unavailable."

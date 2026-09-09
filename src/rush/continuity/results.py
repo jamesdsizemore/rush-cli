@@ -13,7 +13,7 @@ from ..permissions import (
 )
 
 if TYPE_CHECKING:
-    from ..tools.base import Finding, ToolResult
+    from ..tools.base import Finding
 
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True)
 
@@ -25,9 +25,12 @@ class ContinuityResult(dict):
         return adapt_legacy_tool_result(self)
 
 
+ContinuityOutput = ContinuityResult | ToolResultV1
+
+
 def valid_name(name: str | None) -> bool:
     """Validate that name is a single non-empty filename without directory traversal."""
-    return bool(name) and Path(name).name == name and name not in {".", ".."}
+    return bool(name and Path(name).name == name and name not in {".", ".."})
 
 
 def build_continuity_result(
@@ -47,7 +50,7 @@ def build_continuity_result(
     findings: list[Finding] | None = None,
     as_v1: bool = False,
     tool_name: str = "continuity",
-) -> ToolResult | ToolResultV1:
+) -> ContinuityOutput:
     """Build canonical ToolResult or ToolResultV1 for session continuity."""
     metadata = {
         "operation": operation,

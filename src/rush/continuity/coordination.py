@@ -5,16 +5,13 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..mcp_mesh.lock_manager import MeshLockManager
 from ..memory.failure_ledger import FailureLedger
 from ..permissions import ExecutionPermissions
 from ..safety.redactor import SecretRedactor
-from .results import build_continuity_result, valid_name
-
-if TYPE_CHECKING:
-    from ..tools.base import ToolResult
+from .results import ContinuityOutput, build_continuity_result, valid_name
 
 
 def check_coordination(
@@ -25,7 +22,7 @@ def check_coordination(
     max_age_s: float,
     granted: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Inspect mesh lock state for a coordination target."""
     target = (root / (coordination_path or "")).resolve()
     if root not in target.parents or not target.is_file() or max_age_s < 0:
@@ -40,23 +37,36 @@ def check_coordination(
         )
     lock = MeshLockManager.inspect(root, target)
     owner = lock.get("owner")
-    if lock["state"] == "held":
-        acquired_at = float(lock["acquired_at"])
-        if time.time() - acquired_at > max_age_s:
-            coordination = {
-                "state": "stale",
-                "owner": owner,
-                "action": "manual_recovery_required",
-            }
-            return build_continuity_result(
-                started,
-                "skipped",
-                "Stale local ownership evidence requires manual recovery.",
-                operation="coordination_check",
-                granted=granted,
-                coordination=coordination,
-                as_v1=as_v1,
-            )
+    acquired_at = lock.get("acquired_at")
+    if lock["state"] == "held" and not isinstance(acquired_at, (int, float)):
+        return build_continuity_result(
+            started,
+            "skipped",
+            "Local ownership evidence was unavailable.",
+            operation="coordination_check",
+            granted=granted,
+            coordination={"state": "unavailable", "owner": None},
+            as_v1=as_v1,
+        )
+    if (
+        lock["state"] == "held"
+        and isinstance(acquired_at, (int, float))
+        and time.time() - acquired_at > max_age_s
+    ):
+        coordination = {
+            "state": "stale",
+            "owner": owner,
+            "action": "manual_recovery_required",
+        }
+        return build_continuity_result(
+            started,
+            "skipped",
+            "Stale local ownership evidence requires manual recovery.",
+            operation="coordination_check",
+            granted=granted,
+            coordination=coordination,
+            as_v1=as_v1,
+        )
     coordination = {
         "state": "conflict"
         if lock["state"] == "held" and owner != agent_id
@@ -87,11 +97,15 @@ def preview_merge(
     theirs_code: str | None,
     granted: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Preview 3-way merge outcome without applying modifications."""
     from ..tools.swarm_merge import SwarmMergeSolver
 
-    if not all(isinstance(code, str) for code in (base_code, ours_code, theirs_code)):
+    if (
+        not isinstance(base_code, str)
+        or not isinstance(ours_code, str)
+        or not isinstance(theirs_code, str)
+    ):
         return build_continuity_result(
             started,
             "skipped",
@@ -160,7 +174,7 @@ def recover_coordination(
     failure_fingerprint: Any,
     granted: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Gather coordination recovery evidence across flight recorder, failure ledger, and mistake miner."""
     if session_id is not None and not valid_name(session_id):
         return build_continuity_result(

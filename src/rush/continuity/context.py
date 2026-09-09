@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..codegraph.context_packer import ContextPacker
 from ..permissions import (
@@ -14,10 +14,7 @@ from ..permissions import (
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
 from ..token_economy.memory_cache_gate import check_memory_before_pack, write_cache_fill
-from .results import _WRITE_PERMISSION, build_continuity_result
-
-if TYPE_CHECKING:
-    from ..tools.base import ToolResult
+from .results import _WRITE_PERMISSION, ContinuityOutput, build_continuity_result
 
 
 def _build_recovery_envelope(
@@ -74,7 +71,7 @@ def pack_context(
     token_budget: int,
     granted: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Pack bounded context evidence, spilling to CCR cache if over budget."""
     if not context_path or token_budget < 1:
         return build_continuity_result(
@@ -99,6 +96,15 @@ def pack_context(
         context_path, target_symbol, project_root=project_root
     )
     if gate.hit:
+        if gate.content is None:
+            return build_continuity_result(
+                started,
+                "error",
+                "Cached context payload was unavailable.",
+                operation="context_pack",
+                granted=granted,
+                as_v1=as_v1,
+            )
         packed = gate.content
     else:
         packed = ContextPacker(project_root).pack(
@@ -173,7 +179,7 @@ def retrieve_context(
     handle: str | None,
     granted: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Retrieve CCR chunk by handle."""
     database = root / ".rush" / "cache" / "ccr.db"
     content = (

@@ -6,7 +6,7 @@ import hashlib
 import os
 from pathlib import Path
 from time import monotonic
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..continuity.context import pack_context, retrieve_context
 from ..continuity.coordination import (
@@ -24,6 +24,7 @@ from ..continuity.providers import (
 )
 from ..continuity.receipts import restore_receipt, save_receipt
 from ..continuity.results import (
+    ContinuityOutput,
     ContinuityResult,
     build_continuity_result,
     valid_name,
@@ -108,7 +109,7 @@ class SessionContinuityTool(ToolFn):
         provider_id: str | None = None,
         as_v1: bool = False,
     ) -> ToolResult | ToolResultV1:
-        return self.run(
+        result = self.run(
             path,
             operation=operation,
             name=name,
@@ -137,6 +138,9 @@ class SessionContinuityTool(ToolFn):
             provider_id=provider_id,
             as_v1=as_v1,
         )
+        # FastMCP needs schema-bearing public types; ContinuityResult is the
+        # exact legacy ToolResult dictionary with retained conversion methods.
+        return cast(ToolResult | ToolResultV1, result)
 
     def run(
         self,
@@ -162,7 +166,7 @@ class SessionContinuityTool(ToolFn):
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
         as_v1: bool = False,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         del config
         self._as_v1 = as_v1
         started = monotonic()
@@ -224,7 +228,7 @@ class SessionContinuityTool(ToolFn):
         files: list[str] | None,
         handoff: dict[str, Any] | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         if not self._valid_name(name):
             return self._result(
                 started,
@@ -268,7 +272,7 @@ class SessionContinuityTool(ToolFn):
         started: float,
         root: Path,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         try:
             session_dir = PhysicalRoot(root).open_contained(
                 Path(".rush") / "sessions", purpose="read"
@@ -334,7 +338,7 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         name: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         if not self._valid_name(name):
             return self._result(
                 started,
@@ -449,7 +453,7 @@ class SessionContinuityTool(ToolFn):
         target_symbol: str,
         token_budget: int,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return pack_context(
             started,
             project_root,
@@ -466,7 +470,7 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         handle: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return retrieve_context(started, root, handle, granted, as_v1=self._as_v1)
 
     def _coordination_check(
@@ -477,7 +481,7 @@ class SessionContinuityTool(ToolFn):
         agent_id: str | None,
         max_age_s: float,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return check_coordination(
             started,
             root,
@@ -495,7 +499,7 @@ class SessionContinuityTool(ToolFn):
         ours_code: str | None,
         theirs_code: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return preview_merge(
             started, base_code, ours_code, theirs_code, granted, as_v1=self._as_v1
         )
@@ -507,7 +511,7 @@ class SessionContinuityTool(ToolFn):
         session_id: str | None,
         failure_fingerprint: Any,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return recover_coordination(
             started,
             root,
@@ -524,7 +528,7 @@ class SessionContinuityTool(ToolFn):
         name: str | None,
         provider_id: str | None,
         granted: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return resume_provider(
             started, root, name, provider_id, granted, as_v1=self._as_v1
         )
@@ -535,7 +539,7 @@ class SessionContinuityTool(ToolFn):
         handoff: dict[str, Any],
         granted: ExecutionPermissions,
         required: ExecutionPermissions,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         return resume_omniroute(started, handoff, granted, required, as_v1=self._as_v1)
 
     def _provider_handoff(self, root: Path, name: str | None) -> dict[str, Any] | None:
@@ -593,7 +597,7 @@ class SessionContinuityTool(ToolFn):
         provider_route: dict[str, Any] | None = None,
         findings: list[Finding] | None = None,
         as_v1: bool | None = None,
-    ) -> ToolResult | ToolResultV1:
+    ) -> ContinuityOutput:
         effective_v1 = as_v1 if as_v1 is not None else getattr(self, "_as_v1", False)
         return build_continuity_result(
             started,

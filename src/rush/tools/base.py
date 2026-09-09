@@ -100,7 +100,7 @@ class ToolFn(ABC):
         ...
 
     @abstractmethod
-    def __call__(self, path: Path) -> ToolResult:
+    def __call__(self, path: Path) -> ToolResult | ToolResultV1:
         """Run the tool on `path` (file or directory).
 
         Implementations must NEVER raise — return a ToolResult with

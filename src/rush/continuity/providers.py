@@ -9,15 +9,12 @@ import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..permissions import ExecutionPermissions, check_permissions
 from .receipts import restore_receipt
-from .results import build_continuity_result, valid_name
-
-if TYPE_CHECKING:
-    from ..tools.base import ToolResult
+from .results import ContinuityOutput, build_continuity_result, valid_name
 
 
 def provider_prompt(handoff: dict[str, Any]) -> str:
@@ -123,7 +120,7 @@ def resume_omniroute(
     granted: ExecutionPermissions,
     required: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Send a single bounded receipt to OmniRoute's fixed loopback API."""
     route = {
         "provider_id": "omniroute_api",
@@ -259,7 +256,7 @@ def _validate_provider_access(
     required: ExecutionPermissions,
     started: float,
     as_v1: bool,
-) -> ToolResult | None:
+) -> ContinuityOutput | None:
     if provider == "zai":
         return build_continuity_result(
             started,
@@ -299,7 +296,7 @@ def _check_9router(
     granted: ExecutionPermissions,
     required: ExecutionPermissions,
     as_v1: bool,
-) -> tuple[bool, str | None, ToolResult | None]:
+) -> tuple[bool, str | None, ContinuityOutput | None]:
     nine_router = provider == "9router_cli"
     if not nine_router:
         return False, None, None
@@ -334,7 +331,7 @@ def _resume_cli_provider(
     granted: ExecutionPermissions,
     required: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     route = (
         {
             "provider_id": "9router_cli",
@@ -399,7 +396,7 @@ def resume_provider(
     provider_id: str | None,
     granted: ExecutionPermissions,
     as_v1: bool = False,
-) -> ToolResult:
+) -> ContinuityOutput:
     """Resume session continuity across external provider coding CLIs or APIs."""
     provider = provider_id or ""
     required = ExecutionPermissions(network=True)
