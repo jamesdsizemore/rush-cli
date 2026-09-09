@@ -623,3 +623,36 @@ def test_strictify_does_not_assume_shadowed_builtin_annotations(tmp_path: Path):
     )
     result = TypeSynthesizer(tmp_path).audit_and_synthesize(target)
     assert "accepts" not in result["guards"]
+
+
+def test_complexity_scopes_nested_definitions_and_async_methods(tmp_path: Path):
+    target = tmp_path / "scoped_complexity.py"
+    target.write_text(
+        """
+def outer(flag):
+    choose = lambda first, second: first or second
+    def inner(value):
+        if value:
+            for item in value:
+                if item:
+                    return item
+        return None
+    class Nested:
+        def method(self, value):
+            if value:
+                while value:
+                    break
+            return value
+    async def async_inner(value):
+        if value:
+            async for item in value:
+                return item
+            return value
+        return None
+    return inner([])
+""",
+        encoding="utf-8",
+    )
+    result = ComplexityDecomposer(tmp_path).decompose_file(target, max_complexity=0)
+    actual = {item["function"]: item["complexity"] for item in result["candidates"]}
+    assert actual == {"outer": 1, "inner": 4, "method": 3, "async_inner": 3}

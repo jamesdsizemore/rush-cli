@@ -26,6 +26,7 @@ dependencies = [
     "pytest==9.0.3",      # Test runner (we ship tests; users can `uv run pytest`)
     "tiktoken==0.14.0",   # Exact BPE token counting (o200k/cl100k)
     "tree-sitter==0.26.0",# Polyglot AST outline and skeleton parsing
+    "tree-sitter-typescript==0.23.2", # TypeScript/TSX exception AST grammar
     "sqlglot==30.17.0",   # SQL DDL AST parsing for zero-downtime migration linting
     "pillow==12.3.0",     # Image optimization and layout metadata inspection
     "cryptography==50.0.0",# SLSA in-toto cryptographic provenance signing

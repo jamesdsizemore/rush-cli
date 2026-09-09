@@ -12,6 +12,9 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar
 
+import tree_sitter_typescript
+from tree_sitter import Language, Parser
+
 from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, now_ms, skipped_result
 
@@ -154,6 +157,7 @@ class ErrorCatalogTool(ToolFn):
 
         findings: list[Finding] = []
         raw_occurrences: list[dict[str, Any]] = []
+        parse_error = False
 
         for src_file in files:
             rel_path = (
@@ -170,8 +174,11 @@ class ErrorCatalogTool(ToolFn):
                     src_file, rel_path, raw_occurrences, findings
                 )
             else:
-                self._extract_ts_js_exceptions(
-                    src_file, rel_path, raw_occurrences, findings
+                parse_error = (
+                    self._extract_ts_js_exceptions(
+                        src_file, rel_path, raw_occurrences, findings
+                    )
+                    or parse_error
                 )
 
         # Aggregate into RFC 7807 catalog entries
@@ -237,7 +244,7 @@ class ErrorCatalogTool(ToolFn):
                     tool=self.name,
                     engine="error-catalog",
                     engine_version="1.0.0",
-                    status="skipped",
+                    status="error" if parse_error else "skipped",
                     duration_ms=elapsed_ms(start),
                     summary=(
                         f"error-catalog: writing export artifact to '{export_path}' "
@@ -247,6 +254,7 @@ class ErrorCatalogTool(ToolFn):
                     raw={
                         "catalog": catalog_entries,
                         "total_errors": len(raw_occurrences),
+                        "partial": parse_error,
                     },
                     metadata={
                         "execution": build_execution_metadata(
@@ -267,8 +275,13 @@ class ErrorCatalogTool(ToolFn):
             exp.write_text(clean_markdown, encoding="utf-8")
             artifacts.append(str(exp))
 
+        prefix = (
+            "error-catalog: partial catalog"
+            if parse_error
+            else "error-catalog: cataloged"
+        )
         summary = (
-            f"error-catalog: cataloged {len(catalog_entries)} unique RFC 7807 error types "
+            f"{prefix} {len(catalog_entries)} unique RFC 7807 error types "
             f"({len(raw_occurrences)} occurrences across {len(files)} files)"
         )
 
@@ -276,7 +289,7 @@ class ErrorCatalogTool(ToolFn):
             tool=self.name,
             engine="error-catalog",
             engine_version="1.0.0",
-            status="ok",
+            status="error" if parse_error else "ok",
             duration_ms=elapsed_ms(start),
             summary=summary,
             findings=findings,
@@ -284,6 +297,7 @@ class ErrorCatalogTool(ToolFn):
                 "catalog": catalog_entries,
                 "total_unique_errors": len(catalog_entries),
                 "total_occurrences": len(raw_occurrences),
+                "partial": parse_error,
             },
             artifacts=artifacts if artifacts else None,
             metadata={
@@ -366,44 +380,98 @@ class ErrorCatalogTool(ToolFn):
         rel_path: str,
         occurrences: list[dict[str, Any]],
         findings: list[Finding],
-    ) -> None:
+    ) -> bool:
         try:
-            content = src_file.read_text(encoding="utf-8", errors="ignore")
+            content = src_file.read_bytes()
         except Exception:  # noqa: BLE001
-            return
+            return False
 
-        lines = content.splitlines()
-        throw_new_pattern = re.compile(
-            r"""throw\s+new\s+([A-Za-z0-9_$]+)\s*\(\s*(?:['"`](.*?)['"`]|(.*?))\s*\)"""
+        grammar = (
+            tree_sitter_typescript.language_tsx()
+            if src_file.suffix.lower() in {".tsx", ".jsx"}
+            else tree_sitter_typescript.language_typescript()
         )
-        throw_pattern = re.compile(
-            r"""throw\s+([A-Za-z0-9_$]+)\s*\(\s*(?:['"`](.*?)['"`]|(.*?))\s*\)"""
-        )
-        throw_str_pattern = re.compile(r"""throw\s+['"`](.*?)['"`]""")
-
-        for line_idx, line_text in enumerate(lines, start=1):
-            if "throw" not in line_text:
-                continue
-
-            match = throw_new_pattern.search(line_text) or throw_pattern.search(
-                line_text
+        tree = Parser(Language(grammar)).parse(content)
+        parse_error = tree.root_node.has_error
+        if parse_error:
+            error_node = next(
+                (
+                    node
+                    for node in self._walk_tree(tree.root_node)
+                    if node.type == "ERROR" or node.is_missing
+                ),
+                tree.root_node,
             )
-            if match:
-                class_name = match.group(1)
-                message = match.group(2) or match.group(3) or ""
-            else:
-                str_match = throw_str_pattern.search(line_text)
-                if str_match:
-                    class_name = "Error"
-                    message = str_match.group(1)
+            findings.append(
+                Finding(
+                    path=rel_path,
+                    line=error_node.start_point.row + 1,
+                    column=error_node.start_point.column + 1,
+                    rule="error-catalog/parse-error",
+                    rule_id="error-catalog/parse-error",
+                    severity="error",
+                    message=f"TypeScript/JavaScript parse was incomplete: {rel_path}",
+                    fingerprint=f"{rel_path}:{error_node.start_point.row + 1}:parse-error",
+                )
+            )
+
+        for node in self._walk_tree(tree.root_node):
+            if node.type != "throw_statement":
+                continue
+            expression = next(
+                (child for child in node.named_children if child.type != "comment"),
+                None,
+            )
+            while (
+                expression is not None and expression.type == "parenthesized_expression"
+            ):
+                expression = next(
+                    (
+                        child
+                        for child in expression.named_children
+                        if child.type != "comment"
+                    ),
+                    None,
+                )
+            if expression is None:
+                continue
+            class_name = "Error"
+            message = ""
+            if expression.type in {"new_expression", "call_expression"}:
+                field = (
+                    "constructor" if expression.type == "new_expression" else "function"
+                )
+                constructor = expression.child_by_field_name(field)
+                if constructor is not None:
+                    class_name = self._node_source(content, constructor).rsplit(".", 1)[
+                        -1
+                    ]
+                arguments = expression.child_by_field_name("arguments")
+                if arguments is not None:
+                    argument = next(
+                        (
+                            child
+                            for child in arguments.named_children
+                            if child.type != "comment"
+                        ),
+                        None,
+                    )
                 else:
-                    continue
+                    argument = None
+                if argument is not None:
+                    message = self._node_source(content, argument)
+                    if argument.type in {"string", "template_string"}:
+                        message = message[1:-1]
+            else:
+                message = self._node_source(content, expression)
+                if expression.type in {"string", "template_string"}:
+                    message = message[1:-1]
 
             code = _pascal_to_screaming_snake(class_name)
             occurrences.append(
                 {
                     "path": rel_path,
-                    "line": line_idx,
+                    "line": node.start_point.row + 1,
                     "class_name": class_name,
                     "code": code,
                     "message": message,
@@ -412,15 +480,32 @@ class ErrorCatalogTool(ToolFn):
             findings.append(
                 Finding(
                     path=rel_path,
-                    line=line_idx,
-                    column=1,
+                    line=node.start_point.row + 1,
+                    column=node.start_point.column + 1,
                     rule="error-catalog",
                     rule_id=code,
                     severity="info",
                     message=f"{class_name}: {message}" if message else class_name,
-                    fingerprint=f"{rel_path}:{line_idx}:{code}",
+                    fingerprint=f"{rel_path}:{node.start_point.row + 1}:{code}",
                 )
             )
+        return parse_error
+
+    @staticmethod
+    def _walk_tree(root: Any) -> list[Any]:
+        nodes = []
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            nodes.append(node)
+            stack.extend(reversed(node.children))
+        return nodes
+
+    @staticmethod
+    def _node_source(content: bytes, node: Any) -> str:
+        return content[node.start_byte : node.end_byte].decode(
+            "utf-8", errors="replace"
+        )
 
     def _extract_rust_exceptions(
         self,

@@ -72,6 +72,117 @@ export function fetchResource(id: string) {
     assert forbidden["status"] == 403
 
 
+def test_error_catalog_uses_typescript_structure_for_real_throws(
+    tmp_path: Path,
+) -> None:
+    ts_file = tmp_path / "handler.ts"
+    ts_file.write_text(
+        """import { NamedImportedError } from './errors';
+// throw new CommentedFakeError('fake');
+const stringFake = "throw new StringFakeError('fake')";
+const templateFake = `throw new TemplateFakeError('fake')`;
+
+export function handle(value: string) {
+  throw new NamedImportedError(
+    makeMessage(
+      "real detail",
+      value,
+    ),
+  );
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = ErrorCatalogTool().run(ts_file)
+
+    assert result["status"] == "ok"
+    assert result["raw"]["total_occurrences"] == 1
+    assert [entry["code"] for entry in result["raw"]["catalog"]] == [
+        "ERR_NAMED_IMPORTED"
+    ]
+    entry = result["raw"]["catalog"][0]
+    assert entry["class_name"] == "NamedImportedError"
+    assert entry["occurrences"] == [
+        {
+            "path": "handler.ts",
+            "line": 7,
+            "message": 'makeMessage(\n      "real detail",\n      value,\n    )',
+        }
+    ]
+
+
+def test_error_catalog_reports_partial_typescript_parse_error(tmp_path: Path) -> None:
+    ts_file = tmp_path / "broken.ts"
+    ts_file.write_text("export function broken( {\n", encoding="utf-8")
+
+    result = ErrorCatalogTool().run(ts_file)
+
+    assert result["status"] == "error"
+    assert result["raw"]["partial"] is True
+    assert result["raw"]["catalog"] == []
+    assert result["findings"][0]["rule"] == "error-catalog/parse-error"
+
+
+def test_error_catalog_skips_comments_and_unwraps_parenthesized_throws(
+    tmp_path: Path,
+) -> None:
+    ts_file = tmp_path / "comments.ts"
+    ts_file.write_text(
+        """export function first() {
+  throw /* reason */ new NamedImportedError(/* detail */ "real");
+}
+export function second() {
+  throw (new WrappedError("wrapped"));
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = ErrorCatalogTool().run(ts_file)
+
+    assert result["status"] == "ok"
+    assert [entry["code"] for entry in result["raw"]["catalog"]] == [
+        "ERR_NAMED_IMPORTED",
+        "ERR_WRAPPED",
+    ]
+    assert {
+        entry["class_name"]: entry["occurrences"][0]["message"]
+        for entry in result["raw"]["catalog"]
+    } == {"NamedImportedError": "real", "WrappedError": "wrapped"}
+
+
+def test_error_catalog_routes_tsx_and_jsx_to_jsx_grammar(tmp_path: Path) -> None:
+    for suffix in (".tsx", ".jsx"):
+        source_file = tmp_path / f"component{suffix}"
+        source_file.write_text(
+            "export function render() { throw new RenderError(<span>bad</span>); }",
+            encoding="utf-8",
+        )
+        result = ErrorCatalogTool().run(source_file)
+
+        assert result["status"] == "ok", suffix
+        assert result["raw"]["total_occurrences"] == 1, suffix
+        assert result["raw"]["catalog"][0]["class_name"] == "RenderError", suffix
+        assert result["raw"]["catalog"][0]["detail"] == "<span>bad</span>", suffix
+
+
+def test_locked_typescript_grammar_loads() -> None:
+    import tree_sitter_typescript
+    from tree_sitter import Language, Parser
+
+    source = b"throw new LockedRuntimeError('boom');"
+    languages = (
+        Language(tree_sitter_typescript.language_typescript()),
+        Language(tree_sitter_typescript.language_tsx()),
+    )
+
+    for language in languages:
+        root = Parser(language).parse(source).root_node
+        assert root.has_error is False
+        assert any(node.type == "throw_statement" for node in root.children)
+
+
 def test_error_catalog_markdown_export_requires_artifact_write_permission(
     tmp_path: Path,
 ) -> None:

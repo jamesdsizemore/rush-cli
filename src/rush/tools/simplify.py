@@ -12,16 +12,10 @@ class ComplexityDecomposer:
         self.project_root = project_root or Path.cwd()
 
     def calculate_complexity(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
-        score = 1
-        for sub in ast.walk(node):
-            if isinstance(
-                sub,
-                (ast.If, ast.While, ast.For, ast.ExceptHandler, ast.With, ast.Assert),
-            ):
-                score += 1
-            elif isinstance(sub, ast.BoolOp):
-                score += len(sub.values) - 1
-        return score
+        visitor = _FunctionComplexityVisitor()
+        for statement in node.body:
+            visitor.visit(statement)
+        return visitor.score
 
     def decompose_file(
         self, file_path: Path, max_complexity: int = 10
@@ -56,3 +50,39 @@ class ComplexityDecomposer:
             "complex_functions_count": len(candidates),
             "candidates": candidates,
         }
+
+
+class _FunctionComplexityVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.score = 1
+
+    def visit_If(self, node: ast.If) -> None:
+        self.score += 1
+        self.generic_visit(node)
+
+    visit_While = visit_If
+    visit_For = visit_If
+    visit_AsyncFor = visit_If
+    visit_With = visit_If
+    visit_AsyncWith = visit_If
+    visit_Assert = visit_If
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        self.score += 1
+        self.generic_visit(node)
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> None:
+        self.score += len(node.values) - 1
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
