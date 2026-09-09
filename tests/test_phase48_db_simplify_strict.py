@@ -176,6 +176,20 @@ ALTER TABLE customers ALTER COLUMN email SET NOT NULL;
     assert DbDriftAuditor(tmp_path).audit_drift()["passed"] is True
 
 
+def test_db_drift_rejects_non_boolean_column_flags(tmp_path: Path) -> None:
+    _write_db_models(
+        tmp_path,
+        "class Customer(Base):\n"
+        '    __tablename__ = "customers"\n'
+        '    email: Mapped[str] = mapped_column(nullable="False")\n',
+    )
+    from rush.tools.db_drift_rules import collect_models
+
+    model = collect_models(tmp_path)["Customer"]
+    assert model["incomplete"] == ["dynamic column declaration: Customer.email"]
+    assert model["columns"]["email"]["nullable"] is False
+
+
 def test_db_drift_orders_alembic_by_revision_graph(tmp_path: Path) -> None:
     _write_db_models(
         tmp_path,

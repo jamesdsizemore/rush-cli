@@ -65,7 +65,11 @@ def _constant_bool(call: ast.Call, keyword: str) -> bool | None:
     item = next((kw for kw in call.keywords if kw.arg == keyword), None)
     if item is None:
         return None
-    return item.value.value if isinstance(item.value, ast.Constant) else None
+    return (
+        item.value.value
+        if isinstance(item.value, ast.Constant) and isinstance(item.value.value, bool)
+        else None
+    )
 
 
 def _declared_column_type(call: ast.Call, annotation: ast.AST | None) -> str | None:
@@ -151,7 +155,9 @@ def _extract_model_fields(node: ast.ClassDef) -> tuple[dict[str, Any], list[str]
             incomplete.append(f"unknown column type: {node.name}.{field_name}")
         if call and any(
             kw.arg in {"nullable", "primary_key"}
-            and not isinstance(kw.value, ast.Constant)
+            and not (
+                isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool)
+            )
             for kw in call.keywords
         ):
             incomplete.append(f"dynamic column declaration: {node.name}.{field_name}")
@@ -190,6 +196,8 @@ def _sqlmodel_table(node: ast.ClassDef, classes: dict[str, ast.ClassDef]) -> boo
 
 def _declared_table(node: ast.ClassDef) -> tuple[str | None, bool]:
     for item in node.body:
+        if not isinstance(item, (ast.Assign, ast.AnnAssign)):
+            continue
         targets: list[ast.expr] = item.targets if isinstance(item, ast.Assign) else []
         if isinstance(item, ast.AnnAssign):
             targets = [item.target]
@@ -410,10 +418,16 @@ def _apply_sql(content: str, state: dict[str, Any], source: str) -> None:
 
 def _assignment(tree: ast.Module, name: str) -> Any:
     for item in tree.body:
-        target = item.target if isinstance(item, ast.AnnAssign) else None
+        if not isinstance(item, (ast.Assign, ast.AnnAssign)):
+            continue
+        target: ast.expr | None = (
+            item.target if isinstance(item, ast.AnnAssign) else None
+        )
         if isinstance(item, ast.Assign) and len(item.targets) == 1:
             target = item.targets[0]
         if isinstance(target, ast.Name) and target.id == name:
+            if item.value is None:
+                return ...
             try:
                 return ast.literal_eval(item.value)
             except (ValueError, TypeError):
@@ -535,7 +549,9 @@ def _op_create_table(call: ast.Call, args: list[Any], state: dict[str, Any]) -> 
     if table_name in state["tables"]:
         state["incomplete"].append(f"duplicate create_table {table_name}")
         return True
-    state["tables"][table_name] = {"columns": dict(columns)}
+    state["tables"][table_name] = {
+        "columns": dict(column for column in columns if column is not None)
+    }
     return True
 
 
@@ -585,7 +601,7 @@ def _op_rename_table(args: list[Any], state: dict[str, Any]) -> bool:
 
 
 def _alter_column_values(
-    column: dict[str, Any], kwargs: dict[str, ast.AST]
+    column: dict[str, Any], kwargs: dict[str, ast.expr]
 ) -> tuple[bool, str | None]:
     new_name = _literal(kwargs.get("new_column_name"))
     if new_name is not None and not isinstance(new_name, str):
