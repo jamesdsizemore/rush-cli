@@ -73,7 +73,7 @@ class ToolResult(TypedDict, total=False):
     review_kind: LlmStatus | None
     review_provider: str | None
     # v0.2 optional extensions. Existing consumers can ignore these fields.
-    metrics: dict[str, int | float | str] | None
+    metrics: dict[str, int | float | str | None] | None
     artifacts: list[str] | None
     metadata: dict[str, Any] | None
 

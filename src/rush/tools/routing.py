@@ -115,7 +115,7 @@ def aggregate_results(
     duration_ms = 0
     engines: list[str] = []
     findings: list[Finding] = []
-    metrics: dict[str, int | float | str] = {}
+    metrics: dict[str, int | float | str | None] = {}
     artifacts: list[str] = []
 
     ordered_results = results

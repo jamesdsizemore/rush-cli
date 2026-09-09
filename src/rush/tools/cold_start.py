@@ -147,6 +147,8 @@ class ColdStartTool(ToolFn):
         allow_slow: bool = False,
         allow_artifact_write: bool = False,
         allow_browser: bool = False,
+        dynamic: bool | None = None,
+        timeout_seconds: int = 120,
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions
@@ -160,7 +162,13 @@ class ColdStartTool(ToolFn):
             artifact_write=allow_artifact_write,
             browser=allow_browser,
         )
-        return self.run(path, permissions=permissions, **options)
+        return self.run(
+            path,
+            permissions=permissions,
+            dynamic=dynamic,
+            timeout_seconds=timeout_seconds,
+            **options,
+        )
 
     def run(
         self,
@@ -169,6 +177,7 @@ class ColdStartTool(ToolFn):
         config: Any = None,
         permissions: Any = None,
         dynamic: bool | None = None,
+        timeout_seconds: int = 120,
         **options: object,
     ) -> ToolResult:
         from ..permissions import ExecutionPermissions, build_execution_metadata
@@ -250,7 +259,7 @@ class ColdStartTool(ToolFn):
                 res = run_subprocess(
                     [sys.executable, "-X", "importtime", str(target_file.resolve())],
                     cwd=p if p.is_dir() else p.parent,
-                    timeout=int(options.get("timeout_seconds", 120)),
+                    timeout=int(timeout_seconds),
                 )
             except subprocess.TimeoutExpired:
                 return ToolResult(
