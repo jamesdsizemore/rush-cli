@@ -8,7 +8,9 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import tomllib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -767,6 +769,336 @@ def test_load_executed_mode_requires_network_permission(tmp_path: Path) -> None:
     perms = ExecutionPermissions(network=True)
     res_granted = tool.run(tmp_path, permissions=perms)
     assert res_granted["metadata"]["execution"]["mode"] == "executed"
+
+
+def test_load_contacts_target_and_enforces_threshold(
+    monkeypatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "load.js"
+    script.write_text("export default function () {}\n", encoding="utf-8")
+    import rush.tools.load as load_mod
+
+    monkeypatch.setattr(load_mod, "engine_on_path", lambda name: name == "k6")
+    calls = []
+
+    def fake_run(argv, *, cwd=None, timeout=120, env=None):
+        calls.append((argv, cwd, timeout, env))
+        if argv[1:] == ["version"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="k6 v2.2.0", stderr="")
+        report = Path(argv[argv.index("--summary-export") + 1])
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            json.dumps(
+                {
+                    "metrics": {
+                        "http_reqs": {"count": 10},
+                        "http_req_failed": {"passes": 2, "fails": 8, "value": 0.2},
+                        "http_req_duration": {
+                            "values": {"count": 10},
+                            "thresholds": {"p(95)<100": True},
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(
+            argv, 99, stdout="", stderr="threshold failed"
+        )
+
+    monkeypatch.setattr(load_mod, "run_subprocess", fake_run)
+    result = LoadTool().run(
+        tmp_path,
+        script="load.js",
+        target_url="http://127.0.0.1:8765",
+        vus=2,
+        duration_seconds=7,
+        timeout_seconds=9,
+        permissions=ExecutionPermissions(network=True, slow=True, artifact_write=True),
+    )
+
+    assert result["status"] == "fail"
+    assert result["engine_version"] == "2.2.0"
+    assert result["metrics"]["total_requests"] == 10
+    assert result["metrics"]["failed_requests"] == 2
+    assert result["metadata"]["target_contacted"] is True
+    assert result["artifacts"]
+    assert Path(result["artifacts"][0]).is_file()
+    assert calls[1][0][0:7] == [
+        "k6",
+        "run",
+        "--vus",
+        "2",
+        "--duration",
+        "7s",
+        "--summary-export",
+    ]
+    assert calls[1][2] == 9
+    assert calls[1][3]["RUSH_TARGET_URL"] == "http://127.0.0.1:8765"
+
+
+@pytest.mark.parametrize(
+    "metric,value",
+    [
+        ("http_reqs", {"count": True}),
+        ("http_reqs", {"count": 1.5}),
+        ("http_reqs", {"count": "2"}),
+        ("http_reqs", []),
+        ("http_req_failed", {"value": 0}),
+        ("http_req_failed", {"passes": 0, "fails": 1}),
+        ("http_req_duration", {"thresholds": []}),
+        ("http_req_duration", {"thresholds": {"p(95)<100": "false"}}),
+    ],
+)
+def test_load_rejects_malformed_native_summary(monkeypatch, tmp_path, metric, value):
+    import rush.tools.load as load_mod
+
+    (tmp_path / "load.js").write_text("export default function () {}")
+    monkeypatch.setattr(load_mod, "engine_on_path", lambda _: True)
+
+    def run(argv, **kwargs):
+        if argv[1] == "version":
+            return subprocess.CompletedProcess(argv, 0, "k6 v2.2.0", "")
+        metrics = {
+            "http_reqs": {"count": 2},
+            "http_req_failed": {"passes": 0, "fails": 2},
+        }
+        metrics[metric] = value
+        Path(argv[argv.index("--summary-export") + 1]).write_text(
+            json.dumps({"metrics": metrics})
+        )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(load_mod, "run_subprocess", run)
+    result = LoadTool().run(
+        tmp_path,
+        script="load.js",
+        target_url="http://localhost",
+        permissions=ExecutionPermissions(network=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+
+
+@pytest.mark.parametrize(
+    "url,status",
+    [("", "skipped"), ("http://[invalid", "error"), ("http://localhost:bad", "error")],
+)
+def test_load_validates_target_before_launch(monkeypatch, tmp_path, url, status):
+    import rush.tools.load as load_mod
+
+    monkeypatch.setattr(
+        load_mod,
+        "engine_on_path",
+        lambda _: pytest.fail("discovered before validation"),
+    )
+    result = LoadTool().run(
+        tmp_path,
+        script="load.js",
+        target_url=url,
+        permissions=ExecutionPermissions(network=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == status
+    if not url:
+        assert result["metadata"]["requires_input"] == "target_url"
+
+
+def test_load_zero_requests_are_incomplete_and_output_is_sanitized(
+    monkeypatch, tmp_path
+):
+    import rush.tools.load as load_mod
+
+    (tmp_path / "load.js").write_text("export default function () {}")
+    monkeypatch.setattr(load_mod, "engine_on_path", lambda _: True)
+
+    def run(argv, **kwargs):
+        if argv[1] == "version":
+            return subprocess.CompletedProcess(argv, 0, "k6 v2.2.0", "")
+        Path(argv[argv.index("--summary-export") + 1]).write_text(
+            json.dumps(
+                {
+                    "metrics": {
+                        "http_reqs": {"count": 0},
+                        "http_req_failed": {"passes": 0, "fails": 0},
+                    },
+                    "password": "private-password",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(load_mod, "run_subprocess", run)
+    result = LoadTool().run(
+        tmp_path,
+        script="load.js",
+        target_url="http://localhost/?password=private-password",
+        permissions=ExecutionPermissions(network=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == "skipped"
+    assert result["metadata"]["target_contacted"] is False
+    assert "private-password" not in json.dumps(result)
+
+
+def test_load_options_reach_execution_and_invalid_duration_denies_launch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "load.js"
+    script.write_text("export default function () {}\n", encoding="utf-8")
+    import rush.tools.load as load_mod
+
+    monkeypatch.setattr(load_mod, "engine_on_path", lambda _name: True)
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="k6 v2.2.0", stderr="")
+
+    monkeypatch.setattr(load_mod, "run_subprocess", fake_run)
+    permissions = ExecutionPermissions(network=True, slow=True, artifact_write=True)
+    result = LoadTool().run(
+        tmp_path,
+        config={
+            "options": {
+                "script": "load.js",
+                "target_url": "http://127.0.0.1:8765",
+                "vus": 3,
+                "duration_seconds": 4,
+                "timeout_seconds": 5,
+            }
+        },
+        permissions=permissions,
+    )
+    assert result["status"] == "error"
+    assert calls[1][0:7] == [
+        "k6",
+        "run",
+        "--vus",
+        "3",
+        "--duration",
+        "4s",
+        "--summary-export",
+    ]
+    call_count = len(calls)
+    from rush.invocation import InvocationExecutor
+    from rush.mcp_support.tool_registry import make_tool_wrapper
+
+    tool = LoadTool()
+    executor = InvocationExecutor()
+    executor.register(tool.name, tool.__call__)
+    invalid = make_tool_wrapper(tool, executor)(
+        tmp_path,
+        script="load.js",
+        target_url="http://127.0.0.1:8765",
+        vus=1,
+        duration_seconds=10,
+        timeout_seconds=5,
+        allow_network=True,
+        allow_slow=True,
+        allow_artifact_write=True,
+    )
+    assert invalid["status"] == "error"
+    assert len(calls) == call_count
+
+
+def test_load_real_workload(tmp_path: Path) -> None:
+    _require_real_engine("k6")
+    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
+        pytest.skip("real load engine acceptance disabled")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.server.counter += 1
+            status = 500 if self.server.counter % 2 == 0 else 200
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b"ok" if status == 200 else b"error")
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.counter = 0
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        script = tmp_path / "load.js"
+        script.write_text(
+            "import http from 'k6/http';\n"
+            "export const options = { thresholds: { http_req_failed: ['rate<0.25'] } };\n"
+            "export default function () { http.get(__ENV.RUSH_TARGET_URL); }\n",
+            encoding="utf-8",
+        )
+        result = LoadTool().run(
+            tmp_path,
+            script="load.js",
+            target_url=f"http://127.0.0.1:{server.server_port}",
+            vus=1,
+            duration_seconds=2,
+            timeout_seconds=10,
+            permissions=ExecutionPermissions(
+                network=True, slow=True, artifact_write=True
+            ),
+        )
+        assert result["status"] == "fail"
+        assert result["metadata"]["target_contacted"] is True
+        assert result["metrics"]["total_requests"] == server.counter
+        assert result["metrics"]["failed_requests"] == server.counter // 2
+        assert result["engine_version"] == "2.2.0"
+        assert result["artifacts"]
+        assert Path(result["artifacts"][0]).is_file()
+        import hashlib
+
+        assert (
+            result["metadata"]["raw_artifact_sha256"]
+            == hashlib.sha256(Path(result["artifacts"][0]).read_bytes()).hexdigest()
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_load_real_workload_clean_target(tmp_path: Path) -> None:
+    _require_real_engine("k6")
+    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
+        pytest.skip("real load engine acceptance disabled")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.server.counter += 1
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.counter = 0
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        (tmp_path / "load.js").write_text(
+            "import http from 'k6/http';\n"
+            "export const options = { thresholds: { http_req_failed: ['rate<0.01'] } };\n"
+            "export default function () { http.get(__ENV.RUSH_TARGET_URL); }\n",
+            encoding="utf-8",
+        )
+        result = LoadTool().run(
+            tmp_path,
+            script="load.js",
+            target_url=f"http://127.0.0.1:{server.server_port}",
+            vus=1,
+            duration_seconds=1,
+            timeout_seconds=10,
+            permissions=ExecutionPermissions(
+                network=True, slow=True, artifact_write=True
+            ),
+        )
+        assert result["status"] == "ok"
+        assert result["metrics"]["total_requests"] == server.counter
+        assert result["metrics"]["failed_requests"] == 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
 
 
 def test_flaky_executed_mode_requires_slow_permission(tmp_path: Path) -> None:

@@ -399,8 +399,19 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "load",
         "quality",
         "Run an explicit load scenario.",
-        "Run load testing only with --allow-network.",
+        "Run isolated k6 load tests with network, slow and artifact-write permissions.",
         (),
+        option_specs=(
+            ToolOptionSpec(name="script", value_type=str, default="", path_kind="file"),
+            ToolOptionSpec(name="target_url", value_type=str, default=""),
+            ToolOptionSpec(name="vus", value_type=int, default=1, minimum=1),
+            ToolOptionSpec(
+                name="duration_seconds", value_type=int, default=10, minimum=1
+            ),
+            ToolOptionSpec(
+                name="timeout_seconds", value_type=int, default=60, minimum=1
+            ),
+        ),
     ),
     "contract": ToolSpec(
         "contract",

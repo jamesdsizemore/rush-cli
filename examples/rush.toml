@@ -28,6 +28,13 @@ seed = 0
 max_runs = 1000
 timeout_seconds = 60
 
+[tools.load]
+script = "load/scenario.js"
+target_url = "http://127.0.0.1:8000/"
+vus = 1
+duration_seconds = 10
+timeout_seconds = 60
+
 [tools.attest]
 # Select the actual built artifact through the current CLI:
 # rush attest . --artifact-path dist/RELEASE.whl

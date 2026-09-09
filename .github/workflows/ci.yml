@@ -103,6 +103,14 @@ jobs:
       - name: Install mutation and fuzz acceptance engines
         run: uv pip install mutmut==3.7.0 atheris==3.1.0
 
+      - name: Install verified k6 release
+        run: |
+          curl --fail --silent --show-error --location --remote-name https://github.com/grafana/k6/releases/download/v2.2.0/k6-v2.2.0-linux-amd64.tar.gz
+          curl --fail --silent --show-error --location --remote-name https://github.com/grafana/k6/releases/download/v2.2.0/k6-v2.2.0-checksums.txt
+          sha256sum --check --ignore-missing k6-v2.2.0-checksums.txt
+          tar -xzf k6-v2.2.0-linux-amd64.tar.gz
+          echo "$PWD/k6-v2.2.0-linux-amd64" >> "$GITHUB_PATH"
+
       - name: Run real workload contracts
         env:
           RUSH_REQUIRE_REAL_ENGINES: "1"

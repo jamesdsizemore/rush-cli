@@ -78,6 +78,32 @@ def test_fuzz_rejects_unsafe_paths_and_limits(tmp_path, options) -> None:
         _parse({"tools": {"fuzz": options}}, tmp_path / "rush.toml")
 
 
+def test_load_options_preserve_target_and_limits(tmp_path) -> None:
+    options = {
+        "script": "load/scenario.js",
+        "target_url": "http://127.0.0.1:18964/",
+        "vus": 2,
+        "duration_seconds": 3,
+        "timeout_seconds": 8,
+    }
+    config = _parse({"tools": {"load": options}}, tmp_path / "rush.toml")
+    assert dict(config.tools["load"].options) == options
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"script": "../outside.js"},
+        {"vus": 0},
+        {"duration_seconds": -1},
+        {"timeout_seconds": True},
+    ],
+)
+def test_load_rejects_invalid_config_limits(tmp_path, options) -> None:
+    with pytest.raises(RushConfigError):
+        _parse({"tools": {"load": options}}, tmp_path / "rush.toml")
+
+
 def test_parses_review_source_policy_markers_and_exclusions(tmp_path) -> None:
     config = _parse(
         {
