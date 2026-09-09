@@ -20,19 +20,24 @@ class StrictBaseModel(BaseModel):
 class ProvenanceMetrics(StrictBaseModel):
     """Provenance AI metrics with exact numeric boundaries."""
 
-    survival_rate_30d: float = Field(
+    survival_rate_30d: float | None = Field(
         ..., ge=0.0, le=1.0, description="30-day line survival rate"
     )
-    survival_rate_60d: float = Field(
+    survival_rate_60d: float | None = Field(
         ..., ge=0.0, le=1.0, description="60-day line survival rate"
     )
-    survival_rate_90d: float = Field(
+    survival_rate_90d: float | None = Field(
         ..., ge=0.0, le=1.0, description="90-day line survival rate"
     )
-    defect_correlation: float = Field(
-        ..., ge=-1.0, le=1.0, description="Pearson or Spearman defect correlation"
+    defect_correlation: float | None = Field(
+        ..., ge=-1.0, le=1.0, description="Phi coefficient for observed fix linkage"
     )
-    churn_rate: float = Field(..., ge=0.0, le=1.0, description="Code churn rate")
+    churn_rate: float | None = Field(
+        ..., ge=0.0, le=1.0, description="30-day lost cohort fraction"
+    )
+    churn_rate_30d: float | None = Field(default=None, ge=0.0, le=1.0)
+    churn_rate_60d: float | None = Field(default=None, ge=0.0, le=1.0)
+    churn_rate_90d: float | None = Field(default=None, ge=0.0, le=1.0)
     total_commits: int = Field(default=0, ge=0, description="Total commits audited")
     ai_generated_count: int = Field(
         default=0, ge=0, description="AI generated commits count"
