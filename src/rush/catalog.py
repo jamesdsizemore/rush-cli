@@ -371,8 +371,29 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "fuzz",
         "quality",
         "Run a declared fuzz target.",
-        "Run fuzzing only with --allow-fuzz.",
+        "Run an isolated Atheris harness with build, slow and artifact-write permissions.",
         (),
+        option_specs=(
+            ToolOptionSpec(
+                name="harness",
+                value_type=str,
+                default="",
+                path_kind="file",
+                description="Contained Python Atheris harness.",
+            ),
+            ToolOptionSpec(
+                name="corpus",
+                value_type=str,
+                default="",
+                path_kind="directory",
+                description="Contained directory of seed inputs.",
+            ),
+            ToolOptionSpec(name="seed", value_type=int, default=0, minimum=0),
+            ToolOptionSpec(name="max_runs", value_type=int, default=1000, minimum=1),
+            ToolOptionSpec(
+                name="timeout_seconds", value_type=int, default=60, minimum=1
+            ),
+        ),
     ),
     "load": ToolSpec(
         "load",

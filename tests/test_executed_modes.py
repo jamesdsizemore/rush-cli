@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -368,6 +370,392 @@ def test_fuzz_executed_mode_requires_slow_permission(tmp_path: Path) -> None:
     perms = ExecutionPermissions(slow=True)
     res_granted = tool.run(tmp_path, permissions=perms)
     assert res_granted["metadata"]["execution"]["mode"] == "executed"
+
+
+def test_fuzz_runs_target_and_reports_reproducer(monkeypatch, tmp_path: Path) -> None:
+    harness = tmp_path / "harness.py"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    seed = corpus / "seed"
+    seed.write_bytes(b"RUSH_CRASH")
+    original_harness = b"def target(data):\n    return data\n"
+    harness.write_bytes(original_harness)
+
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    calls = []
+
+    def fake_run(argv, *, cwd=None, timeout=120, **_kwargs):
+        calls.append((argv, cwd, timeout))
+        prefix = next(
+            arg.split("=", 1)[1] for arg in argv if arg.startswith("-artifact_prefix=")
+        )
+        crash = Path(f"{prefix}RUSH_CRASH")
+        assert crash.parent.is_dir()
+        crash.write_bytes(b"RUSH_CRASH")
+        return subprocess.CompletedProcess(
+            argv, 77, stdout="", stderr="stat::number_of_executed_units: 3\n"
+        )
+
+    monkeypatch.setattr(fuzz_mod, "run_subprocess", fake_run)
+    result = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        seed=7,
+        max_runs=20,
+        timeout_seconds=9,
+        permissions=ExecutionPermissions(build=True, slow=True, artifact_write=True),
+    )
+
+    assert result["status"] == "fail", result
+    assert result["metrics"]["crashes"] == 1
+    assert result["metrics"]["iterations"] == 3
+    assert result["metadata"]["execution"]["mode"] == "executed"
+    assert calls[0][0][:2] == [sys.executable, "harness.py"]
+    assert calls[0][0][2:7] == [
+        "corpus",
+        "-seed=7",
+        "-runs=20",
+        "-max_total_time=9",
+        "-print_final_stats=1",
+    ]
+    assert calls[0][2] == 9
+    reproducer = Path(result["artifacts"][0])
+    assert reproducer.is_file()
+    assert reproducer.read_bytes() == b"RUSH_CRASH"
+    assert harness.read_bytes() == original_harness
+    assert seed.read_bytes() == b"RUSH_CRASH"
+
+
+def _write_fuzz_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    harness = tmp_path / "harness.py"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "seed").write_bytes(b"SAFE")
+    harness.write_text("print('clean')\n", encoding="utf-8")
+    return harness, corpus
+
+
+def test_fuzz_config_and_explicit_options_reach_argv(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_fuzz_inputs(tmp_path)
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    calls = []
+
+    def fake_run(argv, *, cwd=None, timeout=120, **_kwargs):
+        calls.append((argv, cwd, timeout))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="",
+            stderr="stat::number_of_executed_units: 3\n",
+        )
+
+    monkeypatch.setattr(fuzz_mod, "run_subprocess", fake_run)
+    permissions = ExecutionPermissions(build=True, slow=True, artifact_write=True)
+    direct = FuzzTool().run(
+        tmp_path,
+        config={
+            "options": {
+                "harness": "harness.py",
+                "corpus": "corpus",
+                "seed": 11,
+                "max_runs": 12,
+                "timeout_seconds": 13,
+            }
+        },
+        permissions=permissions,
+    )
+    from rush.invocation import InvocationExecutor
+    from rush.mcp_support.tool_registry import make_tool_wrapper
+
+    tool = FuzzTool()
+    executor = InvocationExecutor()
+    executor.register(tool.name, tool.__call__)
+    wrapped = make_tool_wrapper(tool, executor)
+    explicit = wrapped(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        seed=17,
+        max_runs=18,
+        timeout_seconds=19,
+        allow_build=True,
+        allow_slow=True,
+        allow_artifact_write=True,
+    )
+    assert direct["status"] == "ok"
+    assert explicit["status"] == "ok"
+    assert calls[0][0][2:7] == [
+        "corpus",
+        "-seed=11",
+        "-runs=12",
+        "-max_total_time=13",
+        "-print_final_stats=1",
+    ]
+    assert calls[1][0][2:7] == [
+        "corpus",
+        "-seed=17",
+        "-runs=18",
+        "-max_total_time=19",
+        "-print_final_stats=1",
+    ]
+    assert [call[2] for call in calls] == [13, 19]
+    (tmp_path / "rush.toml").write_text(
+        '[tools.fuzz]\nharness = "harness.py"\ncorpus = "corpus"\nseed = 23\nmax_runs = 24\ntimeout_seconds = 25\n'
+    )
+    configured = wrapped(
+        tmp_path, allow_build=True, allow_slow=True, allow_artifact_write=True
+    )
+    assert configured["status"] == "ok"
+    assert calls[2][0][3:6] == ["-seed=23", "-runs=24", "-max_total_time=25"]
+    assert calls[2][2] == 25
+
+
+def test_fuzz_uses_anchored_stderr_stats_and_rejects_fake_stdout(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_fuzz_inputs(tmp_path)
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    outputs = iter(
+        [
+            (0, "runs 1000", ""),
+            (0, "", "stat::number_of_executed_units: 3\n"),
+        ]
+    )
+
+    def fake_run(argv, **_kwargs):
+        code, stdout, stderr = next(outputs)
+        return subprocess.CompletedProcess(argv, code, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr(fuzz_mod, "run_subprocess", fake_run)
+    permissions = ExecutionPermissions(build=True, slow=True, artifact_write=True)
+    first = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        permissions=permissions,
+    )
+    second = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        permissions=permissions,
+    )
+    assert first["status"] == "skipped"
+    assert first["metadata"]["incomplete"] is True
+    assert second["status"] == "ok"
+    assert second["metrics"]["iterations"] == 3
+
+
+def test_fuzz_timeout_and_positive_exit_without_reproducer_are_errors(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_fuzz_inputs(tmp_path)
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    calls = iter((subprocess.TimeoutExpired([sys.executable], 4),))
+
+    def timeout_run(*_args, **_kwargs):
+        raise next(calls)
+
+    monkeypatch.setattr(fuzz_mod, "run_subprocess", timeout_run)
+    permissions = ExecutionPermissions(build=True, slow=True, artifact_write=True)
+    timed_out = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        seed=2,
+        max_runs=3,
+        timeout_seconds=4,
+        permissions=permissions,
+    )
+    assert timed_out["status"] == "error"
+    assert timed_out["metadata"]["terminal_reason"] == "timeout"
+    assert timed_out["metadata"]["seed"] == 2
+    assert timed_out["metadata"]["max_runs"] == 3
+    assert timed_out["metadata"]["timeout_seconds"] == 4
+    assert (
+        timed_out["metadata"]["execution"]["granted_permissions"]
+        == permissions.to_dict()
+    )
+
+
+def test_fuzz_positive_exit_without_reproducer_is_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_fuzz_inputs(tmp_path)
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(
+        fuzz_mod,
+        "run_subprocess",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, 1, stdout="", stderr="stat::number_of_executed_units: 2\n"
+        ),
+    )
+    result = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        permissions=ExecutionPermissions(build=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+
+
+def test_fuzz_report_symlink_cannot_overwrite_outside_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_fuzz_inputs(tmp_path)
+    outside = tmp_path.parent / "fuzz-victim.json"
+    outside.write_text("sentinel", encoding="utf-8")
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+
+    def fake_run(argv, *, cwd=None, **_kwargs):
+        report = Path(cwd) / "fuzz-report.json"
+        report.symlink_to(outside)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout="", stderr="stat::number_of_executed_units: 2\n"
+        )
+
+    monkeypatch.setattr(fuzz_mod, "run_subprocess", fake_run)
+    result = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        permissions=ExecutionPermissions(build=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+    assert outside.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_fuzz_crash_symlink_outside_run_is_rejected(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write_fuzz_inputs(tmp_path)
+    outside = tmp_path.parent / "fuzz-outside-crashes"
+    outside.mkdir()
+    import rush.tools.fuzz as fuzz_mod
+
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+
+    def fake_run(argv, *, cwd=None, **_kwargs):
+        crashes = Path(cwd) / "crashes"
+        (crashes / "escape").symlink_to(outside, target_is_directory=True)
+        return subprocess.CompletedProcess(
+            argv, 1, stdout="", stderr="stat::number_of_executed_units: 2\n"
+        )
+
+    monkeypatch.setattr(fuzz_mod, "run_subprocess", fake_run)
+    result = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        permissions=ExecutionPermissions(build=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+
+
+def _require_real_module(name: str) -> None:
+    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") == "1":
+        assert importlib.util.find_spec(name), f"required engine module absent: {name}"
+
+
+def test_required_atheris_module_absence_fails(monkeypatch) -> None:
+    monkeypatch.setenv("RUSH_REQUIRE_REAL_ENGINES", "1")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+    with pytest.raises(AssertionError, match="required engine module absent: atheris"):
+        _require_real_module("atheris")
+
+
+def test_fuzz_real_workload(tmp_path: Path) -> None:
+    _require_real_module("atheris")
+    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
+        pytest.skip("real fuzz engine acceptance disabled")
+
+    harness = tmp_path / "harness.py"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "seed").write_bytes(b"RUSH_CRASH")
+    harness.write_text(
+        "import atheris\n"
+        "@atheris.instrument_func\n"
+        "def TestOneInput(data):\n"
+        "    if data == b'RUSH_CRASH':\n"
+        "        raise RuntimeError('known crash')\n"
+        "atheris.Setup(__import__('sys').argv, TestOneInput)\n"
+        "atheris.Fuzz()\n",
+        encoding="utf-8",
+    )
+    original = harness.read_bytes()
+    result = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        seed=0,
+        max_runs=1000,
+        timeout_seconds=60,
+        permissions=ExecutionPermissions(build=True, slow=True, artifact_write=True),
+    )
+    assert result["status"] == "fail"
+    assert result["metrics"]["iterations"] > 0
+    assert result["engine_version"] == "3.1.0"
+    assert harness.read_bytes() == original
+    assert (corpus / "seed").read_bytes() == b"RUSH_CRASH"
+    reproducer = next(
+        Path(path) for path in result["artifacts"] if Path(path).is_file()
+    )
+    assert reproducer.read_bytes() == b"RUSH_CRASH"
+    run_root = reproducer.parent.parent
+    assert run_root.is_relative_to(tmp_path.resolve() / ".rush" / "runs")
+    replay = subprocess.run(
+        [
+            sys.executable,
+            str(run_root / "harness.py"),
+            str(reproducer),
+            "-runs=1",
+            f"-artifact_prefix={reproducer.parent}/",
+        ],
+        cwd=run_root,
+        timeout=60,
+        capture_output=True,
+        check=False,
+    )
+    assert replay.returncode != 0
+    assert b"RuntimeError: known crash" in replay.stderr
+
+    harness.write_text(
+        "import atheris\n"
+        "@atheris.instrument_func\n"
+        "def TestOneInput(data):\n"
+        "    if data:\n"
+        "        return data[0]\n"
+        "    return 0\n"
+        "atheris.Setup(__import__('sys').argv, TestOneInput)\n"
+        "atheris.Fuzz()\n"
+    )
+    clean = FuzzTool().run(
+        tmp_path,
+        harness="harness.py",
+        corpus="corpus",
+        max_runs=20,
+        timeout_seconds=60,
+        permissions=ExecutionPermissions(build=True, slow=True, artifact_write=True),
+    )
+    assert clean["status"] == "ok"
+    assert clean["metrics"]["iterations"] > 0
+    assert clean["metrics"]["crashes"] == 0
 
 
 def test_load_executed_mode_requires_network_permission(tmp_path: Path) -> None:

@@ -100,8 +100,8 @@ jobs:
       - name: Install test dependencies
         run: uv sync --all-extras --frozen
 
-      - name: Install mutation acceptance engine
-        run: uv pip install mutmut==3.7.0
+      - name: Install mutation and fuzz acceptance engines
+        run: uv pip install mutmut==3.7.0 atheris==3.1.0
 
       - name: Run real workload contracts
         env:

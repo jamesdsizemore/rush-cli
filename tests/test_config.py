@@ -51,6 +51,33 @@ def test_mutation_rejects_invalid_deadline(tmp_path, deadline) -> None:
         )
 
 
+def test_fuzz_options_preserve_workload_and_limits(tmp_path) -> None:
+    options = {
+        "harness": "fuzz/harness.py",
+        "corpus": "fuzz/corpus",
+        "seed": 7,
+        "max_runs": 25,
+        "timeout_seconds": 11,
+    }
+    config = _parse({"tools": {"fuzz": options}}, tmp_path / "rush.toml")
+    assert dict(config.tools["fuzz"].options) == options
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"harness": "../outside.py"},
+        {"corpus": "/outside"},
+        {"seed": -1},
+        {"max_runs": 0},
+        {"timeout_seconds": False},
+    ],
+)
+def test_fuzz_rejects_unsafe_paths_and_limits(tmp_path, options) -> None:
+    with pytest.raises(RushConfigError):
+        _parse({"tools": {"fuzz": options}}, tmp_path / "rush.toml")
+
+
 def test_parses_review_source_policy_markers_and_exclusions(tmp_path) -> None:
     config = _parse(
         {
