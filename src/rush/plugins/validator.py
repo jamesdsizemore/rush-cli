@@ -17,6 +17,7 @@ from rush.contracts.results import (
     validate_tool_result,
 )
 from rush.logging import get_logger, log_subsystem
+from rush.tools.base import ToolStatus
 
 logger = get_logger("plugins.validator")
 
@@ -81,7 +82,7 @@ def validate_plugin_output(raw_output: str, plugin_name: str) -> ToolResultV1:
         except Exception as exc:  # noqa: BLE001
             logger.debug("Direct ToolResultV1 validation failed, falling back: %s", exc)
 
-    status = data.get("status")
+    status: ToolStatus = data["status"]
     if status not in VALID_STATUSES:
         status = "error"
 

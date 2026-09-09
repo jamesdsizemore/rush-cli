@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from pathlib import Path
 
 from .base import Finding, ToolResult, ToolStatus
@@ -62,9 +62,9 @@ def collect_files(
     def raise_walk_error(error: OSError) -> None:
         raise error
 
-    candidates = path.rglob("*")
+    candidates: Iterator[Path] = path.rglob("*")
     if strict:
-        strict_candidates = []
+        strict_candidates: list[Path] = []
         for directory, subdirs, filenames in path.walk(on_error=raise_walk_error):
             subdirs[:] = [
                 name

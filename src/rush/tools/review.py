@@ -101,12 +101,13 @@ def _recall_memory_citations(targets: list[Path], root: Path) -> list[Finding]:
         return []
     store = TypedArtifactStore(root)
     findings: list[Finding] = []
+    memory_sources: tuple[tuple[MemorySubject, list[str]], ...] = (
+        ("failure", _FAILURE_MEMORY_SOURCES),
+        ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
+    )
     for target in targets:
         query = f'"{target.name}"'
-        for subject, sources in (
-            ("failure", _FAILURE_MEMORY_SOURCES),
-            ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
-        ):
+        for subject, sources in memory_sources:
             artifacts: list[MemoryArtifact] = []
             # Optional citations must never expose content from a failed recall.
             with suppress(Exception):

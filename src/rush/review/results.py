@@ -6,14 +6,15 @@ fingerprinted findings.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from rush.tools.base import Finding, ToolResult
+from rush.tools.base import Finding, LlmStatus, ToolResult, ToolStatus
 from rush.tools.common import elapsed_ms, finding_fingerprint
 
 
-def _sanitize_finding(finding: dict[str, Any]) -> None:
+def _sanitize_finding(finding: Finding) -> None:
     """Enrich finding in-place with evidence, fingerprint, and freshness."""
     if "evidence" not in finding and finding.get("path"):
         finding["evidence"] = {
@@ -32,7 +33,7 @@ def _sanitize_finding(finding: dict[str, Any]) -> None:
     finding["freshness"] = "unknown"
 
 
-def _finding_sort_key(finding: dict[str, Any]) -> tuple[int, str, int, int, str]:
+def _finding_sort_key(finding: Finding) -> tuple[int, str, int, int, str]:
     """Sort key placing real file findings in coordinate order and synthetic findings at end."""
     path = str(finding.get("path", ""))
     is_synthetic = 1 if not path else 0
@@ -42,7 +43,7 @@ def _finding_sort_key(finding: dict[str, Any]) -> tuple[int, str, int, int, str]
     return (is_synthetic, path, line, column, rule)
 
 
-def _determine_status(findings: list[dict[str, Any]]) -> str:
+def _determine_status(findings: Sequence[Finding]) -> ToolStatus:
     """Determine tool status based on finding severity (error -> fail, warn -> warn, else ok)."""
     if any(f.get("severity") == "error" for f in findings):
         return "fail"
@@ -51,7 +52,7 @@ def _determine_status(findings: list[dict[str, Any]]) -> str:
     return "ok"
 
 
-def _determine_summary(findings: list[dict[str, Any]], review_kind: str) -> str:
+def _determine_summary(findings: Sequence[Finding], review_kind: str) -> str:
     """Format human-readable review summary message."""
     suffix = " (+LLM)" if review_kind == "llm" else ""
     if findings:
@@ -60,16 +61,16 @@ def _determine_summary(findings: list[dict[str, Any]], review_kind: str) -> str:
 
 
 def assemble_review_result(
-    findings: list[Finding | dict[str, Any]],
+    findings: Sequence[Finding],
     *,
     start_ms: int,
     scope: dict[str, Any],
     graft_state: str = "not-requested",
-    review_kind: str = "heuristic",
+    review_kind: LlmStatus = "heuristic",
     review_provider: str | None = None,
 ) -> ToolResult:
     """Assemble and validate canonical ToolResult for the review pipeline."""
-    normalized: list[dict[str, Any]] = [
+    normalized: list[Finding] = [
         f if isinstance(f, dict) else f.to_dict() for f in findings
     ]
     for finding in normalized:
@@ -96,7 +97,7 @@ def assemble_review_result(
         findings=normalized,
         raw={"heuristic_count": heuristic_count},
         metadata={"graft": graft_state, "scope": scope},
-        review_kind=review_kind,  # type: ignore[typeddict-item]
+        review_kind=review_kind,
         review_provider=review_provider,
     )
 

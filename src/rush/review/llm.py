@@ -7,6 +7,7 @@ and synthetic finding generation.
 from __future__ import annotations
 
 import urllib.error
+from collections.abc import Sequence
 from typing import Any
 
 from rush.providers import (
@@ -14,7 +15,7 @@ from rush.providers import (
     ProviderOutcome,
     get_configured_provider,
 )
-from rush.tools.base import Finding
+from rush.tools.base import Finding, LlmStatus
 
 
 def _is_valid_llm_response(
@@ -32,7 +33,7 @@ def _is_valid_llm_response(
 
 
 def _maybe_call_llm(
-    findings: list[Finding] | list[dict],
+    findings: Sequence[Finding],
     *,
     provider: Any | None = None,
     allow_network: bool = True,
@@ -53,7 +54,7 @@ def _maybe_call_llm(
     if active_provider is None:
         return None
 
-    raw_findings = [f if isinstance(f, dict) else f.to_dict() for f in findings]
+    raw_findings = [dict(f) if isinstance(f, dict) else f.to_dict() for f in findings]
     try:
         response = active_provider.summarize_findings(
             raw_findings, allow_network=allow_network
@@ -114,9 +115,9 @@ def parse_llm_findings(llm_summary: dict[str, Any]) -> list[Finding]:
 
 
 def apply_llm_review(
-    findings: list[Finding | dict[str, Any]],
+    findings: Sequence[Finding],
     use_llm: bool,
-) -> tuple[str, str | None, list[Finding]]:
+) -> tuple[LlmStatus, str | None, list[Finding]]:
     """Execute LLM review step if enabled, returning kind, provider, and extra findings."""
     if not use_llm:
         return "heuristic", None, []
