@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
@@ -19,8 +19,10 @@ from rush.contracts.results import ToolResultV1, adapt_legacy_tool_result
 from rush.invocation import (
     InvocationContext,
     ScopeWideningError,
+    decide_cache,
     resolve_invocation,
 )
+from rush.invocation.executor import InvocationExecutor
 from rush.mcp import build_server
 from rush.tools import ALL_TOOLS
 
@@ -36,6 +38,139 @@ CORE_QUALITY_TOOLS: tuple[str, ...] = (
     "dead",
     "complexity",
 )
+
+
+def test_invocation_preserves_scalar_types_and_presence(tmp_path: Path) -> None:
+    executor = InvocationExecutor()
+    executor.register("capture", lambda **kwargs: kwargs)
+
+    literal = resolve_invocation(
+        {
+            "operation_id": "capture",
+            "boolean": "true",
+            "nullable": "null",
+            "number": "123",
+            "items": "[]",
+        },
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    actual = resolve_invocation(
+        {
+            "operation_id": "capture",
+            "boolean": False,
+            "nullable": None,
+            "number": 123,
+            "items": [],
+        },
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    omitted = resolve_invocation(
+        {"operation_id": "capture"},
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+
+    assert executor.execute(literal) == {
+        "boolean": "true",
+        "nullable": "null",
+        "number": "123",
+        "items": "[]",
+    }
+    assert executor.execute(actual) == {
+        "boolean": False,
+        "nullable": None,
+        "number": 123,
+        "items": [],
+    }
+    assert executor.execute(omitted) == {}
+
+    legacy = resolve_invocation(
+        {
+            "operation_id": "capture",
+            "ordered_args": ["--boolean=false", "--nullable=null", "--items=[]"],
+        },
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    assert executor.execute(legacy) == {
+        "boolean": False,
+        "nullable": None,
+        "items": [],
+    }
+    assert (
+        executor.execute(replace(legacy, typed_args=(), ordered_args=("--value=true",)))
+        == {}
+    )
+
+    typed_empty_record = json.loads(
+        json.dumps(
+            {
+                "operation_id": "capture",
+                "typed_args": omitted.typed_args,
+                "ordered_args": ["--value=true"],
+            }
+        )
+    )
+    replayed_empty = resolve_invocation(
+        typed_empty_record,
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    assert replayed_empty.typed_args == ()
+    assert executor.execute(replayed_empty) == {}
+
+    legacy_record = json.loads(
+        json.dumps(
+            {
+                "operation_id": "capture",
+                "ordered_args": ["--value=false", "--nullable=null"],
+            }
+        )
+    )
+    replayed_legacy = resolve_invocation(
+        legacy_record,
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    assert replayed_legacy.typed_args is None
+    assert executor.execute(replayed_legacy) == {"value": False, "nullable": None}
+
+    assert decide_cache(literal).cache_key != decide_cache(actual).cache_key
+
+    persisted_one = resolve_invocation(
+        {
+            "operation_id": "capture",
+            "typed_args": [["value", "one"]],
+            "ordered_args": ["--value=legacy"],
+        },
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    persisted_two = resolve_invocation(
+        {
+            "operation_id": "capture",
+            "typed_args": [["value", "two"]],
+            "ordered_args": ["--value=legacy"],
+        },
+        transport="mcp",
+        workspace_root=tmp_path,
+    )
+    assert (
+        decide_cache(persisted_one).cache_key != decide_cache(persisted_two).cache_key
+    )
+
+    for invalid_name in ("path", "allow_artifact_write"):
+        with pytest.raises(ValueError, match="typed_args names"):
+            resolve_invocation(
+                {
+                    "operation_id": "capture",
+                    "typed_args": [[invalid_name, True]],
+                },
+                transport="mcp",
+                workspace_root=tmp_path,
+            )
 
 
 def test_cli_and_mcp_resolve_equivalent_context(tmp_path: Path) -> None:

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from rush.invocation import InvocationExecutor, resolve_invocation
-from rush.invocation.executor import _parse_ordered_args
+from rush.invocation.executor import invocation_arguments
+from rush.safety.redactor import sanitize_value
 
 
 def make_tool_wrapper(
@@ -21,7 +23,6 @@ def make_tool_wrapper(
     @functools.wraps(tool.__call__)
     def tool_mcp_wrapper(*args: Any, **kwargs: Any) -> Any:
         bound = inspect.signature(tool.__call__).bind(*args, **kwargs)
-        bound.apply_defaults()
         call_args = bound.arguments
         path_val = call_args.get("path", ".")
         p = Path(path_val).resolve()
@@ -29,7 +30,7 @@ def make_tool_wrapper(
         req = {
             "operation_id": tool.name,
             "path": str(p),
-            **{k: v for k, v in call_args.items() if k != "path" and v is not None},
+            **{k: v for k, v in call_args.items() if k != "path"},
         }
         context = resolve_invocation(req, transport="mcp", workspace_root=root)
         return exec_instance.execute(context)
@@ -47,7 +48,6 @@ def make_custom_wrapper(
     @functools.wraps(fn)
     def custom_mcp_wrapper(*args: Any, **kwargs: Any) -> Any:
         bound = inspect.signature(fn).bind(*args, **kwargs)
-        bound.apply_defaults()
         call_args = bound.arguments
         path_val = call_args.get(
             "path", call_args.get("file", call_args.get("target", "."))
@@ -110,7 +110,7 @@ def _bind_custom_handler_kwargs(
     target_fn: Any,
     context: Any,
 ) -> dict[str, Any]:
-    kwargs = _parse_ordered_args(context.ordered_args)
+    kwargs = invocation_arguments(context)
     sig = inspect.signature(target_fn)
     for p_name in ("path", "file", "target"):
         if p_name in sig.parameters and p_name not in kwargs:
@@ -126,7 +126,16 @@ def _bind_custom_handler_kwargs(
 def _make_handler(target_fn: Any) -> Callable[[Any], Any]:
     def handler(context: Any) -> Any:
         kwargs = _bind_custom_handler_kwargs(target_fn, context)
-        return target_fn(**kwargs)
+        result = target_fn(**kwargs)
+        if isinstance(result, str):
+            try:
+                structured = json.loads(result)
+            except ValueError:
+                pass
+            else:
+                if isinstance(structured, (dict, list)):
+                    return json.dumps(sanitize_value(structured).value)
+        return sanitize_value(result).value
 
     return handler
 

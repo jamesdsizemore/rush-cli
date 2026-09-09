@@ -68,6 +68,137 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture
+def registered_handlers():
+    from rush.mcp import _register_tools
+
+    class Server:
+        def __init__(self):
+            self.handlers = {}
+
+        def add_tool(self, *, fn, name, description):
+            self.handlers[name] = fn
+
+    server = Server()
+    _register_tools(server)
+    return server.handlers
+
+
+def test_registered_swarm_merge_preserves_exact_code(registered_handlers):
+    result = registered_handlers["rush_swarm_merge"](
+        base_code="def base():\n    return 1\n",
+        ours_code="def base():\n    return 1\n\ndef ours():\n    return 'true'\n",
+        theirs_code="def base():\n    return 1\n\ndef theirs():\n    return 'null'\n",
+    )
+    assert json.loads(result) == {
+        "success": True,
+        "functions_merged": 3,
+        "merged_code": (
+            "def base():\n    return 1\n\ndef ours():\n    return 'true'\n"
+            "\ndef theirs():\n    return 'null'"
+        ),
+    }
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_registered_outline_redacts_entire_result(
+    tmp_path, registered_handlers, malformed
+):
+    secret = "sk-ant-" + "X" * 48
+    source = tmp_path / "outline.py"
+    source.write_text(
+        f"TOKEN = '{secret}'\n"
+        + ("def broken(:\n" if malformed else "def ok():\n    return 1\n")
+    )
+    result = registered_handlers["rush_token_outline"](path=str(source))
+    assert isinstance(result, str)
+    assert secret not in json.dumps(result)
+    assert result == "TOKEN=[REDACTED]\n" + (
+        "def broken(:\n" if malformed else "\ndef ok():\n    ..."
+    )
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_registered_swarm_merge_redacts_entire_result(registered_handlers, malformed):
+    secret = "sk-ant-" + "Y" * 48
+    code = f"TOKEN = '{secret}'\n" + (
+        "def broken(:\n" if malformed else "def ok():\n    return 1\n"
+    )
+    result = registered_handlers["rush_swarm_merge"](
+        base_code=code, ours_code=code, theirs_code=code
+    )
+    payload = json.loads(result)
+    assert secret not in json.dumps(result)
+    assert payload["success"] is (not malformed)
+    if malformed:
+        assert payload["merged_code"] is None
+        assert payload["error"].startswith("AST parse error during 3-way merge:")
+    else:
+        assert payload["merged_code"] == ("TOKEN=[REDACTED]\n\ndef ok():\n    return 1")
+
+
+def test_custom_result_sanitization_preserves_types():
+    from rush.invocation import InvocationExecutor
+    from rush.mcp_support.tool_registry import register_custom_tools
+
+    secret = "sk-ant-" + "Z" * 48
+    original = {"values": [False, None, 123, "true", "null", "[]", secret]}
+    handlers = {}
+
+    class Server:
+        def add_tool(self, *, fn, name, description):
+            handlers[name] = fn
+
+    def custom():
+        return original
+
+    register_custom_tools(Server(), InvocationExecutor(), [(custom, "custom", "test")])
+    result = handlers["custom"]()
+    assert result == {
+        "values": [False, None, 123, "true", "null", "[]", "[REDACTED_ANTHROPIC_KEY]"]
+    }
+    assert original["values"][-1] == secret
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_registered_wrappers_preserve_types_and_omission(tmp_path, custom):
+    from rush.invocation import InvocationExecutor
+    from rush.mcp_support.tool_registry import register_all_tools, register_custom_tools
+
+    omitted = object()
+    handlers = {}
+
+    class Server:
+        def add_tool(self, *, fn, name, description):
+            handlers[name] = fn
+
+    class Probe:
+        name = "typed-probe"
+        mcp_description = "Test argument fidelity"
+
+        def __call__(self, path: Path = Path("."), value=omitted):
+            return {
+                "present": value is not omitted,
+                "value": None if value is omitted else value,
+            }
+
+    probe = Probe()
+    if custom:
+        register_custom_tools(
+            Server(),
+            InvocationExecutor(),
+            [(probe.__call__, "rush_typed_probe", "test")],
+        )
+    else:
+        register_all_tools(Server(), InvocationExecutor(), [probe])
+    handler = handlers["rush_typed_probe"]
+    assert handler(path=str(tmp_path)) == {"present": False, "value": None}
+    for value in ("true", "null", "123", "[]", False, None, ["123", False, None]):
+        result = handler(path=str(tmp_path), value=value)
+        assert result == {"present": True, "value": value}
+        assert type(result["value"]) is type(value)
+
+
 def test_stdio_mcp_lists_clean_tool_schemas_and_calls_review(tmp_path: Path):
     """The real server completes initialize → tools/list → two tools/call.
 

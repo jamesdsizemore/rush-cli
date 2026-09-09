@@ -6,6 +6,7 @@ adaptation for CLI and MCP transports.
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 from collections.abc import Callable
@@ -105,6 +106,13 @@ def _parse_ordered_args(ordered_args: tuple[str, ...]) -> dict[str, Any]:
                 k = kv.replace("-", "_")
                 kwargs[k] = True
     return kwargs
+
+
+def invocation_arguments(context: InvocationContext) -> dict[str, Any]:
+    """Return typed request arguments, falling back only for legacy ordered records."""
+    if context.typed_args is not None:
+        return copy.deepcopy(dict(context.typed_args))
+    return _parse_ordered_args(context.ordered_args)
 
 
 def _is_bindable_context_param(
@@ -254,7 +262,7 @@ def adapt_signature_at_registration(
                 if context.targets
                 else (context.workspace_root,)
             )
-            parsed_kwargs = _parse_ordered_args(context.ordered_args)
+            parsed_kwargs = invocation_arguments(context)
             return (target_paths, parsed_kwargs)
 
         return var_args_adapter
@@ -297,7 +305,7 @@ def adapt_signature_at_registration(
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         call_args: list[Any] = []
         call_kwargs: dict[str, Any] = {}
-        parsed_kwargs = _parse_ordered_args(context.ordered_args)
+        parsed_kwargs = invocation_arguments(context)
 
         for p in params:
             if p.kind == inspect.Parameter.POSITIONAL_ONLY:
@@ -452,4 +460,5 @@ __all__ = [
     "ToolResultV1",
     "adapt_signature_at_registration",
     "format_signature_error_diagnostic",
+    "invocation_arguments",
 ]

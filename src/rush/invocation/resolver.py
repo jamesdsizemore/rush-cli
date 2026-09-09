@@ -46,6 +46,7 @@ RESERVED_REQUEST_KEYS: frozenset[str] = frozenset(
         "normalizer_revision",
         "args",
         "ordered_args",
+        "typed_args",
     }
 )
 
@@ -141,6 +142,59 @@ def _resolve_targets(
     )
 
 
+def _is_typed_argument_name(name: str, request: dict[str, Any]) -> bool:
+    """Match canonical request argument namespace for persisted records."""
+    return (
+        name not in RESERVED_REQUEST_KEYS
+        and not name.startswith("allow_")
+        and not (
+            name == "operation"
+            and not request.get("operation_id")
+            and not request.get("tool")
+        )
+    )
+
+
+def _typed_arguments(request: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    """Retain transport-native argument values, including explicit null."""
+    return tuple(
+        (key, copy.deepcopy(request[key]))
+        for key in sorted(request)
+        if _is_typed_argument_name(key, request)
+    )
+
+
+def _persisted_typed_arguments(
+    request: dict[str, Any],
+) -> tuple[tuple[str, Any], ...] | None:
+    """Restore typed arguments from a persisted invocation record."""
+    raw_args = request.get("typed_args")
+    if raw_args is None:
+        return None
+    if not isinstance(raw_args, (list, tuple)):
+        raise TypeError("typed_args must be a sequence of name/value pairs")
+    try:
+        typed_args = tuple((name, copy.deepcopy(value)) for name, value in raw_args)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("typed_args must be a sequence of name/value pairs") from exc
+    if any(
+        not isinstance(name, str) or not _is_typed_argument_name(name, request)
+        for name, _ in typed_args
+    ):
+        raise ValueError("typed_args names must be canonical request arguments")
+    return typed_args
+
+
+def _ordered_args_from_typed(
+    typed_args: tuple[tuple[str, Any], ...],
+) -> tuple[str, ...]:
+    """Create a lossless cache identity for new transport-native arguments."""
+    return tuple(
+        f"--{name}={json.dumps(value, default=str, sort_keys=True, separators=(',', ':'))}"
+        for name, value in typed_args
+    )
+
+
 def resolve_invocation(
     request: dict[str, Any] | Any,
     transport: Literal["cli", "mcp"],
@@ -194,31 +248,33 @@ def resolve_invocation(
         op_kind = "tool"
 
     # Argument normalization
-    if "ordered_args" in req and isinstance(req["ordered_args"], (list, tuple)):
+    persisted_typed_args = (
+        _persisted_typed_arguments(req) if "typed_args" in req else None
+    )
+    legacy_ordered_args = persisted_typed_args is None and (
+        ("ordered_args" in req and isinstance(req["ordered_args"], (list, tuple)))
+        or ("args" in req and isinstance(req["args"], (list, tuple)))
+    )
+    if persisted_typed_args is not None:
+        ordered_args = _ordered_args_from_typed(persisted_typed_args)
+    elif "ordered_args" in req and isinstance(req["ordered_args"], (list, tuple)):
         ordered_args = tuple(str(a) for a in req["ordered_args"])
     elif "args" in req and isinstance(req["args"], (list, tuple)):
         ordered_args = tuple(str(a) for a in req["args"])
     else:
-        # Collect remaining tool kwargs in stable deterministic order
-        extra_args: list[str] = []
-        for k in sorted(req):
-            if k in RESERVED_REQUEST_KEYS or k.startswith("allow_"):
-                continue
-            if k == "operation" and not req.get("operation_id") and not req.get("tool"):
-                continue
-            val = req[k]
-            if val is None:
-                continue
-            if isinstance(val, bool):
-                if val:
-                    extra_args.append(f"--{k}")
-                else:
-                    extra_args.append(f"--{k}=false")
-            elif isinstance(val, (list, tuple, dict)):
-                extra_args.append(f"--{k}={json.dumps(val)}")
-            else:
-                extra_args.append(f"--{k}={val}")
-        ordered_args = tuple(extra_args)
+        typed_source = (
+            persisted_typed_args
+            if persisted_typed_args is not None
+            else _typed_arguments(req)
+        )
+        ordered_args = _ordered_args_from_typed(typed_source)
+    typed_args = (
+        persisted_typed_args
+        if "typed_args" in req
+        else None
+        if legacy_ordered_args
+        else _typed_arguments(req)
+    )
 
     declared_ignored: tuple[str, ...] = tuple(
         str(i) for i in req.get("declared_ignored_inputs", ())
@@ -251,6 +307,7 @@ def resolve_invocation(
         normalizer_revision=normalizer_rev,
         environment_digest=env_digest,
         request_id=req_id,
+        typed_args=typed_args,
     )
 
 

@@ -47,6 +47,7 @@ class InvocationContext:
     normalizer_revision: str
     environment_digest: str
     request_id: str = ""
+    typed_args: tuple[tuple[str, Any], ...] | None = None
 
 
 @dataclass(frozen=True)
