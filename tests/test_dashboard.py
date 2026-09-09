@@ -9,6 +9,7 @@ Verifies:
 
 from __future__ import annotations
 
+import json
 import threading
 import urllib.error
 import urllib.request
@@ -34,6 +35,35 @@ def _start_test_server(results: list[ToolResult], token: str) -> tuple[HTTPServe
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, port
+
+
+def test_dashboard_findings_serializes_canonical_result() -> None:
+    result = ToolResult(
+        tool="lint",
+        status="fail",
+        duration_ms=12,
+        summary="One lint error",
+        findings=[{"path": "app.py", "severity": "error", "message": "Unused import"}],
+    )
+    server, port = _start_test_server([result], "findings-token")
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/findings",
+            headers={"X-Rush-Auth": "findings-token"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert response.status == 200
+            assert json.load(response) == [
+                {
+                    "tool": "lint",
+                    "status": "fail",
+                    "summary": "One lint error",
+                    "findings_count": 1,
+                }
+            ]
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_dashboard_unauthorized_request_rejected() -> None:

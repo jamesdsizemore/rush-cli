@@ -71,10 +71,10 @@ class AuthenticatedDashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             data = [
                 {
-                    "tool": r.tool,
-                    "status": r.status,
-                    "summary": r.summary,
-                    "findings_count": len(r.findings),
+                    "tool": r["tool"],
+                    "status": r["status"],
+                    "summary": r["summary"],
+                    "findings_count": len(r["findings"]),
                 }
                 for r in self.cached_results
             ]
