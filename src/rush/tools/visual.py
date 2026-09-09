@@ -22,7 +22,7 @@ class VisualTool(GuardedQualityTool):
         self,
         path: Path,
         *,
-        accept: bool = False,
+        accept: object = False,
         config=None,
         permissions=None,
         **options: object,

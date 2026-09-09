@@ -36,7 +36,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pip-audit==2.10.1", "ruff==0.16.3", "mypy==2.3.1"]
+dev = [
+    "pip-audit==2.10.1",
+    "ruff==0.16.3",
+    "mypy==2.3.1",
+    "claude-agent-sdk==0.2.152",
+    "agent-client-protocol==0.12.1",
+]
+
+[tool.mypy]
+follow_untyped_imports = true
 
 [project.scripts]
 rush = "rush.cli:cli"
