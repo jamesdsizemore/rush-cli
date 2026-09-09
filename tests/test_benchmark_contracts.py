@@ -80,7 +80,7 @@ def test_fixture_path_security():
 
 def test_load_scenarios_validation():
     scenarios = load_scenarios()
-    assert len(scenarios) == 40
+    assert len(scenarios) == 46
 
     categories = {}
     for sc in scenarios.values():
@@ -98,3 +98,4 @@ def test_load_scenarios_validation():
     assert categories.get("privacy") == 8
     assert categories.get("budget") == 8
     assert categories.get("concurrency") == 4
+    assert categories.get("memory") == 6

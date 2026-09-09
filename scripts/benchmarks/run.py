@@ -48,6 +48,10 @@ def get_probe_runner(probe_name: str) -> Callable[..., ProbeResult]:
             from . import local
 
             _PROBE_MAP["local"] = local.run_local_probe
+        elif probe_name == "memory":
+            from . import memory
+
+            _PROBE_MAP["memory"] = memory.run_memory_probe
         else:
             raise FixtureError(f"unknown probe: {probe_name}")
     return _PROBE_MAP[probe_name]

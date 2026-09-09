@@ -34,8 +34,12 @@ def fixture_path(name: str) -> Path:
 def load_scenarios() -> dict[str, Scenario]:
     """Loads and validates scenarios from tests/fixtures/benchmarks/scenarios.json."""
     raw = json.loads(fixture_path("scenarios.json").read_text(encoding="utf-8"))
+    memory_raw = json.loads(
+        fixture_path("memory_cases.json").read_text(encoding="utf-8")
+    )
+    items = [*raw.get("scenarios", []), *memory_raw.get("cases", [])]
     scenarios: dict[str, Scenario] = {}
-    for item in raw.get("scenarios", []):
+    for item in items:
         require_exact_keys(
             item,
             frozenset(
@@ -130,6 +134,31 @@ def load_coordination_cases() -> list[dict[str, Any]]:
         fixture_path("coordination_cases.json").read_text(encoding="utf-8")
     )
     return list(raw.get("cases", []))
+
+
+def load_memory_cases(name: str = "memory_cases.json") -> list[dict[str, Any]]:
+    """Load deterministic memory benchmark descriptors under fixture containment."""
+    raw = json.loads(fixture_path(name).read_text(encoding="utf-8"))
+    cases = raw.get("cases")
+    if not isinstance(cases, list):
+        raise FixtureError("memory benchmark fixture cases must be a list")
+    for case in cases:
+        if not isinstance(case, dict) or not isinstance(case.get("scenario_id"), str):
+            raise FixtureError("memory benchmark case is malformed")
+        require_exact_keys(
+            case,
+            frozenset(
+                {
+                    "scenario_id",
+                    "probe",
+                    "category",
+                    "input",
+                    "required_facts",
+                    "expected_outcome",
+                }
+            ),
+        )
+    return cases
 
 
 def load_local_candidates() -> list[dict[str, Any]]:

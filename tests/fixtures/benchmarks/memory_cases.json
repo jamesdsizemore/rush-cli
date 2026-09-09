@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {"scenario_id":"M01","probe":"memory","category":"memory","input":{"fixture":"memory_cases.json","case_id":"M01","evidence_mode":"legacy-baseline","operation_mode":"current-ask","label":"exact identifier retrieval"},"required_facts":["actual_memory_tool"],"expected_outcome":"pass"},
+    {"scenario_id":"M03","probe":"memory","category":"memory","input":{"fixture":"memory_cases.json","case_id":"M03","evidence_mode":"legacy-baseline","operation_mode":"current-ask","label":"stale record retrieval"},"required_facts":["actual_memory_tool"],"expected_outcome":"pass"},
+    {"scenario_id":"M05","probe":"memory","category":"memory","input":{"fixture":"memory_cases.json","case_id":"M05","evidence_mode":"legacy-baseline","operation_mode":"current-ask","label":"denied source cannot outrank allowed source"},"required_facts":["actual_memory_tool"],"expected_outcome":"pass"},
+    {"scenario_id":"M06","probe":"memory","category":"memory","input":{"fixture":"memory_cases.json","case_id":"M06","evidence_mode":"legacy-baseline","operation_mode":"current-ask","label":"oversized evidence payload measurement"},"required_facts":["actual_memory_tool"],"expected_outcome":"pass"},
+    {"scenario_id":"M09","probe":"memory","category":"memory","input":{"fixture":"memory_cases.json","case_id":"M09","evidence_mode":"legacy-baseline","operation_mode":"current-ask","label":"source edit measurement"},"required_facts":["actual_memory_tool"],"expected_outcome":"pass"},
+    {"scenario_id":"M10","probe":"memory","category":"memory","input":{"fixture":"memory_cases.json","case_id":"M10","evidence_mode":"legacy-baseline","operation_mode":"current-ask","label":"cache budget measurement"},"required_facts":["actual_memory_tool"],"expected_outcome":"pass"}
+  ]
+}
