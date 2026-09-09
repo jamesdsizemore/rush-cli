@@ -212,6 +212,8 @@ def resolve_invocation(
             if isinstance(val, bool):
                 if val:
                     extra_args.append(f"--{k}")
+                else:
+                    extra_args.append(f"--{k}=false")
             elif isinstance(val, (list, tuple, dict)):
                 extra_args.append(f"--{k}={json.dumps(val)}")
             else:

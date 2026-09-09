@@ -18,6 +18,7 @@ from rush.patch.contracts import (
 from rush.patch.promoter import PatchPromoter
 from rush.patch.sandbox import PatchSandboxManager
 from rush.patch.verifier import PatchVerifier
+from rush.permissions import ExecutionPermissions
 from rush.tools.common import run_subprocess as real_run_subp
 
 
@@ -224,7 +225,9 @@ def test_policy_changing_patch_cannot_receive_ordinary_verified_success(
         # 3. Promoter also refuses promotion of policy-changing patch
         promoter = PatchPromoter(repo_root=repo)
         promo_ok, promo_summary = promoter.promote_sandbox_diff(
-            sb_path, contract=contract_policy
+            sb_path,
+            contract=contract_policy,
+            permissions=ExecutionPermissions(artifact_write=True),
         )
         assert promo_ok is False
         assert (
@@ -331,7 +334,7 @@ def test_unavailable_failed_verifier_leaves_checkout_unchanged(tmp_path: Path) -
 
 
 def test_rollback_and_cleanup_are_contained_and_manager_owned(tmp_path: Path) -> None:
-    """T-58.19: Injected promotion failure triggers automatic atomic rollback restoring working copy and cleaning sandbox worktrees under PhysicalRoot."""
+    """T-58.19: Failed promotion preserves source; manager removes only its sandbox."""
     repo = _init_git_repo(tmp_path / "repo_rollback")
     orig_rev = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -362,7 +365,9 @@ def test_rollback_and_cleanup_are_contained_and_manager_owned(tmp_path: Path) ->
         return real_run_subp(cmd, **kwargs)
 
     with patch("rush.patch.promoter.run_subprocess", side_effect=mock_subp):
-        ok, err = promoter.promote_sandbox_diff(sb_path)
+        ok, err = promoter.promote_sandbox_diff(
+            sb_path, permissions=ExecutionPermissions(artifact_write=True)
+        )
         assert ok is False
         assert "promotion failed" in err.lower() or "error" in err.lower()
 

@@ -47,3 +47,8 @@ operation = "audit"
 
 [tools.pr-synthesize]
 base_ref = "main"
+
+[tools.patch-apply]
+dry_run = true
+circuit_breaker = true
+allow_artifact_write = false

@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 152
+total_operations = 153
 
 [[operations]]
 id = "admin.memory_maintain"
@@ -425,6 +425,17 @@ input_contract = "ClickArguments"
 output_contract = "ClickExitCode"
 effect_class = "read-only"
 safe_probe = "rush outline --help"
+
+[[operations]]
+id = "tool.patch_apply"
+kind = "tool"
+canonical_impl = "rush.tools.patch_apply:PatchApplyTool"
+cli_command = "patch apply"
+mcp_tool = "rush_patch_apply"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush patch apply --help"
 
 [[operations]]
 id = "cli.patch_memory"

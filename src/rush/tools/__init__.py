@@ -64,6 +64,7 @@ from .mem_profile import MemProfileTool
 from .memory import MemoryTool
 from .mutation import MutationTool
 from .offline_runner import OfflineReviewTool
+from .patch_apply import PatchApplyTool
 from .pbt import PbtTool
 from .pr_synthesize import PrSynthesizer, PrSynthesizeTool
 from .prompt_eval import PromptEvalTool
@@ -124,6 +125,7 @@ ALL_TOOLS: list[ToolFn] = [
     AiEvalTool(),
     TddGuardTool(),
     FixTool(),
+    PatchApplyTool(),
     DoctorTool(),
     AttestationTool(),
     LicenseMatrixTool(),
@@ -167,6 +169,7 @@ __all__ = [  # noqa: RUF022
     "MemProfileTool",
     "MemoryTool",
     "OfflineReviewTool",
+    "PatchApplyTool",
     "PrSynthesizeTool",
     "PrSynthesizer",
     "PromptEvalTool",

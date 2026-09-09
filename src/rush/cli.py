@@ -1206,6 +1206,7 @@ for _catalog_tool in ALL_TOOLS:
         "fix",
         "benchmark",
         "memory",
+        "patch-apply",
     }:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
@@ -1287,6 +1288,43 @@ def workspace_locks_cmd(path: Path) -> None:
 @cli.group(name="patch")
 def patch_group() -> None:
     """Isolated AI patch testing, verification, and session memory."""
+
+
+@patch_group.command(name="apply")
+@click.argument(
+    "patch_file", metavar="PATH", type=click.Path(exists=True, path_type=Path)
+)
+@click.option(
+    "--dry-run/--no-dry-run", default=True, help="Verify without promoting changes."
+)
+@click.option(
+    "--circuit-breaker/--no-circuit-breaker",
+    default=True,
+    help="Stop after failed verification.",
+)
+@click.option(
+    "--allow-artifact-write", is_flag=True, help="Permit verified patch promotion."
+)
+@click.option("--json", "as_json", is_flag=True, help="Print ToolResult JSON.")
+def patch_apply_cmd(
+    patch_file: Path,
+    dry_run: bool,
+    circuit_breaker: bool,
+    allow_artifact_write: bool,
+    as_json: bool,
+) -> None:
+    """Verify PATH as a unified diff in isolation; explicitly grant promotion."""
+    _run_tool(
+        "patch-apply",
+        Path.cwd(),
+        as_json=as_json,
+        permissions=ExecutionPermissions(artifact_write=allow_artifact_write),
+        extra_kwargs={
+            "patch_file": patch_file,
+            "dry_run": dry_run,
+            "circuit_breaker": circuit_breaker,
+        },
+    )
 
 
 @patch_group.command(name="test")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Self
 
@@ -100,6 +101,12 @@ class PatchVerifier:
         executed_commands: list[dict[str, Any]] = []
         passed_count = 0
         failed_details: list[str] = []
+        project_env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                (str(self.sandbox_dir / "src"), str(self.sandbox_dir))
+            ),
+        }
 
         # 2. Execute explicit command plan if bound in contract
         if active_contract and active_contract.required_commands:
@@ -109,6 +116,7 @@ class PatchVerifier:
                     list(plan.command),
                     cwd=cmd_cwd,
                     timeout=plan.timeout_seconds,
+                    env=project_env,
                 )
                 passed = proc.returncode == plan.expected_exit_code
                 cmd_record = {
@@ -138,6 +146,7 @@ class PatchVerifier:
                 proc = run_subprocess(
                     ["pytest", "-q", "--tb=short"],
                     cwd=self.sandbox_dir,
+                    env=project_env,
                 )
                 passed = proc.returncode == 0
                 cmd_record = {

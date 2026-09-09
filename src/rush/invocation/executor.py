@@ -259,6 +259,12 @@ def adapt_signature_at_registration(
 
         return var_args_adapter
 
+    # Catalog-declared options are supplied through the invocation's ordered arguments.
+    from rush.catalog import TOOL_SPECS
+
+    spec = TOOL_SPECS.get(operation_id)
+    declared_options = {option.name for option in spec.option_specs} if spec else set()
+
     # Validate all parameters at registration time
     for p in params:
         if p.kind in (
@@ -267,7 +273,9 @@ def adapt_signature_at_registration(
         ):
             continue
 
-        is_bindable = _is_bindable_context_param(p.name, p.annotation, p.kind)
+        is_bindable = _is_bindable_context_param(p.name, p.annotation, p.kind) or (
+            p.kind != inspect.Parameter.POSITIONAL_ONLY and p.name in declared_options
+        )
         has_default = p.default is not inspect.Parameter.empty
 
         if not is_bindable and not has_default:

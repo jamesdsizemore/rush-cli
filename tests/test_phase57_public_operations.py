@@ -185,7 +185,7 @@ def test_cli_mcp_signature_error_is_equivalent() -> None:
 
 
 def test_transport_contracts_reconcile_with_operation_manifest() -> None:
-    """T-57.10 (R-004): Asserts all 152 operations in public-operations.toml reconcile with registry and executor."""
+    """T-57.10 (R-004): Asserts all 153 operations in public-operations.toml reconcile with registry and executor."""
     import tomllib
 
     from rush.contracts.operations import (
@@ -201,8 +201,8 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 152
-    assert manifest_data.get("manifest", {}).get("total_operations") == 152
+    assert len(operations) == 153
+    assert manifest_data.get("manifest", {}).get("total_operations") == 153
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -236,17 +236,17 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         else:
             declared_transports[op_id] = "mcp"
 
-    assert len(declared_transports) == 152
-    # 61 dual-transport, 74 cli-only, 17 mcp-only
-    assert sum(1 for t in declared_transports.values() if t == "both") == 61
+    assert len(declared_transports) == 153
+    # 62 dual-transport, 74 cli-only, 17 mcp-only
+    assert sum(1 for t in declared_transports.values() if t == "both") == 62
     assert sum(1 for t in declared_transports.values() if t == "cli") == 74
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 17
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 152
-    assert report["tool_count"] == 70
+    assert report["total"] == 153
+    assert report["tool_count"] == 71
     assert report["admin_count"] == 65
     assert report["service_count"] == 17
     assert len(report["unmapped"]) == 0
@@ -375,7 +375,7 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     paired_ops = [
         op for op in operations if op.get("cli_command") and op.get("mcp_tool")
     ]
-    assert len(paired_ops) == 61
+    assert len(paired_ops) == 62
 
     # 1. All paired operations MUST be kind == "tool" and enforce ToolResultV1,
     #    except deliberately dual-transport admin mutations (e.g. memory
@@ -513,8 +513,8 @@ def test_unprobed_route_is_not_advertised() -> None:
             f"Advertised MCP tool '{tool_name}' is unprobed / unmanifested in governance/public-operations.toml"
         )
 
-    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 135
-    assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 74
+    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 136
+    assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 75
 
 
 # ---------------------------------------------------------------------------

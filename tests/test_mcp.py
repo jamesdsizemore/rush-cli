@@ -13,10 +13,12 @@ import hashlib
 import inspect
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -445,6 +447,72 @@ def test_registered_mcp_ship_clean_propagates_registry_error(
     assert result["status"] == "error"
     assert "malformed" in result["error"]
     assert result["removed_count"] == 0
+
+
+@pytest.mark.parametrize("mode", ["dry-run", "denied", "failed-verification", "apply"])
+def test_registered_mcp_patch_apply_parity(tmp_path: Path, mode: str) -> None:
+    from rush import mcp
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.tools = {}
+
+        def add_tool(self, *, fn, name, description) -> None:
+            self.tools[name] = fn
+
+    server = FakeServer()
+    mcp._register_tools(server)
+    assert "rush_patch_apply" in server.tools
+    wrapper = server.tools["rush_patch_apply"]
+    signature = inspect.signature(wrapper)
+    assert signature.parameters["patch_file"].default is inspect.Parameter.empty
+    assert signature.parameters["dry_run"].default is True
+    assert signature.parameters["circuit_breaker"].default is True
+    assert signature.parameters["allow_artifact_write"].default is False
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, capture_output=True, check=True
+        )
+
+    git("init", "-q")
+    git("config", "user.email", "patch-test@example.invalid")
+    git("config", "user.name", "Patch test")
+    (tmp_path / ".gitignore").write_text(".rush/\n__pycache__/\n.pytest_cache/\n")
+    (tmp_path / "app.py").write_text("value = 1\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
+    (tmp_path / "test_app.py").write_text(
+        "import app\n\ndef test_value():\n"
+        f"    assert app.value == {3 if mode == 'failed-verification' else 2}\n"
+    )
+    patch_file = tmp_path / "fix.patch"
+    patch_file.write_text(
+        "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-value = 1\n+value = 2\n"
+    )
+    git("add", ".")
+    git("commit", "-qm", "fixture")
+
+    result = wrapper(
+        path=tmp_path,
+        patch_file=patch_file,
+        dry_run=mode == "dry-run",
+        circuit_breaker=True,
+        allow_artifact_write=mode in {"failed-verification", "apply"},
+    )
+
+    assert (
+        result["status"]
+        == {
+            "dry-run": "ok",
+            "denied": "skipped",
+            "failed-verification": "fail",
+            "apply": "ok",
+        }[mode]
+    )
+    assert result["metadata"]["promoted"] is (mode == "apply")
+    assert (tmp_path / "app.py").read_text() == (
+        "value = 2\n" if mode == "apply" else "value = 1\n"
+    )
 
 
 def test_phase50_mcp_registration_has_one_object_per_tool_and_only_attest_alias() -> (

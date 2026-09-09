@@ -416,6 +416,45 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Diagnose environment health and binary resolution at <path>. Returns {status, findings[], summary}.",
         (),
     ),
+    "patch-apply": ToolSpec(
+        name="patch-apply",
+        category="workflow",
+        description="Apply a contained unified diff with dry-run and circuit-breaker safeguards.",
+        mcp_description=(
+            "Apply a contained unified diff from <patch_file> to project <path>; defaults to dry-run "
+            "and requires explicit artifact-write permission for promotion."
+        ),
+        engine_names=(),
+        maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="patch_file",
+                value_type=str,
+                default=None,
+                required=True,
+                path_kind="file",
+                description="Contained unified diff file to apply.",
+            ),
+            ToolOptionSpec(
+                name="dry_run",
+                value_type=bool,
+                default=True,
+                description="Validate patch without promoting changes.",
+            ),
+            ToolOptionSpec(
+                name="circuit_breaker",
+                value_type=bool,
+                default=True,
+                description="Stop on patch safety violations.",
+            ),
+            ToolOptionSpec(
+                name="allow_artifact_write",
+                value_type=bool,
+                default=False,
+                description="Explicitly grant promotion writes.",
+            ),
+        ),
+    ),
     "attest": ToolSpec(
         name="attest",
         category="security",
@@ -792,6 +831,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "tdd": "real_adapter",
     "fix": "real_adapter",
     "doctor": "real_adapter",
+    "patch-apply": "real_adapter",
     "attest": "real_adapter",
     "license-matrix": "real_adapter",
     "iam-audit": "real_adapter",

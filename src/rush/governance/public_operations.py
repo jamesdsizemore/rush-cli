@@ -207,6 +207,13 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory maintain --help",
             "admin",
         ),
+        "patch apply": (
+            "rush_patch_apply",
+            "rush.tools.patch_apply:PatchApplyTool",
+            "stateful-mutation",
+            "rush patch apply --help",
+            "tool",
+        ),
     }
 
     # 3. Pair canonical tool specs first
