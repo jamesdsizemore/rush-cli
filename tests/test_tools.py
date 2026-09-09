@@ -262,6 +262,36 @@ def test_lint_dispatches_per_extension(tmp_path: Path):
         assert "eslint" in (result.get("engine") or "")
 
 
+def test_lint_missing_eslint_skips_nonempty_javascript_project(
+    monkeypatch, tmp_path: Path
+):
+    source = tmp_path / "app.js"
+    source.write_text("const value = ;\n")
+    monkeypatch.setattr("rush.tools.lint.engine_on_path", lambda name: False)
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda name: False)
+
+    result = LintTool().run(tmp_path)
+
+    assert result["status"] == "skipped"
+    assert "clean" not in result["summary"]
+
+
+def test_lint_missing_ruff_skips_nonempty_python_project(monkeypatch, tmp_path: Path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n")
+    monkeypatch.setattr("rush.tools.lint.engine_on_path", lambda name: False)
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda name: False)
+
+    result = LintTool().run(tmp_path)
+
+    assert result["status"] == "skipped"
+    assert "clean" not in result["summary"]
+
+    result = FormatTool().run(tmp_path)
+    assert result["status"] == "skipped"
+    assert "all formatted" not in result["summary"]
+
+
 # --- FormatTool -------------------------------------------------------------
 
 
@@ -273,6 +303,87 @@ def test_format_runs_ruff_format_check(py_repo: Path):
     assert result["tool"] == "format"
     # Either clean (ok) or has reformat findings (warn)
     assert result["status"] in ("ok", "warn")
+
+
+def test_format_uses_ruff_format_subcommand(monkeypatch, py_repo: Path):
+    calls = []
+
+    def fake_run_engine(_engine, _path, args, **_kwargs):
+        calls.append(args)
+        return {"status": "ok", "findings": []}
+
+    monkeypatch.setattr("rush.tools.format.run_engine", fake_run_engine)
+    result = FormatTool().run(py_repo)
+
+    assert result["status"] == "ok"
+    assert calls and calls[0][0:2] == ["format", "--check"]
+
+
+def test_format_preserves_engine_error_without_findings(monkeypatch, py_repo: Path):
+    monkeypatch.setattr(
+        "rush.tools.format.run_engine",
+        lambda *_args, **_kwargs: {"status": "error", "findings": []},
+    )
+
+    result = FormatTool().run(py_repo)
+
+    assert result["status"] == "error"
+
+
+@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
+def test_format_unformatted_reports_exact_path(tmp_path: Path):
+    source = tmp_path / "unformatted.py"
+    source.write_text("value=1\n")
+
+    result = FormatTool().run(tmp_path)
+
+    assert result["status"] == "warn"
+    assert any(finding["path"] == str(source) for finding in result["findings"])
+
+
+@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
+def test_format_syntax_error_is_error(tmp_path: Path):
+    source = tmp_path / "invalid.py"
+    source.write_text("def broken(:\n    pass\n")
+
+    result = FormatTool().run(tmp_path)
+
+    assert result["status"] == "error"
+
+
+@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
+def test_format_clean_is_ok(tmp_path: Path):
+    source = tmp_path / "clean.py"
+    source.write_text("value = 1\n")
+
+    result = FormatTool().run(tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["findings"] == []
+
+
+def test_ruff_format_parser_handles_current_diagnostics(tmp_path: Path):
+    from rush.engines.ruff import RuffEngine
+
+    result = RuffEngine().normalize(
+        {
+            "format_check": True,
+            "exit_code": 1,
+            "findings": [
+                {
+                    "code": "unformatted",
+                    "filename": str(tmp_path / "dirty.py"),
+                    "location": {"row": 1, "column": 1},
+                    "message": "File would be reformatted",
+                }
+            ],
+        },
+        tmp_path,
+        "format",
+    )
+
+    assert result["status"] == "warn"
+    assert result["findings"][0]["path"] == str(tmp_path / "dirty.py")
 
 
 # --- TestTool ---------------------------------------------------------------

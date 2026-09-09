@@ -41,14 +41,25 @@ class RuffEngine(Engine):
         `args` come from the tool caller (CLI flags / rush.toml). We prepend
         `--output-format=json` so the output is always structured.
         """
-        argv = [
-            self.binary,
-            "check",
-            "--output-format=json",
-            "--no-cache",  # deterministic; cache is host-specific
-            str(path),
-            *args,
-        ]
+        format_check = bool(args and args[0] == "format")
+        if format_check:
+            argv = [
+                self.binary,
+                "format",
+                "--check",
+                "--output-format=json",
+                "--no-cache",
+                *args[2:],
+            ]
+        else:
+            argv = [
+                self.binary,
+                "check",
+                "--output-format=json",
+                "--no-cache",  # deterministic; cache is host-specific
+                str(path),
+                *args,
+            ]
         # Use absolute binary path so subprocess finds it even when PATH is weird
         binary_path = resolve_binary(self.binary) or self.binary
         argv[0] = binary_path
@@ -83,6 +94,8 @@ class RuffEngine(Engine):
         from ..tools.base import ToolResult
         from ..tools.common import elapsed_ms, normalize_findings
 
+        exit_code = raw.get("exit_code", 0)
+
         findings = normalize_findings(
             [
                 {
@@ -100,8 +113,7 @@ class RuffEngine(Engine):
         )
 
         # ruff exit 0 = clean, 1 = findings, 2+ = config/crash
-        exit_code = raw.get("exit_code", 0)
-        if exit_code >= 2:
+        if exit_code not in (0, 1):
             status = "error"
             summary = f"ruff config error: {raw.get('stderr', '').strip().splitlines()[0] if raw.get('stderr') else 'unknown'}"
         elif findings:
@@ -111,6 +123,9 @@ class RuffEngine(Engine):
                 else "warn"
             )
             summary = raw.get("summary") or f"ruff found {len(findings)} issue(s)"
+        elif exit_code == 1:
+            status = "error"
+            summary = "ruff: nonzero exit without readable findings"
         else:
             status = "ok"
             summary = "ruff: no issues"

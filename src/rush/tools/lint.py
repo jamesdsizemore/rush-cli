@@ -69,7 +69,7 @@ def _run_selected_engines(
     from ..engines import ENGINES
 
     findings_all: list[dict[str, Any]] = []
-    last_status = "ok"
+    last_status = "skipped"
     engines_used: list[str] = []
 
     for name in ("ruff", "eslint"):
@@ -127,7 +127,11 @@ def _assemble_lint_result(
     summary = (
         f"lint [{engine_str}]: {n_findings} issue(s)"
         if n_findings
-        else f"lint [{engine_str}]: clean"
+        else (
+            f"lint [{engine_str}]: clean"
+            if status == "ok"
+            else f"lint [{engine_str}]: {status}"
+        )
     )
 
     return ToolResult(

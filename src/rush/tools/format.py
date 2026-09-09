@@ -74,12 +74,12 @@ class FormatTool(ToolFn):
 
         findings_all: list = []
         engines_used: list[str] = []
-        last_status = "ok"
+        last_status = "skipped"
 
         if ruff_files:
             argv = ["format", "--check", *[str(p) for p in ruff_files]]
             r = run_engine(ENGINES["ruff"], path, argv, tool_name="format")
-            findings_all.extend(self._parse_ruff_format(r))
+            findings_all.extend(r.get("findings", []))
             engines_used.append("ruff")
             last_status = combine_status(last_status, r.get("status", "ok"))
 
@@ -104,12 +104,18 @@ class FormatTool(ToolFn):
 
         n = len(findings_all)
         if n == 0:
-            status = "ok"
-            summary = f"format [{'+'.join(engines_used)}]: all formatted"
-        else:
-            status = "warn"
+            status = last_status
             summary = (
-                f"format [{'+'.join(engines_used)}]: {n} file(s) need reformatting"
+                f"format [{'+'.join(engines_used)}]: all formatted"
+                if status == "ok"
+                else f"format [{'+'.join(engines_used)}]: engine {status}"
+            )
+        else:
+            status = combine_status(last_status, "warn")
+            summary = (
+                f"format [{'+'.join(engines_used)}]: engine error"
+                if status == "error"
+                else f"format [{'+'.join(engines_used)}]: {n} file(s) need reformatting"
             )
 
         return ToolResult(
@@ -122,45 +128,3 @@ class FormatTool(ToolFn):
             findings=findings_all,
             raw=None,
         )
-
-    @staticmethod
-    def _parse_ruff_format(result: dict) -> list:
-        """ruff format --check prints filenames needing reformat to stdout."""
-        out = []
-        for line in (result.get("stdout") or "").splitlines():
-            line = line.strip()
-            if line and not line.startswith(("Found", "reformat")) and ":" in line:
-                # Lines look like: "file.py:62:80:"
-                file_part = line.split(":")[0]
-                out.append(
-                    {
-                        "path": file_part,
-                        "line": 0,
-                        "rule": "formatting",
-                        "severity": "warn",
-                        "message": "ruff format would reformat this file",
-                    }
-                )
-        # ruff also exits non-zero when files need reformat; check status
-        if result.get("status") == "warn" and not out:
-            # Try stderr for the file list
-            for line in (result.get("stderr") or "").splitlines():
-                line = line.strip()
-                if line.endswith("would be reformatted"):
-                    # line like: "Would reformat: file.py"
-                    fname = (
-                        line.replace("Would reformat:", "")
-                        .replace("would be reformatted", "")
-                        .strip()
-                    )
-                    if fname:
-                        out.append(
-                            {
-                                "path": fname,
-                                "line": 0,
-                                "rule": "formatting",
-                                "severity": "warn",
-                                "message": "ruff format would reformat this file",
-                            }
-                        )
-        return out
