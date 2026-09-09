@@ -1650,9 +1650,14 @@ def bundle_analyze_cmd(dist_dir: Path) -> None:
 @click.argument("assets_dir", type=click.Path(exists=True, path_type=Path))
 def bundle_dead_assets_cmd(assets_dir: Path) -> None:
     """Scan public/assets directories for unreferenced images and media."""
-    from rush.bundle.dead_assets import DeadAssetScanner
+    from rush.bundle.dead_assets import OrphanedAssetScanner
 
-    unused = DeadAssetScanner.scan_unused_assets(assets_dir, Path.cwd() / "src")
+    assets_root = assets_dir.resolve()
+    unused = [
+        asset
+        for asset in OrphanedAssetScanner(Path.cwd()).find_orphaned_assets()
+        if asset.is_relative_to(assets_root)
+    ]
     click.echo(f"Unreferenced Assets ({len(unused)}):")
     for u in unused:
         click.echo(f"  - {u}")
@@ -1680,14 +1685,14 @@ def hotspots_analyze_cmd() -> None:
 @hotspots_group.command(name="bus-factor")
 def hotspots_bus_factor_cmd() -> None:
     """Calculate module knowledge distribution and bus factor risks."""
-    from rush.hotspots.bus_factor import BusFactorCalculator
+    from rush.hotspots.bus_factor import BusFactorAssessor
 
-    calc = BusFactorCalculator(Path.cwd())
-    reports = calc.compute_bus_factors()
+    reports = BusFactorAssessor(Path.cwd()).assess_ownership()
     click.echo(f"Bus Factor Analysis ({len(reports)} files):")
     for r in reports[:10]:
         click.echo(
-            f"  - {r.file_path}: Bus Factor {r.bus_factor} (Primary author: {r.primary_author} {int(r.authorship_share * 100)}%)"
+            f"  - {r.file_path}: {r.total_authors} authors, ownership entropy {r.author_entropy} "
+            f"(Primary author: {r.primary_owner} {r.ownership_percent}%)"
         )
 
 
@@ -1711,11 +1716,10 @@ def governance_sync_cmd() -> None:
 @governance_group.command(name="check")
 def governance_check_cmd() -> None:
     """Check that multi-IDE rule files are synchronized with AGENTS.md."""
-    from rush.governance.parity_checker import GovernanceParityChecker
+    from rush.governance.parity_checker import RuleParityChecker
 
-    checker = GovernanceParityChecker(Path.cwd())
-    in_sync, drifted = checker.check_parity()
-    if in_sync:
+    drifted = RuleParityChecker(Path.cwd()).check_parity()
+    if not drifted:
         click.echo("[OK] All multi-IDE governance rule files match AGENTS.md.")
     else:
         click.echo(
@@ -1723,7 +1727,7 @@ def governance_check_cmd() -> None:
             err=True,
         )
         for d in drifted:
-            click.echo(f"  - {d}", err=True)
+            click.echo(f"  - {d.target_path}: {d.reason}", err=True)
         sys.exit(1)
 
 
