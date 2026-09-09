@@ -11,7 +11,7 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms
 
 
@@ -259,7 +259,7 @@ class BenchmarkTool(ToolFn):
                 )
             )
 
-        status = "fail" if findings else "ok"
+        status: ToolStatus = "fail" if findings else "ok"
         summary = (
             f"benchmark: Evaluated {len(sample_list)} sample(s) against '{baseline_name}' baseline: "
             f"{regression_pct:+.2f}% delta ({'PASS' if not findings else 'FAIL'})"

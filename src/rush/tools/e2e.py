@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import ToolResult
+from .base import ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, resolve_binary, run_subprocess, skipped_result
 from .quality import GuardedQualityTool
 
@@ -75,7 +75,7 @@ class E2eTool(GuardedQualityTool):
             cwd=path if path.is_dir() else path.parent,
             timeout=180.0,
         )
-        status = "ok" if proc.returncode == 0 else "fail"
+        status: ToolStatus = "ok" if proc.returncode == 0 else "fail"
         return ToolResult(
             tool=self.name,
             engine="playwright",

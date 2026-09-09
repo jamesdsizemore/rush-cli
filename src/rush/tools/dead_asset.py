@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
-from .base import Finding, ToolFn, ToolResult
+from .base import Finding, ToolFn, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, skipped_result
 
 
@@ -278,7 +278,7 @@ class DeadAssetTool(ToolFn):
             exp.write_text(json.dumps(clean_manifest, indent=2), encoding="utf-8")
             artifacts.append(str(exp))
 
-        status = "warn" if dead_count > 0 else "ok"
+        status: ToolStatus = "warn" if dead_count > 0 else "ok"
         savings_kb = round(potential_savings_bytes / 1024, 1)
 
         summary = (

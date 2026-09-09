@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import ToolFn, ToolName, ToolResult
+from .base import ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_engine
 from .routing import collect_files, combine_status
 
@@ -74,7 +74,7 @@ class FormatTool(ToolFn):
 
         findings_all: list = []
         engines_used: list[str] = []
-        last_status = "skipped"
+        last_status: ToolStatus = "skipped"
 
         if ruff_files:
             argv = ["format", "--check", *[str(p) for p in ruff_files]]
@@ -104,7 +104,7 @@ class FormatTool(ToolFn):
 
         n = len(findings_all)
         if n == 0:
-            status = last_status
+            status: ToolStatus = last_status
             summary = (
                 f"format [{'+'.join(engines_used)}]: all formatted"
                 if status == "ok"

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from ..engines.iac_parser import StructuredIacReportError, parse_structured_iac_report
-from .base import ToolFn, ToolResult
+from .base import ToolFn, ToolResult, ToolStatus
 from .common import (
     elapsed_ms,
     engine_on_path,
@@ -103,7 +103,7 @@ class CodeqlTool(ToolFn):
                 )
 
             if any(item["severity"] == "error" for item in findings):
-                status = "fail"
+                status: ToolStatus = "fail"
             elif any(item["severity"] == "warn" for item in findings):
                 status = "warn"
             else:

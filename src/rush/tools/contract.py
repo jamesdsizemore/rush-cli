@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..safety.redactor import sanitize_value
-from .base import ToolFn, ToolResult
+from .base import ToolFn, ToolResult, ToolStatus
 from .common import (
     elapsed_ms,
     engine_on_path,
@@ -126,7 +126,7 @@ class ContractTool(ToolFn):
                     duration_ms=elapsed_ms(start),
                 )
 
-            status = "fail" if errors else "warn" if warnings else "ok"
+            status: ToolStatus = "fail" if errors else "warn" if warnings else "ok"
             return ToolResult(
                 tool=self.name,
                 engine="pact-report",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import ToolFn, ToolResult
+from .base import ToolFn, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, skipped_result
 
 
@@ -46,7 +46,7 @@ class ReleaseTool(ToolFn):
                 cejel_res = run_engine(ENGINES["cejel"], path, [], tool_name=self.name)
                 findings.extend(cejel_res.get("findings", []))
 
-            status = "fail" if findings else "ok"
+            status: ToolStatus = "fail" if findings else "ok"
             result = ToolResult(
                 tool=self.name,
                 engine="builtin+cejel" if engine_on_path("cejel") else "builtin",

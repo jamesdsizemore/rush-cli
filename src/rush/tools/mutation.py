@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
-from .base import ToolFn, ToolResult
+from .base import ToolFn, ToolResult, ToolStatus
 from .common import (
     elapsed_ms,
     engine_on_path,
@@ -414,7 +414,7 @@ class MutationTool(ToolFn):
                     "mutation report counts do not conserve generated mutants"
                 )
             escaped = metrics["survived"] + metrics["timeout"] + metrics["untested"]
-            status = (
+            status: ToolStatus = (
                 "skipped"
                 if metrics["generated"] == 0
                 else ("fail" if escaped else "ok")

@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .base import Finding, ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms
 
 
@@ -244,7 +244,7 @@ class PromptEvalTool(ToolFn):
 
         has_errors = any(f.get("severity") in ("error", "fail") for f in findings)
         if has_errors or pass_rate < pass_rate_threshold:
-            status = "fail"
+            status: ToolStatus = "fail"
         elif findings:
             status = "warn"
         else:

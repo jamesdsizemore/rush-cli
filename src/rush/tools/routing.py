@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from pathlib import Path
 
-from .base import Finding, ToolResult
+from .base import Finding, ToolResult, ToolStatus
 from .common import finding_fingerprint
 
 _STATUS_RANK = {"skipped": 0, "ok": 1, "warn": 2, "fail": 3, "error": 4}
@@ -42,7 +42,7 @@ def detect_project_languages(path: Path) -> list[str]:
     ]
 
 
-def combine_status(left: str, right: str) -> str:
+def combine_status(left: ToolStatus, right: ToolStatus) -> ToolStatus:
     """Return the worst Rush status while preserving known status semantics."""
     return left if _STATUS_RANK.get(left, -1) >= _STATUS_RANK.get(right, -1) else right
 
@@ -111,7 +111,7 @@ def aggregate_results(
             raw=None,
         )
 
-    status = "skipped"
+    status: ToolStatus = "skipped"
     duration_ms = 0
     engines: list[str] = []
     findings: list[Finding] = []
@@ -130,7 +130,10 @@ def aggregate_results(
         )
 
     for result in ordered_results:
-        status = combine_status(status, str(result.get("status", "skipped")))
+        incoming_status = str(result.get("status", "skipped"))
+        match incoming_status:
+            case "ok" | "warn" | "fail" | "error" | "skipped":
+                status = combine_status(status, incoming_status)
         duration_ms += int(result.get("duration_ms", 0) or 0)
         engine = result.get("engine")
         if engine and engine not in engines:

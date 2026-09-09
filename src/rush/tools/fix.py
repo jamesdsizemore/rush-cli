@@ -20,7 +20,7 @@ from typing import Any
 from rush.config import RushConfig
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
-from rush.tools.base import ToolFn, ToolName, ToolResult
+from rush.tools.base import ToolFn, ToolName, ToolResult, ToolStatus
 
 logger = get_logger("tools.fix")
 
@@ -574,7 +574,7 @@ class FixTool(ToolFn):
                 )
             remaining_findings = remaining_findings or proc_verify.returncode == 1
 
-        status = "warn" if format_changed or remaining_findings else "ok"
+        status: ToolStatus = "warn" if format_changed or remaining_findings else "ok"
         mode_str = " (dry run)" if dry_run else ""
         return ToolResult(
             tool=self.name,
