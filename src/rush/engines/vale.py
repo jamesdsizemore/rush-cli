@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class ValeEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             severity = item.get("Severity", "warning").lower()
             findings.append(
@@ -59,7 +59,7 @@ class ValeEngine(Engine):
                     "line": item.get("Line", 0),
                     "column": item.get("Span", [0])[0],
                     "rule": f"vale/{item.get('Check', 'style')}",
-                    "severity": "fail" if severity == "error" else "warn",
+                    "severity": "error" if severity == "error" else "warn",
                     "message": item.get("Message", "Prose style recommendation"),
                 }
             )
@@ -67,7 +67,7 @@ class ValeEngine(Engine):
         exit_code = raw.get("exit_code", 0)
         status: ToolStatus = (
             "fail"
-            if any(f["severity"] == "fail" for f in findings)
+            if any(f["severity"] == "error" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
         )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -36,7 +36,7 @@ class TextLintEngine(Engine):
             for line in (raw.get("stdout") or raw.get("stderr", "")).splitlines()
             if line.strip()
         ]
-        findings = [
+        findings: list[Finding] = [
             {"path": str(path), "rule": self.name, "severity": "warn", "message": line}
             for line in lines
         ]

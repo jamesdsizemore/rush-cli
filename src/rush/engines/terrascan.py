@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -48,7 +48,7 @@ class TerrascanEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             severity = item.get("severity", "MEDIUM").upper()
             findings.append(
@@ -58,13 +58,13 @@ class TerrascanEngine(Engine):
                     "column": 0,
                     "rule": item.get("rule_name")
                     or item.get("rule_id", "terrascan-policy"),
-                    "severity": "fail" if severity in ("HIGH", "CRITICAL") else "warn",
+                    "severity": "error" if severity in ("HIGH", "CRITICAL") else "warn",
                     "message": item.get("description", "Terrascan policy violation"),
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        has_fail = any(f["severity"] == "fail" for f in findings)
+        has_fail = any(f["severity"] == "error" for f in findings)
         status: ToolStatus = (
             "fail"
             if has_fail

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -46,7 +46,7 @@ class WasmToolsEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(
                 {
@@ -54,7 +54,7 @@ class WasmToolsEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": "wasm-tools/validate",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": item.get(
                         "error", "WebAssembly bytecode validation error"
                     ),

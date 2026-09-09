@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -55,7 +55,7 @@ class SchemathesisEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(
                 {
@@ -63,7 +63,7 @@ class SchemathesisEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": item.get("code", "schemathesis-contract-error"),
-                    "severity": "fail",
+                    "severity": "error",
                     "message": item.get(
                         "message", "API schema property contract violation"
                     ),

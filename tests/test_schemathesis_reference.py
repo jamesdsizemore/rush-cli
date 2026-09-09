@@ -63,4 +63,5 @@ def test_schemathesis_normalizes_clean_and_failures(
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert failing["findings"][0]["rule"] == "status_code_conformance"

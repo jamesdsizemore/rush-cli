@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -62,7 +62,7 @@ class GitleaksEngine(Engine):
                 duration_ms=raw.get("duration_ms", 0),
                 terminal_reason="nonzero_exit",
             )
-        findings = [
+        findings: list[Finding] = [
             {
                 "path": str(item.get("File", "")),
                 "line": item.get("StartLine", 0),

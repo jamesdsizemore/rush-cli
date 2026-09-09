@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from ..logging import redact_secrets
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -49,7 +49,7 @@ class SecretlintEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for file_item in raw.get("findings", []):
             file_path = file_item.get("filePath", str(path))
             for msg in file_item.get("messages", []):
@@ -60,7 +60,7 @@ class SecretlintEngine(Engine):
                         "line": msg.get("line", 0),
                         "column": msg.get("column", 0),
                         "rule": msg.get("ruleId", "secretlint-rule"),
-                        "severity": "fail"
+                        "severity": "error"
                         if msg.get("severity") == "error"
                         else "warn",
                         "message": redacted_msg,
@@ -70,7 +70,7 @@ class SecretlintEngine(Engine):
         exit_code = raw.get("exit_code", 0)
         status: ToolStatus = (
             "fail"
-            if any(f["severity"] == "fail" for f in findings)
+            if any(f["severity"] == "error" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
         )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class ScorecardEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             name = item.get("name", "SupplyChainCheck")
             score = item.get("score", 0)
@@ -61,17 +61,14 @@ class ScorecardEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": f"scorecard/{name.lower()}",
-                    "severity": "warn" if score > 0 else "fail",
+                    "severity": "warn" if score > 0 else "error",
                     "message": f"{name} scored {score}/10: {reason}",
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        overall_score = (
-            raw.get("parsed", {}).get("score", 10)
-            if isinstance(raw.get("parsed"), dict)
-            else 10
-        )
+        parsed = raw.get("parsed")
+        overall_score = parsed.get("score", 10) if isinstance(parsed, dict) else 10
         status: ToolStatus = (
             "warn"
             if (findings or overall_score < 7)

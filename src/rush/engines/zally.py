@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class ZallyEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             violation_type = item.get("violation_type", "SHOULD").upper()
             findings.append(
@@ -59,13 +59,13 @@ class ZallyEngine(Engine):
                     "line": int(item.get("line_number", 0) or 0),
                     "column": 0,
                     "rule": f"zally/{item.get('rule_title', 'rule').lower().replace(' ', '-')}",
-                    "severity": "fail" if violation_type == "MUST" else "warn",
+                    "severity": "error" if violation_type == "MUST" else "warn",
                     "message": item.get("description", "Zally API guideline violation"),
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        has_must = any(f["severity"] == "fail" for f in findings)
+        has_must = any(f["severity"] == "error" for f in findings)
         status: ToolStatus = (
             "fail"
             if has_must

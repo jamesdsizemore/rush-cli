@@ -62,4 +62,5 @@ def test_scorecard_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) ->
     )
     assert failing["status"] == "warn"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "scorecard/dangerous-workflow" in failing["findings"][0]["rule"]

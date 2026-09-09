@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -35,7 +35,7 @@ class CosignEngine(Engine):
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         exit_code = raw.get("exit_code", 0)
-        findings = []
+        findings: list[Finding] = []
         if exit_code != 0:
             findings.append(
                 {

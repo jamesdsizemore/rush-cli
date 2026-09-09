@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -48,7 +48,7 @@ class SlsaVerifierEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         exit_code = raw.get("exit_code", 0)
         if exit_code != 0 or raw.get("findings"):
             findings.append(
@@ -57,7 +57,7 @@ class SlsaVerifierEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": "slsa/provenance-verification-failed",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": raw.get("stderr")
                     or "SLSA provenance verification failed",
                 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult, ToolStatus
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class StatoscopeEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             is_error = item.get("status") == "error"
             findings.append(
@@ -59,7 +59,7 @@ class StatoscopeEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": f"statoscope/{item.get('name', 'bundle-validation')}",
-                    "severity": "fail" if is_error else "warn",
+                    "severity": "error" if is_error else "warn",
                     "message": item.get(
                         "message", "Bundle size / duplicate package issue"
                     ),
@@ -69,7 +69,7 @@ class StatoscopeEngine(Engine):
         exit_code = raw.get("exit_code", 0)
         status: ToolStatus = (
             "fail"
-            if any(f["severity"] == "fail" for f in findings)
+            if any(f["severity"] == "error" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
         )
 

@@ -63,4 +63,5 @@ def test_zally_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> Non
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "zally/use-snake-case-for-query-params" in failing["findings"][0]["rule"]

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..tools.base import Finding, ToolResult
+from ..tools.base import Finding, Severity, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -45,7 +45,7 @@ class HadolintEngine(Engine):
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         try:
             report = json.loads(raw.get("stdout", ""))
-            findings = _parse_hadolint_report(report, path)
+            findings: list[Finding] = _parse_hadolint_report(report, path)
         except (json.JSONDecodeError, TypeError, ValueError):
             return error_result(
                 tool_name,
@@ -130,7 +130,11 @@ def _parse_hadolint_report(report: Any, path: Path) -> list[Finding]:
     return findings
 
 
-def _severity(value: object) -> str:
-    return {"error": "error", "warning": "warn", "info": "info", "style": "info"}.get(
-        str(value).lower(), "warn"
-    )
+def _severity(value: object) -> Severity:
+    severities: dict[str, Severity] = {
+        "error": "error",
+        "warning": "warn",
+        "info": "info",
+        "style": "info",
+    }
+    return severities.get(str(value).lower(), "warn")
