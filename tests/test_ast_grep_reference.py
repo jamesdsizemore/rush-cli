@@ -60,4 +60,5 @@ def test_ast_grep_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> 
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "ast-grep/no-eval-call" in failing["findings"][0]["rule"]

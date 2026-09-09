@@ -61,4 +61,5 @@ def test_atlas_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> Non
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "atlas/destructive-table-drop-detected" in failing["findings"][0]["rule"]

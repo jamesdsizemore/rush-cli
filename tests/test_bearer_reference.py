@@ -68,4 +68,5 @@ def test_bearer_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> No
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert failing["findings"][0]["rule"] == "CWE-359"

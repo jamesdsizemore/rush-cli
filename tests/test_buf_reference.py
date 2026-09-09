@@ -59,4 +59,5 @@ def test_buf_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> None:
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "buf/FIELD_LOWER_SNAKE_CASE" in failing["findings"][0]["rule"]

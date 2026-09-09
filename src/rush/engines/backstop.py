@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -50,7 +50,7 @@ class BackstopEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             pair = item.get("pair", {})
             findings.append(
@@ -59,13 +59,13 @@ class BackstopEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": "backstop/viewport-mismatch",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": f"Visual mismatch in scenario '{pair.get('label', 'view')}' on viewport {pair.get('viewportLabel', 'default')}",
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = "fail" if (findings or exit_code != 0) else "ok"
+        status: ToolStatus = "fail" if (findings or exit_code != 0) else "ok"
 
         return ToolResult(
             tool=tool_name,

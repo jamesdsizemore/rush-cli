@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -64,7 +64,7 @@ class BearerEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(
                 {
@@ -74,7 +74,7 @@ class BearerEngine(Engine):
                     "rule": item.get("cwe_ids", ["privacy-finding"])[0]
                     if item.get("cwe_ids")
                     else "privacy-finding",
-                    "severity": "fail"
+                    "severity": "error"
                     if item.get("severity") in ("critical", "high")
                     else "warn",
                     "message": item.get("title")
@@ -83,8 +83,8 @@ class BearerEngine(Engine):
             )
 
         exit_code = raw.get("exit_code", 0)
-        has_errors = any(f["severity"] == "fail" for f in findings)
-        status = (
+        has_errors = any(f["severity"] == "error" for f in findings)
+        status: ToolStatus = (
             "fail"
             if has_errors
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
