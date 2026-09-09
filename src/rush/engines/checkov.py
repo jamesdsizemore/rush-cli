@@ -144,11 +144,14 @@ def _parse_checkov_report(report: Any, path: Path) -> tuple[list[Finding], list[
 
 
 def _checkov_path(check: dict[str, Any]) -> str | None:
-    source_path = check.get("file_abs_path") or check.get("file_path")
+    explicit_path = check.get("file_abs_path")
+    if isinstance(explicit_path, str):
+        return explicit_path
+
+    source_path = check.get("file_path")
     if not isinstance(source_path, str):
         return None
-    candidate = Path(source_path)
-    if not candidate.is_absolute() and source_path.startswith(("/", "\\")):
+    if source_path.startswith(("/", "\\")):
         return source_path.lstrip("/\\")
     return source_path
 

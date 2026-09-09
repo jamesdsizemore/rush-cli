@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -186,3 +187,88 @@ def test_iac_aggregates_tflint_and_checkov_in_declared_order(
         "iac/checkov",
         "iac/tflint",
     ]
+
+
+def _checkov_finding(**check: object) -> dict[str, object]:
+    return {
+        "results": {
+            "failed_checks": [
+                {
+                    "check_id": "CKV_TF_1",
+                    "check_name": "Example policy",
+                    "severity": "HIGH",
+                    "file_line_range": [1, 1],
+                    **check,
+                }
+            ],
+            "parsing_errors": [],
+        }
+    }
+
+
+def test_checkov_strips_root_prefix_from_nested_file_path_only(tmp_path: Path) -> None:
+    result = CheckovEngine().normalize(
+        {
+            "exit_code": 1,
+            "stdout": json.dumps(_checkov_finding(file_path="/modules/main.tf")),
+            "stderr": "",
+        },
+        tmp_path,
+        "iac",
+    )
+
+    assert result["findings"][0]["path"] == str(tmp_path / "modules" / "main.tf")
+
+
+def test_checkov_preserves_explicit_contained_absolute_file_path(
+    tmp_path: Path,
+) -> None:
+    explicit = tmp_path / "modules" / "main.tf"
+    result = CheckovEngine().normalize(
+        {
+            "exit_code": 1,
+            "stdout": json.dumps(
+                _checkov_finding(
+                    file_path="/wrong.tf",
+                    file_abs_path=str(explicit),
+                )
+            ),
+            "stderr": "",
+        },
+        tmp_path,
+        "iac",
+    )
+
+    assert result["findings"][0]["path"] == str(explicit)
+
+
+def test_checkov_rejects_outside_absolute_file_path(tmp_path: Path) -> None:
+    result = CheckovEngine().normalize(
+        {
+            "exit_code": 1,
+            "stdout": json.dumps(
+                _checkov_finding(file_abs_path=str(tmp_path.parent / "outside.tf"))
+            ),
+            "stderr": "",
+        },
+        tmp_path,
+        "iac",
+    )
+
+    assert result["status"] == "error"
+    assert result["metadata"]["terminal_reason"] == "malformed_output"
+
+
+def test_checkov_rejects_traversal_file_path(tmp_path: Path) -> None:
+    result = CheckovEngine().normalize(
+        {
+            "exit_code": 1,
+            "stdout": json.dumps(_checkov_finding(file_path="../outside.tf")),
+            "stderr": "",
+        },
+        tmp_path,
+        "iac",
+    )
+
+    assert result["status"] == "error"
+    assert result["metadata"]["terminal_reason"] == "malformed_output"

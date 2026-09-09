@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pip-audit==2.10.1", "ruff==0.16.3"]
+dev = ["pip-audit==2.10.1", "ruff==0.16.3", "mypy==2.3.1"]
 
 [project.scripts]
 rush = "rush.cli:cli"

@@ -31,10 +31,13 @@ jobs:
         run: uv sync --all-extras --frozen
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests scripts
 
       - name: Check formatting
-        run: uv run ruff format --check src tests
+        run: uv run ruff format --check src tests scripts
+
+      - name: Build distribution artifacts
+        run: uv build
 
       - name: Run tests
         run: uv run pytest tests/ -q
@@ -50,9 +53,6 @@ jobs:
 
       - name: Check whitespace
         run: git diff --check
-
-      - name: Build distribution artifacts
-        run: uv build
 
   representative-engines:
     name: Representative Python engine smoke
@@ -115,6 +115,30 @@ jobs:
         env:
           RUSH_REQUIRE_REAL_ENGINES: "1"
         run: uv run --no-sync pytest tests/test_executed_modes.py -q -k real_workload
+
+  windows-contracts:
+    name: Windows runtime and installed contracts
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Install locked dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Build distribution artifacts
+        run: uv build
+
+      - name: Verify Windows contracts
+        run: uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py -q
 
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})
