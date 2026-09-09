@@ -62,4 +62,5 @@ def test_garak_normalizes_clean_and_vulnerabilities(
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "dan.Dan_11_0" in failing["findings"][0]["rule"]

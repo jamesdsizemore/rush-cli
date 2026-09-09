@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -49,7 +49,7 @@ class DockleEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             level = item.get("level", "WARN").upper()
             findings.append(
@@ -58,15 +58,15 @@ class DockleEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": f"dockle/{item.get('code', 'CIS-DI')}",
-                    "severity": "fail" if level in ("FATAL", "WARN") else "warn",
+                    "severity": "error" if level in ("FATAL", "WARN") else "warn",
                     "message": item.get("title", "Container security check"),
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = (
+        status: ToolStatus = (
             "fail"
-            if any(f["severity"] == "fail" for f in findings)
+            if any(f["severity"] == "error" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
         )
 

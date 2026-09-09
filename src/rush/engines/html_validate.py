@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -52,7 +52,7 @@ class HtmlValidateEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             severity = item.get("severity", 1)  # 2 is error, 1 is warning
             findings.append(
@@ -61,15 +61,15 @@ class HtmlValidateEngine(Engine):
                     "line": item.get("line", 0),
                     "column": item.get("column", 0),
                     "rule": f"html-validate/{item.get('ruleId', 'html-error')}",
-                    "severity": "fail" if severity == 2 else "warn",
+                    "severity": "error" if severity == 2 else "warn",
                     "message": item.get("message", "HTML validation error"),
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = (
+        status: ToolStatus = (
             "fail"
-            if any(f["severity"] == "fail" for f in findings)
+            if any(f["severity"] == "error" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
         )
 

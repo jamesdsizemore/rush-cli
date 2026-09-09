@@ -65,4 +65,5 @@ def test_graphql_inspector_normalizes_clean_and_findings(
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "graphql/field_removed" in failing["findings"][0]["rule"]

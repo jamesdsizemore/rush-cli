@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -83,7 +83,7 @@ class HorusecEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             severity = item.get("severity", "LOW").upper()
             findings.append(
@@ -92,15 +92,15 @@ class HorusecEngine(Engine):
                     "line": int(item.get("line", 0) or 0),
                     "column": int(item.get("column", 0) or 0),
                     "rule": item.get("rule_id") or item.get("type", "horusec-vuln"),
-                    "severity": "fail" if severity in ("CRITICAL", "HIGH") else "warn",
+                    "severity": "error" if severity in ("CRITICAL", "HIGH") else "warn",
                     "message": item.get("details", "Horusec vulnerability finding"),
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = (
+        status: ToolStatus = (
             "fail"
-            if any(f["severity"] == "fail" for f in findings)
+            if any(f["severity"] == "error" for f in findings)
             else ("warn" if findings else ("ok" if exit_code == 0 else "error"))
         )
 

@@ -61,4 +61,5 @@ def test_lighthouse_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "lighthouse/largest-contentful-paint" in failing["findings"][0]["rule"]

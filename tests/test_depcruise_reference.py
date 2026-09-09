@@ -63,4 +63,5 @@ def test_depcruise_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) ->
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "depcruise/no-controller-to-db" in failing["findings"][0]["rule"]

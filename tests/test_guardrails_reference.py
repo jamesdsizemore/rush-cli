@@ -68,4 +68,5 @@ def test_guardrails_normalizes_clean_and_violations(
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert failing["findings"][0]["rule"] == "unreachable-flow"

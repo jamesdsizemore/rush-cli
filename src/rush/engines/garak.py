@@ -8,7 +8,7 @@ from pathlib import Path
 from ..io.atomic_file import AtomicFile, SanitizedBytes
 from ..io.physical_paths import PhysicalRoot
 from ..safety.redactor import sanitize_value
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -66,7 +66,7 @@ class GarakEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             probe_name = item.get("probe", "garak-probe")
             detector = item.get("detector", "vulnerability")
@@ -77,13 +77,15 @@ class GarakEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": f"{probe_name}/{detector}",
-                    "severity": "fail" if score < 0.5 else "warn",
+                    "severity": "error" if score < 0.5 else "warn",
                     "message": f"Garak probe vulnerability: {probe_name} (detector: {detector}, score: {score})",
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = "fail" if findings else ("ok" if exit_code == 0 else "error")
+        status: ToolStatus = (
+            "fail" if findings else ("ok" if exit_code == 0 else "error")
+        )
 
         return ToolResult(
             tool=tool_name,

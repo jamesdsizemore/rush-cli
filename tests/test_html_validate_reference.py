@@ -65,4 +65,5 @@ def test_html_validate_normalizes_clean_and_findings(
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert failing["findings"][0]["rule"] == "html-validate/element-required-attributes"

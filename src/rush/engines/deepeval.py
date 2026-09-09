@@ -8,7 +8,7 @@ from pathlib import Path
 from ..io.atomic_file import AtomicFile
 from ..io.physical_paths import PhysicalRoot
 from ..safety.redactor import sanitize_value
-from ..tools.base import ToolResult
+from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
 
@@ -62,7 +62,7 @@ class DeepevalEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        findings = []
+        findings: list[Finding] = []
         for item in raw.get("findings", []):
             name = item.get("name") or item.get("metric", "DeepEvalMetric")
             score = item.get("score", 0.0)
@@ -73,13 +73,15 @@ class DeepevalEngine(Engine):
                     "line": 0,
                     "column": 0,
                     "rule": f"deepeval/{name}",
-                    "severity": "fail",
+                    "severity": "error",
                     "message": f"{name} failed with score {score}: {reason}",
                 }
             )
 
         exit_code = raw.get("exit_code", 0)
-        status = "fail" if findings else ("ok" if exit_code == 0 else "error")
+        status: ToolStatus = (
+            "fail" if findings else ("ok" if exit_code == 0 else "error")
+        )
 
         return ToolResult(
             tool=tool_name,

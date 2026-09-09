@@ -58,4 +58,5 @@ def test_dockle_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> No
     )
     assert failing["status"] == "fail"
     assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
     assert "dockle/CIS-DI-0001" in failing["findings"][0]["rule"]
