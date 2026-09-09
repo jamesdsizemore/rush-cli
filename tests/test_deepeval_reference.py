@@ -16,6 +16,9 @@ def test_deepeval_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
         argv: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
+        (Path(_kwargs["cwd"]) / "deepeval-results.json").write_text(
+            '{"test_results": [{"success": true}]}'
+        )
         return subprocess.CompletedProcess(
             argv, 0, stdout='{"test_results": []}', stderr=""
         )
@@ -31,7 +34,8 @@ def test_deepeval_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
             "C:/bin/deepeval",
             "test",
             "run",
-            "--json-report=deepeval-results.json",
+            str(tmp_path),
+            f"--json-report={tmp_path / 'deepeval-results.json'}",
         ]
     ]
 

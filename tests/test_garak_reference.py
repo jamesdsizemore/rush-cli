@@ -16,6 +16,9 @@ def test_garak_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
         argv: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
+        (Path(_kwargs["cwd"]) / "garak_report.report.jsonl").write_text(
+            '{"entry_type": "eval", "passed": true}\n'
+        )
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(garak, "resolve_binary", lambda _binary: "C:/bin/garak")
@@ -28,7 +31,7 @@ def test_garak_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
         [
             "C:/bin/garak",
             "--report_prefix",
-            "garak_report",
+            str(tmp_path / "garak_report"),
         ]
     ]
 

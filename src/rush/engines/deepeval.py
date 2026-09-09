@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..io.atomic_file import AtomicFile
+from ..io.physical_paths import PhysicalRoot
+from ..safety.redactor import sanitize_value
 from ..tools.base import ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
@@ -21,24 +24,22 @@ class DeepevalEngine(Engine):
         args: list[str],
         cwd: Path | None = None,
     ) -> EngineResult:
+        physical = PhysicalRoot(cwd or path)
+        report_file = physical.open_contained("deepeval-results.json", purpose="write")
+        if report_file.exists():
+            raise ValueError("Evaluation report must not preexist invocation")
         binary_path = resolve_binary(self.binary) or self.binary
-        default_args = ["test", "run", "--json-report=deepeval-results.json"]
+        default_args = ["test", "run", str(path), f"--json-report={report_file}"]
         argv = [binary_path, *default_args, *args]
 
         proc = run_subprocess(argv, cwd=cwd or path, timeout=300)
 
-        parsed = None
-        report_file = (cwd or path) / "deepeval-results.json"
-        if report_file.exists():
-            try:
-                parsed = json.loads(report_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                parsed = None
-        elif proc.stdout.strip():
-            try:
-                parsed = json.loads(proc.stdout)
-            except json.JSONDecodeError:
-                parsed = None
+        report_file = physical.open_contained(report_file.name, purpose="read")
+        if not report_file.is_file():
+            raise ValueError("DeepEval did not create its invocation report")
+        sanitized = sanitize_value(json.loads(report_file.read_text(encoding="utf-8")))
+        parsed = sanitized.value
+        AtomicFile(physical).write_json(report_file.name, sanitized)
 
         findings_raw: list[dict] = []
         if isinstance(parsed, dict) and "test_results" in parsed:

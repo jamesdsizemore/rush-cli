@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+from ..io.atomic_file import AtomicFile
+from ..io.physical_paths import PhysicalRoot
+from ..safety.redactor import sanitize_value
 from ..tools.base import ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
@@ -21,47 +25,65 @@ class PromptfooEngine(Engine):
         args: list[str],
         cwd: Path | None = None,
     ) -> EngineResult:
+        physical = PhysicalRoot(cwd or path)
+        report_file = physical.open_contained("promptfoo-report.json", purpose="write")
+        if report_file.exists():
+            raise ValueError("Evaluation report must not preexist invocation")
         binary_path = resolve_binary(self.binary) or self.binary
         default_args = [
             "eval",
             "--output",
-            "promptfoo-report.json",
+            str(report_file),
             "--no-table",
-            "--no-progress-bars",
+            "--no-progress-bar",
+            "--no-cache",
+            "--no-write",
+            "--no-share",
         ]
         argv = [binary_path, *default_args, *args]
 
-        proc = run_subprocess(argv, cwd=cwd or path, timeout=300)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd or path,
+            timeout=300,
+            env={
+                **os.environ,
+                "PROMPTFOO_CONFIG_DIR": str(cwd or path),
+                "PROMPTFOO_DISABLE_TELEMETRY": "1",
+            },
+        )
 
         parsed = None
-        report_file = (cwd or path) / "promptfoo-report.json"
-        if report_file.exists():
-            try:
-                parsed = json.loads(report_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                parsed = None
-        elif proc.stdout.strip():
-            try:
-                parsed = json.loads(proc.stdout)
-            except json.JSONDecodeError:
-                parsed = None
+        report_file = physical.open_contained(report_file.name, purpose="read")
+        if not report_file.is_file():
+            raise ValueError("Promptfoo did not create its invocation report")
+        sanitized = sanitize_value(json.loads(report_file.read_text(encoding="utf-8")))
+        parsed = sanitized.value
+        AtomicFile(physical).write_json(report_file.name, sanitized)
 
         findings_raw: list[dict] = []
         if isinstance(parsed, dict) and "results" in parsed:
-            for table in parsed.get("results", {}).get("table", {}).get("body", []):
-                # Check for failing test assertions
-                pass_status = (
-                    table.get("pass", True) if isinstance(table, dict) else True
+            results = parsed["results"]
+            rows = results.get("results", []) if isinstance(results, dict) else []
+            if not rows and isinstance(results, dict):
+                rows = results.get("table", {}).get("body", [])
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                grading = row.get("gradingResult", {})
+                pass_status = row.get(
+                    "success", row.get("pass", grading.get("pass", True))
                 )
                 if not pass_status:
                     findings_raw.append(
                         {
-                            "description": table.get(
-                                "description", "Promptfoo test failure"
+                            "description": row.get("testCase", {}).get(
+                                "description",
+                                row.get("description", "Promptfoo test failure"),
                             ),
-                            "provider": table.get("provider", "llm"),
-                            "prompt": table.get("prompt", {}).get("raw", ""),
-                            "gradingResult": table.get("gradingResult", {}),
+                            "provider": row.get("provider", "llm"),
+                            "prompt": row.get("prompt", {}).get("raw", ""),
+                            "gradingResult": grading,
                         }
                     )
 

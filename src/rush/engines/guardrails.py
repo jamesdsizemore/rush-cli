@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..io.atomic_file import AtomicFile
+from ..io.physical_paths import PhysicalRoot
+from ..safety.redactor import sanitize_value
 from ..tools.base import ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
@@ -21,23 +24,26 @@ class GuardrailsEngine(Engine):
         args: list[str],
         cwd: Path | None = None,
     ) -> EngineResult:
+        physical = PhysicalRoot(cwd or path)
+        report_file = physical.open_contained(
+            "guardrails-results.json", purpose="write"
+        )
+        if report_file.exists():
+            raise ValueError("Evaluation report must not preexist invocation")
         binary_path = resolve_binary(self.binary) or self.binary
         default_args = ["validate", "--format", "json"]
         argv = [binary_path, *default_args, *args, str(path)]
 
         proc = run_subprocess(argv, cwd=cwd or path, timeout=120)
 
-        parsed = None
+        sanitized = sanitize_value(json.loads(proc.stdout))
+        parsed = sanitized.value
+        AtomicFile(physical).write_json(report_file.name, sanitized)
         findings_raw: list[dict] = []
-        if proc.stdout.strip():
-            try:
-                parsed = json.loads(proc.stdout)
-                if isinstance(parsed, dict) and "violations" in parsed:
-                    findings_raw = parsed["violations"]
-                elif isinstance(parsed, list):
-                    findings_raw = parsed
-            except json.JSONDecodeError:
-                parsed = None
+        if isinstance(parsed, dict) and "violations" in parsed:
+            findings_raw = parsed["violations"]
+        elif isinstance(parsed, list):
+            findings_raw = parsed
 
         return EngineResult(
             exit_code=proc.returncode,

@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..io.atomic_file import AtomicFile, SanitizedBytes
+from ..io.physical_paths import PhysicalRoot
+from ..safety.redactor import sanitize_value
 from ..tools.base import ToolResult
 from ..tools.common import resolve_binary, run_subprocess
 from .base import Engine, EngineResult
@@ -21,38 +24,36 @@ class GarakEngine(Engine):
         args: list[str],
         cwd: Path | None = None,
     ) -> EngineResult:
+        physical = PhysicalRoot(cwd or path)
+        report_file = physical.open_contained(
+            "garak_report.report.jsonl", purpose="write"
+        )
+        if report_file.exists():
+            raise ValueError("Evaluation report must not preexist invocation")
         binary_path = resolve_binary(self.binary) or self.binary
-        default_args = ["--report_prefix", "garak_report"]
+        default_args = ["--report_prefix", str(physical.root_path / "garak_report")]
         argv = [binary_path, *default_args, *args]
 
         proc = run_subprocess(argv, cwd=cwd or path, timeout=300)
 
         findings_raw: list[dict] = []
-        # Search for generated report.jsonl
-        report_files = list((cwd or path).glob("garak_report*.report.jsonl"))
-        if report_files:
-            try:
-                for line in report_files[0].read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    entry = json.loads(line)
-                    if (
-                        entry.get("entry_type") == "eval"
-                        and entry.get("passed") is False
-                    ):
-                        findings_raw.append(entry)
-            except (json.JSONDecodeError, OSError):
-                pass
-        elif proc.stdout.strip():
-            try:
-                for line in proc.stdout.splitlines():
-                    if not line.strip():
-                        continue
-                    entry = json.loads(line)
-                    if isinstance(entry, dict) and entry.get("passed") is False:
-                        findings_raw.append(entry)
-            except json.JSONDecodeError:
-                pass
+        report_file = physical.open_contained(report_file.name, purpose="read")
+        if not report_file.is_file():
+            raise ValueError("Garak did not create its invocation report")
+        rows = sanitize_value(
+            [
+                json.loads(line)
+                for line in report_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        ).value
+        AtomicFile(physical).write_bytes(
+            report_file.name,
+            SanitizedBytes("".join(json.dumps(row) + "\n" for row in rows).encode()),
+        )
+        for entry in rows:
+            if entry.get("entry_type") == "eval" and entry.get("passed") is False:
+                findings_raw.append(entry)
 
         return EngineResult(
             exit_code=proc.returncode,

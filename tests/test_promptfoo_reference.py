@@ -16,6 +16,9 @@ def test_promptfoo_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
         argv: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
+        (Path(_kwargs["cwd"]) / "promptfoo-report.json").write_text(
+            '{"results": {"results": [{"success": true}]}}'
+        )
         return subprocess.CompletedProcess(
             argv, 0, stdout='{"results": {"table": {"body": []}}}', stderr=""
         )
@@ -31,9 +34,12 @@ def test_promptfoo_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
             "C:/bin/promptfoo",
             "eval",
             "--output",
-            "promptfoo-report.json",
+            str(tmp_path / "promptfoo-report.json"),
             "--no-table",
-            "--no-progress-bars",
+            "--no-progress-bar",
+            "--no-cache",
+            "--no-write",
+            "--no-share",
         ]
     ]
 
