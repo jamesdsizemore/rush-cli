@@ -10,7 +10,7 @@ Returns skipped if neither marker is present.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
@@ -18,6 +18,10 @@ from .routing import aggregate_results
 
 if TYPE_CHECKING:
     from ..permissions import ExecutionPermissions
+
+    class _EnginePermissions(TypedDict, total=False):
+        permissions: ExecutionPermissions
+
 
 _OSV_LOCKFILES = (
     "poetry.lock",
@@ -94,7 +98,9 @@ class SecurityTool(ToolFn):
                 },
             )
 
-        engine_kwargs = {"permissions": permissions} if permissions is not None else {}
+        engine_kwargs: _EnginePermissions = (
+            {"permissions": permissions} if permissions is not None else {}
+        )
         results: list[ToolResult] = []
         if (project_root / "requirements.txt").is_file():
             results.append(

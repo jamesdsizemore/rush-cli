@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .base import ToolFn, ToolName, ToolResult
+from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import (
     elapsed_ms,
     engine_on_path,
@@ -27,7 +27,7 @@ from .common import (
 from .routing import collect_files, combine_status, detect_project_languages
 
 
-def _build_skipped_result(start: float, summary: str) -> ToolResult:
+def _build_skipped_result(start: int, summary: str) -> ToolResult:
     return ToolResult(
         tool="lint",
         engine=None,
@@ -64,12 +64,12 @@ def _run_selected_engines(
     targets: list[Path],
     path: Path,
     engine_args: list[str] | None = None,
-) -> tuple[list[dict[str, Any]], str, list[str]]:
+) -> tuple[list[Finding], ToolStatus, list[str]]:
     """Execute each applicable engine sequentially and aggregate findings."""
     from ..engines import ENGINES
 
-    findings_all: list[dict[str, Any]] = []
-    last_status = "skipped"
+    findings_all: list[Finding] = []
+    last_status: ToolStatus = "skipped"
     engines_used: list[str] = []
 
     for name in ("ruff", "eslint"):
@@ -92,7 +92,7 @@ def _run_selected_engines(
 
 
 def _check_missing_engines_result(
-    engine_files: dict[str, list[Path]], start: float
+    engine_files: dict[str, list[Path]], start: int
 ) -> ToolResult:
     """Return a skipped result when required engines are missing from PATH."""
     ruff_files = engine_files.get("ruff", [])
@@ -111,10 +111,10 @@ def _check_missing_engines_result(
 
 
 def _assemble_lint_result(
-    findings_all: list[dict[str, Any]],
-    last_status: str,
+    findings_all: list[Finding],
+    last_status: ToolStatus,
     engines_used: list[str],
-    start: float,
+    start: int,
 ) -> ToolResult:
     """Assemble canonical ToolResult from aggregated engine findings and status."""
     status = last_status
