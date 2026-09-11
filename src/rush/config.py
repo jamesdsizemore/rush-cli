@@ -350,3 +350,25 @@ def resolve_tool_options(
                 resolved[name] = val
 
     return resolved
+
+
+def resolve_memory_record(cfg: Mapping[str, Any] | None) -> bool:
+    """Resolve the single opt-in `[tools.memory] record` observation flag. Default `False`.
+
+    MC05 (Phase 63) adds only this key; MC14 adds the remaining `tools.memory`
+    configuration keys later. Accepts either a snapshotted `RushConfig`-shaped
+    mapping (`tools.memory.options.record`, produced by `_parse()`/invocation
+    config snapshotting) or a flat test mapping (`tools.memory.record`).
+    """
+    if not isinstance(cfg, Mapping):
+        return False
+    tools = cfg.get("tools")
+    if not isinstance(tools, Mapping):
+        return False
+    memory_cfg = tools.get("memory")
+    if not isinstance(memory_cfg, Mapping):
+        return False
+    options = memory_cfg.get("options")
+    if isinstance(options, Mapping) and "record" in options:
+        return bool(options["record"])
+    return bool(memory_cfg.get("record", False))

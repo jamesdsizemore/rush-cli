@@ -60,6 +60,10 @@ EXPECTED_TOOLS = {f"rush_{tool.name.replace('-', '_')}" for tool in ALL_TOOLS} |
     "rush_iam_audit",
     "rush_dead_asset",
     "rush_pr_synthesize",
+    "rush_project",
+    "rush_scan",
+    "rush_agent_connection",
+    "rush_scan_handoff",
 }
 
 

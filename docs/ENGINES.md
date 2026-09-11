@@ -82,10 +82,10 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Pa11y (`pa11y`) | Automated WCAG 2.1 AA/AAA accessibility | `security` | `npm install -g pa11y` | HTML files/URLs; evaluates contrast, ARIA, and markup semantics. |
 | HTML-Validate (`html-validate`) | W3C HTML validator | `templates` | `npm install -D html-validate` | HTML/Vue/Svelte templates; detects malformed elements and missing tags. |
 | Lighthouse (`lighthouse`) | Core Web Vitals & performance | `visual` | `npm install -g lighthouse` | Web URLs; audits LCP, CLS, FID, and SEO benchmarks under `--allow-browser`. |
-| OWASP ZAP (`zap-cli`) | Dynamic Application Security Testing | `security` | `pip install zapcli` | Web endpoints; runs safe active/passive vulnerability scans under `--allow-network`. |
+| OWASP ZAP (`zap`, binary `zap-cli`) | Dynamic Application Security Testing | `security` | `pip install zapcli` | Web endpoints; runs safe active/passive vulnerability scans under `--allow-network`. |
 | Deadfinder (`deadfinder`) | Broken route & 404 crawler | `security` | `install deadfinder` | SPA web applications; crawls endpoints for broken links. |
 | Broken-Link-Checker (`blc`) | Recursive anchor validator | `lint` | `npm install -g broken-link-checker` | HTML sites; verifies all internal and external hyperlinks. |
-| PageSpeed (`pagespeed-insights`) | Real-world web performance | `visual` | `npm install -g psi` | Web endpoints; assesses performance metrics against real-world data. |
+| PageSpeed (`pagespeed`, binary `pagespeed-insights`) | Real-world web performance | `visual` | `npm install -g psi` | Web endpoints; assesses performance metrics against real-world data. |
 
 ## Advanced Polyglot Mutation Testing & Fault Injection (Phase 16)
 
@@ -94,7 +94,7 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Stryker (`stryker`) | JS/TS/C# mutation testing | `mutation` | `npm install -D @stryker-mutator/core` | JavaScript, TypeScript, C# projects; tests test suite resilience under `--allow-slow`. |
 | Cosmic Ray (`cosmic-ray`) | Python mutation testing | `mutation` | `pip install cosmic-ray` | Python packages; injects AST faults to verify test coverage efficacy. |
 | Infection (`infection`) | PHP AST mutation testing | `mutation` | `composer require --dev infection/infection` | PHP codebases; executes mutation testing against PHPUnit/Pest. |
-| Pitest (`mvn org.pitest:pitest-maven`) | Java/Kotlin bytecode mutation | `mutation` | `install pitest` | JVM projects; tests branch and mutation coverage on bytecode. |
+| Pitest (`pitest`, invoked as `mvn org.pitest:pitest-maven`) | Java/Kotlin bytecode mutation | `mutation` | `install pitest` | JVM projects; tests branch and mutation coverage on bytecode. |
 | Cargo-mutants (`cargo-mutants`) | Rust mutation testing | `mutation` | `cargo install cargo-mutants` | Rust crates; mutates AST expressions without cargo clean rebuilds. |
 
 ## UI/UX, Visual Regression & Web Asset Optimization (Phase 17)
@@ -102,13 +102,13 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Engine | What / who | Command | Catalog install hint | Applicability and recovery |
 |---|---|---|---|---|
 | Lost Pixel (`lost-pixel`) | Storybook/Ladle visual diffing | `visual` | `npm install -D lost-pixel` | UI component stories; catches unintended visual regressions. |
-| BackstopJS (`backstopjs`) | Responsive multi-viewport visual test | `visual` | `npm install -g backstopjs` | Web apps; captures multi-screen layout regressions under `--allow-browser`. |
+| BackstopJS (`backstop`, package `backstopjs`) | Responsive multi-viewport visual test | `visual` | `npm install -g backstopjs` | Web apps; captures multi-screen layout regressions under `--allow-browser`. |
 | Playwright (`playwright`) | Headless browser end-to-end testing | `e2e`, `visual` | `npm install -D @playwright/test` | Web applications; requires `--allow-browser`. |
 | Axe-core (`axe`) | Accessibility testing engine | `semantic-drift`, `security` | `npm install -D @axe-core/cli` | DOM/accessibility standards inspection under `--allow-browser`. |
 | Semantic-drift (`semantic-drift`) | DOM and accessibility drift detection | `semantic-drift` | `rush semantic-drift` | Browser-driven correctness verification under `--allow-browser` and `--allow-slow`. |
 | Stylelint (`stylelint`) | CSS/SCSS/CSS-in-JS linter | `lint` | `npm install -D stylelint` | CSS/SCSS/Less stylesheets; enforces style conventions and valid rules. |
 | A11yWatch (`a11ywatch`) | Multi-page accessibility crawler | `security` | `npm install -g a11ywatch-cli` | Full websites; crawls site hierarchy for accessibility regressions. |
-| Squoosh (`squoosh-cli`) | Web image compressor | `format` | `npm install -g @squoosh/cli` | PNG/JPG/WebP/AVIF images; compresses assets without perceptual quality loss. |
+| Squoosh (`squoosh`, binary `squoosh-cli`) | Web image compressor | `format` | `npm install -g @squoosh/cli` | PNG/JPG/WebP/AVIF images; compresses assets without perceptual quality loss. |
 | Critical (`critical`) | Above-the-fold CSS inliner | `format` | `npm install -g critical` | HTML pages; extracts and inlines critical render path stylesheets. |
 | Font-Spider (`font-spider`) | Web font glyph compressor | `format` | `npm install -g font-spider` | Font files; analyzes HTML to prune unused glyphs from web fonts. |
 
@@ -116,7 +116,7 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 
 | Engine | What / who | Command | Catalog install hint | Applicability and recovery |
 |---|---|---|---|---|
-| markdownlint-cli (`markdownlint`) | Markdown rules | `markdown` | `npm install -D markdownlint-cli` | `.md/.mdx`; Rush uses owned contained config rather than custom rules. |
+| markdownlint-cli (`markdownlint-cli`, binary `markdownlint`) | Markdown rules | `markdown` | `npm install -D markdownlint-cli` | `.md/.mdx`; Rush uses owned contained config rather than custom rules. |
 | Lychee (`lychee`) | Broken link checker | `markdown` | `install lychee` | `.md/.html`; offline checking by default; `--allow-network` for live URLs. |
 | Actionlint (`actionlint`) | GitHub Actions workflows | `actions` | `install actionlint` | `.github/workflows`; download an upstream release for Windows/macOS/Linux and verify `actionlint -version`. |
 | Spectral (`spectral`) | YAML/OpenAPI rules | `yaml` | `npm install -D @stoplight/spectral-cli` | `.yml/.yaml`; remote `$ref` is rejected. |
@@ -140,7 +140,7 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Scorecard (`scorecard`) | OpenSSF supply chain posture | `ci` | `install scorecard` | Repository-wide; evaluates branch protection, dangerous workflows, and pin dependencies. |
 | ScanCode (`scancode`) | License & copyright toolkit | `sbom` | `pip install scancode-toolkit` | Code and dependency tree; deep copyleft and license risk identification. |
 | SLSA Verifier (`slsa-verifier`) | SLSA provenance verifier | `release` | `install slsa-verifier` | Artifact verification against cryptographic build provenance attestations. |
-| GUAC (`guacone`) | Supply chain graph analysis | `sbom` | `install guac` | Graph-based vulnerability and provenance queries across software supply chain metadata. |
+| GUAC (`guac`, binary `guacone`) | Supply chain graph analysis | `sbom` | `install guac` | Graph-based vulnerability and provenance queries across software supply chain metadata. |
 | pip-licenses (`pip-licenses`) | Python license compliance | `sbom` | `pip install pip-licenses` | Python environment packages; audits dependency license copyleft risks. |
 | Cosign (`cosign`) | Signature verification | `release` | `install cosign` | Local blob signature and provenance verification. |
 | Commitlint (`commitlint`) | Conventional Commit messages | `commit-msg` | `npm install -D @commitlint/cli` | Validates commit messages passed via `-m/--message` or file. |
@@ -164,7 +164,7 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 | Vale (`vale`) | Documentation & prose style linter | `lint` | `install vale` | Syntax-aware editorial guide and style rule enforcement. |
 | CSpell (`cspell`) | Identifier & code spell checker | `lint` | `npm install -g cspell` | Catches spelling mistakes across source code, strings, and comments. |
 | Alex (`alex`) | Inclusive language linter | `lint` | `npm install -g alex` | Flags insensitive or inconsiderate terminology in markdown/docs. |
-| Readability (`readability-cli`) | Flesch-Kincaid prose analyzer | `complexity` | `npm install -g readability-cli` | Evaluates reading ease and grade-level complexity. |
+| Readability (`readability`, binary `readability-cli`) | Flesch-Kincaid prose analyzer | `complexity` | `npm install -g readability-cli` | Evaluates reading ease and grade-level complexity. |
 | RedPen (`redpen`) | Technical documentation validator | `lint` | `install redpen` | Enforces vocabulary consistency and sentence length thresholds. |
 | No-Jargon (`no-jargon`) | Corporate buzzword detector | `lint` | `npm install -g no-jargon` | Flags marketing clichés and corporate buzzwords. |
 | Markdown-Unfluff (`markdown-unfluff`) | AI filler pattern cleaner | `lint` | `pip install markdown-unfluff` | Detects redundant AI bullet points and repetitive prose fluff. |
@@ -246,3 +246,50 @@ Rush governs engine discovery and conformance through `governance/engine-support
    - Experimental or advisory tools with permissive skip semantics (`can_pass_all_skipped = true`).
 ## Deterministic Engine Conformance (Phase 59)
 All 19 engine families are classified into `mandatory`, `supported-optional`, and `best-effort`. Supported families cannot pass when all tests are skipped (`can_pass_all_skipped = false`). Tests execute with fixed-PATH isolation to prevent ambient host tools from masking gaps.
+
+## Rush-managed toolchain provisioning (Phase 65 P65-02)
+
+`rush setup --install` builds and, with explicit `--allow-*` grants, applies a provision plan that installs a project's recommended engines into Rush-owned toolchain directories (`<Rush data root>/toolchains/<engine>/<version>/<os>-<arch>/`), instead of asking a user to run the informational per-engine install hints above manually. Every engine in `rush.catalog.ENGINE_SPECS` (121 keys) has exactly one row in `rush.setup.engine_packages.ENGINE_PACKAGES` naming its real, canonical installable package identity -- e.g. `biome` installs `@biomejs/biome`, not the bare `biome` executable name; `tsc` installs `typescript`. An engine outside this declared allowlist is never installed under an arbitrary or invented package name; `rush.setup.provision.build_provision_plan` rejects it immediately.
+
+### Manager families and canonical identity examples
+
+| Manager family | Source registry | Example engine → package identity | Install destination |
+|---|---|---|---|
+| uv/pip | PyPI (`pypi.org/pypi/<pkg>/json`) | `ruff` → `ruff`, `guardrails` → `guardrails-ai` | Rush-owned toolchain dir via `uv tool install` |
+| npm/yarn | npm registry (`registry.npmjs.org`) | `biome` → `@biomejs/biome`, `tsc` → `typescript` | Rush-owned toolchain dir via `npm install --global --prefix <dir> --ignore-scripts` |
+| Cargo | crates.io API | `cargo-mutants` → `cargo-mutants`, `clines` → `clines` | `cargo install --locked --root <dir>` |
+| RubyGems | rubygems.org API | `undercover` → `undercover` | `gem install --install-dir <dir> --no-document` |
+| Composer | Packagist (`repo.packagist.org/p2`) | `infection` → `infection/infection` | `composer require --no-interaction --no-scripts --working-dir <dir>` |
+| Maven (project plugin) | Maven Central (`search.maven.org`) | `pitest` → `org.pitest:pitest-maven` | `mvn dependency:get` against the resolved coordinate |
+| Go (source build) | Go module proxy | `zally` → `zalando/zally` pinned `v2.1.1` | `go install github.com/zalando/zally@v2.1.1` with `GOBIN` set to the Rush toolchain dir |
+| Native binary (GitHub release) | GitHub Releases API | `osv-scanner` → `google/osv-scanner`, `gitleaks` → `gitleaks/gitleaks`, `trivy` → `aquasecurity/trivy` (34 engines total) | Verified download + checksum + safe archive extraction into the Rush toolchain dir |
+| Alias (no separate install) | n/a | `npm-audit` → ships with npm; `git-guard` → ships with git | Reuses the already-provisioned npm/git runtime |
+| Internal target adapter | n/a | `semantic-drift` -- never a fictional standalone executable | Runtime selected by target config (managed Playwright or .NET) |
+
+### Runtime prerequisites (`rush.setup.engine_packages.RUNTIME_PACKAGES`)
+
+| Runtime | Resolution source | Managed by Rush |
+|---|---|---|
+| uv | `astral-sh/uv` GitHub releases | Yes |
+| Python | uv-managed Python catalog | Yes |
+| Node.js / npm | `nodejs.org/dist/index.json` (npm bundled) | Yes |
+| Rust / Cargo | `static.rust-lang.org/dist/channel-rust-stable.toml` (Cargo bundled) | Yes |
+| Go | `go.dev/dl/?mode=json&include=all` | Yes |
+| JVM | Eclipse Adoptium API (JDK 21) | Yes |
+| Maven / Gradle | Apache Maven / Gradle distribution archives | Yes |
+| Composer | getcomposer.org installer | Yes |
+| PHP, Ruby, Erlang, Elixir, Git | OS package manager only (Homebrew, winget, apt, dnf, apk) | No -- surfaced as `SYSTEM_PREREQUISITE_REQUIRED` with the exact command; Rush never installs Homebrew/winget or invokes sudo/UAC implicitly |
+
+Exact OS-package prerequisite names (`rush.setup.engine_packages.OS_PACKAGE_NAMES`): `php` → `php`/`PHP.PHP.8.4`; `ruby` → `ruby`/`RubyInstallerTeam.Ruby.3.4`; `erlang` → `erlang`/`Erlang.ErlangOTP`/apt `erlang-base`; `elixir` → `elixir` (no winget package); `git` → `git`/`Git.Git`.
+
+### Project dependency installs (`rush.setup.engine_packages.PROJECT_MANAGER_COMMANDS`)
+
+Project dependencies (as opposed to engine toolchains) install via each manager's own lockfile-preserving command: `npm ci --ignore-scripts`, `pnpm install --frozen-lockfile --ignore-scripts`, Yarn Classic `install --frozen-lockfile --ignore-scripts`, Yarn Berry `install --immutable`, `uv sync --frozen`, `poetry install --sync`, `go mod download`, `composer install --no-interaction --no-scripts`, `mix deps.get --check-locked`, and isolated-snapshot Maven/Gradle wrapper builds. Project lockfiles are always honored, never silently regenerated; install/build scripts require the explicit `build` grant.
+
+### Manifest binding and tamper detection
+
+Every successful install writes an immutable `manifest.json` (via `rush.runtime.binaries.write_manifest`) binding the resolved engine version, source registry, manager, the installed executable's absolute path, its SHA256 hash, OS/arch, the owning project's ID and root, and the plan ID that produced it. `rush.runtime.binaries.resolve_project_binary` re-hashes the executable on every lookup before trusting it; a hash mismatch (tampered bytes), a project-scope mismatch, or an incompatible manifest schema fails closed and falls through to the existing PATH-based `resolve_binary` policy instead of trusting an unverified, project-controlled path. A failed post-install probe never writes a manifest and never marks an engine ready. Two projects can independently select and retain different compatible versions of the same engine without collision, since toolchain directories are versioned (`toolchains/<engine>/<version>/<os>-<arch>/`) and each project keeps its own `.rush/toolchains.json` selection pointer.
+
+### Sandboxed development note
+
+Live network resolution/download against PyPI, npm, crates.io, RubyGems, Packagist, Maven Central, and GitHub Releases is exercised in this repository's test suite through injectable `http_get`/`downloader`/`runner`/`prober` seams and saved-metadata fixtures, not real network calls -- matching this project's own "runtime network resolution tests use saved official metadata fixtures" contract. Actually downloading and installing a real toolchain requires outbound network access, which this sandboxed development/CI environment does not have; that live acceptance run is an external blocker here, consistent with the same limitation already recorded for the Phase 65 P65-01 standalone release artifacts work.

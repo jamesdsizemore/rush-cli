@@ -356,8 +356,53 @@ def _catalog_contracts() -> dict[str, Any]:
     return contracts
 
 
+def _engine_contracts() -> dict[str, Any]:
+    """P65-09: the real, current engine registry (`rush.catalog.ENGINE_SPECS`)
+    -- every engine's binary/extensions/markers/capability, so docs like
+    `docs/ENGINES.md` are checked against the live registry the same way CLI/
+    MCP/catalog surfaces already are."""
+    from rush.catalog import ENGINE_SPECS
+
+    contracts: dict[str, Any] = {}
+    for name, spec in sorted(ENGINE_SPECS.items()):
+        parameters = [
+            {
+                "default": _json_default(spec.binary),
+                "kind": "field",
+                "name": "binary",
+                "required": True,
+                "type": "str",
+            },
+            {
+                "default": _json_default(spec.file_extensions),
+                "kind": "field",
+                "name": "file_extensions",
+                "required": True,
+                "type": "list",
+            },
+            {
+                "default": _json_default(spec.project_markers),
+                "kind": "field",
+                "name": "project_markers",
+                "required": True,
+                "type": "list",
+            },
+            {
+                "default": _json_default(spec.capability),
+                "kind": "field",
+                "name": "capability",
+                "required": True,
+                "type": "str",
+            },
+        ]
+        contracts[name] = {
+            "parameters": sorted(parameters, key=lambda item: item["name"])
+        }
+    return contracts
+
+
 def collect_runtime_contracts(repo_root: Path) -> dict[str, Any]:
-    """Read current checked-out CLI, MCP, and catalog registrations."""
+    """Read current checked-out CLI, MCP, catalog, and engine registrations."""
     source = str(repo_root.resolve() / "src")
     if source not in sys.path:
         sys.path.insert(0, source)
@@ -365,18 +410,41 @@ def collect_runtime_contracts(repo_root: Path) -> dict[str, Any]:
         "cli": _cli_contracts(),
         "mcp": _mcp_contracts(),
         "catalog": _catalog_contracts(),
+        "engines": _engine_contracts(),
     }
+
+
+def _is_excluded_document(relative: str) -> bool:
+    """OS/process artifacts that are never final documentation.
+
+    Excludes Finder's .DS_Store metadata (any directory under docs/) and
+    GoalBuddy's continuously-mutating live board state
+    (docs/goals/*/state.yaml), so neither needs a frozen sha256 receipt.
+    """
+    path = PurePosixPath(relative)
+    if path.name == ".DS_Store":
+        return True
+    parts = path.parts
+    return (
+        len(parts) == 4
+        and parts[0] == "docs"
+        and parts[1] == "goals"
+        and parts[3] == "state.yaml"
+    )
 
 
 def _all_document_paths(repo_root: Path) -> set[str]:
     docs = repo_root / "docs"
     if not docs.exists():
         return set()
-    return {
-        path.relative_to(repo_root).as_posix()
-        for path in docs.rglob("*")
-        if path.is_file()
-    }
+    paths: set[str] = set()
+    for path in docs.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repo_root).as_posix()
+        if not _is_excluded_document(relative):
+            paths.add(relative)
+    return paths
 
 
 def _actual_referrers(repo_root: Path, all_paths: set[str]) -> dict[str, list[str]]:
@@ -489,7 +557,7 @@ def _check_contracts(actual: dict[str, Any], recorded: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(recorded, dict):
         return ["contracts: missing runtime contract object"]
-    for surface in ("cli", "mcp", "catalog"):
+    for surface in ("cli", "mcp", "catalog", "engines"):
         expected_commands = actual.get(surface, {})
         saved_commands = recorded.get(surface, {})
         if not isinstance(saved_commands, dict):
@@ -555,6 +623,8 @@ def check_docs(
     except ValueError as error:
         return [str(error)]
     for relative in sorted(git_paths - all_paths):
+        if _is_excluded_document(relative):
+            continue
         errors.append(f"{relative}: Git inventory path missing from filesystem")
 
     report_path = repo_root / REPORT_PATH
@@ -586,6 +656,8 @@ def check_docs(
     for relative in sorted(all_paths - set(entries)):
         errors.append(f"{relative}: missing coverage receipt")
     for relative in sorted(set(entries) - all_paths):
+        if _is_excluded_document(relative):
+            continue
         errors.append(f"{relative}: receipt path missing from filesystem")
 
     actual_referrers = _actual_referrers(repo_root, all_paths)

@@ -18,8 +18,8 @@ These guides will teach you how to set up Rush as your AI copilot's automated sa
    - How to connect Rush to Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot via FastMCP.
 4. [Slop-Busting & Hallucination Defense](slop-busting-and-hallucination-defense.md)
    - How `rush slop`, `rush tdd`, and `rush review` catch AI mistakes, empty placeholder stubs, and redundant comments.
-5. [Fix command limits and planned safe remediation](instant-fix-and-auto-remediation.md)
-   - Current safety boundary and accepted Phase 64 repair contract.
+5. [Fix command: bounded Ruff remediation](instant-fix-and-auto-remediation.md)
+   - Current preview/apply route; P64-04 patch cleanup remains planned.
 6. [Token Diet for Vibecoders](token-diet-for-vibecoders.md)
    - How `rush token` and `rush codegraph` compress code context by 70–90%, slashing LLM latency and costs.
 7. [Shipping with Swagger](shipping-with-swagger.md)
@@ -32,7 +32,7 @@ These guides will teach you how to set up Rush as your AI copilot's automated sa
 ## Quick Command Reference for Vibecoders
 
 - `rush watch .`: Starts live background monitoring with auto-re-evaluation.
-- `uv run rush fix --help`: Inspect current options. Do not run fixes on valued work until P64-01 is implemented and verified.
+- `uv run rush fix --help`: Preview bounded Ruff remediation with `uv run rush fix . --dry-run --force`; apply requires `--allow-artifact-write`.
 - `rush slop .`: Flags AI hallucinations, empty placeholder methods, and filler comments.
 - `rush tdd .`: Confirms that your AI assistant actually wrote tests for the new code.
 - `rush score compute`: Computes your repository's health grade (A+ to F).

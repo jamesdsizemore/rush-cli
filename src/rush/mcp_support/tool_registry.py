@@ -7,11 +7,27 @@ import inspect
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from rush.config import RushConfigError, load_config
 from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.invocation.executor import invocation_arguments
 from rush.safety.redactor import sanitize_value
+
+
+def _load_config_or_none(root: Path) -> Any:
+    """Best-effort `rush.toml` load for MCP invocations.
+
+    MC05: MCP invocations must resolve real `[tools.memory]` config (same as CLI's
+    `load_config(start=path)` in `cli_support/rendering.py`) so `memory_record` is
+    populated identically on both transports. A malformed `rush.toml` fails open to
+    no config here (unchanged pre-MC05 MCP behavior) rather than newly breaking
+    every MCP tool call over a config error MCP never validated before.
+    """
+    try:
+        return load_config(start=root)
+    except RushConfigError:
+        return None
 
 
 def make_tool_wrapper(
@@ -32,7 +48,12 @@ def make_tool_wrapper(
             "path": str(p),
             **{k: v for k, v in call_args.items() if k != "path"},
         }
-        context = resolve_invocation(req, transport="mcp", workspace_root=root)
+        context = resolve_invocation(
+            req,
+            transport="mcp",
+            workspace_root=root,
+            config=_load_config_or_none(root),
+        )
         return exec_instance.execute(context)
 
     tool_mcp_wrapper.__dict__["__self__"] = tool
@@ -61,7 +82,12 @@ def make_custom_wrapper(
             "operation_id": tool_id,
             **call_args,
         }
-        context = resolve_invocation(req, transport="mcp", workspace_root=root)
+        context = resolve_invocation(
+            req,
+            transport="mcp",
+            workspace_root=root,
+            config=_load_config_or_none(root),
+        )
         return exec_instance.execute(context)
 
     return custom_mcp_wrapper
@@ -153,3 +179,81 @@ def register_custom_tools(
             name=name,
             description=desc,
         )
+
+
+_MEMORY_BRIDGE_OPERATIONS = ("receive", "expand", "related", "resume")
+
+
+def build_memory_bridge_handler(
+    *, root: Path, session_id: str, capability: str
+) -> Callable[[str, dict[str, Any] | None], Any]:
+    """MC11.3: the restricted-receiver `rush_memory` handler -- the *only* tool a
+    `--memory-session` MCP server exposes. `operation` must be one of
+    `_MEMORY_BRIDGE_OPERATIONS`; every other value (including every other catalog tool's
+    name) is denied identically, never routed anywhere. `expand`/`related`/`resume` always
+    run with this session's own stored `session_allowlist` -- a caller-supplied allowlist
+    inside `request` can never widen it, because none is ever read from `request` here.
+    """
+    from rush.memory import handoff
+    from rush.memory.store import TypedArtifactStore
+    from rush.tools.memory import MemoryOperation, MemoryTool
+
+    tool = MemoryTool()
+
+    def rush_memory_bridge(
+        operation: str, request: dict[str, Any] | None = None
+    ) -> Any:
+        if operation not in _MEMORY_BRIDGE_OPERATIONS:
+            return {
+                "schema_version": 1,
+                "operation": operation,
+                "code": "E_PERMISSION",
+                "data": {
+                    "message": "This restricted handoff receiver only permits "
+                    f"{_MEMORY_BRIDGE_OPERATIONS}."
+                },
+            }
+        validated_operation = cast(MemoryOperation, operation)
+        store = TypedArtifactStore(root)
+        try:
+            session = handoff.load_session(store, session_id, capability)
+        except handoff.HandoffError as exc:
+            return {
+                "schema_version": 1,
+                "operation": operation,
+                "code": exc.code,
+                "data": {"message": str(exc)},
+            }
+        req = dict(request or {})
+        if operation == "receive":
+            req["session_id"] = session_id
+            req["capability"] = capability
+            result = tool(path=root, operation="receive", request=req)
+        else:
+            req.pop("session_allowlist", None)
+            result = tool(
+                path=root,
+                operation=validated_operation,
+                request=req,
+                session_allowlist=list(session.session_allowlist),
+            )
+        return result["raw"]
+
+    return rush_memory_bridge
+
+
+def register_memory_bridge_tool(
+    server: Any, *, root: Path, session_id: str, capability: str
+) -> None:
+    """MC11.3: register the single restricted `rush_memory` tool onto an MCP server built
+    for one `--memory-session`. No other catalog tool is ever registered on this server."""
+    server.add_tool(
+        fn=build_memory_bridge_handler(
+            root=root, session_id=session_id, capability=capability
+        ),
+        name="rush_memory",
+        description=(
+            "Restricted cross-tool memory handoff receiver bound to one bounded, "
+            "capability-gated session. Only receive/expand/related/resume are permitted."
+        ),
+    )

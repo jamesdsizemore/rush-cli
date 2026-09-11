@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Collection, Iterator, Sequence
 from pathlib import Path
 
+from rush.discovery.stack import PYTHON_MARKERS
+
 from .base import Finding, ToolResult, ToolStatus
 from .common import finding_fingerprint
 
@@ -14,7 +16,7 @@ _SKIP_DIRS = frozenset(
 )
 
 _LANGUAGE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("python", ("pyproject.toml", "setup.py")),
+    ("python", PYTHON_MARKERS),
     ("javascript", ("package.json",)),
     ("go", ("go.mod",)),
     ("rust", ("Cargo.toml",)),

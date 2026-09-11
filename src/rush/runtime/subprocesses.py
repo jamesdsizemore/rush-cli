@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..permissions import build_execution_metadata, check_permissions
 from ..safety.redactor import SecretRedactor
@@ -23,6 +27,40 @@ if TYPE_CHECKING:
     from ..permissions import ExecutionPermissions
 
 MAX_SUBPROCESS_OUTPUT_CHARS = 256 * 1024
+
+
+class SubprocessCancelled(Exception):
+    """Raised by `run_subprocess` when `cancel_check()` returns True while
+    its child is still running (P65-08). The owned child process group
+    (POSIX) / process tree (Windows) is already terminated before this is
+    raised -- callers never need to kill anything themselves."""
+
+    def __init__(self, argv: list[str], pid: int) -> None:
+        self.argv = argv
+        self.pid = pid
+        super().__init__(f"subprocess cancelled: {argv} (pid={pid})")
+
+
+def _terminate_owned_group(proc: subprocess.Popen[str]) -> None:
+    """Terminate only this owned child's own process group (POSIX, started
+    with `start_new_session=True`) or process tree (Windows, started with
+    `CREATE_NEW_PROCESS_GROUP`) -- never a foreign process, never orphaned."""
+    if os.name == "nt":
+        with suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        return
+    with suppress(ProcessLookupError, PermissionError):
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 
 
 def _bounded_redacted_output(output: str) -> str:
@@ -45,6 +83,8 @@ def run_subprocess(
     cwd: Path | None = None,
     timeout: float = 120,
     env: dict[str, str] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    poll_interval: float = 0.05,
 ) -> subprocess.CompletedProcess[str]:
     """Run a list-only local child process without inheriting stdin.
 
@@ -52,9 +92,34 @@ def run_subprocess(
     fixed optional working directory, and DEVNULL stdin so they cannot consume
     the stdio MCP transport. Timeout exceptions remain observable by the shared
     `run_engine` error mapping.
+
+    `cancel_check` (P65-08) is optional and defaults to `None`, which keeps
+    every existing caller's exact prior `subprocess.run`-blocking behavior
+    unchanged. When given, the child runs under `Popen` in its own owned
+    process group/tree instead, polled every `poll_interval` seconds; if
+    `cancel_check()` ever returns `True` before the child exits, only that
+    owned group/tree is terminated and `SubprocessCancelled` is raised.
     """
     if not argv or any(not isinstance(arg, str) for arg in argv):
         raise ValueError("argv must be a non-empty list of strings")
+    exec_argv = _resolve_exec_argv(argv)
+
+    if cancel_check is None:
+        return _run_subprocess_blocking(
+            exec_argv, argv, cwd=cwd, timeout=timeout, env=env
+        )
+    return _run_subprocess_cancellable(
+        exec_argv,
+        argv,
+        cwd=cwd,
+        timeout=timeout,
+        env=env,
+        cancel_check=cancel_check,
+        poll_interval=poll_interval,
+    )
+
+
+def _resolve_exec_argv(argv: list[str]) -> list[str]:
     common = sys.modules.get("rush.tools.common")
     resolver = (
         getattr(common, "resolve_binary", resolve_binary)
@@ -62,14 +127,24 @@ def run_subprocess(
         else resolve_binary
     )
     resolved_cmd = resolver(argv[0]) or argv[0]
-    if os.name == "nt":
-        which_cmd = shutil.which(resolved_cmd) or resolved_cmd
-        if which_cmd.lower().endswith((".cmd", ".bat")):
-            exec_argv = ["cmd.exe", "/c", which_cmd, *argv[1:]]
-        else:
-            exec_argv = [which_cmd, *argv[1:]]
-    else:
-        exec_argv = [resolved_cmd, *argv[1:]]
+    if os.name != "nt":
+        return [resolved_cmd, *argv[1:]]
+    which_cmd = shutil.which(resolved_cmd) or resolved_cmd
+    if which_cmd.lower().endswith((".cmd", ".bat")):
+        return ["cmd.exe", "/c", which_cmd, *argv[1:]]
+    return [which_cmd, *argv[1:]]
+
+
+def _run_subprocess_blocking(
+    exec_argv: list[str],
+    argv: list[str],
+    *,
+    cwd: Path | None,
+    timeout: float,
+    env: dict[str, str] | None,
+) -> subprocess.CompletedProcess[str]:
+    """The original, unchanged `subprocess.run`-blocking path -- every
+    caller that never passes `cancel_check` gets this exact behavior."""
     try:
         result = subprocess.run(
             exec_argv,
@@ -86,10 +161,7 @@ def run_subprocess(
         )
     except FileNotFoundError:
         return subprocess.CompletedProcess(
-            argv,
-            127,
-            stdout="",
-            stderr=f"{argv[0]}: command not found",
+            argv, 127, stdout="", stderr=f"{argv[0]}: command not found"
         )
 
     return subprocess.CompletedProcess(
@@ -97,6 +169,77 @@ def run_subprocess(
         result.returncode,
         stdout=_bounded_redacted_output(result.stdout),
         stderr=_bounded_redacted_output(result.stderr),
+    )
+
+
+def _popen_kwargs_for_cancellable(
+    *, cwd: Path | None, env: dict[str, str] | None
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "cwd": str(cwd) if cwd is not None else None,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "env": env,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def _run_subprocess_cancellable(
+    exec_argv: list[str],
+    argv: list[str],
+    *,
+    cwd: Path | None,
+    timeout: float,
+    env: dict[str, str] | None,
+    cancel_check: Callable[[], bool],
+    poll_interval: float,
+) -> subprocess.CompletedProcess[str]:
+    """P65-08: `Popen`-based poll loop used only when a caller opts in with
+    `cancel_check`. Terminates only this owned child's own process group/
+    tree, never a foreign process."""
+    try:
+        proc = subprocess.Popen(
+            exec_argv, **_popen_kwargs_for_cancellable(cwd=cwd, env=env)
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(
+            argv, 127, stdout="", stderr=f"{argv[0]}: command not found"
+        )
+
+    start = time.monotonic()
+    stdout = ""
+    stderr = ""
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=poll_interval)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel_check():
+                _terminate_owned_group(proc)
+                with suppress(subprocess.TimeoutExpired):
+                    stdout, stderr = proc.communicate(timeout=5)
+                raise SubprocessCancelled(exec_argv, proc.pid) from None
+            if time.monotonic() - start >= timeout:
+                _terminate_owned_group(proc)
+                with suppress(subprocess.TimeoutExpired):
+                    stdout, stderr = proc.communicate(timeout=5)
+                raise subprocess.TimeoutExpired(
+                    exec_argv, timeout, output=stdout, stderr=stderr
+                ) from None
+
+    return subprocess.CompletedProcess(
+        exec_argv,
+        proc.returncode,
+        stdout=_bounded_redacted_output(stdout or ""),
+        stderr=_bounded_redacted_output(stderr or ""),
     )
 
 
@@ -255,6 +398,7 @@ def run_engine(
 
 __all__ = [
     "MAX_SUBPROCESS_OUTPUT_CHARS",
+    "SubprocessCancelled",
     "_bounded_redacted_output",
     "_install_hint",
     "run_engine",

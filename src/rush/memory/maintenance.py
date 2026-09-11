@@ -19,6 +19,7 @@ from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
     MemoryArtifact,
     TypedArtifactStore,
+    _write_version,
     promote_stored_artifact,
 )
 from rush.memory.trust import count_corroboration
@@ -187,9 +188,18 @@ def _mutate_promotion_sweep(
         artifact.subject, artifact.symbol_ref, candidate_sources
     )
     if recomputed_count != row["corroboration_count"]:
+        new_version = _write_version(
+            conn,
+            artifact.id,
+            content=artifact.content,
+            source=artifact.source,
+            trust_tier=artifact.trust_tier,
+            expected_version=None,
+        )
         conn.execute(
-            "UPDATE memory_artifacts SET corroboration_count = ? WHERE id = ?",
-            (recomputed_count, artifact.id),
+            "UPDATE memory_artifacts SET corroboration_count = ?, artifact_version = ? "
+            "WHERE id = ?",
+            (recomputed_count, new_version, artifact.id),
         )
         conn.commit()
         return True
@@ -210,7 +220,23 @@ def _mutate_staleness_sweep(
     except (OSError, UnicodeError):
         current_hash = None
     if current_hash != row["content_hash"]:
-        conn.execute("UPDATE memory_artifacts SET stale = 1 WHERE id = ?", (row["id"],))
+        conn.execute("BEGIN IMMEDIATE")
+        artifact_row = conn.execute(
+            "SELECT content, source, trust_tier FROM memory_artifacts WHERE id = ?",
+            (row["id"],),
+        ).fetchone()
+        new_version = _write_version(
+            conn,
+            row["id"],
+            content=json.loads(artifact_row["content"]),
+            source=artifact_row["source"],
+            trust_tier=artifact_row["trust_tier"],
+            expected_version=None,
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET stale = 1, artifact_version = ? WHERE id = ?",
+            (new_version, row["id"]),
+        )
         conn.commit()
         return True
     return False

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.probe_installed_artifacts import (
     probe_installed_artifact,
+    probe_native_artifact,
     scrub_environment,
+    select_platform_asset,
+    verify_archive_checksum,
     verify_package_origin,
 )
 
@@ -166,3 +171,39 @@ def test_windows_and_posix_jobs_cover_both_artifacts() -> None:
     assert "|| true" not in run_cmd, (
         f"Artifact probe step must not mask errors with '|| true': {run_cmd}"
     )
+
+
+def test_native_artifact_needs_no_checkout_python_or_uv(tmp_path: Path) -> None:
+    """Verify the extracted native release archive proves origin, version and a real MCP
+    initialize handshake from a clean external directory with checkout/Python/uv absent
+    from PATH (Phase 65: P65-01.3)."""
+    import platform
+    import tomllib
+
+    pyproject_data = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    expected_version = pyproject_data["project"]["version"]
+
+    asset_name = select_platform_asset(platform.system(), platform.machine())
+    archive_path = PROJECT_ROOT / "dist" / asset_name
+    checksums_path = PROJECT_ROOT / "dist" / "SHA256SUMS"
+
+    if not archive_path.is_file():
+        pytest.skip(
+            f"No native release archive at {archive_path} for this platform. CI does not "
+            "build PyInstaller archives yet; build one first with "
+            "scripts.probe_installed_artifacts.build_release_archive to exercise this "
+            "probe locally."
+        )
+
+    assert verify_archive_checksum(archive_path, checksums_path) is True, (
+        "Native archive bytes do not match its recorded SHA256SUMS entry."
+    )
+
+    result = probe_native_artifact(archive_path, PROJECT_ROOT, tmp_path)
+
+    assert result.status == "passed", f"Native artifact probe failed: {result.stderr}"
+    assert result.origin_verified is True
+    assert result.mcp_initialized is True
+    assert result.stdout.strip() == expected_version

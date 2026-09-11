@@ -8,7 +8,7 @@ Rush is built on ten architectural principles that guide all development, engine
 Both Click CLI (`src/rush/cli.py`) and FastMCP (`src/rush/mcp.py`) invoke the exact same `ToolFn` objects in `src/rush/tools/`. Transport layers never duplicate engine logic.
 
 ## 2. Safe, Local & Non-Mutating Defaults
-Safe inspection is the required design contract. External test tools may write artifacts; `fix --dry-run` currently destroys user changes (F01). See [Known issues](KNOWN_ISSUES.md) before relying on current safety claims.
+Safe inspection is the required design contract. `rush fix PATH --dry-run --force` is bounded Ruff preview; apply requires `--allow-artifact-write`. See [Known issues](KNOWN_ISSUES.md) for open defects.
 
 ## 3. Dynamic Engine Discovery with Non-Fatal Absence
 Rush discovers tools from the host environment. Missing optional engines return structured `status: "skipped"` results with actionable install hints—never crashing and never running silent background downloads.

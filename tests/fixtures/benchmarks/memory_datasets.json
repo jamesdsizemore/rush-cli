@@ -1,0 +1,134 @@
+{
+  "longmemeval": {
+    "manifest": {
+      "dataset": "longmemeval_cleaned_s_sample",
+      "url": "https://github.com/xiaowu0162/LongMemEval",
+      "revision": "b1f0a6e0c9a2d3b4c5e6f7081920a3b4c5d6e7f8",
+      "sha256": "4fdda6045d6257f0c5f16bbdb3f6fe4857d32d036ab1e851bcfa19d4fd247659",
+      "license_or_terms": "MIT (see upstream repository LICENSE)",
+      "split": "longmemeval_s_cleaned_sample"
+    },
+    "records": [
+      {
+        "question_id": "lme-q-001",
+        "question_type": "temporal-reasoning",
+        "question": "On what date did I say my flight got delayed?",
+        "question_date": "2023-05-14",
+        "haystack_sessions": [
+          {
+            "session_id": "s1",
+            "date": "2023-05-10",
+            "turns": [
+              {
+                "role": "user",
+                "content": "Ugh, my flight just got delayed to next week.",
+                "has_answer": true
+              },
+              {
+                "role": "assistant",
+                "content": "Sorry to hear that. Want help rebooking?",
+                "has_answer": false
+              }
+            ]
+          },
+          {
+            "session_id": "s2",
+            "date": "2023-05-12",
+            "turns": [
+              {
+                "role": "user",
+                "content": "Actually it's fine, I rebooked myself already.",
+                "has_answer": false
+              }
+            ]
+          }
+        ],
+        "answer": "2023-05-10",
+        "answer_session_ids": [
+          "s1"
+        ]
+      },
+      {
+        "question_id": "lme-q-002",
+        "question_type": "single-session-update",
+        "question": "What did I decide to name the new database migration branch?",
+        "question_date": "2023-06-02",
+        "haystack_sessions": [
+          {
+            "session_id": "s3",
+            "date": "2023-06-01",
+            "turns": [
+              {
+                "role": "user",
+                "content": "Let's call the migration branch db-widen-ids.",
+                "has_answer": true
+              }
+            ]
+          },
+          {
+            "session_id": "s4",
+            "date": "2023-06-02",
+            "turns": [
+              {
+                "role": "user",
+                "content": "Reminder: standup moved to 10am tomorrow.",
+                "has_answer": false
+              }
+            ]
+          }
+        ],
+        "answer": "db-widen-ids",
+        "answer_session_ids": [
+          "s3"
+        ]
+      }
+    ]
+  },
+  "memory_agent_bench": {
+    "manifest": {
+      "dataset": "memory_agent_bench_sample",
+      "url": "https://github.com/HUST-AI-HYZ/MemoryAgentBench",
+      "revision": "a2c4e6081012141618202224262830323436384a",
+      "sha256": "24979c356b00d62828dd5ffa9a42c675d58517907cd0390344eca389c872d41d",
+      "license_or_terms": "MIT (see upstream repository LICENSE)",
+      "split": "incremental_conflict_sample"
+    },
+    "records": [
+      {
+        "task_id": "mab-incr-001",
+        "capability": "incremental_memorization",
+        "prompt": "Remember: the deployment key is stored under infra/keys/deploy.pem.",
+        "probe_question": "Where is the deployment key stored?",
+        "expected_output": "infra/keys/deploy.pem"
+      },
+      {
+        "task_id": "mab-conflict-002",
+        "capability": "conflict_resolution",
+        "prompt": "Earlier I said staging uses port 8080; correction, staging now uses port 9090.",
+        "probe_question": "What port does staging use?",
+        "expected_output": "9090"
+      }
+    ]
+  },
+  "swe_bench_verified": {
+    "manifest": {
+      "dataset": "swe_bench_verified_sample",
+      "url": "https://github.com/princeton-nlp/SWE-bench",
+      "revision": "b6e8fa1c2d3e4f5061728394a5b6c7d8e9f0a1b2",
+      "sha256": "7913d225abcfcf3ac8b4304456ca338792dbb7e8adec74c8ab456aab2436e7f6",
+      "license_or_terms": "MIT (see upstream repository LICENSE)",
+      "split": "verified_sample"
+    },
+    "records": [
+      {
+        "instance_id": "astropy__astropy-12907",
+        "repo": "astropy/astropy",
+        "base_commit": "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+        "problem_statement": "Modeling's `separability_matrix` does not compute separability correctly for nested CompoundModels.",
+        "gold": {
+          "patch": "--- a/astropy/modeling/separable.py\n+++ b/astropy/modeling/separable.py\n@@ placeholder @@\n"
+        }
+      }
+    ]
+  }
+}

@@ -134,6 +134,17 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         engine_names=(),
         maturity="real_adapter",
+        option_specs=(
+            ToolOptionSpec(
+                name="record",
+                value_type=bool,
+                default=False,
+                description=(
+                    "Record eligible tool invocations as redacted memory observations. "
+                    "Requires host-granted cache-write per invocation; default off."
+                ),
+            ),
+        ),
     ),
     "semantic-drift": ToolSpec(
         name="semantic-drift",

@@ -42,7 +42,7 @@ Here is how thousands of developers and AI agents use Rush throughout their dail
 flowchart LR
     A["1. Code & Edit"] --> B["2. rush check . (Fast feedback in ms)"]
     B --> C{"Any issues?"}
-    C -- Yes --> D["3. rush fix . (Auto-clean formatting)"]
+    C -- Yes --> D["3. rush fix . --dry-run --force (Preview Ruff)"]
     D --> B
     C -- No --> E["4. rush test . (Verify tests pass)"]
     E --> F["5. rush hook run (Pre-commit check)"]
@@ -53,8 +53,8 @@ flowchart LR
 
 1. **`rush check .`** (The Quick Health Check):
    - Run this while you are actively writing code. It runs your linters, format checkers, and type checkers together in milliseconds.
-2. **`rush fix .`** (The Automatic Broom):
-   - Current `rush fix`, including `--dry-run`, can discard staged and unstaged changes. Do not use it on valuable work. Safe bounded remediation remains planned in [P64-01](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); see [F01](reports/phase-64-66-application-review.md).
+2. **`rush fix . --dry-run --force`** (The Ruff Preview):
+   - [`rush fix . --dry-run --force`](phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) is bounded Ruff preview. Apply requires `--allow-artifact-write`; P64-04 patch remediation remains planned.
 3. **`rush test .`** (The Safety Net):
    - Runs supported installed test engines. Inspect executed tests, failures and skips; passing tests cover only the behavior they exercise.
 4. **`rush gate .`** (The Pre-Merge Guard):

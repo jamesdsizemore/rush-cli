@@ -195,15 +195,15 @@ rush audit .
 rush gate . --fail-fast
 ```
 
-### Automated Code Remediation — currently unsafe
+### Automated Code Remediation
 
-`fix --dry-run` can discard staged and unstaged work. Do not run these commands on valuable work. Bounded preview/restoration is planned in [P64-01](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); see [F01](reports/phase-64-66-application-review.md).
+[`rush fix PATH --dry-run --force`](phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) preserves Git state for Ruff-selected Python targets. Apply requires `--allow-artifact-write`; P64-04 patch-sandbox restoration remains planned.
 ```bash
-# Current destructive dry-run defect: disposable checkout only
-rush fix . --dry-run
+# P64-01 bounded dry-run preview
+rush fix . --dry-run --force
 
-# Attempts fixes; cleanup can discard unrelated changes
-rush fix .
+# Apply writes only with explicit artifact permission
+rush fix . --allow-artifact-write
 ```
 
 ### Real-Time File Watcher

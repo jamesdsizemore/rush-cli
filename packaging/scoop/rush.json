@@ -1,11 +1,16 @@
 {
-  "version": "0.2.0",
+  "_comment": "hash fields intentionally omitted for all architectures: no real per-platform release archives have been published yet. The release pipeline (P65-10) populates a 'hash' key per architecture entry once actual GitHub release assets exist.",
+  "version": "0.3.0",
   "description": "Zero-dependency local CLI and stdio-only MCP quality server",
   "homepage": "https://github.com/jamesdsizemore/rush-cli",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v0.2.0/rush-windows-x86_64.zip",
+      "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v0.3.0/rush-windows-x86_64.zip",
+      "bin": "rush.exe"
+    },
+    "arm64": {
+      "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v0.3.0/rush-windows-arm64.zip",
       "bin": "rush.exe"
     }
   },
@@ -14,6 +19,9 @@
     "architecture": {
       "64bit": {
         "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v$version/rush-windows-x86_64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/jamesdsizemore/rush-cli/releases/download/v$version/rush-windows-arm64.zip"
       }
     }
   }

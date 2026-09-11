@@ -64,6 +64,15 @@ check = true
 
 `NAME` must exactly match one of the catalog tool names (e.g. `lint`, `format`, `test`, `security`, `tdd`, `slop`, `complexity`). Unknown names raise `RushConfigError`.
 
+## `[tools.memory]` (Phase 63 MC05, observation opt-in only)
+
+```toml
+[tools.memory]
+record = false
+```
+
+- `record`: opt-in flag for `InvocationExecutor` to capture a completed tool execution as a redacted `experience`/`episodic` memory observation (`rush.memory.experience.record_observation`); implemented. Default `false`. Even when `true`, an observation is only written when the invocation is also host-granted `cache_write`; a cache hit never produces a new observation, and the `memory` tool's own operations are excluded from this recursive capture. This is the only `tools.memory` key MC05 adds; MC14 adds the remaining `tools.memory` configuration keys later.
+
 ## `[plugins.NAME]` (Phase 28)
 
 ```toml

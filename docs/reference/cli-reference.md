@@ -54,7 +54,7 @@ uv run rush mcp serve
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
-| `fix [PATH]` | Current remediation command; checkout/index preservation repair remains pending. | Ruff, Biome, ESLint, Prettier, ast-grep. | Do not run on valued work until [P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01) is implemented and verified. Current options include `--dry-run` and `--force`. |
+| `fix [PATH]` | [Bounded Ruff remediation](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) for selected Python targets. | Ruff. | Dry run preserves Git state; apply requires `--allow-artifact-write`. P64-04 remains planned. |
 
 ## AI, LLM & Agent Safety (Phase 09)
 
@@ -113,7 +113,7 @@ Evaluation commands expose permission flags according to their own generated hel
 | `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
-| `fix PATH` | Confined automated remediation for formatting and linter errors. | `--dry-run`, `--force` | Modifies code within workspace |
+| `fix PATH` | [Bounded Ruff remediation](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) for selected Python targets. | `--dry-run`, `--force`, `--allow-artifact-write` | Dry-run preview; apply is denied without artifact-write permission. |
 | `setup [PATH]` | Current stack inspection/setup prototype. Integrated, verified installation remains planned in [P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--install-complete-applicable-toolchains-f3031). | `--non-interactive`, `--json` | Current package-manager identities and execution branches are not accepted installation evidence |
 | `init [PATH]` | Generate starter `rush.toml` for detected project stacks. | `--force` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |

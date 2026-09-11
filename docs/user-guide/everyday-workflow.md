@@ -45,13 +45,13 @@ If you make a typo or break a type signature, you’ll see the warning in your t
 
 We’ve all been there: you just finished writing a complex algorithm, but your indentation is messy, your quote styles are inconsistent, and you have four unused imports at the top of the file.
 
-Current `rush fix` has unresolved checkout/index preservation defects. Inspect its options, but do not run it on valued work:
+Use bounded Ruff preview before an authorized apply:
 
 ```bash
 uv run rush fix --help
 ```
 
-Apply findings manually until [Phase 64, P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01) proves dry-run, success, failure, and cancellation preserve unrelated files and Git state.
+[`--dry-run --force`](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) preserves Git state; apply requires `--allow-artifact-write`. P64-04 remains planned.
 
 ---
 
@@ -92,7 +92,7 @@ Current dashboard browser/server integration is broken at this baseline, and per
 |---|---|---|
 | Run current check suite | `uv run rush check . --json` | Shows child execution and skip evidence. |
 | Trigger checks on file changes | `uv run rush watch .` | Runs configured suite after debounce. |
-| Inspect remediation options | `uv run rush fix --help` | Avoid execution until P64-01 passes. |
+| Preview Ruff remediation | `uv run rush fix . --dry-run --force` | Preserves Git state; apply requires `--allow-artifact-write`. |
 | Run applicable project tests | `uv run rush test . --json` | Shows executed, failed, and skipped evidence. |
 | Inspect dashboard options | `uv run rush dashboard --help` | Current UI limits; Phase 66 owns completion. |
 

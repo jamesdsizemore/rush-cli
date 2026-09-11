@@ -1,5 +1,8 @@
+# InstallerSha256 intentionally omitted for all installers: no real per-platform release
+# archives have been published yet. The release pipeline (P65-10) populates
+# InstallerSha256 per installer entry once actual GitHub release assets exist.
 PackageIdentifier: jamesdsizemore.rush
-PackageVersion: 0.2.0
+PackageVersion: 0.3.0
 PackageName: Rush CLI
 Publisher: jamesdsizemore
 License: MIT
@@ -7,7 +10,13 @@ ShortDescription: Zero-dependency local CLI and stdio-only MCP quality server.
 Installers:
   - Architecture: x64
     InstallerType: zip
-    InstallerUrl: https://github.com/jamesdsizemore/rush-cli/releases/download/v0.2.0/rush-windows-x86_64.zip
+    InstallerUrl: https://github.com/jamesdsizemore/rush-cli/releases/download/v0.3.0/rush-windows-x86_64.zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: rush.exe
+  - Architecture: arm64
+    InstallerType: zip
+    InstallerUrl: https://github.com/jamesdsizemore/rush-cli/releases/download/v0.3.0/rush-windows-arm64.zip
     NestedInstallerType: portable
     NestedInstallerFiles:
       - RelativeFilePath: rush.exe

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rush.config import RushConfig
 from rush.permissions import ExecutionPermissions
 from rush.workflows import suites
 from rush.workflows.suites import (
@@ -77,3 +78,95 @@ def test_workflow_suite_uses_public_tool_call(tmp_path: Path, monkeypatch) -> No
     assert result["status"] == "ok"
     assert result["summary"] == "probe-suite: executed 1 tool(s) with status 'ok'"
     assert calls == 1
+
+
+def test_suite_retains_child_results_and_skips(tmp_path: Path, monkeypatch) -> None:
+    """An unregistered step is a real, visible `skipped` child -- never a
+    silent drop, and never counted in `executed_tools`."""
+
+    class RealTool:
+        name = "real"
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            return {
+                "tool": "real",
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": "real: ok",
+                "findings": [],
+            }
+
+    monkeypatch.setattr(suites, "ALL_TOOLS", [RealTool()])
+    workflow = WorkflowSuite("mixed", "mixed", ("real", "missing-tool"))
+
+    result = run_workflow_suite(workflow, tmp_path, ExecutionPermissions())
+
+    children = result["metadata"]["children"]
+    assert [child["tool"] for child in children] == ["real", "missing-tool"]
+    assert children[0]["status"] == "ok"
+    assert children[1]["status"] == "skipped"
+    assert result["metadata"]["executed_tools"] == ("real",)
+
+
+def test_tool_typeerror_runs_once(tmp_path: Path, monkeypatch) -> None:
+    """A handler `TypeError` surfaces as one real `error` child -- the
+    handler runs exactly once, with zero exception-based retry."""
+
+    calls = 0
+
+    class BrokenTool:
+        name = "broken"
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            raise TypeError("boom")
+
+    monkeypatch.setattr(suites, "ALL_TOOLS", [BrokenTool()])
+    workflow = WorkflowSuite("broken-suite", "broken", ("broken",))
+
+    result = run_workflow_suite(workflow, tmp_path, ExecutionPermissions())
+
+    assert calls == 1
+    assert result["status"] == "error"
+    assert result["metadata"]["children"] == [{"tool": "broken", "status": "error"}]
+    assert result["metadata"]["executed_tools"] == ()
+
+
+def test_config_reaches_each_child(tmp_path: Path, monkeypatch) -> None:
+    """The same `config` object passed to `run_workflow_suite` reaches
+    `resolve_invocation` for every child in the sequence, not just the
+    first."""
+
+    seen_configs: list[object] = []
+    real_resolve_invocation = suites.resolve_invocation
+
+    def spy_resolve_invocation(request, **kwargs):
+        seen_configs.append(kwargs.get("config"))
+        return real_resolve_invocation(request, **kwargs)
+
+    class RealTool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __call__(self, path: Path) -> dict[str, object]:
+            return {
+                "tool": self.name,
+                "status": "ok",
+                "duration_ms": 0,
+                "summary": f"{self.name}: ok",
+                "findings": [],
+            }
+
+    monkeypatch.setattr(suites, "ALL_TOOLS", [RealTool("one"), RealTool("two")])
+    monkeypatch.setattr(suites, "resolve_invocation", spy_resolve_invocation)
+    workflow = WorkflowSuite("cfg-suite", "cfg", ("one", "two"))
+    sentinel_config = RushConfig()
+
+    run_workflow_suite(
+        workflow, tmp_path, ExecutionPermissions(), config=sentinel_config
+    )
+
+    assert len(seen_configs) == 2
+    assert seen_configs[0] is sentinel_config
+    assert seen_configs[1] is sentinel_config

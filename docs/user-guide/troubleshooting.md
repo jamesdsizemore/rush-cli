@@ -31,9 +31,9 @@ For a `metadata.coordination` result, `conflict`, `stale`, and `merge_conflict` 
 ---
 
 ### 2. "Should I bypass `Uncommitted changes detected` for `rush fix`?"
-**Explanation**: No. Current `fix` has unresolved checkout/index preservation defects. `--force` bypasses a guard; it does not prove safe ownership or recovery.
+**Explanation**: `--force` only bypasses the dirty-tree guard. P64-01 dry run is non-mutating; apply requires `--allow-artifact-write`.
 
-**Solution**: Keep valued work unchanged and apply findings manually. Safe dry-run/apply behavior is **planned repair — implementation [Phase 64, P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01).**
+**Solution**: Use [`rush fix PATH --dry-run --force`](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) for preview. Apply only with `--allow-artifact-write`; P64-04 remains planned.
 
 ---
 

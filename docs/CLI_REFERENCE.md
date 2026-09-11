@@ -20,7 +20,7 @@ Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Gl
 
 ## Operations Reconciliation & Inventory (Phase 51 & Phase 54)
 
-Historical Phase 51/54 inventory below is not the current registration count. Current `collect_runtime_contracts()` observes 161 CLI paths including groups (135 leaves), 74 MCP tools and 53 catalog tools. Full parameter/type/default tuples are checked in the [current generated CLI reference](reference/cli-reference.md).
+Historical Phase 51/54 inventory below is not the current registration count. Current `collect_runtime_contracts()` observes 198 CLI paths including groups (29 groups, 169 leaves), 79 MCP tools, 54 catalog tools, and (Phase 65 P65-09) 121 engine registrations. Full parameter/type/default tuples are checked in the [current generated CLI reference](reference/cli-reference.md).
 - **Historical Tool Operations (`kind = "tool"`)**: The old inventory counted 67 operations. When invoked with `--json`, return canonical `ToolResultV1` JSON (`schema_version: "1.0.0"`), validated through `ToolOperationAdapter`.
 - **Historical Admin Operations (`kind = "admin"`)**: The old inventory counted 62 operations (e.g. `version`, `doctor`, `capabilities`). Return exit codes (`ClickExitCode`) or specialized admin data, validated through `AdminOperationAdapter`, and are not wrapped in `ToolResultV1`.
 - **Historical Service Operations (`kind = "service"`)**: The old inventory counted 17 operations (e.g. `rush mcp serve`). Handle stdio and protocol streams, validated through `ServiceOperationAdapter`.
@@ -65,7 +65,7 @@ rush mcp serve
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
-| `fix PATH` | Attempts formatting/lint remediation. | Ruff, Biome, ESLint, Prettier, ast-grep. | Unsafe cleanup can discard unrelated staged/unstaged work, including with `--dry-run`; bounded restoration planned in P64-01. |
+| `fix PATH` | Bounded Ruff remediation for selected Python targets. | Ruff. | `--dry-run --force` preserves Git state; apply requires `--allow-artifact-write`. |
 
 ## AI, LLM & Agent Safety (Phase 09)
 
@@ -144,8 +144,9 @@ The following explicit permission flags are available across tools:
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
-| `ui PATH` | Launch interactive terminal UI (TUI) for finding exploration. | Permissions | none |
-| `dashboard PATH` | Authenticated, CSRF-hardened local web dashboard on 127.0.0.1. | `--port`, Permissions | none |
+| `scan --project ID_OR_PATH` | Plan (and, with `--full`, execute) a full-project scan across every catalog candidate. | `--full`, `--install`, Permissions | `--full` persists an immutable run manifest under `<root>/.rush/runs/`; `--install` applies the project's provision plan first |
+| `ui [PATH ...]` | Launch the persistent interactive terminal UI (project map, scans/findings, memory, tokens, Git, artifacts); accepts one or more project paths to switch between, defaults to the current directory. | Permissions | none |
+| `dashboard PATH` | Launch the persistent, authenticated, CSRF-hardened local web dashboard on 127.0.0.1, sharing the same project actions as `rush ui`. | `--port`, `--no-open`, `--json`, `--reconnect`, `--server-id`, Permissions | none |
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
@@ -157,6 +158,30 @@ Status: P64-01 implements bounded target restoration for this route; Phase 64 re
 Prerequisite: Ruff must be discoverable. Dry run does not snapshot or write target files. Apply requires `--allow-artifact-write`; `--force` only bypasses the dirty-tree guard. Before any write, apply snapshots bytes and modes for selected regular Python targets. It refuses missing, redirected, symlink, and non-regular targets; it preserves Ruff excludes. On process/config/AST/cancellation/unexpected-exception paths, it restores invocation-owned targets or reports a bounded, redacted restore failure. Unrelated staged, unstaged, and untracked files remain outside its write set.
 
 Evidence: `tests/test_fix.py::test_dry_run_preserves_index_and_unrelated_files` and `test_fix_cli_and_direct_dry_run_preserve_same_dirty_fixture` exercised real Ruff 0.16.3. The latter uses direct `FixTool.run` and the in-process Click `rush fix` route against one dirty fixture. A real-Ruff apply test preserves excluded `.venv/vendor.py`. Registered MCP reaches `rush_fix`; its `allow_artifact_write: bool = False` parameter denies apply without a grant and applies with `True`. No external installed `rush` binary ran.
+
+### `rush scan --project ID_OR_PATH`
+
+Status: P65-04/P65-06/P65-08 (Phase 65, [project provisioning, scan, and agent workflow plan](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md)). Wraps `ScanTool`'s canonical `plan`/`run`/`status` operations over the shared `rush.workflows.suites` aggregation. `rush scan --project ID_OR_PATH` builds and previews an immutable plan covering every catalog candidate with a reasoned disposition (`applicable`, `excluded_by_user`, `not_applicable`, `requires_input`, ...); no execution occurs and no run manifest is written. `--full` additionally executes that plan and persists one immutable run manifest under `<project_root>/.rush/runs/<run_id>/`; the response merges the run's `aggregate` `ToolResult`, a `coverage` object (candidate/scheduled/executed/finding totals, matching the manifest's own denominator — an unavailable engine never silently shrinks it), and `expansion_links` (`manifest_path` and the paginated `status` cursor) alongside `run_id`. `--install` applies the project's `setup`/`provision.py` plan (P65-02) before scanning, and requires the same `--allow-*` grants as `setup --install`. `run` additionally requires `--allow-cache-write` and `--allow-artifact-write`; without `--full` those grants are not required.
+
+`cancel`, `resume`, `rescan`, and `handoff` are registered `scan` subcommands (P65-06/P65-08), each taking `RUN_ID` as a positional argument and `--project ID_OR_PATH` (required):
+- `rush scan handoff RUN_ID --project ID_OR_PATH --agent AGENT_ID [--finding FINDING_ID ...] [--max-tokens N] [--max-bytes N] --allow-cache-write --allow-artifact-write [--json]` prepares a bounded agent handoff packet of `RUN_ID`'s unresolved findings (every unresolved finding by default; repeat `--finding` to scope to specific ones). Requires `--allow-cache-write` and `--allow-artifact-write`.
+- `rush scan rescan RUN_ID --project ID_OR_PATH [--allow-* ...] [--json]` re-executes `RUN_ID`'s own staged plan against current source and reports each baseline finding as `resolved`, `persisting`, `new`, or `unverified` (an engine missing from the current run never reads as silently "resolved").
+- `rush scan cancel RUN_ID --project ID_OR_PATH [--json]` requests cooperative cancellation of an in-flight run.
+- `rush scan resume RUN_ID --project ID_OR_PATH [--allow-* ...] [--json]` resumes a run interrupted before completion; a stale/changed source or config since the original plan is refused, never silently resumed against the wrong baseline.
+
+Registered MCP reaches `rush_scan(request)` for `plan`/`run`/`status`/`rescan`, and `rush_scan_handoff(request)` for the handoff lifecycle (`prepare`/`dispatch`/`status`/`acknowledge`/`complete`) — both single-`dict` envelopes over the same `handle_request` contract (plan §6.1). `rush_scan` does not auto-compose `--full`'s convenience workflow — callers stage `plan`, execute `run` with the returned `plan_id`, and poll `status` with the returned `run_id` for coverage totals and the paginated candidate cursor.
+
+### `rush install [--agents all|none] [--memory on|off] [--project PATH_OR_ID] [--create NAME [--parent DIR]] [--init-git] [--session-id ID] [--version V] [--json]`
+
+Status: P65-10 (Phase 65 §3.1/§6.2). The one-command global install: downloads and checksum-verifies the current platform's release archive, installs a self-contained `rush` executable under a user-owned binary directory, and (independent of any project choice) discovers/connects every supported local agent client and activates Phase 63 user-scoped memory. `--agents none` skips agent connection entirely; `--memory off` still connects agents but withholds tool-observation consent. Omitting `--project` completes a successful global install with no active project — the current working directory is never auto-registered. `--project PATH_OR_ID` selects or registers an existing folder and applies its provision plan (P65-02); `--create NAME [--parent DIR] [--init-git]` creates and registers a new project folder instead. A checksum mismatch, failed extraction, or a new binary that fails to start all leave the previously installed executable untouched, and no agent config is written before the binary is verified to run. Re-running `rush install` on an existing installation upgrades/repairs/connects idempotently — it never duplicates an agent registration or memory scope. Not registered over MCP (installation is a one-time host bootstrap step, not a per-session tool call).
+
+### `rush agent list|connect|doctor` (Phase 65 P65-05)
+
+- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
+- `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. `--consent` allows real tool-observation payloads to be recorded for that scope; without it, only the connection itself is registered. `--acknowledge` is required before the connection reports `connected: true` — writing the config file is necessary but not sufficient.
+- `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.
+
+Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envelope over `AgentConnectionTool.handle_request` (`src/rush/tools/agent_connection.py`).
 
 ## Advanced Autonomous Agent, Hygiene & Governance Commands (Phases 29–40)
 
@@ -229,9 +254,34 @@ Query and write the unified `TypedArtifactStore` (`.rush/memory.db`) — the sam
 * `promote`: requires `--allow-cache-write`; approved candidates persist as `STATED` with a checksum and promotion timestamp after the screen, schema, grounding, and corroboration checks.
 * `maintain`: requires `--task promotion_sweep|staleness_sweep|skill_admission_check|expiry_sweep` and `--allow-cache-write`. Runs a bounded sweep in the selected repository; defaults to 500 rows via `--batch-size`.
 
+### `rush memory delete --input FILE` (Phase 65 P65-07.3)
+Batch-deletes memory artifacts through the plan §6.4 transaction/outbox algorithm. `--input FILE` is a JSON object `{"artifact_ids": [...], "expected_revisions": {"<id>": <int>, ...}, "scope": "<subject>", "apply": false}`:
+* `artifact_ids`: 1–100 unique existing IDs; no path separators, `..`, or external file paths.
+* `expected_revisions`: exact `{id: current_revision}` map for every listed ID — a stale revision for *any one* member refuses the entire batch atomically (`E_VERSION`), never a partial delete.
+* `scope`: the memory subject every listed artifact must currently have; a member whose actual subject differs refuses the entire batch (`E_SCOPE`) — deletion never crosses subjects it wasn't declared for.
+* `apply` (default `false`, preview): preview never writes and returns each affected ID's revision, dependent `memory_relations` reference count, and (for a Rush-owned handoff-packet artifact) its on-disk blob path. Apply requires `--allow-cache-write` for the database mutation — it replaces each row's stored bytes with a content-free tombstone version (never retaining deleted content) and removes the live row so retrieval/`expand` see it as gone immediately. A Rush-owned handoff blob is additionally unlinked only when `--allow-artifact-write` is also granted; otherwise it is left on disk and reported `cleanup_pending` in the response's `blob_cleanup` (idempotent to retry later — never claimed as atomically erased across the DB/filesystem boundary). External source files are never deleted by this operation. Deleted artifacts remain listed (as `deleted: true`, with no retained content) by `rush project artifacts` for provenance.
+
+### `rush memory edit --input FILE` (Phase 65 P65-07 §6.4)
+Edits one memory artifact's content under compare-and-swap. `--input FILE` is a JSON object `{"scope": "<subject>", "id": "<artifact_id>", "expected_version": <int>, "content": {...}, "apply": false}`:
+* `scope`/`id`/`expected_version`: a stale `expected_version` (`E_VERSION`) or an `id` whose actual subject differs from `scope` (`E_SCOPE`) refuses the edit atomically — never a partial write.
+* `apply` (default `false`, preview): preview never writes, returning the current revision and trust tier. Apply requires `--allow-cache-write`; it writes the new content through the same versioned `update_content` compare-and-swap path every store mutation uses (preserving the prior version's content as history) and, if the artifact was previously promoted (`trust_tier="STATED"`), resets its trust back to an unpromoted candidate (clearing its signature and promotion timestamp) — an edit is never itself a re-promotion.
+
+### `rush memory archive --input FILE` (Phase 65 P65-07 §6.4)
+Sets or clears an archived marker on one memory artifact — never deletes content or history. `--input FILE` is a JSON object `{"scope": "<subject>", "id": "<artifact_id>", "expected_version": <int>, "apply": false, "archived": true}`:
+* `scope`/`id`/`expected_version`: same atomic cross-scope/stale-version refusal as `edit` above (`E_SCOPE`/`E_VERSION`).
+* `apply` (default `false`, preview): preview never writes. Apply requires `--allow-cache-write`; the marker change is itself a versioned store mutation (its own audit row), so full content/history stays retrievable — only excluded from `rush memory ask|list|recall`'s normal results. `rush memory list SUBJECT QUERY --include-archived` opts back into archived rows for authorized inspection.
+* `archived` (default `true`): set `false` with the row's current `expected_version` to reverse a prior archive — fully idempotent-reversible, unlike `delete`.
+
+### `rush project snapshot [--project-id ID] [--session ID]` (Phase 65 P65-07.2)
+One shared evidence view over a registered project: overview/readiness, a run/coverage/finding summary, a memory summary (counts by subject, deleted count, and the admin capabilities `write`/`promote`/`maintain`/`delete`), token totals (see below), a best-effort Git HEAD/dirty summary, and categorized artifact references (same shape `rush project artifacts` returns). Read-only; resolves the target project the same way `rush project show` does. Token totals separate four distinct numbers, never blending an estimate into a real count: `provider_reported` (real per-tool metrics from run manifests; `total_tokens` stays `null`/"unknown" — never `0` — when no manifest ever reported one), `tokenizer_counted` (real `cl100k_base` counts summed from persisted agent-handoff packets), `cache_hits` (real, opt-in-recorded memory retrieval/expansion/packing/handoff/embedding event costs), and `estimated_avoided` (the existing token-economy ledger's raw-vs-compressed savings estimate).
+
+### `rush project artifacts [--project-id ID] [--session ID] [--category NAME]... [--limit N] [--offset N]` (Phase 65 P65-07.2/.3)
+Categorized, provenance-carrying references to everything a project has produced — scan-run outputs (`scan_outputs`), agent handoff packets (`handoffs`), and memory artifacts including tombstoned/deleted ones (`memory`). A scan output's `category` is whatever the scan classified it as, passed through verbatim — a category this command has never seen before (a future profiling/export engine) is still returned, never silently dropped, so new output never goes invisible before a bespoke viewer exists for it. Never includes raw finding evidence, tool stdout, or memory content — reference metadata only (an `id`/`artifact_ref` a caller can separately `memory expand`), so a secret embedded in raw tool output or memory content can never surface through this listing. `--category` (repeatable) filters each of the three lists independently by exact match; `--limit`/`--offset` (default 100/0, max 1000) then slice each filtered list independently.
+
 ### `rush ship clean`
-Deletes scratch directories, caches, and build artifacts by default. Ownership checks and permission-gated apply remain planned in P64-02; default CLI/MCP execution can delete user files (F02). Use only `--dry-run` for inspection.
-* `--dry-run`: Preview files to be removed without deleting.
+Previews registered, unchanged Rush-owned ordinary files under `.rush/runs/`; it does not scan or remove arbitrary `scratch/`, `tmp/`, cache, or user files. Registry entries in `.rush/cleanup.json` bind path, digest, length, producer, and file identity. Apply requires both flags below; missing, modified, redirected, or nonregular entries are refused.
+* `--apply`: Request deletion after preview.
+* `--allow-artifact-write`: Required with `--apply`; default invocation is preview-only.
 
 ### `rush ship env`
 Lint codebase environment variable usage against `.env.example`.
@@ -274,7 +324,7 @@ Align prompt prefix above provider cache boundary (>=1024 tokens).
 * `--system, -s`: System prompt string to align.
 
 ### `rush context gain`
-Print one Rich summary of local compression estimates, then exit. Persistent interaction is planned in P66-03; these are not measured provider bills or cache-hit rates.
+Print one Rich summary of local compression estimates, then exit. The persistent, live equivalent is the Tokens section of `rush ui` / `rush dashboard` (same `TelemetryStore` summary, per-run/session/agent views); these are not measured provider bills or cache-hit rates.
 
 ### `rush context persona`
 View or configure agent terse response persona style.

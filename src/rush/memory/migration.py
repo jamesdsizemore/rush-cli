@@ -36,6 +36,7 @@ from rush.memory.store import (
     MemoryFamily,
     MemorySubject,
     TypedArtifactStore,
+    _write_version,
 )
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import sanitize_value
@@ -94,27 +95,43 @@ def replace_origin_content(
     *,
     created_at: float | None = None,
 ) -> bool:
-    """Replace changed compatibility content without inheriting approval of old bytes."""
+    """Replace changed compatibility content without inheriting approval of old bytes.
+
+    Routed through `_write_version` (MC01 §6.1) only when content actually changed: an
+    identical import stays a no-op (matches the existing early-return below), never advancing
+    `artifact_version`.
+    """
     clean_content = sanitize_value(content).value
     with sqlite3.connect(str(store.db_path)) as conn:
+        conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ?",
+            "SELECT id, content, source FROM memory_artifacts "
+            "WHERE origin_kind = ? AND origin_id = ?",
             (origin_kind, origin_id),
         ).fetchone()
-        if row is None or json.dumps(json.loads(row[0]), sort_keys=True) == json.dumps(
-            clean_content, sort_keys=True
-        ):
+        if row is None or json.dumps(
+            json.loads(row["content"]), sort_keys=True
+        ) == json.dumps(clean_content, sort_keys=True):
             return False
+        new_version = _write_version(
+            conn,
+            row["id"],
+            content=clean_content,
+            source=row["source"],
+            trust_tier=_LOCAL_TIER,
+            expected_version=None,
+        )
         conn.execute(
             "UPDATE memory_artifacts SET content = ?, trust_tier = ?, created_at = ?, "
             "signature = NULL, promoted_at = NULL, corroboration_count = 0, "
             "stale = 0, content_hash = NULL, expires_at = NULL, expired_at = NULL, "
-            "expired_by = NULL WHERE origin_kind = ? AND origin_id = ?",
+            "expired_by = NULL, artifact_version = ? WHERE origin_kind = ? AND origin_id = ?",
             (
                 json.dumps(clean_content),
                 _LOCAL_TIER,
                 created_at if created_at is not None else time.time(),
+                new_version,
                 origin_kind,
                 origin_id,
             ),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 import json
 import os
@@ -712,7 +713,7 @@ def test_fuzz_real_workload(tmp_path: Path) -> None:
     )
     assert result["status"] == "fail"
     assert result["metrics"]["iterations"] > 0
-    assert result["engine_version"] == "3.1.0"
+    assert result["engine_version"] == importlib.metadata.version("atheris")
     assert harness.read_bytes() == original
     assert (corpus / "seed").read_bytes() == b"RUSH_CRASH"
     reproducer = next(
@@ -735,7 +736,7 @@ def test_fuzz_real_workload(tmp_path: Path) -> None:
         check=False,
     )
     assert replay.returncode != 0
-    assert b"RuntimeError: known crash" in replay.stderr
+    assert b"RuntimeError: known crash" in replay.stdout + replay.stderr
 
     harness.write_text(
         "import atheris\n"

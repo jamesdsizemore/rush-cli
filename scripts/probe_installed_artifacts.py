@@ -12,13 +12,17 @@ Enforces:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +36,7 @@ class ArtifactProbeResult:
     import_clean: bool
     stdout: str
     stderr: str
+    mcp_initialized: bool = False
 
 
 def scrub_environment(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -59,6 +64,234 @@ def check_import_integrity(code: str) -> bool:
     """Check whether code contains invalid 'src.rush' imports (R-001 negative control)."""
     pattern = re.compile(r"^\s*(from|import)\s+src\.rush", re.MULTILINE)
     return not bool(pattern.search(code))
+
+
+class UnsupportedPlatformError(ValueError):
+    """Raised when no release asset is defined for a given OS/architecture pair."""
+
+
+_ARCH_ALIASES = {
+    "aarch64": "arm64",
+    "arm64": "arm64",
+    "amd64": "x86_64",
+    "x86_64": "x86_64",
+}
+
+# Canonical release asset name for each supported (OS, architecture) pair (Phase 65: P65-01).
+# Mirrors the build matrix in .github/workflows/release.yml and the URLs referenced by
+# packaging/homebrew/rush.rb, packaging/scoop/rush.json and packaging/winget/rush.yaml.
+PLATFORM_ASSET_MATRIX: dict[tuple[str, str], str] = {
+    ("darwin", "arm64"): "rush-darwin-arm64.tar.gz",
+    ("darwin", "x86_64"): "rush-darwin-x86_64.tar.gz",
+    ("linux", "x86_64"): "rush-linux-x86_64.tar.gz",
+    ("linux", "arm64"): "rush-linux-arm64.tar.gz",
+    ("windows", "x86_64"): "rush-windows-x86_64.zip",
+    ("windows", "arm64"): "rush-windows-arm64.zip",
+}
+
+
+def select_platform_asset(system: str, machine: str) -> str:
+    """Return the exact release asset filename for an OS name and CPU architecture.
+
+    ``system`` accepts ``platform.system()`` values (Darwin/Linux/Windows, case-insensitive).
+    ``machine`` accepts ``platform.machine()`` values (arm64/aarch64/x86_64/AMD64, case-insensitive).
+    Raises ``UnsupportedPlatformError`` for any pair outside the six-member release matrix.
+    """
+    normalized_machine = _ARCH_ALIASES.get(
+        machine.strip().lower(), machine.strip().lower()
+    )
+    key = (system.strip().lower(), normalized_machine)
+    try:
+        return PLATFORM_ASSET_MATRIX[key]
+    except KeyError:
+        raise UnsupportedPlatformError(
+            f"No release asset defined for system={system!r} machine={machine!r}"
+        ) from None
+
+
+def compute_sha256(path: Path) -> str:
+    """Return the hex sha256 digest of a file's exact bytes."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_sha256sums(archive_paths: list[Path], dest: Path) -> Path:
+    """Write a SHA256SUMS manifest computed from each archive's exact bytes."""
+    lines = [
+        f"{compute_sha256(p)}  {p.name}"
+        for p in sorted(archive_paths, key=lambda p: p.name)
+    ]
+    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dest
+
+
+def verify_archive_checksum(archive_path: Path, checksums_path: Path) -> bool:
+    """Verify archive_path's exact sha256 bytes match its recorded SHA256SUMS entry.
+
+    Returns False (never raises) when the archive is missing, the checksum manifest is
+    missing, the archive has no entry in it, or the recorded digest does not match.
+    """
+    if not archive_path.is_file() or not checksums_path.is_file():
+        return False
+    expected = None
+    for line in checksums_path.read_text(encoding="utf-8").splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        digest, name = parts
+        if name.lstrip("*") == archive_path.name:
+            expected = digest
+            break
+    if expected is None:
+        return False
+    return compute_sha256(archive_path) == expected
+
+
+def build_release_archive(
+    binary_path: Path, dest_dir: Path, asset_name: str, version: str
+) -> Path:
+    """Package a self-contained binary plus a VERSION file into the named release archive."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir = dest_dir / f".stage-{asset_name}"
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True)
+    try:
+        binary_name = "rush.exe" if asset_name.endswith(".zip") else "rush"
+        staged_binary = stage_dir / binary_name
+        shutil.copy2(binary_path, staged_binary)
+        staged_binary.chmod(staged_binary.stat().st_mode | 0o111)
+        (stage_dir / "VERSION").write_text(version + "\n", encoding="utf-8")
+
+        archive_path = dest_dir / asset_name
+        if asset_name.endswith(".zip"):
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for item in sorted(stage_dir.iterdir()):
+                    zf.write(item, item.name)
+        else:
+            with tarfile.open(archive_path, "w:gz") as tf:
+                for item in sorted(stage_dir.iterdir()):
+                    tf.add(item, arcname=item.name)
+        return archive_path
+    finally:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
+
+def probe_native_artifact(
+    archive_path: Path, checkout_root: Path, work_dir: Path
+) -> ArtifactProbeResult:
+    """Extract a release archive and probe its self-contained binary from a clean directory.
+
+    PATH is reduced to bare OS directories only (no python/uv/checkout entries) to prove the
+    binary needs neither a source checkout nor an installed Python interpreter. Also performs
+    a real MCP stdio ``initialize`` handshake against the extracted binary.
+    """
+    if not archive_path.is_file():
+        return ArtifactProbeResult(
+            artifact_type="native",
+            artifact_path=str(archive_path),
+            status="failed",
+            origin_verified=False,
+            import_clean=False,
+            stdout="",
+            stderr=f"Archive not found: {archive_path}",
+            mcp_initialized=False,
+        )
+
+    extract_dir = work_dir / "extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    if archive_path.suffix == ".zip":
+        with zipfile.ZipFile(archive_path) as zf:
+            zf.extractall(extract_dir)
+        binary_name = "rush.exe"
+    else:
+        with tarfile.open(archive_path, "r:gz") as tf:
+            tf.extractall(extract_dir, filter="data")
+        binary_name = "rush"
+
+    binary_path = (extract_dir / binary_name).resolve()
+    external_cwd = work_dir / "cwd_native"
+    external_cwd.mkdir(parents=True, exist_ok=True)
+
+    bare_path = "C:\\Windows\\System32" if sys.platform == "win32" else "/usr/bin:/bin"
+    env = {"PATH": bare_path, "HOME": str(work_dir)}
+
+    version_probe = subprocess.run(
+        [str(binary_path), "--version"],
+        cwd=external_cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    origin_verified = verify_package_origin(binary_path, checkout_root)
+
+    mcp_initialized = False
+    mcp_error = ""
+    proc: subprocess.Popen[str] | None = None
+    try:
+        proc = subprocess.Popen(
+            [str(binary_path), "mcp", "serve"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=external_cwd,
+            env=env,
+            text=True,
+        )
+        request = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "probe", "version": "0.0.1"},
+                    },
+                }
+            )
+            + "\n"
+        )
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        proc.stdin.write(request)
+        proc.stdin.flush()
+        line = proc.stdout.readline()
+        response = json.loads(line) if line else {}
+        mcp_initialized = response.get("id") == 1 and "serverInfo" in response.get(
+            "result", {}
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        mcp_error = str(exc)
+    finally:
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    status = (
+        "passed"
+        if (version_probe.returncode == 0 and origin_verified and mcp_initialized)
+        else "failed"
+    )
+
+    return ArtifactProbeResult(
+        artifact_type="native",
+        artifact_path=str(archive_path),
+        status=status,
+        origin_verified=origin_verified,
+        import_clean=version_probe.returncode == 0,
+        stdout=version_probe.stdout,
+        stderr=version_probe.stderr or mcp_error,
+        mcp_initialized=mcp_initialized,
+    )
 
 
 def probe_installed_artifact(
@@ -255,13 +488,27 @@ def main() -> int:
     wheels = sorted(
         dist_dir.glob("*.whl"), key=lambda p: p.stat().st_mtime, reverse=True
     )
+    # Scoped to the sdist naming convention (rush_cli-*) so it never collides with the
+    # native release archives (rush-{platform}-{arch}.tar.gz) that also live in dist/.
     sdists = sorted(
-        dist_dir.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime, reverse=True
+        dist_dir.glob("rush_cli-*.tar.gz"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
     )
 
-    if not wheels and not sdists:
+    try:
+        native_asset_name: str | None = select_platform_asset(
+            platform.system(), platform.machine()
+        )
+    except UnsupportedPlatformError:
+        native_asset_name = None
+    native_path = dist_dir / native_asset_name if native_asset_name else None
+    native_present = native_path is not None and native_path.is_file()
+
+    if not wheels and not sdists and not native_present:
         print(
-            f"No .whl or .tar.gz artifacts found in '{dist_dir}'. Run 'uv build' first.",
+            f"No .whl, sdist, or native release archive found in '{dist_dir}'. "
+            "Build artifacts first.",
             file=sys.stderr,
         )
         return 1
@@ -289,6 +536,15 @@ def main() -> int:
                 f"[probe:sdist] Status: {res.status} (origin_verified={res.origin_verified}, import_clean={res.import_clean})"
             )
 
+        if native_present:
+            assert native_path is not None
+            print(f"[probe:native] Testing {native_path.name}...")
+            res = probe_native_artifact(native_path, checkout_root, work_dir)
+            results.append(res)
+            print(
+                f"[probe:native] Status: {res.status} (origin_verified={res.origin_verified}, mcp_initialized={res.mcp_initialized})"
+            )
+
     if args.json:
         out_data = [
             {
@@ -297,6 +553,7 @@ def main() -> int:
                 "status": r.status,
                 "origin_verified": r.origin_verified,
                 "import_clean": r.import_clean,
+                "mcp_initialized": r.mcp_initialized,
                 "stderr": r.stderr,
             }
             for r in results

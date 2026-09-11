@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from rush import __version__
+from rush.config import resolve_memory_record
 from rush.permissions import ExecutionPermissions
 
 from .models import (
@@ -310,6 +311,9 @@ def resolve_invocation(
     tool_rev = str(req.get("tool_revision") or "1.0.0")
     normalizer_rev = str(req.get("normalizer_revision") or "1.0.0")
     req_id = str(req.get("request_id") or "")
+    # MC05 §9: resolved from real `[tools.memory] record` config only, never from
+    # arbitrary result text or a caller-declared flag.
+    memory_record = resolve_memory_record(cfg)
 
     return InvocationContext(
         workspace_root=root,
@@ -328,6 +332,7 @@ def resolve_invocation(
         environment_digest=env_digest,
         request_id=req_id,
         typed_args=typed_args,
+        memory_record=memory_record,
     )
 
 

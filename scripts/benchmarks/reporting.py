@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -400,3 +401,42 @@ def generate_and_write_decisions(
         )
     write_handoff(decisions, output_root / "final-handoff.md")
     return decisions
+
+
+# --- MC13.4/MC13.5: memory-suite paired scoring and report ------------------------
+
+
+def paired_bootstrap_ci(
+    differences: list[float], *, seed: int, resamples: int = 2000
+) -> tuple[float, float]:
+    """Seeded paired bootstrap 95% CI over per-case `candidate - baseline`
+    differences. Deterministic for a fixed `(differences, seed, resamples)`
+    -- resampling uses `random.Random(seed)`, never the shared global RNG.
+    Returns `(0.0, 0.0)` for an empty input (insufficient precision, not a
+    fabricated interval)."""
+    if not differences:
+        return (0.0, 0.0)
+    rng = random.Random(seed)
+    n = len(differences)
+    means: list[float] = []
+    for _ in range(resamples):
+        resample = [differences[rng.randrange(n)] for _ in range(n)]
+        means.append(sum(resample) / n)
+    means.sort()
+    lower_index = int(0.025 * resamples)
+    upper_index = min(int(0.975 * resamples), resamples - 1)
+    return (means[lower_index], means[upper_index])
+
+
+def write_memory_suite_report(output_root: Path, payload: dict[str, Any]) -> Path:
+    """Atomically writes the MC13 memory-suite run's full JSON report
+    (dataset case results, named-episode results, variant comparisons,
+    named blockers) -- same temp-file + `os.replace` pattern as
+    `write_result`."""
+    output_root = output_root.resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    dest_path = output_root / "memory-suite-report.json"
+    tmp_path = output_root / "memory-suite-report.tmp"
+    tmp_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp_path, dest_path)
+    return dest_path

@@ -59,8 +59,9 @@ flowchart TB
 - **Polyglot Monorepo Scoping (Phase 26)**:
   - Deterministic workspace topology discovery (`src/rush/discovery/workspace.py`) for npm, pnpm, yarn, Cargo, and Turborepo with strict path containment.
 - **Authenticated In-Memory Web Dashboard & Rich TUI (Phase 27)**:
-  - Single-binary zero-dependency local HTTP server (`src/rush/dashboard.py`) binding exclusively to `127.0.0.1` with ephemeral `X-Rush-Auth` tokens, DNS rebinding prevention, and CSRF Origin validation.
+  - Single-binary zero-dependency local HTTP server (`src/rush/dashboard/server.py`, restructured into the `src/rush/dashboard/` package by Phase 66) binding exclusively to `127.0.0.1` with ephemeral `X-Rush-Auth` tokens, DNS rebinding prevention, and CSRF Origin validation. This one-shot findings handler (`AuthenticatedDashboardHandler`) remains in place alongside Phase 66's persistent server.
   - Interactive terminal finding explorer (`src/rush/tui.py`) built with Rich layouts.
+  - **Phase 66 extension**: the same `src/rush/dashboard/` package and `tui.py` now also host a persistent, session-cookie/CSRF-header-authenticated per-server dashboard (`create_dashboard_server`) and a persistent Rich TUI (`run_interactive_tui`), sharing one canonical project action/snapshot API for the project map, scans/findings/handoff/rescan, scoped memory administration, per-run/session token use, real Git history, and every generated artifact -- see [Phase 66 implementation evidence](phase-plans/phase-66-implementation-evidence.md).
 - **Trust-Gated Dynamic Plugin Runtime (Phase 28)**:
   - Declarative script plugin execution (`src/rush/plugins/`) with local repository trust verification (`~/.rush/trusted_repositories.json`) preventing arbitrary code execution in untrusted checkouts.
 - **Closed-Loop AI Patch Remediation & Session Memory (Phase 29)**:

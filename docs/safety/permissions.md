@@ -4,7 +4,7 @@
 
 `provider_resume` requires explicit network permission (`--allow-network`) before Rush invokes a supported user-owned CLI or fixed-loopback provider route. `9router_cli` may read `RUSH_9ROUTER_API_KEY` only to set `OPENAI_API_KEY` in its single Codex child process; it does not grant OAuth/browser access, automatic fallback, automatic retry, or direct `9router_api` use.
 
-Rush distinguishes ordinary local inspection from expensive or mutating work. The table describes intended gate semantics, not universally enforced behavior: AI eval can launch without required grants (F08), `ship clean` defaults to deletion (F02), and `fix --dry-run` can destroy work (F01). See [Known issues](../KNOWN_ISSUES.md).
+Rush distinguishes ordinary local inspection from expensive or mutating work. The table describes intended gate semantics, not universally enforced behavior: AI eval can launch without required grants (F08). `fix --dry-run` is bounded Ruff preview; `ship clean` previews registered artifacts and requires `--apply --allow-artifact-write` to delete. See [Known issues](../KNOWN_ISSUES.md).
 
 | Boundary | CLI flag | Intended effect | Default |
 |---|---|---|---|
@@ -86,7 +86,7 @@ The following component contracts are not whole-application guarantees. Checkpoi
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
+   - Patch-sandbox rollback still uses broad reset/clean and can discard unrelated work. Patch-sandbox restoration remains planned in [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F43](../reports/phase-64-66-application-review.md) remains open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

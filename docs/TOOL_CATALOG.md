@@ -8,6 +8,10 @@ Manages local session checkpoints through `save`, `list`, and `restore`. It is i
 
 Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through `ask`, `write`, `promote`, `list`, `recall`, and `maintain`. It is implemented by `MemoryTool`, has no external engine, and is registered as MCP `rush_memory` and CLI `rush memory`. `write`/`promote`/`maintain` are `stateful-mutation` operations requiring cache-write permission. `ask`/`list`/`recall` require an explicit session allowlist and return content only after recall defenses pass.
 
+## `scan` — workflow, real adapter (Phase 65)
+
+Plans and executes a full-project scan across every catalog candidate through `plan`, `run`, and `status`. It is implemented by `ScanTool` over `rush.workflows.project_run`, has no external engine of its own (it schedules the existing `ALL_TOOLS` catalog), and is registered as MCP `rush_scan` and CLI `rush scan --project ID_OR_PATH`. `plan` is a preview; `run` is a `stateful-mutation` operation requiring `allow_cache_write` and `allow_artifact_write`, and persists one immutable run manifest per invocation. `status` paginates the run's scheduled candidates behind the same HMAC-signed cursor `rush_project`'s `list` uses.
+
 The live `TOOL_SPECS` catalog contains 53 user-visible tools (distinct from 74 registered MCP names). **Maturity matters:** a listed tool can be a real adapter, importer, or browser runtime.
 
 Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).

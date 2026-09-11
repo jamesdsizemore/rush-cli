@@ -8,6 +8,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Canonical Python project markers. Shared with `rush.tools.routing` so both
+# discovery paths agree on what counts as "a Python project" (fixes
+# requirements.txt-only projects being invisible to language routing).
+PYTHON_MARKERS: tuple[str, ...] = (
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "Pipfile",
+)
+
 
 @dataclass(frozen=True)
 class DetectedStack:
@@ -33,12 +43,7 @@ def detect_project_stacks(root: Path) -> list[DetectedStack]:
     resolved = root.resolve()
 
     # 1. Python Detection
-    if (
-        (resolved / "pyproject.toml").is_file()
-        or (resolved / "requirements.txt").is_file()
-        or (resolved / "setup.py").is_file()
-        or (resolved / "Pipfile").is_file()
-    ):
+    if any((resolved / marker).is_file() for marker in PYTHON_MARKERS):
         pm = (
             "uv"
             if (resolved / "uv.lock").is_file()
@@ -130,9 +135,18 @@ def detect_project_stacks(root: Path) -> list[DetectedStack]:
         pm = "maven" if (resolved / "pom.xml").is_file() else "gradle"
         stacks.append(
             DetectedStack(
-                language="java/kotlin",
+                language="jvm",
                 package_manager=pm,
                 suggested_engines=["spotless", "detekt"],
+            )
+        )
+
+    # 8. Dart Detection
+    if (resolved / "pubspec.yaml").is_file():
+        stacks.append(
+            DetectedStack(
+                language="dart",
+                package_manager="pub",
             )
         )
 

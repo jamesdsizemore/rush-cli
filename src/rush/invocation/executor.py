@@ -423,6 +423,22 @@ class InvocationExecutor:
         # Invokes handler(*args, **kwargs) exactly once. Zero retry on TypeError.
         result = operation.handler(*args, **kwargs)
 
+        # MC05 §6.4: capture one real observation after execution, before the
+        # result-cache write, only when opted in and host-granted cache_write.
+        # Memory/telemetry operations never recursively record themselves.
+        # Never converts or reruns the original result on any observation failure.
+        if (
+            context.memory_record
+            and "cache_write" in context.permissions
+            and context.operation_id != "memory"
+        ):
+            try:
+                from rush.memory.experience import record_observation
+
+                record_observation(context, result)
+            except Exception:  # noqa: BLE001, S110
+                pass
+
         if (
             decision.decision == "eligible"
             and self._cache is not None

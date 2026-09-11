@@ -8,12 +8,13 @@ never mutates the DB).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from rush.memory.store import TypedArtifactStore
+from rush.memory.store import TypedArtifactStore, _write_version
 
 _DAY_SECONDS = 86400
 
@@ -70,8 +71,9 @@ def sweep_expired(project_root: Path | None = None, *, batch_size: int = 500) ->
     ttl_sql = "CASE " + " ".join(ttl_cases) + " END"
     with sqlite3.connect(str(store.db_path)) as conn:
         conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
-            "SELECT id, subject, trust_tier, created_at FROM memory_artifacts "
+            "SELECT id, subject, trust_tier, created_at, content, source FROM memory_artifacts "
             f"WHERE expired_at IS NULL AND created_at + ({ttl_sql}) <= ? "
             "ORDER BY created_at ASC LIMIT ?",
             (*parameters, now, batch_size),
@@ -82,10 +84,18 @@ def sweep_expired(project_root: Path | None = None, *, batch_size: int = 500) ->
                 continue
             expires_at = row["created_at"] + row_policy.ttl_seconds
             if now >= expires_at:
+                new_version = _write_version(
+                    conn,
+                    row["id"],
+                    content=json.loads(row["content"]),
+                    source=row["source"],
+                    trust_tier=row["trust_tier"],
+                    expected_version=None,
+                )
                 conn.execute(
                     "UPDATE memory_artifacts SET expires_at = ?, expired_at = ?, "
-                    "expired_by = ? WHERE id = ?",
-                    (expires_at, now, "expiry_sweep", row["id"]),
+                    "expired_by = ?, artifact_version = ? WHERE id = ?",
+                    (expires_at, now, "expiry_sweep", new_version, row["id"]),
                 )
                 changed += 1
         conn.commit()

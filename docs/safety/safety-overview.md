@@ -4,7 +4,7 @@
 
 Mined mistake records are redacted and labelled historical evidence in coordination recovery. They remain non-authoritative: no command, patch, merge, or retry follows automatically from them.
 
-Safe defaults remain the design requirement. Current `fix --dry-run`, `ship clean`, checkpoint/governance symlinks and custom token-outline output violate it (F01–F07). Repairs remain planned in [Phase 64](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md).
+Safe defaults remain the design requirement. P64-01 makes `fix --dry-run` bounded Ruff preview; P64-02 makes `ship clean` preview registered artifacts and require explicit apply plus artifact-write. Checkpoint/governance symlinks, patch cleanup, and token-outline retain open Phase 64 defects.
 
 - **No implicit installs.** Missing optional engines return `skipped`.
 - **No silent source rewrite.** Review/check commands are read-only; formatter mutation is an explicit path and `--check` is available.
@@ -60,7 +60,7 @@ The following component contracts are not whole-application guarantees. Checkpoi
    - `PatchContract` cryptographically binds base commit, tree digest, patch content hash, sandbox directory under `rush.io.PhysicalRoot`, command plans, and policy review classes (`standard`, `policy-changing`, `privileged`).
    - Workspaces must be clean before sandboxing or patch application; dirty checkouts fail closed with `DirtyWorkspaceError`.
    - `PatchVerifier` requires at least one passing executed test command; zero executed commands return `outcome='unavailable'` and `False` (zero commands never verify).
-   - Current rollback uses broad reset/clean and can discard unrelated work. Exact restoration remains planned in [P64-01/P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F01/F43](../reports/phase-64-66-application-review.md) remain open.
+   - Patch-sandbox rollback still uses broad reset/clean and can discard unrelated work. Patch-sandbox restoration remains planned in [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); [F43](../reports/phase-64-66-application-review.md) remains open.
 
 5. **Runtime Output Boundary Adapter Enforcement (`rush.contracts.operations`)**:
    - 100% of public operations declared in `governance/public-operations.toml` enforce their target adapters (`ToolOperationAdapter`, `AdminOperationAdapter`, `ServiceOperationAdapter`) at runtime boundaries while preserving native JSON-RPC service protocol messages.

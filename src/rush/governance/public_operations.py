@@ -52,6 +52,11 @@ def build_operations_inventory() -> list[PublicOperation]:
         if hasattr(cmd, "commands") and cmd.commands:
             for sub_name in cmd.commands:
                 click_leaves.append(f"{name} {sub_name}")
+            # A group invocable bare (invoke_without_command=True, e.g. `rush
+            # scan --full`) is also its own callable leaf -- don't let having
+            # subcommands hide that route.
+            if getattr(cmd, "invoke_without_command", False):
+                click_leaves.append(name)
         else:
             click_leaves.append(name)
 
@@ -207,12 +212,258 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory maintain --help",
             "admin",
         ),
+        # MC14 (Phase 63 §9.1): the 13 new memory operations. None of them claim the
+        # shared "rush_memory" MCP tool name (already claimed by "memory ask" above --
+        # test_operation_ids_and_transport_names_are_unique requires mcp_tool uniqueness),
+        # matching the existing memory list/recall/write/promote/maintain precedent.
+        "memory expand": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory expand --help",
+            "admin",
+        ),
+        "memory link": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory link --help",
+            "admin",
+        ),
+        "memory related": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory related --help",
+            "admin",
+        ),
+        "memory consolidate": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory consolidate --help",
+            "admin",
+        ),
+        "memory verify-attempt": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory verify-attempt --help",
+            "admin",
+        ),
+        "memory prepare": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory prepare --help",
+            "admin",
+        ),
+        "memory resume": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory resume --help",
+            "admin",
+        ),
+        "memory intent": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory intent --help",
+            "admin",
+        ),
+        "memory recipe": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory recipe --help",
+            "admin",
+        ),
+        "memory plan-checks": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory plan-checks --help",
+            "admin",
+        ),
+        "memory last-success-diagnose": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory last-success-diagnose --help",
+            "admin",
+        ),
+        "memory handoff": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory handoff --help",
+            "admin",
+        ),
+        "memory receive": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory receive --help",
+            "admin",
+        ),
+        # P65-07.3 (Phase 65 §6.4): the public memory-delete operation. Matches the
+        # MC14 "13 new memory operations" precedent immediately above -- doesn't claim
+        # the shared "rush_memory" MCP tool name, "admin" kind regardless that preview
+        # is read-only (apply is a real, gated database mutation).
+        "memory delete": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory delete --help",
+            "admin",
+        ),
+        # T031 (Phase 65 §6.4): edit/archive, added to the same P65-07 file set as
+        # delete above -- same non-shared-mcp-tool-name, "admin" kind precedent.
+        "memory edit": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory edit --help",
+            "admin",
+        ),
+        "memory archive": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory archive --help",
+            "admin",
+        ),
+        # P65-03.3 (Phase 65 §3.2): project registry operations over `ProjectTool`.
+        # `list`/`show` are read-only queries ("tool" kind, matching the "memory
+        # ask/recall/list" precedent); `add`/`select`/`configure`/`create`/`relink`
+        # mutate registry or session state ("admin" kind, matching "memory
+        # write/promote/maintain"). `list` claims the shared `rush_project` MCP tool
+        # name, alphabetically first among the read-only actions.
+        "project add": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "stateful-mutation",
+            "rush project add --help",
+            "admin",
+        ),
+        "project list": (
+            "rush_project",
+            "rush.tools.project:ProjectTool",
+            "read-only",
+            "rush project list --help",
+            "tool",
+        ),
+        "project show": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "read-only",
+            "rush project show --help",
+            "tool",
+        ),
+        # P65-07.3 (Phase 65 §6.4): the shared project-evidence view and its categorized
+        # artifact listing -- read-only queries, matching the "project show" precedent.
+        "project snapshot": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "read-only",
+            "rush project snapshot --help",
+            "tool",
+        ),
+        "project artifacts": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "read-only",
+            "rush project artifacts --help",
+            "tool",
+        ),
+        "project select": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "stateful-mutation",
+            "rush project select --help",
+            "admin",
+        ),
+        "project configure": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "stateful-mutation",
+            "rush project configure --help",
+            "admin",
+        ),
+        "project create": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "stateful-mutation",
+            "rush project create --help",
+            "admin",
+        ),
+        "project relink": (
+            None,
+            "rush.tools.project:ProjectTool",
+            "stateful-mutation",
+            "rush project relink --help",
+            "admin",
+        ),
+        # P65-04.3 (Phase 65 §3.2): full-project scan over `ScanTool`. One CLI
+        # leaf (`--full` executes; otherwise the plan is only previewed) paired
+        # directly with the one `rush_scan` MCP tool, matching "patch apply"'s
+        # single-row pairing rather than `rush_project`'s split-by-action rows.
+        "scan": (
+            "rush_scan",
+            "rush.tools.scan:ScanTool",
+            "stateful-mutation",
+            "rush scan --help",
+            "tool",
+        ),
         "patch apply": (
             "rush_patch_apply",
             "rush.tools.patch_apply:PatchApplyTool",
             "stateful-mutation",
             "rush patch apply --help",
             "tool",
+        ),
+        # P65-05.3 (Phase 65 §3.2): agent connection operations over
+        # `AgentConnectionTool`, matching `rush_project`'s split-by-action rows.
+        # `list`/`doctor` are read-only queries ("tool" kind); `connect` mutates
+        # a third-party agent's own config file ("admin" kind, matching
+        # "project add"/"project select"). `list` claims the shared
+        # `rush_agent_connection` MCP tool name -- it is the tool's default
+        # action, matching `rush_project`'s "list" precedent.
+        "agent list": (
+            "rush_agent_connection",
+            "rush.tools.agent_connection:AgentConnectionTool",
+            "read-only",
+            "rush agent list --help",
+            "tool",
+        ),
+        "agent connect": (
+            None,
+            "rush.tools.agent_connection:AgentConnectionTool",
+            "stateful-mutation",
+            "rush agent connect --help",
+            "admin",
+        ),
+        "agent doctor": (
+            None,
+            "rush.tools.agent_connection:AgentConnectionTool",
+            "read-only",
+            "rush agent doctor --help",
+            "tool",
+        ),
+        # T024 (Phase 65 §6.1): InstallTool is administrative CLI composition,
+        # not a remotely callable installer MCP tool -- mcp_tool stays None.
+        # It mutates the local filesystem, agent configs, and installs a
+        # binary, so it is "admin"/"stateful-mutation" (matching "agent
+        # connect"'s CLI-only administrative-mutation precedent) rather than
+        # the read-only fallback the generic CLI-leaf pass (step 6) would
+        # otherwise assign it.
+        "install": (
+            None,
+            "rush.tools.install:InstallTool",
+            "stateful-mutation",
+            "rush install --help",
+            "admin",
         ),
     }
 

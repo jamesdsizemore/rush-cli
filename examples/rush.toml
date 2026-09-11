@@ -76,3 +76,7 @@ base_ref = "main"
 dry_run = true
 circuit_breaker = true
 allow_artifact_write = false
+
+# Opt-in only; default false. Also requires host-granted cache-write per invocation.
+[tools.memory]
+record = false

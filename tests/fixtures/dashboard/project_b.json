@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "project_id": "project-b",
+  "source_identity": "source-b-0001",
+  "root": "/fixtures/dashboard/project-b",
+  "files": [
+    {"path": "src/a.py"},
+    {"path": "src/b.py"}
+  ],
+  "findings": [
+    {"id": "f1-b", "path": "src/a.py", "line": 3, "severity": "error"},
+    {"id": "f2-b", "path": "src/a.py", "line": 8, "severity": "warn"},
+    {"id": "f3-b", "path": "src/b.py", "line": 2, "severity": "warn"}
+  ],
+  "memories": [
+    {"id": "m1-b", "cites": ["src/a.py"]},
+    {"id": "m2-b", "cites": ["f3-b"]}
+  ],
+  "agents": [
+    {"id": "ag1-b", "assigned_to": ["f1-b"]}
+  ]
+}

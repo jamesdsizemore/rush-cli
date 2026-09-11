@@ -49,11 +49,11 @@ These commands exist, but current implementations do not satisfy the accepted pe
 # Review deterministic heuristics
 uv run rush review src --json
 
-# Inspect available fix options; current safe-execution repairs are pending
+# Inspect available fix options; bounded Ruff remediation
 uv run rush fix --help
 ```
 
-Current `fix` execution has unresolved checkout/index preservation defects. Do not use it on valued work until [Phase 64, P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01) is implemented and verified.
+[`fix PATH --dry-run --force`](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) preserves checkout/index state for Ruff-selected Python targets. Apply requires `--allow-artifact-write`; P64-04 remains planned.
 
 ## What to do next
 

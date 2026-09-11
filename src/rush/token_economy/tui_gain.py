@@ -9,13 +9,13 @@ from rich.table import Table
 from .telemetry import TelemetryStore
 
 
-def render_gain_dashboard(
-    project_root: Path | None = None, console: Console | None = None
-) -> None:
-    """Renders the Rich terminal HUD displaying token savings and dollar economy metrics."""
+def build_gain_panel(project_root: Path | None = None) -> Panel:
+    """Builds the Rich HUD panel from live `TelemetryStore` data. Reused by
+    both the one-shot `render_gain_dashboard` CLI print and the persistent
+    TUI's memory/gain toggle (P66-03) so both surfaces read the exact same
+    real numbers -- never a duplicated, possibly-drifting copy."""
     store = TelemetryStore(project_root)
     stats = store.get_summary()
-    console = console or Console()
 
     table = Table(title="Rush Context Intelligence Gain HUD", expand=True)
     table.add_column("Metric", style="cyan", justify="left")
@@ -30,12 +30,19 @@ def render_gain_dashboard(
         "Est. Dollar Savings (Blended)", f"${stats['dollar_savings_est']:.4f}"
     )
 
-    panel = Panel(
+    return Panel(
         table,
         title="[bold green]Context Gain Telemetry[/bold green]",
         subtitle="[dim]Powered by TOON, Skeletons & Distillers[/dim]",
     )
-    console.print(panel)
+
+
+def render_gain_dashboard(
+    project_root: Path | None = None, console: Console | None = None
+) -> None:
+    """Renders the Rich terminal HUD displaying token savings and dollar economy metrics."""
+    console = console or Console()
+    console.print(build_gain_panel(project_root))
 
 
 render_gain_summary = render_gain_dashboard

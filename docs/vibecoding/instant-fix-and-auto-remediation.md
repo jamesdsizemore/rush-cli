@@ -1,22 +1,19 @@
-# Fix command: current limits and planned safe remediation
+# Fix command: bounded Ruff remediation
 
 Nothing ruins a great vibecoding flow state like getting bogged down in trivial formatting errors: missing trailing commas, inconsistent double quotes, unsorted imports, or trailing whitespace.
 
-Current `rush fix` exists, but checkout/index preservation defects make it unsuitable for valued work. **Status: planned repair — implementation [Phase 64, P64-01](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-01--preserve-checkoutindex-during-fixes-f01).** This page retains the accepted automated-remediation requirement without claiming the current route is safe.
+[`rush fix PATH --dry-run --force`](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) now provides bounded Ruff preview. Apply requires `--allow-artifact-write`; P64-04 patch remediation remains planned.
 
 ---
 
 ## 1. How `rush fix` Works
 
 ```bash
-# Preview what Rush will clean up (safe, non-destructive preview)
-uv run rush fix --help
+# Preview Ruff changes without writes
+uv run rush fix . --dry-run --force
 ```
 
-The current implementation attempts to orchestrate installed formatters and fixers:
-- **Python**: Invokes `Ruff` to format code, sort imports (`I001`), and clean unused variables.
-- **JavaScript & TypeScript**: Invokes `Prettier`, `ESLint`, and `Biome` to standardize style, format JSX/TSX, and resolve linting rules.
-- **HTML / Templates**: Invokes `djLint` to tidy template indentation.
+The current implementation invokes installed Ruff for selected Python targets. Missing Ruff returns structured `skipped`; apply requires `--allow-artifact-write`.
 
 ---
 
@@ -38,7 +35,7 @@ To make formatting 100% effortless, start the live watcher at the beginning of y
 uv run rush watch .
 ```
 
-`rush watch` can trigger checks after file changes, but it does not make current `fix` safe. Inspect findings and apply changes manually until P64-01 passes its preservation gates.
+`rush watch` can trigger checks after file changes. Use `rush fix` apply only with artifact-write permission; P64-04 remains planned.
 
 ### Failed-Fix Memory Pairing (Phase 61)
 

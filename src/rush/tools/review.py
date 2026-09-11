@@ -53,6 +53,7 @@ from rush.review.results import (
     build_error_review_result,
 )
 
+from ..memory.retrieval import SourceValidationMemo, defended_recall
 from ..memory.store import MemoryArtifact, MemorySubject, TypedArtifactStore
 from .base import Finding, ToolFn, ToolName, ToolResult
 from .common import now_ms
@@ -96,24 +97,30 @@ def _format_memory_citation(
 
 
 def _recall_memory_citations(targets: list[Path], root: Path) -> list[Finding]:
-    """Cite prior failure/architectural-decision memory matching each reviewed file's name."""
+    """Cite prior failure/architectural-decision memory matching each reviewed file's name.
+
+    MC04 §9.0: one `defended_recall()` query per (target, subject) pair — never the old
+    `search()`-then-`recall()` double query — sharing one `SourceValidationMemo` across the
+    whole run, so N reviewed targets/subjects that cite the same backing source file hash/
+    API-diff it once, not once per citation.
+    """
     if not targets:
         return []
     store = TypedArtifactStore(root)
+    memo = SourceValidationMemo()
     findings: list[Finding] = []
     memory_sources: tuple[tuple[MemorySubject, list[str]], ...] = (
         ("failure", _FAILURE_MEMORY_SOURCES),
         ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
     )
     for target in targets:
-        query = f'"{target.name}"'
         for subject, sources in memory_sources:
             artifacts: list[MemoryArtifact] = []
             # Optional citations must never expose content from a failed recall.
             with suppress(Exception):
-                if not store.search(subject, query):
-                    continue
-                artifacts = store.recall(subject, query, session_allowlist=sources)
+                artifacts = defended_recall(
+                    store, subject, target.name, sources, memo=memo
+                )
             for artifact in artifacts:
                 if artifact.stale:
                     continue

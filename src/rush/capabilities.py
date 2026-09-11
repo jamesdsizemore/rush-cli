@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from pathlib import Path
 from typing import TypedDict
 
 from .catalog import ENGINE_SPECS, TOOL_SPECS
 from .config import RushConfig, load_config
+from .discovery.stack import detect_project_stacks
 from .tools.common import resolve_binary
 from .tools.routing import detect_project_languages
 
@@ -64,6 +66,7 @@ def inspect_capabilities(path: Path, *, config: RushConfig | None = None) -> dic
     root = path if path.is_dir() else path.parent
     config = config or load_config(start=root)
     languages = detect_project_languages(root)
+    stacks = [dataclasses.asdict(stack) for stack in detect_project_stacks(root)]
     reports = sorted(name for name, _ in _REPORTS if (root / name).is_file())
     report_tools = {tool for name, tool in _REPORTS if name in reports}
     tools: dict[str, Capability] = {}
@@ -127,6 +130,7 @@ def inspect_capabilities(path: Path, *, config: RushConfig | None = None) -> dic
     return {
         "path": str(root),
         "languages": languages,
+        "stacks": stacks,
         "reports": reports,
         "tools": tools,
     }

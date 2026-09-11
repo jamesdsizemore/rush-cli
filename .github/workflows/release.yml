@@ -11,19 +11,32 @@ permissions:
 jobs:
   build-binaries:
     name: Build Standalone Executables
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            artifact_name: rush-linux-x86_64
-            asset_name: rush-linux-x86_64.tar.gz
-          - os: macos-latest
-            artifact_name: rush-darwin-arm64
+          - runner: macos-latest
             asset_name: rush-darwin-arm64.tar.gz
-          - os: windows-latest
-            artifact_name: rush-windows-x86_64.exe
+            binary_name: rush
+          # macOS x86_64 is no longer a free GitHub-hosted runner tier; macos-15-intel is a
+          # paid "large" runner. Kept here (not omitted) per the acceptance matrix contract:
+          # an unsupported free tier is a blocker to resolve, not a platform to drop silently.
+          - runner: macos-15-intel
+            asset_name: rush-darwin-x86_64.tar.gz
+            binary_name: rush
+          - runner: ubuntu-latest
+            asset_name: rush-linux-x86_64.tar.gz
+            binary_name: rush
+          - runner: ubuntu-24.04-arm
+            asset_name: rush-linux-arm64.tar.gz
+            binary_name: rush
+          - runner: windows-latest
             asset_name: rush-windows-x86_64.zip
+            binary_name: rush.exe
+          - runner: windows-11-arm
+            asset_name: rush-windows-arm64.zip
+            binary_name: rush.exe
 
     steps:
       - name: Checkout repository
@@ -44,18 +57,88 @@ jobs:
         run: |
           mypy src/rush
 
-      - name: Compile Standalone Binary
+      - name: Resolve version from package metadata
+        id: version
+        shell: bash
         run: |
-          pyinstaller --onefile --name rush src/rush/cli.py
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Built Packages
+      - name: Write standalone entry point
+        shell: bash
         run: |
-          python -m pip install build
-          python -m build
+          cat > rush_entry.py <<'PYEOF'
+          from rush.cli import cli
+
+          if __name__ == "__main__":
+              cli()
+          PYEOF
+
+      - name: Compile standalone binary
+        run: |
+          pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+
+      - name: Package named archive with version metadata (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p release_stage
+          cp dist/rush release_stage/rush
+          chmod +x release_stage/rush
+          echo "${{ steps.version.outputs.version }}" > release_stage/VERSION
+          tar -C release_stage -czf ${{ matrix.asset_name }} rush VERSION
+
+      - name: Package named archive with version metadata (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release_stage | Out-Null
+          Copy-Item dist/rush.exe release_stage/rush.exe
+          Set-Content -Path release_stage/VERSION -Value "${{ steps.version.outputs.version }}"
+          Compress-Archive -Path release_stage/* -DestinationPath ${{ matrix.asset_name }}
+
+      - name: Move archive into dist for probing
+        shell: bash
+        run: |
+          rm -f dist/rush dist/rush.exe
+          mv ${{ matrix.asset_name }} dist/${{ matrix.asset_name }}
+
+      - name: Probe extracted native artifact (origin, version, MCP initialize)
+        shell: bash
+        run: |
           python scripts/probe_installed_artifacts.py --json
 
-
-      - name: Upload Release Asset
+      - name: Upload release asset
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87238604da99376a6cb63 # v2.2.1
         with:
-          files: dist/*
+          files: dist/${{ matrix.asset_name }}
+
+  checksums:
+    name: Publish SHA256SUMS
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download published release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ github.ref_name }}" --dir dist --pattern "rush-*"
+
+      - name: Generate SHA256SUMS from exact bytes
+        run: |
+          python -c "
+          from pathlib import Path
+          from scripts.probe_installed_artifacts import write_sha256sums
+          archives = sorted(Path('dist').glob('rush-*.tar.gz')) + sorted(Path('dist').glob('rush-*.zip'))
+          write_sha256sums(archives, Path('dist/SHA256SUMS'))
+          "
+
+      - name: Upload checksum manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" dist/SHA256SUMS --clobber

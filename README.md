@@ -24,7 +24,7 @@
 
 Rush provides a Python 3.12 command-line application and a stdio Model Context Protocol (FastMCP) server for code checks, agent tools and scoped memory. Its catalog describes external engines; installed compatibility, target inputs and permissions determine which checks can execute. Token reduction depends on the actual input and measurement. Generating an attestation does not establish SLSA Level 3 compliance.
 
-**Current implementation status:** the [whole-application review](docs/reports/phase-64-66-application-review.md) records unresolved runtime and integration defects at baseline `997b56e`. [Phase 64](docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) repairs those paths, [Phase 63](docs/phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) extends memory, [Phase 65](docs/phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) connects installation/scanning/agents, and [Phase 66](docs/phase-plans/phase-66-interactive-tui-and-local-web-plan.md) delivers the persistent TUI and local web application. Their requirements remain in scope; planned routes are not current installation or usage instructions.
+**Current implementation status:** the [whole-application review](docs/reports/phase-64-66-application-review.md) records unresolved runtime and integration defects at baseline `997b56e`. [Phase 64](docs/phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) repairs those paths, [Phase 63](docs/phase-plans/phase-63-memory-capabilities-vibecoder-plan.md) extends memory, [Phase 65](docs/phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md) connects installation/scanning/agents, and [Phase 66](docs/phase-plans/phase-66-interactive-tui-and-local-web-plan.md) delivers the persistent TUI and local web application -- implemented, with real source/test/runtime evidence in [Phase 66 implementation evidence](docs/phase-plans/phase-66-implementation-evidence.md). Other phases' requirements remain in scope where not yet independently evidenced; planned routes are not current installation or usage instructions.
 
 ```bash
 # 30-second quickstart: initialize, sync multi-IDE rules, and review codebase
@@ -32,6 +32,26 @@ uv run rush init .
 uv run rush governance sync
 uv run rush review .
 ```
+
+### One-command install (Phase 65 [P65-10](docs/phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42))
+
+Once release assets are published, a single streamed command downloads a checksum-verified, self-contained `rush` executable, installs it under a user-owned binary directory, and connects every detected local coding agent -- no checkout, no Python, no `uv`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jamesdsizemore/rush-cli/main/scripts/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/jamesdsizemore/rush-cli/main/scripts/install.ps1 | iex
+```
+
+Both scripts hand off to `rush install --agents all --memory on`, which is also the command an existing installation re-runs directly to upgrade, repair, or connect a project:
+
+```bash
+rush install --agents all --memory on --project /path/to/your/project
+```
+
+Omit `--project` to finish global setup with project selection pending -- that is a successful install, not a failed one; the current working directory is never auto-registered. `--agents none`/`--memory off` skip agent connection/consent; `--create NAME --parent DIR` creates and registers a new project folder instead of selecting an existing one. See the [MCP client setup guide](docs/integrations/mcp-client-setup.md) for per-agent connection detail. These scripts are not currently valid instructions against a published release; publishing is tracked separately from this implementation.
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
 
@@ -162,7 +182,7 @@ flowchart TD
 * **Compact Serialization**: Local serialization utilities retain the compact-result requirement. MCP remains JSON-RPC; percentage reductions require measured comparison, and no universal `--format toon` flag is registered.
 * **Subprocess Command Distillers**: Distillers in `src/rush/token_economy/distillers/` summarize supported command output. Savings depend on input; Phase 63 benchmarks measure retained evidence and token effects.
 * **Stale Tool Deduplication (ADR-0043)**: Content signatures support identifying repeated output. They do not establish automatic HTTP 304 delivery or a fixed token saving across every MCP call.
-* **Terminal Gain (`rush context gain`)**: Displays recorded local token estimates. Phase 66 implements the persistent animated interface; estimated dollars are not provider billing measurements.
+* **Terminal Gain (`rush context gain`)**: Prints a one-shot Rich token-savings HUD from recorded local estimates. Phase 66's persistent live equivalent is the Tokens section of `rush ui` and the web dashboard, both computed from the same `TelemetryStore` summary; estimated dollars are not provider billing measurements.
 
 ---
 
@@ -231,7 +251,7 @@ flowchart TD
 
 ### Pillar 12: 7-Vector Pre-Flight Ship Cockpit & Dashboards (ADRs 0016, 0031)
 * **7-Vector Ship Gate Cockpit (`rush ship gate`)**: Verifies 7 strict pre-flight invariants (clean Git tree, zero linter errors, 100% passing tests, zero DB drift, zero API breaks, clean docs, SLSA attestation).
-* **Local dashboard and terminal output (`rush dashboard`, `rush ui`)**: Current code uses stdlib HTTP and one-shot Rich output. Authentication/API and interaction defects remain open in review F36–F40. The persistent animated TUI and per-project web application are required Phase 66 work.
+* **Local dashboard and terminal application (`rush dashboard`, `rush ui`)**: Phase 66 shipped a persistent, authenticated project browser (loopback stdlib `ThreadingHTTPServer`, no frontend build/framework) and a persistent Rich TUI over the same shared project actions -- project map, scans/findings/handoff/rescan, scoped memory administration, per-run/session token use, real Git history and every generated artifact, all driven through one canonical action/snapshot API (`src/rush/dashboard/server.py`).
 * **Composite Quality Scorecard (`rush score`)**: Computes 6-pillar quality scores, generates SVG badges, and builds interactive HTML reports.
 
 <img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=0,1,2&height=2" width="100%" />
@@ -452,7 +472,7 @@ Catalog quality tools use the canonical `ToolResult` shape. Administrative comma
 * **`rush bundle analyze` / `dead-assets`**: Frontend bundle chunk calculator and barrel file auditor.
 * **`rush hotspots analyze` / `bus-factor`**: Git code velocity, churn, and temporal coupling analyzer.
 * **`rush trust` / `rush plugin`**: Trust-gated plugin store with SHA-256 hash validation and `SKILL.md` exporter.
-* **`rush dashboard` / `rush ui`**: Current stdlib HTTP dashboard and one-shot Rich output; the full interactive interfaces are planned in Phase 66, with current defects recorded as F36–F40.
+* **`rush dashboard` / `rush ui`**: Persistent authenticated web dashboard (stdlib HTTP, no frontend framework/build) and persistent Rich TUI, sharing one project action/snapshot API for scans, memory, tokens, Git, and artifacts.
 * **`rush score compute` / `consensus reconcile`**: Multi-model consensus reconciler, HTML quality report generator, SVG badge generator, and 6-pillar scorecard.
 * **`rush doctor`**: Toolchain health diagnostics and virtualenv binary shadowing prevention.
 * **`rush hook run` / `hook install` / `hook verify`**: Pre-commit intelligence and SHA-256 hook tamper detection.
@@ -522,7 +542,7 @@ rush context mistakes
 # 7. Launch the real-time token gain HUD
 rush context gain
 
-# 8. Launch the local in-memory web dashboard
+# 8. Launch the persistent, authenticated local web dashboard
 rush dashboard
 
 # 9. Run full 7-vector pre-flight ship-readiness gate
@@ -542,7 +562,7 @@ rush ship gate
 │   ├── 📂 memory/              # Dual-layer memory engine, mistake miner & failure ledger
 │   ├── 📂 bundle/              # Frontend bundle chunk calculator & barrel file auditor
 │   ├── 📂 codegraph/           # Polyglot AST CodeGraph & ContextPacker
-│   ├── 📂 dashboard/           # Stdlib HTTP dashboard; terminal entry is tui.py
+│   ├── 📂 dashboard/           # Persistent authenticated web dashboard (stdlib HTTP); terminal entry is tui.py
 │   ├── 📂 discovery/           # 10+ Tech stack auto-detection heuristics
 │   ├── 📂 engines/             # External quality and security engine adapters
 │   ├── 📂 governance/          # Multi-IDE rule compiler & subagent hierarchy guard

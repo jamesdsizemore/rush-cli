@@ -563,13 +563,22 @@ def mcp() -> None:
 
 
 @mcp.command()
-def serve() -> None:
+@click.option(
+    "--memory-session",
+    default=None,
+    help=(
+        "MC11: restrict this server to one bounded memory-handoff session's restricted "
+        "rush_memory receiver (receive/expand/related/resume only). The session's "
+        "capability is read from RUSH_MEMORY_CAPABILITY, never a CLI argument."
+    ),
+)
+def serve(memory_session: str | None) -> None:
     """Start the rush MCP server on stdio (for coding agents)."""
     import asyncio
 
     from .mcp import run_stdio
 
-    asyncio.run(run_stdio())
+    asyncio.run(run_stdio(memory_session))
 
 
 # --- Cache CLI commands ---------------------------------------------------
@@ -606,28 +615,83 @@ def cache_clean() -> None:
 @cli.command(name="setup")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
 @click.option(
-    "--non-interactive",
-    is_flag=True,
+    "--non-interactive/--interactive",
+    "non_interactive",
     default=True,
-    help="Run without interactive confirmation prompts.",
+    help="Select prompting behavior; does not by itself suppress an explicitly granted --install.",
 )
+@click.option(
+    "--install",
+    is_flag=True,
+    help=(
+        "Build and apply the engine provision plan for recommended toolchains. "
+        "Requires the relevant --allow-* grants; without them the plan is previewed only."
+    ),
+)
+@permission_options
 @click.option(
     "--json",
     "as_json",
     is_flag=True,
     help="Print detected stacks and installation summary as JSON.",
 )
-def setup_cmd(path: Path, non_interactive: bool, as_json: bool) -> None:
+def setup_cmd(
+    path: Path,
+    non_interactive: bool,
+    install: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
     """Inspect repository stacks and set up recommended quality toolchains."""
     from .tools.setup_wizard import run_setup_wizard
 
-    res = run_setup_wizard(path.resolve(), non_interactive=non_interactive)
+    permissions = (
+        _extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        )
+        if install
+        else None
+    )
+    res = run_setup_wizard(
+        path.resolve(),
+        non_interactive=non_interactive,
+        install=install,
+        permissions=permissions,
+    )
     if as_json:
-        click.echo(json.dumps(res, indent=2))
+        click.echo(json.dumps(res, indent=2, default=str))
     else:
         click.echo(f"Detected stacks: {', '.join(res['stacks']) or 'none'}")
         if res["skipped"]:
             click.echo(f"Recommended engines: {', '.join(res['skipped'])}")
+        provision = res.get("provision")
+        if provision and provision.get("plan_only"):
+            click.echo(
+                f"Provision plan {res['plan_id'][:12]} built (preview only); "
+                "pass --allow-network --allow-download --allow-cache-write (and --allow-build "
+                "where required) to apply it."
+            )
+        elif provision:
+            if provision["applied"]:
+                click.echo(f"Installed: {', '.join(provision['applied'])}")
+            if provision["failed"]:
+                click.echo(f"Failed: {', '.join(sorted(provision['failed']))}")
+            if provision["permission_blocked"]:
+                click.echo(
+                    f"Permission blocked: {', '.join(sorted(provision['permission_blocked']))}"
+                )
 
 
 @cli.command(name="init")
@@ -934,10 +998,10 @@ def watch_cmd(
 
 
 @cli.command(name="ui")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
 @permission_options
 def ui_cmd(
-    path: Path,
+    paths: tuple[Path, ...],
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -946,8 +1010,13 @@ def ui_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
 ) -> None:
-    """Open the interactive terminal UI to explore tool results and findings."""
-    from .tui import launch_interactive_tui
+    """Open the interactive terminal UI to explore tool results and findings.
+
+    Accepts one or more project paths (`rush ui path1 path2 ...`) to open
+    and switch between multiple projects; defaults to the current directory
+    when none are given.
+    """
+    from .tui import ProjectSeed, run_interactive_tui
     from .workflows.suites import CHECK_SUITE, run_workflow_suite
 
     perms = _extract_permissions(
@@ -959,8 +1028,98 @@ def ui_cmd(
         allow_artifact_write=allow_artifact_write,
         allow_browser=allow_browser,
     )
-    res = run_workflow_suite(suite=CHECK_SUITE, path=path.resolve(), permissions=perms)
-    launch_interactive_tui([res])
+    resolved_paths = [p.resolve() for p in paths] or [Path.cwd()]
+    seeds = []
+    for resolved in resolved_paths:
+        res = run_workflow_suite(suite=CHECK_SUITE, path=resolved, permissions=perms)
+        seeds.append(
+            ProjectSeed(
+                name=resolved.name or str(resolved), root=resolved, results=[res]
+            )
+        )
+    run_interactive_tui(seeds)
+
+
+def _dashboard_descriptor_path(server_id: str) -> Path:
+    from .setup.provision import default_data_root
+
+    return default_data_root() / "dashboard" / f"{server_id}.json"
+
+
+def _write_dashboard_descriptor(ctx: Any) -> Path:
+    """Private per-instance descriptor for `--reconnect` discovery (plan
+    3.7): schema_version, PID, start nonce, bound port, control capability.
+    Never a project artifact or browser response. POSIX-only 0700/0600
+    modes; on non-POSIX platforms `os.chmod` is a no-op and this descriptor
+    is skipped entirely rather than persisting an unverified-ACL secret."""
+    path = _dashboard_descriptor_path(ctx.server_id)
+    if os.name != "posix":
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    payload = {
+        "schema_version": 1,
+        "pid": ctx.pid,
+        "start_nonce": ctx.start_nonce,
+        "bound_host": ctx.bound_host,
+        "bound_port": ctx.bound_port,
+        "control_capability": ctx.auth.control_capability,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    os.chmod(path, 0o600)
+    return path
+
+
+def _remove_dashboard_descriptor(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _newest_dashboard_descriptor(server_id: str | None) -> Path | None:
+    directory = _dashboard_descriptor_path("_").parent
+    if not directory.is_dir():
+        return None
+    if server_id is not None:
+        candidate = directory / f"{server_id}.json"
+        return candidate if candidate.is_file() else None
+    candidates = sorted(
+        directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    return candidates[0] if candidates else None
+
+
+def _reconnect_existing_dashboard(
+    *, server_id: str | None, no_open: bool, json_output: bool
+) -> None:
+    import webbrowser
+
+    from .dashboard.server import reconnect_dashboard
+
+    descriptor_path = _newest_dashboard_descriptor(server_id)
+    if descriptor_path is None:
+        raise click.ClickException("no running dashboard server found to reconnect to.")
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    base_url = f"http://{descriptor['bound_host']}:{descriptor['bound_port']}"
+    try:
+        new_token = reconnect_dashboard(base_url, descriptor["control_capability"])
+    except Exception as exc:
+        _remove_dashboard_descriptor(descriptor_path)
+        raise click.ClickException(
+            f"dashboard server is no longer reachable: {exc}"
+        ) from exc
+
+    launch_url = f"{base_url}/#token={new_token}"
+    if json_output:
+        click.echo(json.dumps({"ready": True, "url": launch_url}))
+    else:
+        click.echo(f"Reconnected: {launch_url}")
+    if not no_open:
+        try:
+            webbrowser.open(launch_url)
+        except Exception:  # noqa: BLE001, S110
+            pass
 
 
 @cli.command(name="dashboard")
@@ -968,10 +1127,36 @@ def ui_cmd(
 @click.option(
     "--port", default=0, type=int, help="Port to bind dashboard server (0 for random)."
 )
+@click.option(
+    "--no-open", is_flag=True, help="Do not open a browser automatically on launch."
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit a readiness/URL JSON record instead of prose.",
+)
+@click.option(
+    "--reconnect",
+    is_flag=True,
+    help=(
+        "Issue a fresh one-use launch URL for an already-running dashboard "
+        "server instead of starting a new one."
+    ),
+)
+@click.option(
+    "--server-id",
+    default=None,
+    help="Select a specific running server for --reconnect (default: newest live one).",
+)
 @permission_options
 def dashboard_cmd(
     path: Path,
     port: int,
+    no_open: bool,
+    json_output: bool,
+    reconnect: bool,
+    server_id: str | None,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -981,9 +1166,17 @@ def dashboard_cmd(
     allow_browser: bool,
 ) -> None:
     """Launch an authenticated, CSRF-hardened local web dashboard on 127.0.0.1."""
+    if reconnect:
+        _reconnect_existing_dashboard(
+            server_id=server_id, no_open=no_open, json_output=json_output
+        )
+        return
+
+    import threading
     import webbrowser
 
-    from .dashboard import launch_dashboard
+    from .dashboard.server import bootstrap_launch_url, create_dashboard_server
+    from .workflows.projects import register_project
     from .workflows.suites import CHECK_SUITE, run_workflow_suite
 
     perms = _extract_permissions(
@@ -995,21 +1188,57 @@ def dashboard_cmd(
         allow_artifact_write=allow_artifact_write,
         allow_browser=allow_browser,
     )
-    res = run_workflow_suite(suite=CHECK_SUITE, path=path.resolve(), permissions=perms)
-    server, url = launch_dashboard([res], port=port)
 
-    click.echo(f"Dashboard running at: {url}")
-    click.echo("Press Ctrl+C to stop.")
-    try:
-        webbrowser.open(url)
-    except Exception:  # noqa: BLE001, S110
-        pass
+    resolved_path = path.resolve()
+    record = register_project(resolved_path)
+    empty_snapshot = {
+        "schema_version": 1,
+        "project_id": record.project_id,
+        "source_identity": record.root,
+        "root": record.root,
+        "files": [],
+        "findings": [],
+        "memories": [],
+        "agents": [],
+    }
+    # Start the authenticated server first -- never block the browser
+    # opening on a long scan (plan §2/3.7). The scan below runs in the
+    # background; wiring its results into this project's live map data is
+    # P66-04's scan-actions packet, not this one.
+    server, ctx, token = create_dashboard_server(
+        {record.project_id: empty_snapshot}, port=port
+    )
+    launch_url = bootstrap_launch_url(ctx, token)
+    descriptor_path = _write_dashboard_descriptor(ctx)
+
+    if json_output:
+        click.echo(
+            json.dumps({"ready": True, "url": launch_url, "server_id": ctx.server_id})
+        )
+    else:
+        click.echo(f"Dashboard running at: {launch_url}")
+        click.echo("Press Ctrl+C to stop.")
+
+    if not no_open:
+        try:
+            webbrowser.open(launch_url)
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    def _run_initial_scan() -> None:
+        run_workflow_suite(suite=CHECK_SUITE, path=resolved_path, permissions=perms)
+
+    scan_thread = threading.Thread(target=_run_initial_scan, daemon=True)
+    scan_thread.start()
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         click.echo("\nStopping dashboard.")
+    finally:
         server.shutdown()
+        server.server_close()
+        _remove_dashboard_descriptor(descriptor_path)
 
 
 # --- Trust & Plugin CLI commands ------------------------------------------
@@ -2190,11 +2419,17 @@ def memory_recall_cmd(
     multiple=True,
     help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
 )
+@click.option(
+    "--include-archived",
+    is_flag=True,
+    help="Also return artifacts a `memory archive` call has excluded from normal recall.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_list_cmd(
     subject: MemorySubject,
     query: str,
     session_allowlist: tuple[str, ...],
+    include_archived: bool,
     as_json: bool,
 ) -> None:
     """List defended memory artifacts scoped to explicit sessions."""
@@ -2206,6 +2441,7 @@ def memory_list_cmd(
         subject=subject,
         query=query,
         session_allowlist=list(session_allowlist) or None,
+        include_archived=include_archived,
     )
     _render_session_result(dict(result), as_json)
 
@@ -2373,6 +2609,1117 @@ def memory_maintain_cmd(
         permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
     _render_session_result(dict(result), as_json)
+
+
+# MC14 (Phase 63 §9.1): the 13 new memory operations added by MC02-MC12 (expand, link,
+# related, consolidate, verify_attempt, prepare, resume, intent, recipe, plan_checks,
+# last_success_diagnose, handoff, receive) share one request-shaped contract --
+# `{schema_version, operation, code, data}` in/out -- so one generator builds every leaf
+# instead of duplicating 13 near-identical commands. Each leaf routes through `_run_tool`
+# (catalog CLI -> InvocationExecutor.execute), the same executor `make_tool_wrapper` uses
+# for MCP, so CLI and MCP calls with an identical request produce byte-identical
+# MemoryTool status/raw (excluding duration).
+_MEMORY_OPERATION_HELP: dict[str, str] = {
+    "expand": "Expand exact stored artifact bytes by id/version.",
+    "link": "Add a versioned evidence edge between two artifacts. Requires --allow-cache-write.",
+    "related": "Bounded, authorized relation traversal from one seed artifact.",
+    "consolidate": "Consolidate duplicate episodes into one summary. Requires --allow-cache-write.",
+    "verify_attempt": (
+        "Run a real sandboxed check against a proposed patch. Requires "
+        "--allow-cache-write, --allow-artifact-write, --allow-build plus declared checks."
+    ),
+    "prepare": "Prepare bounded repair evidence for a failing task; executes no commands.",
+    "resume": "Resume bounded repair evidence for a failing task; executes no commands.",
+    "intent": (
+        "Create, confirm, supersede or check confirmed user intent. Mutating actions "
+        "require --allow-cache-write."
+    ),
+    "recipe": (
+        "Record, resolve, or record an outcome for a reusable recipe. record/outcome "
+        "require --allow-cache-write."
+    ),
+    "plan_checks": "Rank required checks by evidence without dropping required membership.",
+    "last_success_diagnose": "Compare a current failure to the last successful behavior.",
+    "handoff": (
+        "Prepare a bounded cross-tool memory handoff (action=prepare). Requires "
+        "--allow-cache-write. dispatch/status report E_UNAVAILABLE (not yet implemented)."
+    ),
+    "receive": "Receive a bounded delta as a restricted handoff receiver.",
+    "delete": (
+        "Batch-delete memory artifacts by id/revision/scope (preview by default). "
+        "Apply requires --allow-cache-write, plus --allow-artifact-write to also remove "
+        "a Rush-owned handoff-packet blob."
+    ),
+    "edit": (
+        "Edit one memory artifact's content under compare-and-swap (preview by default). "
+        "Apply requires --allow-cache-write; demotes a promoted (STATED) artifact's trust "
+        "back to an unpromoted candidate."
+    ),
+    "archive": (
+        "Set or clear an archived marker on one memory artifact (preview by default, "
+        "archived=true by default). Apply requires --allow-cache-write. Retains content "
+        "and history; only excludes the row from normal recall."
+    ),
+}
+
+
+def _memory_input_request(input_file: Path) -> dict[str, Any]:
+    """MC14: parse a memory operation's JSON request body from --input FILE once, shared
+    by every new memory CLI leaf (Phase 63 plan §9.1's per-operation request schema)."""
+    try:
+        data = json.loads(input_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"--input must be valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise click.ClickException("--input JSON must decode to an object.")
+    return data
+
+
+def _build_memory_operation_command(operation: str):
+    """MC14: build one `rush memory <leaf>` Click command for `operation`."""
+
+    def _cmd(
+        input_file: Path,
+        session_allowlist: tuple[str, ...],
+        allow_network: bool,
+        allow_download: bool,
+        allow_cache_write: bool,
+        allow_build: bool,
+        allow_slow: bool,
+        allow_artifact_write: bool,
+        allow_browser: bool,
+        as_json: bool,
+    ) -> None:
+        request = _memory_input_request(input_file)
+        _run_tool(
+            "memory",
+            Path.cwd(),
+            as_json=as_json,
+            permissions=_extract_permissions(
+                allow_network=allow_network,
+                allow_download=allow_download,
+                allow_cache_write=allow_cache_write,
+                allow_build=allow_build,
+                allow_slow=allow_slow,
+                allow_artifact_write=allow_artifact_write,
+                allow_browser=allow_browser,
+            ),
+            extra_kwargs={
+                "operation": operation,
+                "request": request,
+                "session_allowlist": list(session_allowlist) or None,
+            },
+        )
+
+    _cmd.__name__ = f"memory_{operation}_cmd"
+    _cmd.__doc__ = _MEMORY_OPERATION_HELP[operation]
+    _cmd = click.option(
+        "--json", "as_json", is_flag=True, help="Print raw ToolResult JSON."
+    )(_cmd)
+    _cmd = permission_options(_cmd)
+    _cmd = click.option(
+        "--session",
+        "session_allowlist",
+        multiple=True,
+        help=(
+            "Source to scope this operation to; repeat for multiple. Only consulted by "
+            "operations that read session_allowlist (expand/related/consolidate/prepare/"
+            "resume); ignored otherwise."
+        ),
+    )(_cmd)
+    _cmd = click.option(
+        "--input",
+        "input_file",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+        required=True,
+        help=f"JSON file containing the {operation} request body (Phase 63 plan §9.1).",
+    )(_cmd)
+    return _cmd
+
+
+for _memory_op, _memory_cli_name in (
+    ("expand", "expand"),
+    ("link", "link"),
+    ("related", "related"),
+    ("consolidate", "consolidate"),
+    ("verify_attempt", "verify-attempt"),
+    ("prepare", "prepare"),
+    ("resume", "resume"),
+    ("intent", "intent"),
+    ("recipe", "recipe"),
+    ("plan_checks", "plan-checks"),
+    ("last_success_diagnose", "last-success-diagnose"),
+    ("handoff", "handoff"),
+    ("receive", "receive"),
+    ("delete", "delete"),
+    ("edit", "edit"),
+    ("archive", "archive"),
+):
+    memory_group.command(name=_memory_cli_name)(
+        _build_memory_operation_command(_memory_op)
+    )
+del _memory_op, _memory_cli_name
+
+
+# P65-03.3 CONNECT (Phase 65 §3.2): CLI surface over `rush.workflows.projects` via
+# `ProjectTool`. `select` binds a project to one explicit `--session` ID -- never a
+# global cwd guessed by this interface -- matching the plan's "session-specific
+# selection" contract.
+@cli.group(name="project")
+def project_group() -> None:
+    """Register, discover, select, and configure Rush projects."""
+
+
+@project_group.command(name="add")
+@click.argument(
+    "path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("."),
+)
+@click.option("--name", default=None, help="Display name; defaults to the folder name.")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_add_cmd(
+    path: Path,
+    name: str | None,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Register an existing folder as a Rush project. Requires --allow-cache-write."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().run(
+        path,
+        action="add",
+        name=name,
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="list")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_list_cmd(as_json: bool) -> None:
+    """List every registered Rush project."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().run(Path("."), action="list")
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="show")
+@click.argument("path", type=click.Path(path_type=Path), default=Path("."))
+@click.option(
+    "--project-id", default=None, help="Resolve by project ID instead of PATH."
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_show_cmd(path: Path, project_id: str | None, as_json: bool) -> None:
+    """Show one registered project's identity, languages, and readiness."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().run(path, action="show", project_id=project_id)
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="snapshot")
+@click.option("--project-id", default=None, help="Resolve by project ID.")
+@click.option("--session", "session_id", default=None, help="Interface/session ID.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_snapshot_cmd(
+    project_id: str | None, session_id: str | None, as_json: bool
+) -> None:
+    """P65-07.2: one shared evidence view -- overview, runs/coverage/findings, memory
+    summary, token totals, Git summary, and categorized artifact references."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().handle_request(
+        {
+            "schema_version": 1,
+            "operation": "snapshot",
+            "project": project_id,
+            "session_id": session_id,
+        }
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="artifacts")
+@click.option("--project-id", default=None, help="Resolve by project ID.")
+@click.option("--session", "session_id", default=None, help="Interface/session ID.")
+@click.option(
+    "--category",
+    "categories",
+    multiple=True,
+    help="Keep only this artifact category; repeat for multiple.",
+)
+@click.option("--limit", type=int, default=100, help="Max items per list (1-1000).")
+@click.option("--offset", type=int, default=0, help="Items to skip per list.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_artifacts_cmd(
+    project_id: str | None,
+    session_id: str | None,
+    categories: tuple[str, ...],
+    limit: int,
+    offset: int,
+    as_json: bool,
+) -> None:
+    """P65-07.2/.3: categorized, provenance-carrying artifact references (scan outputs,
+    handoffs, memory) -- generic passthrough so a future output category is never
+    invisible until a bespoke widget exists."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().handle_request(
+        {
+            "schema_version": 1,
+            "operation": "artifacts",
+            "project": project_id,
+            "session_id": session_id,
+            "categories": list(categories) or None,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="select")
+@click.argument("project_id")
+@click.option(
+    "--session",
+    "session_id",
+    required=True,
+    help="Explicit interface/session ID to bind this project to; never a guessed cwd.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_select_cmd(
+    project_id: str,
+    session_id: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Bind a registered project to one explicit session. Requires --allow-cache-write."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().run(
+        Path("."),
+        action="select",
+        project_id=project_id,
+        session_id=session_id,
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="configure")
+@click.argument("project_id")
+@click.option(
+    "--settings", default=None, help="JSON-encoded settings object to merge in."
+)
+@click.option(
+    "--expected-revision",
+    type=int,
+    default=None,
+    help="Current registry revision; required with --apply, ignored for preview.",
+)
+@click.option(
+    "--plan-id",
+    default=None,
+    help="Plan ID from a prior preview run; required with --apply.",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Apply --plan-id at --expected-revision instead of previewing.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_configure_cmd(
+    project_id: str,
+    settings: str | None,
+    expected_revision: int | None,
+    plan_id: str | None,
+    apply: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Preview (default) or apply one project's scan/memory/agent settings.
+
+    --apply requires --plan-id, --expected-revision, --allow-cache-write, and
+    --allow-artifact-write.
+    """
+    import json as _json
+
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().handle_request(
+        {
+            "schema_version": 1,
+            "operation": "configure",
+            "project": project_id,
+            "settings": _json.loads(settings) if settings else None,
+            "expected_revision": expected_revision,
+            "apply": apply,
+            "plan_id": plan_id,
+            "allow_network": allow_network,
+            "allow_download": allow_download,
+            "allow_cache_write": allow_cache_write,
+            "allow_build": allow_build,
+            "allow_slow": allow_slow,
+            "allow_artifact_write": allow_artifact_write,
+            "allow_browser": allow_browser,
+        }
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="create")
+@click.argument("name")
+@click.option(
+    "--parent",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("."),
+    help="Parent directory for the new project folder.",
+)
+@click.option("--init-git", is_flag=True, help="Run `git init` in the new folder.")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_create_cmd(
+    name: str,
+    parent: Path,
+    init_git: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Create NAME at --parent and register it. Requires --allow-cache-write."""
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().run(
+        parent,
+        action="create",
+        name=name,
+        init_git=init_git,
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@project_group.command(name="relink")
+@click.argument("project_id")
+@click.argument("path", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--expected-revision",
+    type=int,
+    required=True,
+    help="Current registry revision for this project; a stale value fails REVISION_CONFLICT.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def project_relink_cmd(
+    project_id: str,
+    path: Path,
+    expected_revision: int,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Repoint a registered project at its new PATH after a move.
+
+    Requires --allow-cache-write and --allow-artifact-write.
+    """
+    from .tools.project import ProjectTool
+
+    result = ProjectTool().handle_request(
+        {
+            "schema_version": 1,
+            "operation": "relink",
+            "project": project_id,
+            "path": str(path),
+            "expected_revision": expected_revision,
+            "allow_network": allow_network,
+            "allow_download": allow_download,
+            "allow_cache_write": allow_cache_write,
+            "allow_build": allow_build,
+            "allow_slow": allow_slow,
+            "allow_artifact_write": allow_artifact_write,
+            "allow_browser": allow_browser,
+        }
+    )
+    _render_session_result(dict(result), as_json)
+
+
+# P65-04.3 CONNECT (Phase 65 §3.2): CLI surface over `rush.workflows.project_run`
+# via `ScanTool`, matching `rush project`'s wiring mechanism (T204/T097/T013).
+# `--full` builds a plan and immediately executes it (persisting an immutable
+# run manifest, plan §6.1); without `--full` this only previews the plan.
+# `--install` runs P65-02's provisioning plan for the project before scanning.
+#
+# P65-06.3 CONNECT (Phase 65 §3.2, F35): reconciles the P65-04 flat `rush
+# scan --project ... --full` command into a group with that exact same
+# default (no-subcommand) behavior, plus `handoff`/`rescan` subcommands over
+# `ScanHandoffTool`/`rush.workflows.project_run.rescan_project_run` -- the
+# default invocation and the two subcommands stay unambiguous because the
+# group only runs its own body when no subcommand was given
+# (`ctx.invoked_subcommand is None`).
+@cli.group(name="scan", invoke_without_command=True)
+@click.option(
+    "--project", default=None, help="Registered project ID or filesystem path."
+)
+@click.option(
+    "--full",
+    is_flag=True,
+    help="Execute the plan immediately, persisting a run manifest. "
+    "Without this flag, only build and preview the plan.",
+)
+@click.option(
+    "--install",
+    is_flag=True,
+    help="Apply the project's provisioning plan before scanning. "
+    "Requires the relevant --allow-* grants.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@click.pass_context
+def scan_group(
+    ctx: click.Context,
+    project: str | None,
+    full: bool,
+    install: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Plan (and, with --full, execute) a full-project scan for --project, or
+    use a scan subcommand (`handoff`, `rescan`)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if not project:
+        raise click.UsageError("--project is required for the default scan invocation.")
+    _run_default_scan(
+        project,
+        full,
+        install,
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+        as_json=as_json,
+    )
+
+
+def _run_default_scan(
+    project: str,
+    full: bool,
+    install: bool,
+    *,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    from .tools.scan import ScanTool
+
+    permissions = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+
+    if install:
+        from .tools.setup_wizard import run_setup_wizard
+        from .workflows.projects import resolve_project
+
+        record = resolve_project(project)
+        run_setup_wizard(
+            Path(record["root"]),
+            non_interactive=True,
+            install=True,
+            permissions=permissions,
+        )
+
+    scan_tool = ScanTool()
+    plan_result = scan_tool.handle_request(
+        {"schema_version": 1, "operation": "plan", "project": project, "full": True}
+    )
+    if not full or plan_result.get("status") != "ok":
+        _render_session_result(dict(plan_result), as_json)
+        return
+
+    plan_data = (plan_result.get("raw") or {}).get("data") or {}
+    run_result = scan_tool.handle_request(
+        {
+            "schema_version": 1,
+            "operation": "run",
+            "project": project,
+            "plan_id": plan_data.get("plan_id"),
+            "install": install,
+            "allow_network": allow_network,
+            "allow_download": allow_download,
+            "allow_cache_write": allow_cache_write,
+            "allow_build": allow_build,
+            "allow_slow": allow_slow,
+            "allow_artifact_write": allow_artifact_write,
+            "allow_browser": allow_browser,
+        }
+    )
+    if run_result.get("status") != "ok":
+        _render_session_result(dict(run_result), as_json)
+        return
+
+    run_data = (run_result.get("raw") or {}).get("data") or {}
+    status_result = scan_tool.handle_request(
+        {
+            "schema_version": 1,
+            "operation": "status",
+            "project": project,
+            "run_id": run_data.get("run_id"),
+        }
+    )
+    status_data = (status_result.get("raw") or {}).get("data") or {}
+
+    combined_data = dict(run_data)
+    combined_data["coverage"] = status_data.get("totals")
+    combined_data["expansion_links"] = {
+        "manifest_path": run_data.get("manifest_path"),
+        "status_next_cursor": status_data.get("next_cursor"),
+    }
+    combined = dict(run_result)
+    combined["raw"] = {**(run_result.get("raw") or {}), "data": combined_data}
+    _render_session_result(combined, as_json)
+
+
+@scan_group.command(name="handoff")
+@click.argument("run_id")
+@click.option(
+    "--project", required=True, help="Registered project ID or filesystem path."
+)
+@click.option("--agent", "agent_id", required=True, help="Receiving agent ID.")
+@click.option(
+    "--finding",
+    "finding_ids",
+    multiple=True,
+    help="Repeatable: hand off exactly this finding_id. Omit to hand off "
+    "every unresolved finding on RUN_ID.",
+)
+@click.option(
+    "--max-tokens", default=2048, type=int, help="Compact packet token budget."
+)
+@click.option("--max-bytes", default=8192, type=int, help="Compact packet byte budget.")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def scan_handoff_cmd(
+    run_id: str,
+    project: str,
+    agent_id: str,
+    finding_ids: tuple[str, ...],
+    max_tokens: int,
+    max_bytes: int,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Prepare a bounded agent handoff of RUN_ID's findings for --agent.
+
+    Requires --allow-cache-write and --allow-artifact-write.
+    """
+    from .tools.scan_handoff import ScanHandoffTool
+
+    permissions = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    result = ScanHandoffTool().run(
+        Path(project),
+        action="prepare",
+        run_id=run_id,
+        agent_id=agent_id,
+        finding_ids=tuple(finding_ids),
+        max_tokens=max_tokens,
+        max_bytes=max_bytes,
+        permissions=permissions,
+    )
+    _render_session_result(dict(result), as_json)
+
+
+# P65-06.3 CONNECT (Phase 65 §3.2, F35): `rush_scan.rescan(project,run_id)`
+# (plan §6.1) lives on `ScanTool` (`src/rush/tools/scan.py`), outside this
+# packet's allowed files -- calls `rush.workflows.project_run.
+# rescan_project_run` directly rather than routing through a tool envelope
+# that doesn't own this operation. The `rescan` operation is also reachable
+# via `rush_scan`'s MCP `rescan` operation on `ScanTool` -- it is implemented,
+# not a gap.
+@scan_group.command(name="rescan")
+@click.argument("run_id")
+@click.option(
+    "--project", required=True, help="Registered project ID or filesystem path."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def scan_rescan_cmd(
+    run_id: str,
+    project: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Re-execute RUN_ID's own staged plan against current source and
+    compare fixed/persisting/new/unverified findings against RUN_ID."""
+    from .workflows.project_run import ScanError, rescan_project_run
+
+    permissions = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    try:
+        data = rescan_project_run(project, run_id, permissions=permissions)
+    except ScanError as exc:
+        _render_session_result(
+            {
+                "tool": "scan-rescan",
+                "status": "error",
+                "duration_ms": 0,
+                "summary": f"scan rescan: {exc}",
+                "findings": [],
+                "raw": {
+                    "error": {
+                        "code": getattr(exc, "code", "INVALID_REQUEST"),
+                        "message": str(exc),
+                    }
+                },
+            },
+            as_json,
+        )
+        return
+
+    comparison = data["comparison"]
+    summary = (
+        f"scan rescan {run_id}: {len(comparison['resolved'])} resolved, "
+        f"{len(comparison['persisting'])} persisting, "
+        f"{len(comparison['new'])} new, "
+        f"{len(comparison['unverified'])} unverified"
+    )
+    _render_session_result(
+        {
+            "tool": "scan-rescan",
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": summary,
+            "findings": [],
+            "raw": data,
+        },
+        as_json,
+    )
+
+
+@scan_group.command(name="cancel")
+@click.argument("run_id")
+@click.option(
+    "--project", required=True, help="Registered project ID or filesystem path."
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def scan_cancel_cmd(run_id: str, project: str, as_json: bool) -> None:
+    """Request cooperative cancellation of RUN_ID's in-flight scan.
+
+    P65-08.3 CONNECT (Phase 65 §3.2, F35): `cancel`/`resume`
+    (`rush.workflows.project_run.cancel_scan_run`/`resume_scan_run`) live
+    outside `ScanTool` (`src/rush/tools/scan.py` is not in this packet's
+    allowed files) -- calls the workflow function directly, exactly like
+    `scan rescan` above.
+    """
+    from .workflows.project_run import ScanError, cancel_scan_run
+
+    try:
+        data = cancel_scan_run(project, run_id)
+    except ScanError as exc:
+        _render_session_result(
+            {
+                "tool": "scan-cancel",
+                "status": "error",
+                "duration_ms": 0,
+                "summary": f"scan cancel: {exc}",
+                "findings": [],
+                "raw": {
+                    "error": {
+                        "code": getattr(exc, "code", "INVALID_REQUEST"),
+                        "message": str(exc),
+                    }
+                },
+            },
+            as_json,
+        )
+        return
+
+    _render_session_result(
+        {
+            "tool": "scan-cancel",
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": f"scan cancel {run_id}: requested",
+            "findings": [],
+            "raw": data,
+        },
+        as_json,
+    )
+
+
+@scan_group.command(name="resume")
+@click.argument("run_id")
+@click.option(
+    "--project", required=True, help="Registered project ID or filesystem path."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def scan_resume_cmd(
+    run_id: str,
+    project: str,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Resume RUN_ID's most recent scan attempt as a new attempt.
+
+    Retains every already-`executed` candidate's evidence and re-attempts
+    everything else. Denies a stale resume if the project's source changed
+    since the run's last attempt started. Requires --allow-cache-write and
+    --allow-artifact-write (same write gate as `scan --full`/`scan rescan`).
+    """
+    from .workflows.project_run import ScanError, resume_scan_run
+
+    permissions = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    try:
+        run = resume_scan_run(project, run_id, permissions=permissions)
+    except ScanError as exc:
+        _render_session_result(
+            {
+                "tool": "scan-resume",
+                "status": "error",
+                "duration_ms": 0,
+                "summary": f"scan resume: {exc}",
+                "findings": [],
+                "raw": {
+                    "error": {
+                        "code": getattr(exc, "code", "INVALID_REQUEST"),
+                        "message": str(exc),
+                    }
+                },
+            },
+            as_json,
+        )
+        return
+
+    _render_session_result(
+        {
+            "tool": "scan-resume",
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": (
+                f"scan resume {run_id}: new attempt {run.attempt_id}, "
+                f"state={run.run_state}"
+            ),
+            "findings": [],
+            "raw": run.to_dict(),
+        },
+        as_json,
+    )
+
+
+@cli.group(name="agent")
+def agent_group() -> None:
+    """Discover, connect, and diagnose local MCP-capable coding agents."""
+
+
+@agent_group.command(name="list")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def agent_list_cmd(as_json: bool) -> None:
+    """List every known local agent and its current Rush registration state."""
+    from .tools.agent_connection import AgentConnectionTool
+
+    result = AgentConnectionTool().run(None, action="list")
+    _render_session_result(dict(result), as_json)
+
+
+@agent_group.command(name="connect")
+@click.argument("agent_id")
+@click.option(
+    "--session",
+    "session_id",
+    required=True,
+    help="Explicit session ID this connection's memory scope binds to.",
+)
+@click.option(
+    "--project",
+    "project_path",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Project root for project-scoped memory; omit for user scope.",
+)
+@click.option(
+    "--rush-binary", default=None, help="Absolute installed rush executable path."
+)
+@click.option(
+    "--consent",
+    is_flag=True,
+    help="Allow capturing real tool observations for this scope.",
+)
+@click.option(
+    "--acknowledge",
+    is_flag=True,
+    help="Confirm the agent actually picked up the connection; required for connected=true.",
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def agent_connect_cmd(
+    agent_id: str,
+    session_id: str,
+    project_path: Path | None,
+    rush_binary: str | None,
+    consent: bool,
+    acknowledge: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Register Rush with AGENT_ID and activate its scoped memory.
+
+    Requires --allow-cache-write and --allow-artifact-write.
+    """
+    from .tools.agent_connection import AgentConnectionTool
+
+    result = AgentConnectionTool().run(
+        agent_id,
+        action="connect",
+        session_id=session_id,
+        rush_binary=rush_binary,
+        consent=consent,
+        acknowledge=acknowledge,
+        project_root=project_path,
+        permissions=_extract_permissions(
+            allow_network=allow_network,
+            allow_download=allow_download,
+            allow_cache_write=allow_cache_write,
+            allow_build=allow_build,
+            allow_slow=allow_slow,
+            allow_artifact_write=allow_artifact_write,
+            allow_browser=allow_browser,
+        ),
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@agent_group.command(name="doctor")
+@click.option(
+    "--session", "session_id", default=None, help="Include this session's memory state."
+)
+@click.option(
+    "--project",
+    "project_path",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Project root for project-scoped memory.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def agent_doctor_cmd(
+    session_id: str | None, project_path: Path | None, as_json: bool
+) -> None:
+    """Diagnose every known agent's connection and memory state."""
+    from .tools.agent_connection import AgentConnectionTool
+
+    result = AgentConnectionTool().run(
+        None, action="doctor", session_id=session_id, project_root=project_path
+    )
+    _render_session_result(dict(result), as_json)
+
+
+# P65-10 (Phase 65 §3.2): one-command bootstrap over InstallTool, composing
+# P65-01's release artifacts, P65-05's agent/memory readiness, and (only for
+# an explicit --project/--create choice) P65-03's project registry + P65-02's
+# provision-plan offer. Running this command at all is the explicit
+# authorization for the writes it performs -- no separate --allow-* flags,
+# matching the plan's own one-command invocation.
+@cli.command(name="install")
+@click.option(
+    "--agents",
+    type=click.Choice(["all", "none"]),
+    default="all",
+    help="Connect every detected local agent, or skip agent connection entirely.",
+)
+@click.option(
+    "--memory",
+    type=click.Choice(["on", "off"]),
+    default="on",
+    help="Grant connected agents consent to capture tool observations.",
+)
+@click.option(
+    "--project",
+    "project_path",
+    default=None,
+    help="Existing folder path or registered project ID to select; registers "
+    "an unregistered folder first. Omit to choose later.",
+)
+@click.option(
+    "--create",
+    "create_name",
+    default=None,
+    help="Create a new project folder named NAME.",
+)
+@click.option(
+    "--parent",
+    "create_parent",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Parent directory for --create; defaults to the current directory.",
+)
+@click.option("--init-git", is_flag=True, help="Run `git init` in a --create'd folder.")
+@click.option(
+    "--session",
+    "session_id",
+    default="install",
+    help="Session ID this install's project selection and agent memory scope bind to.",
+)
+@click.option(
+    "--version",
+    "version",
+    default=None,
+    help="Pin an exact release version instead of latest.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def install_cmd(
+    agents: str,
+    memory: str,
+    project_path: str | None,
+    create_name: str | None,
+    create_parent: Path | None,
+    init_git: bool,
+    session_id: str,
+    version: str | None,
+    as_json: bool,
+) -> None:
+    """Download/verify/install the release binary, connect agents, and optionally set up a project."""
+    from .tools.install import InstallTool
+
+    result = InstallTool().run(
+        agents=agents,  # type: ignore[arg-type]
+        memory=memory,  # type: ignore[arg-type]
+        project=project_path,
+        create_name=create_name,
+        create_parent=create_parent,
+        init_git=init_git,
+        session_id=session_id,
+        version=version,
+        permissions=ExecutionPermissions(
+            network=True, download=True, cache_write=True, artifact_write=True
+        ),
+    )
+    _render_session_result(dict(result), as_json)
+    if result["status"] != "ok":
+        raise click.exceptions.Exit(1)
 
 
 @cli.group(name="ship")

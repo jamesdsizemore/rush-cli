@@ -48,6 +48,7 @@ class InvocationContext:
     environment_digest: str
     request_id: str = ""
     typed_args: tuple[tuple[str, Any], ...] | None = None
+    memory_record: bool = False
 
 
 @dataclass(frozen=True)

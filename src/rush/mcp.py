@@ -38,12 +38,40 @@ def build_server_instructions() -> str:
     )
 
 
-def build_server():
+def build_server(memory_session: str | None = None):
     """Construct and return the FastMCP server with all catalog tools registered.
 
     Does NOT start serving — caller decides transport. See ``run_stdio``.
+
+    MC11: when `memory_session` is given, this is a *restricted receiver* -- it registers
+    only the single `rush_memory` bridge tool (receive/expand/related/resume) bound to that
+    one handoff session, and nothing else. The capability travels only through the
+    `RUSH_MEMORY_CAPABILITY` environment variable, never a CLI argument. This is the only
+    path that ever narrows the server below its full catalog; the default (`memory_session
+    =None`) is unchanged and still registers every catalog tool.
     """
     from mcp.server.fastmcp import FastMCP
+
+    if memory_session is not None:
+        import os
+
+        from .mcp_support.tool_registry import register_memory_bridge_tool
+
+        capability = os.environ.get("RUSH_MEMORY_CAPABILITY", "")
+        server = FastMCP(
+            SERVER_NAME,
+            instructions=(
+                "Restricted rush memory handoff receiver. Only rush_memory "
+                "(receive/expand/related/resume) is available in this session."
+            ),
+        )
+        register_memory_bridge_tool(
+            server,
+            root=Path.cwd(),
+            session_id=memory_session,
+            capability=capability,
+        )
+        return server
 
     server = FastMCP(SERVER_NAME, instructions=build_server_instructions())
     _register_tools(server)
@@ -314,6 +342,200 @@ def rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:
     return json.dumps(res, indent=2)
 
 
+# P65-03.3 CONNECT (Phase 65 §3.2): one `rush_project` MCP tool over `ProjectTool`,
+# matching the CLI's `project` group. `select` binds a project to the caller-supplied
+# `session_id` explicitly -- never a global cwd guessed by this server.
+#
+# Plan §6.1: "Every new MCP entry accepts exactly one request: dict with
+# schema_version: 1 and operation-specific fields." Dispatches through the
+# canonical envelope call boundary (`handle_request`), not the legacy
+# flat-kwarg `.run()` path.
+def rush_project(request: dict[str, object]) -> dict[str, object]:
+    from rush.tools.project import ProjectTool
+
+    result = ProjectTool().handle_request(dict(request))
+    return dict(result)
+
+
+# P65-04.3 CONNECT (Phase 65 §3.2): one `rush_scan` MCP tool over `ScanTool`,
+# matching `rush_project`'s wiring mechanism and the CLI's `scan` command.
+# `plan`/`run`/`status`/`rescan` are implemented on `ScanTool` (§6.1).
+#
+# P65-08.3 CONNECT (Phase 65 §3.2, F35, T216): `cancel`/`resume` reach
+# `rush.workflows.project_run.cancel_scan_run`/`resume_scan_run` directly --
+# `ScanTool` (`src/rush/tools/scan.py`) is outside this packet's allowed
+# files and cannot register these two operations itself, so `rush_scan`
+# intercepts them here before ever delegating to `ScanTool`, mirroring the
+# `rescan`-direct-call precedent the CLI already uses for
+# `rescan_project_run`. Registering a NEW operation string on an already-
+# registered MCP tool name never changes the set of advertised MCP tool
+# names itself, so this needs no new `governance/public-operations.toml`
+# entry (only a brand-new CLI leaf command does -- see `cli.py`'s `scan
+# cancel`/`scan resume` docstrings for that separately-flagged gap).
+_SCAN_DIRECT_OPERATIONS = frozenset({"cancel", "resume"})
+
+
+def rush_scan(request: dict[str, object]) -> dict[str, object]:
+    from rush.tools.scan import ScanTool
+
+    operation = request.get("operation") if isinstance(request, dict) else None
+    if operation in _SCAN_DIRECT_OPERATIONS:
+        return _rush_scan_direct_operation(dict(request), str(operation))
+
+    result = ScanTool().handle_request(dict(request))
+    return dict(result)
+
+
+def _scan_direct_envelope(
+    operation: str,
+    started: float,
+    status: str,
+    *,
+    data: object = None,
+    error: dict[str, object] | None = None,
+) -> dict[str, object]:
+    from time import monotonic
+
+    return {
+        "tool": "scan",
+        "engine": None,
+        "engine_version": None,
+        "status": status,
+        "duration_ms": int((monotonic() - started) * 1000),
+        "summary": (
+            f"scan {operation}: ok" if status == "ok" else f"scan {operation}: error"
+        ),
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": operation,
+            "data": data,
+            "error": error,
+        },
+    }
+
+
+def _scan_direct_error(
+    operation: str, started: float, code: str, message: str
+) -> dict[str, object]:
+    return _scan_direct_envelope(
+        operation,
+        started,
+        "error",
+        error={"code": code, "message": message, "retryable": False},
+    )
+
+
+def _scan_direct_allowed_fields(operation: str) -> set[str]:
+    allowed = {"schema_version", "operation", "project", "run_id"}
+    if operation == "resume":
+        allowed |= {
+            "allow_network",
+            "allow_download",
+            "allow_cache_write",
+            "allow_build",
+            "allow_slow",
+            "allow_artifact_write",
+            "allow_browser",
+        }
+    return allowed
+
+
+def _validate_scan_direct_request(
+    request: dict[str, object], operation: str
+) -> tuple[str, str] | None:
+    """Returns an `(code, message)` error pair, or `None` if valid."""
+    if request.get("schema_version") != 1:
+        return "INVALID_REQUEST", "schema_version must be 1"
+    project = request.get("project")
+    run_id = request.get("run_id")
+    if not isinstance(project, str) or not project:
+        return "INVALID_REQUEST", f"{operation} requires project"
+    if not isinstance(run_id, str) or not run_id:
+        return "INVALID_REQUEST", f"{operation} requires run_id"
+    unknown = set(request) - _scan_direct_allowed_fields(operation)
+    if unknown:
+        return "INVALID_REQUEST", f"unknown request field(s): {sorted(unknown)}"
+    return None
+
+
+def _permissions_from_scan_direct_request(
+    request: dict[str, object],
+) -> ExecutionPermissions:
+    return ExecutionPermissions(
+        network=bool(request.get("allow_network", False)),
+        download=bool(request.get("allow_download", False)),
+        cache_write=bool(request.get("allow_cache_write", False)),
+        build=bool(request.get("allow_build", False)),
+        slow=bool(request.get("allow_slow", False)),
+        artifact_write=bool(request.get("allow_artifact_write", False)),
+        browser=bool(request.get("allow_browser", False)),
+    )
+
+
+def _rush_scan_direct_operation(
+    request: dict[str, object], operation: str
+) -> dict[str, object]:
+    """`rush_scan` `cancel`/`resume`: mirrors `ScanTool._envelope_result`'s
+    `{schema_version, operation, data, error}` `raw` shape so callers see
+    one consistent `rush_scan` contract regardless of which operation
+    dispatched."""
+    from time import monotonic
+
+    from rush.workflows.project_run import ScanError, cancel_scan_run, resume_scan_run
+
+    started = monotonic()
+    invalid = _validate_scan_direct_request(request, operation)
+    if invalid is not None:
+        return _scan_direct_error(operation, started, *invalid)
+
+    project = str(request["project"])
+    run_id = str(request["run_id"])
+    try:
+        if operation == "cancel":
+            data: object = cancel_scan_run(project, run_id)
+        else:
+            permissions = _permissions_from_scan_direct_request(request)
+            if not (permissions.cache_write and permissions.artifact_write):
+                return _scan_direct_error(
+                    operation,
+                    started,
+                    "SCOPE_DENIED",
+                    "resume requires allow_cache_write and allow_artifact_write",
+                )
+            data = resume_scan_run(project, run_id, permissions=permissions).to_dict()
+    except ScanError as exc:
+        return _scan_direct_error(
+            operation, started, getattr(exc, "code", "INVALID_REQUEST"), str(exc)
+        )
+
+    return _scan_direct_envelope(operation, started, "ok", data=data)
+
+
+# P65-05.3 CONNECT (Phase 65 §3.2): one `rush_agent_connection` MCP tool over
+# `AgentConnectionTool`, matching `rush_project`/`rush_scan`'s wiring mechanism
+# and the CLI's `agent list/connect/doctor` commands.
+def rush_agent_connection(request: dict[str, object]) -> dict[str, object]:
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    result = AgentConnectionTool().handle_request(dict(request))
+    return dict(result)
+
+
+# P65-06.3 CONNECT (Phase 65 §3.2, F35): one `rush_scan_handoff` MCP tool over
+# `ScanHandoffTool`, matching `rush_project`/`rush_scan`'s wiring mechanism and
+# the CLI's `scan handoff` subcommand. Operations: prepare/dispatch/status/
+# acknowledge/complete (plan §6.1). An agent-ready response's `data` always
+# carries `state` (the real, non-fabricated lifecycle state) so a caller's
+# next operation is unambiguous. `rush_scan`'s `rescan` operation (plan §6.1)
+# is implemented via `ScanTool`; see `rush.workflows.project_run.rescan_project_run`.
+def rush_scan_handoff(request: dict[str, object]) -> dict[str, object]:
+    from rush.tools.scan_handoff import ScanHandoffTool
+
+    result = ScanHandoffTool().handle_request(dict(request))
+    return dict(result)
+
+
 # Backward compatibility aliases
 mcp_rush_ship_clean = rush_ship_clean
 mcp_rush_ship_env = rush_ship_env
@@ -335,6 +557,10 @@ mcp_rush_trace = rush_trace
 mcp_rush_mesh_acquire_lock = rush_mesh_acquire_lock
 mcp_rush_mesh_release_lock = rush_mesh_release_lock
 mcp_rush_swarm_merge = rush_swarm_merge
+mcp_rush_project = rush_project
+mcp_rush_scan = rush_scan
+mcp_rush_agent_connection = rush_agent_connection
+mcp_rush_scan_handoff = rush_scan_handoff
 
 _attest_tool = next((t for t in ALL_TOOLS if t.name == "attest"), None)
 rush_attest_generate = _attest_tool.__call__ if _attest_tool else None
@@ -453,6 +679,26 @@ def _register_tools(server) -> None:
             "rush_swarm_merge",
             "Execute 3-way AST merge conflict resolution",
         ),
+        (
+            rush_project,
+            "rush_project",
+            "Register, discover, select, and configure Rush projects",
+        ),
+        (
+            rush_scan,
+            "rush_scan",
+            "Plan, run, and check status of a full-project scan",
+        ),
+        (
+            rush_agent_connection,
+            "rush_agent_connection",
+            "Discover, connect, and diagnose local coding agents",
+        ),
+        (
+            rush_scan_handoff,
+            "rush_scan_handoff",
+            "Prepare, dispatch, and acknowledge a bounded agent handoff of scan findings",
+        ),
     ]
 
     register_custom_tools(server, executor, custom_tools)
@@ -461,8 +707,8 @@ def _register_tools(server) -> None:
 mcp_server = build_server()
 
 
-async def run_stdio() -> None:
+async def run_stdio(memory_session: str | None = None) -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""
-    server = build_server()
+    server = build_server(memory_session)
     get_logger("mcp").debug("starting rush stdio MCP server")
     await server.run_stdio_async()

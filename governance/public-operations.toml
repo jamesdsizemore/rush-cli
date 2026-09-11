@@ -2,7 +2,117 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 153
+total_operations = 188
+
+[[operations]]
+id = "admin.agent_connect"
+kind = "admin"
+canonical_impl = "rush.tools.agent_connection:AgentConnectionTool"
+cli_command = "agent connect"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush agent connect --help"
+
+[[operations]]
+id = "admin.install"
+kind = "admin"
+canonical_impl = "rush.tools.install:InstallTool"
+cli_command = "install"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush install --help"
+
+[[operations]]
+id = "admin.memory_archive"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory archive"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory archive --help"
+
+[[operations]]
+id = "admin.memory_consolidate"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory consolidate"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory consolidate --help"
+
+[[operations]]
+id = "admin.memory_delete"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory delete"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory delete --help"
+
+[[operations]]
+id = "admin.memory_edit"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory edit"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory edit --help"
+
+[[operations]]
+id = "admin.memory_expand"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory expand"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory expand --help"
+
+[[operations]]
+id = "admin.memory_handoff"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory handoff"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory handoff --help"
+
+[[operations]]
+id = "admin.memory_intent"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory intent"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory intent --help"
+
+[[operations]]
+id = "admin.memory_last_success_diagnose"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory last-success-diagnose"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory last-success-diagnose --help"
+
+[[operations]]
+id = "admin.memory_link"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory link"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory link --help"
 
 [[operations]]
 id = "admin.memory_maintain"
@@ -15,26 +125,144 @@ effect_class = "stateful-mutation"
 safe_probe = "rush memory maintain --help"
 
 [[operations]]
+id = "admin.memory_plan_checks"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory plan-checks"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory plan-checks --help"
+
+[[operations]]
+id = "admin.memory_prepare"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory prepare"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory prepare --help"
+
+[[operations]]
 id = "admin.memory_promote"
 kind = "admin"
 canonical_impl = "rush.tools.memory:MemoryTool"
 cli_command = "memory promote"
-mcp_tool = "rush_memory"
 input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory promote --help"
 
 [[operations]]
+id = "admin.memory_receive"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory receive"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory receive --help"
+
+[[operations]]
+id = "admin.memory_recipe"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory recipe"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory recipe --help"
+
+[[operations]]
+id = "admin.memory_related"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory related"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory related --help"
+
+[[operations]]
+id = "admin.memory_resume"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory resume"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory resume --help"
+
+[[operations]]
+id = "admin.memory_verify_attempt"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory verify-attempt"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory verify-attempt --help"
+
+[[operations]]
 id = "admin.memory_write"
 kind = "admin"
 canonical_impl = "rush.tools.memory:MemoryTool"
 cli_command = "memory write"
-mcp_tool = "rush_memory"
 input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory write --help"
+
+[[operations]]
+id = "admin.project_add"
+kind = "admin"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project add"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush project add --help"
+
+[[operations]]
+id = "admin.project_configure"
+kind = "admin"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project configure"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush project configure --help"
+
+[[operations]]
+id = "admin.project_create"
+kind = "admin"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project create"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush project create --help"
+
+[[operations]]
+id = "admin.project_relink"
+kind = "admin"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project relink"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush project relink --help"
+
+[[operations]]
+id = "admin.project_select"
+kind = "admin"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project select"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush project select --help"
 
 [[operations]]
 id = "cli.api_diff"
@@ -427,17 +655,6 @@ effect_class = "read-only"
 safe_probe = "rush outline --help"
 
 [[operations]]
-id = "tool.patch_apply"
-kind = "tool"
-canonical_impl = "rush.tools.patch_apply:PatchApplyTool"
-cli_command = "patch apply"
-mcp_tool = "rush_patch_apply"
-input_contract = "ToolInputOptions"
-output_contract = "ToolResult"
-effect_class = "stateful-mutation"
-safe_probe = "rush patch apply --help"
-
-[[operations]]
 id = "cli.patch_memory"
 kind = "admin"
 canonical_impl = "rush.cli:patch"
@@ -506,6 +723,46 @@ input_contract = "ClickArguments"
 output_contract = "ClickExitCode"
 effect_class = "read-only"
 safe_probe = "rush scaffold init --help"
+
+[[operations]]
+id = "cli.scan_cancel"
+kind = "admin"
+canonical_impl = "rush.cli:scan"
+cli_command = "scan cancel"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush scan cancel --help"
+
+[[operations]]
+id = "cli.scan_handoff"
+kind = "admin"
+canonical_impl = "rush.cli:scan"
+cli_command = "scan handoff"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush scan handoff --help"
+
+[[operations]]
+id = "cli.scan_rescan"
+kind = "admin"
+canonical_impl = "rush.cli:scan"
+cli_command = "scan rescan"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush scan rescan --help"
+
+[[operations]]
+id = "cli.scan_resume"
+kind = "admin"
+canonical_impl = "rush.cli:scan"
+cli_command = "scan resume"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush scan resume --help"
 
 [[operations]]
 id = "cli.score_compute"
@@ -888,6 +1145,16 @@ effect_class = "read-only"
 safe_probe = "mcp:inspect:rush_release"
 
 [[operations]]
+id = "mcp.scan_handoff"
+kind = "service"
+canonical_impl = "rush.mcp:rush_scan_handoff"
+mcp_tool = "rush_scan_handoff"
+input_contract = "McpArguments"
+output_contract = "McpCallResult"
+effect_class = "read-only"
+safe_probe = "mcp:inspect:rush_scan_handoff"
+
+[[operations]]
 id = "mcp.simplify"
 kind = "service"
 canonical_impl = "rush.mcp:rush_simplify"
@@ -957,6 +1224,27 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush actions --help"
+
+[[operations]]
+id = "tool.agent_doctor"
+kind = "tool"
+canonical_impl = "rush.tools.agent_connection:AgentConnectionTool"
+cli_command = "agent doctor"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush agent doctor --help"
+
+[[operations]]
+id = "tool.agent_list"
+kind = "tool"
+canonical_impl = "rush.tools.agent_connection:AgentConnectionTool"
+cli_command = "agent list"
+mcp_tool = "rush_agent_connection"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush agent list --help"
 
 [[operations]]
 id = "tool.ai_eval"
@@ -1304,7 +1592,6 @@ id = "tool.memory_list"
 kind = "tool"
 canonical_impl = "rush.tools.memory:MemoryTool"
 cli_command = "memory list"
-mcp_tool = "rush_memory"
 input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
@@ -1315,7 +1602,6 @@ id = "tool.memory_recall"
 kind = "tool"
 canonical_impl = "rush.tools.memory:MemoryTool"
 cli_command = "memory recall"
-mcp_tool = "rush_memory"
 input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
@@ -1344,6 +1630,17 @@ effect_class = "read-only"
 safe_probe = "rush offline-review --help"
 
 [[operations]]
+id = "tool.patch_apply"
+kind = "tool"
+canonical_impl = "rush.tools.patch_apply:PatchApplyTool"
+cli_command = "patch apply"
+mcp_tool = "rush_patch_apply"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush patch apply --help"
+
+[[operations]]
 id = "tool.pbt"
 kind = "tool"
 canonical_impl = "rush.tools.pbt:PbtTool"
@@ -1364,6 +1661,47 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush pr-synthesize --help"
+
+[[operations]]
+id = "tool.project_artifacts"
+kind = "tool"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project artifacts"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush project artifacts --help"
+
+[[operations]]
+id = "tool.project_list"
+kind = "tool"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project list"
+mcp_tool = "rush_project"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush project list --help"
+
+[[operations]]
+id = "tool.project_show"
+kind = "tool"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project show"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush project show --help"
+
+[[operations]]
+id = "tool.project_snapshot"
+kind = "tool"
+canonical_impl = "rush.tools.project:ProjectTool"
+cli_command = "project snapshot"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush project snapshot --help"
 
 [[operations]]
 id = "tool.prompt_eval"
@@ -1408,6 +1746,17 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush sbom --help"
+
+[[operations]]
+id = "tool.scan"
+kind = "tool"
+canonical_impl = "rush.tools.scan:ScanTool"
+cli_command = "scan"
+mcp_tool = "rush_scan"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush scan --help"
 
 [[operations]]
 id = "tool.secrets"

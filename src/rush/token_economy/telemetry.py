@@ -5,6 +5,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+# MC04 §9.0: the real-cost event kinds `record_memory_event()` accepts. "embedding" has no
+# wired producer yet (no embedding call site exists in this codebase) — it's a valid kind so
+# the ledger doesn't need a schema change the day one shows up.
+_MEMORY_EVENT_KINDS = frozenset(
+    {"retrieval", "expansion", "packing", "handoff", "embedding"}
+)
+
 
 class TelemetryStore:
     """Records raw and compressed token consumption to measure real-world savings and cost reduction."""
@@ -29,7 +36,67 @@ class TelemetryStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_events (
+                    request_id TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    tokens INTEGER NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    PRIMARY KEY (request_id, event_id)
+                )
+                """
+            )
             conn.commit()
+
+    def record_memory_event(
+        self,
+        kind: str,
+        tokens: int,
+        *,
+        request_id: str,
+        event_id: str,
+        opt_in: bool = False,
+        cache_write: bool = False,
+    ) -> bool:
+        """MC04 §9.0: persist one real retrieval/expansion/packing/handoff/embedding cost,
+        deduplicated by `(request_id, event_id)` so a replayed request never inflates the
+        total. Requires `opt_in` or `cache_write` — a read-only lookup must call this with
+        neither (or, better, never call it at all) so it never persists anything.
+
+        Returns whether a new row was actually written (`False` on a denied write or an
+        already-recorded `(request_id, event_id)` pair).
+        """
+        if kind not in _MEMORY_EVENT_KINDS:
+            raise ValueError(f"unknown memory event kind: {kind!r}")
+        if not (opt_in or cache_write):
+            return False
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO memory_events
+                    (request_id, event_id, kind, tokens, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (request_id, event_id, kind, int(tokens), int(time.time())),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_memory_event_total(self, kind: str | None = None) -> int:
+        """Sum of `tokens` across recorded memory events, optionally scoped to one `kind`."""
+        with sqlite3.connect(self.db_path) as conn:
+            if kind is None:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(tokens), 0) FROM memory_events"
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(tokens), 0) FROM memory_events WHERE kind = ?",
+                    (kind,),
+                ).fetchone()
+        return int(row[0])
 
     def record_savings(
         self,

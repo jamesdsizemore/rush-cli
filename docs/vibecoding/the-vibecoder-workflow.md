@@ -98,10 +98,13 @@ You just built and tested a complete, production-ready feature in 10 minutes fla
 
 Before opening a PR or tagging a release:
 ```bash
-# 1. Purge scratch debris
+# 1. Preview registered Rush-owned run artifacts
 uv run rush ship clean
 
-# 2. Check environment variable parity
+# 2. Delete only after review and explicit artifact-write authorization
+uv run rush ship clean --apply --allow-artifact-write
+
+# 3. Check environment variable parity
 uv run rush ship env
 
 # 3. Verify documentation links

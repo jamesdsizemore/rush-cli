@@ -4,7 +4,7 @@
 
 Provider resume is opt-in, projection-limited, and non-retrying. OmniRoute uses one fixed loopback API request and validates semantic completion without retaining its response. `9router_cli` runs Codex through fixed local 9Router with a child-process-only credential, no model argument, and no output retention. Z.AI is deferred without invocation. There is no automatic provider routing, OAuth flow, or profile mutation.
 
-Rush aims for safe defaults, but current safety defects remain open. `fix --dry-run` can destroy user work, `ship clean` deletes by default, checkpoint/governance symlinks escape containment, and custom token-outline output can expose secrets. See [Known issues](KNOWN_ISSUES.md) and [P64-01–P64-06](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); those fixes are planned.
+Rush aims for safe defaults, but current safety defects remain open. P64-01 makes `fix --dry-run` bounded Ruff preview; P64-02 makes `ship clean` preview registered Rush-owned artifacts and requires explicit apply plus artifact-write. Checkpoint/governance symlinks escape containment and custom token-outline output can expose secrets. See [Known issues](KNOWN_ISSUES.md) and [P64-03–P64-06](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md); those fixes are planned.
 
 - **No implicit installs.** Missing optional engines return `skipped`.
 - **No silent source rewrite.** Review/check commands are read-only; formatter mutation is an explicit path and `--check` is available.
