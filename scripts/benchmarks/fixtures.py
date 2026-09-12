@@ -31,28 +31,19 @@ def fixture_path(name: str) -> Path:
     return path
 
 
+_SCENARIO_CONTRACT_KEYS = frozenset(
+    {"scenario_id", "probe", "category", "input", "required_facts", "expected_outcome"}
+)
+
+
 def load_scenarios() -> dict[str, Scenario]:
-    """Loads and validates scenarios from tests/fixtures/benchmarks/scenarios.json."""
+    """Loads and validates scenarios from tests/fixtures/benchmarks/scenarios.json,
+    merged with memory benchmark cases loaded via load_memory_cases()."""
     raw = json.loads(fixture_path("scenarios.json").read_text(encoding="utf-8"))
-    memory_raw = json.loads(
-        fixture_path("memory_cases.json").read_text(encoding="utf-8")
-    )
-    items = [*raw.get("scenarios", []), *memory_raw.get("cases", [])]
+    items = [*raw.get("scenarios", []), *load_memory_cases()]
     scenarios: dict[str, Scenario] = {}
     for item in items:
-        require_exact_keys(
-            item,
-            frozenset(
-                {
-                    "scenario_id",
-                    "probe",
-                    "category",
-                    "input",
-                    "required_facts",
-                    "expected_outcome",
-                }
-            ),
-        )
+        require_exact_keys(item, _SCENARIO_CONTRACT_KEYS)
         scenario = Scenario(
             scenario_id=item["scenario_id"],
             probe=item["probe"],
@@ -145,19 +136,7 @@ def load_memory_cases(name: str = "memory_cases.json") -> list[dict[str, Any]]:
     for case in cases:
         if not isinstance(case, dict) or not isinstance(case.get("scenario_id"), str):
             raise FixtureError("memory benchmark case is malformed")
-        require_exact_keys(
-            case,
-            frozenset(
-                {
-                    "scenario_id",
-                    "probe",
-                    "category",
-                    "input",
-                    "required_facts",
-                    "expected_outcome",
-                }
-            ),
-        )
+        require_exact_keys(case, _SCENARIO_CONTRACT_KEYS)
     return cases
 
 

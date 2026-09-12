@@ -58,7 +58,7 @@ def test_memory_baseline_records_over_budget_payload(tmp_path: Path) -> None:
 
     assert result.outcome == Outcome.PASS
     assert result.metrics["serialized_bytes"] > 8192
-    assert result.metrics["payload_truncated"] is False
+    assert result.metrics["payload_truncated"] is True
 
 
 def test_memory_probe_keeps_denied_content_out_of_results(tmp_path: Path) -> None:
@@ -147,3 +147,44 @@ def test_memory_probe_metrics_match_recorded_tool_result(
     assert result.metrics["token_count"] == len(
         memory.tiktoken.get_encoding("cl100k_base").encode(serialized)
     )
+
+
+def test_memory_probe_detects_stale_record_via_legacy_path_only(tmp_path: Path) -> None:
+    result = run_memory_probe(_scenario("M03"), output_root=tmp_path)
+
+    assert result.metrics["stale_visible_legacy"] is True
+    assert result.metrics["stale_visible_compact"] is False
+    assert result.metrics["expiry_sweep_changed"] >= 1
+
+
+def test_memory_probe_measures_real_payload_truncation(tmp_path: Path) -> None:
+    result = run_memory_probe(_scenario("M06"), output_root=tmp_path)
+
+    assert result.metrics["payload_truncated"] is True
+    assert result.metrics["compact_items_returned"] < 100
+
+
+def test_memory_probe_measures_source_edit(tmp_path: Path) -> None:
+    result = run_memory_probe(_scenario("M09"), output_root=tmp_path)
+
+    assert result.metrics["post_edit_version"] > result.metrics["pre_edit_version"]
+    assert result.metrics["edited_content_visible"] is True
+
+
+def test_memory_probe_measures_cache_budget_pagination(tmp_path: Path) -> None:
+    result = run_memory_probe(_scenario("M10"), output_root=tmp_path)
+
+    assert result.metrics["compact_paginated"] is True
+    assert result.metrics["compact_pages"] > 1
+
+
+def test_memory_probe_token_fallback_when_encoder_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _raise_encoder_unavailable(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("encoder unavailable")
+
+    monkeypatch.setattr(memory.tiktoken, "get_encoding", _raise_encoder_unavailable)
+    result = run_memory_probe(_scenario("M01"), output_root=tmp_path)
+
+    assert result.metrics["token_method"] == "tiktoken:cl100k_base:fallback"
