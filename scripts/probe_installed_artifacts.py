@@ -555,7 +555,9 @@ def main() -> int:
 
     results: list[ArtifactProbeResult] = []
 
-    with tempfile.TemporaryDirectory(prefix="rush_probe_") as tmp_str:
+    with tempfile.TemporaryDirectory(
+        prefix="rush_probe_", ignore_cleanup_errors=True
+    ) as tmp_str:
         work_dir = Path(tmp_str)
 
         if wheels:
