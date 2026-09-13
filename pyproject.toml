@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
     # Architecture §13: stdlib tomllib + hand-rolled (no pydantic) — keep deps minimal
     "mcp==1.28.1",        # Official Python MCP SDK; stdio FastMCP server
+    "certifi==2026.7.22", # CA bundle for the frozen binary's downloader; PyInstaller doesn't inherit the system trust store
     "click==8.4.2",       # CLI framework; matches headcleaner-cli
     "rich==13.9.4",       # Terminal pretty-printing; cyan/green/yellow palette
     "pytest==9.0.3",      # Test runner (we ship tests; users can `uv run pytest`)

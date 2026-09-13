@@ -22,6 +22,7 @@ import json
 import os
 import platform
 import shutil
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -32,6 +33,8 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import certifi
 
 from rush.permissions import ExecutionPermissions, check_permissions
 from rush.runtime.binaries import ProvisionManifest, compute_file_sha256, write_manifest
@@ -59,9 +62,14 @@ class ProvisionError(Exception):
 HttpGet = Callable[[str], bytes]
 
 
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
 def _default_http_get(url: str) -> bytes:
     with urlopen(
-        Request(url, headers={"User-Agent": "rush-cli-provision"}), timeout=15
+        Request(url, headers={"User-Agent": "rush-cli-provision"}),
+        timeout=15,
+        context=_SSL_CONTEXT,
     ) as resp:
         return resp.read()
 
