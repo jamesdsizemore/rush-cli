@@ -155,7 +155,9 @@ def test_adapter_registration_preserves_unrelated_settings(
     monkeypatch.setattr(agents_mod.shutil, "which", lambda _name: None)
     home = _home_with(tmp_path, adapter_id, fixture_text)
 
-    plan = plan_agent_registration(adapter_id, rush_binary=RUSH_BINARY, home=home)
+    plan = plan_agent_registration(
+        adapter_id, rush_binary=RUSH_BINARY, home=home, os_name="Darwin"
+    )
     assert plan.method == "config-edit"
     assert plan.backup_path is not None
     result = apply_agent_registration(plan)
@@ -189,12 +191,14 @@ def test_adapter_registration_preserves_unrelated_settings(
         if adapter_id == "windsurf":
             assert parsed[servers_key]["legacy"]["command"] == "old-rush"
 
-    statuses = discover_agents(home=home, rush_binary=RUSH_BINARY)
+    statuses = discover_agents(home=home, rush_binary=RUSH_BINARY, os_name="Darwin")
     entry = next(s for s in statuses if s.agent_id == adapter_id)
     assert entry.status == "registered"
 
     # Re-applying (repeated install) must never duplicate the rush entry.
-    plan2 = plan_agent_registration(adapter_id, rush_binary=RUSH_BINARY, home=home)
+    plan2 = plan_agent_registration(
+        adapter_id, rush_binary=RUSH_BINARY, home=home, os_name="Darwin"
+    )
     apply_agent_registration(plan2)
     final_text = plan.config_path.read_text(encoding="utf-8")
     if adapter_id == "codex":

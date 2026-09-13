@@ -175,8 +175,18 @@ def test_native_startup_timeout_reaps_child(monkeypatch, tmp_path, stage):
     assert pidfile.is_file(), f"Peer never reached {stage} before dispatch deadline"
     pid = int(pidfile.read_text())
     try:
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+        # SIGKILL is immediate but the killed process lingers as a zombie
+        # until its parent reaps it -- os.kill(pid, 0) still succeeds against
+        # an unreaped zombie, so poll instead of asserting instantaneously.
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            if time.monotonic() >= deadline:
+                pytest.fail(f"peer pid {pid} was not reaped within 2s of dispatch timeout")
+            time.sleep(0.05)
     finally:
         try:
             os.kill(pid, signal.SIGKILL)
