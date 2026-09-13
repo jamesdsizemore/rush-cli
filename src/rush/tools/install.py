@@ -35,6 +35,7 @@ import hashlib
 import os
 import platform
 import shutil
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -43,6 +44,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 from urllib.request import Request, urlopen
+
+import certifi
 
 from rush.integrations.agents import (
     ADAPTERS,
@@ -134,9 +137,14 @@ def _release_asset_url(asset_name: str, version: str | None) -> str:
     return f"https://github.com/{_RELEASE_REPO}/releases/latest/download/{asset_name}"
 
 
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
 def _default_downloader(url: str) -> bytes:
     with urlopen(
-        Request(url, headers={"User-Agent": "rush-cli-install"}), timeout=30
+        Request(url, headers={"User-Agent": "rush-cli-install"}),
+        timeout=30,
+        context=_SSL_CONTEXT,
     ) as resp:
         return resp.read()
 
