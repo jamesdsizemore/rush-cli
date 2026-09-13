@@ -35,11 +35,12 @@ jobs:
           - runner: windows-latest
             asset_name: rush-windows-x86_64.zip
             binary_name: rush.exe
-          # cryptography ships no win_arm64 wheel on PyPI at any version (verified against
-          # PyPI's release index) -- uv sync fails building openssl-sys from source on this
-          # runner. Upstream gap, not a rush-cli bug. Kept here (not omitted) per the same
-          # acceptance matrix contract as macOS x86_64 above; allowed to fail so it doesn't
-          # redden the whole release run while the other 5 platforms build clean.
+          # cryptography shipped win_arm64 wheels only through 46.0.3, which carries 13 known
+          # CVEs per OSV.dev; the pinned 50.0.0 (0 known CVEs) has no win_arm64 wheel, and
+          # downgrading to regain one isn't a real option. uv sync fails building openssl-sys
+          # from source on this runner. Upstream gap, not a rush-cli bug. Kept here (not
+          # omitted) per the same acceptance matrix contract as macOS x86_64 above; allowed to
+          # fail so it doesn't redden the whole release run while the other 5 platforms build clean.
           - runner: windows-11-arm
             asset_name: rush-windows-arm64.zip
             binary_name: rush.exe
