@@ -13,6 +13,13 @@ $ErrorActionPreference = "Stop"
 # channel" failure on both this fetch and the Invoke-WebRequest calls below.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
+# Invoke-WebRequest's default progress-bar rendering makes large downloads
+# (this archive is ~36 MB) extremely slow in Windows PowerShell 5.1 -- slow
+# enough to time out or get interrupted mid-transfer, leaving a truncated
+# zip that Expand-Archive then fails to open ("invalid data"). Disabling the
+# progress bar restores normal download speed.
+$ProgressPreference = "SilentlyContinue"
+
 $Repo = "jamesdsizemore/rush-cli"
 $Machine = $env:PROCESSOR_ARCHITECTURE
 switch ($Machine) {
