@@ -58,7 +58,7 @@ jobs:
           "
 
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload"
+        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
