@@ -216,8 +216,12 @@ def probe_native_artifact(
     external_cwd = work_dir / "cwd_native"
     external_cwd.mkdir(parents=True, exist_ok=True)
 
-    bare_path = "C:\\Windows\\System32" if sys.platform == "win32" else "/usr/bin:/bin"
-    env = {"PATH": bare_path, "HOME": str(work_dir)}
+    if sys.platform == "win32":
+        bare_path = "C:\\Windows\\System32"
+        env = {"PATH": bare_path, "USERPROFILE": str(work_dir)}
+    else:
+        bare_path = "/usr/bin:/bin"
+        env = {"PATH": bare_path, "HOME": str(work_dir)}
 
     version_probe = subprocess.run(
         [str(binary_path), "--version"],
