@@ -185,7 +185,9 @@ def test_native_startup_timeout_reaps_child(monkeypatch, tmp_path, stage):
             except ProcessLookupError:
                 break
             if time.monotonic() >= deadline:
-                pytest.fail(f"peer pid {pid} was not reaped within 2s of dispatch timeout")
+                pytest.fail(
+                    f"peer pid {pid} was not reaped within 2s of dispatch timeout"
+                )
             time.sleep(0.05)
     finally:
         try:
