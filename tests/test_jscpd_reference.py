@@ -35,13 +35,17 @@ def test_jscpd_runs_bounded_argv(monkeypatch, tmp_path: Path) -> None:
 
 def test_jscpd_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> None:
     engine = JscpdEngine()
-    monkeypatch.setattr(JscpdEngine, "version", lambda _self: "3.5.10")
+    monkeypatch.setattr(JscpdEngine, "version", lambda _self: "5.2.0")
 
     clean = engine.normalize({"exit_code": 0, "stdout": ""}, tmp_path, "complexity")
     finding = engine.normalize(
         {
-            "exit_code": 1,
-            "stdout": "src/example.ts:10-20 - duplicate block\n",
+            "exit_code": 0,
+            "stdout": (
+                "Clone found (typescript):\n"
+                " - a.ts [10:1 - 20:2] (10 lines, 50 tokens)\n"
+                "   b.ts [10:1 - 20:2]\n"
+            ),
         },
         tmp_path,
         "complexity",
@@ -50,9 +54,11 @@ def test_jscpd_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> Non
     assert clean["status"] == "ok"
     assert clean["tool"] == "complexity"
     assert finding["status"] == "warn"
-    assert len(finding["findings"]) == 1
+    assert len(finding["findings"]) == 2
     assert finding["findings"][0]["rule"] == "jscpd"
     assert finding["findings"][0]["line"] == 10
+    assert finding["findings"][0]["path"] == "a.ts"
+    assert finding["findings"][0]["message"] == "duplicates b.ts (10 lines)"
 
 
 def test_jscpd_missing_and_timeout(monkeypatch, tmp_path: Path) -> None:

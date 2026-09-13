@@ -23,19 +23,50 @@ class JscpdEngine(Engine):
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
         )
 
+    # jscpd 5.x (Rust engine) console format, e.g.:
+    #   Clone found (typescript):
+    #    - a.ts [4:19 - 10:2] (7 lines, 21 tokens)
+    #      b.ts [4:20 - 10:2]
+    # jscpd wraps parts of this in ANSI escapes even when stdout is piped, so
+    # those are stripped before either pattern is applied.
+    _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+    _HEADER_RE = re.compile(r"^Clone found \([^)]*\):?$")
+    _FILE_RE = re.compile(
+        r"^\s*-?\s*(?P<path>\S+)\s*\[(?P<start_line>\d+):\d+\s*-\s*\d+:\d+\]"
+        r"(?:\s*\((?P<lines>\d+) lines, \d+ tokens\))?\s*$"
+    )
+
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
-        pattern = re.compile(r"^(?P<path>.+?):(?P<line>\d+)-\d+\s+-\s+(?P<message>.+)$")
+        text = self._ANSI_RE.sub("", raw.get("stdout", ""))
+        lines = text.splitlines()
         findings: list[Finding] = []
-        for line in raw.get("stdout", "").splitlines():
-            match = pattern.match(line)
-            if match:
+        i = 0
+        while i < len(lines):
+            if not self._HEADER_RE.match(lines[i]):
+                i += 1
+                continue
+            i += 1
+            block: list[re.Match[str]] = []
+            while i < len(lines):
+                match = self._FILE_RE.match(lines[i])
+                if not match:
+                    break
+                block.append(match)
+                i += 1
+            if len(block) < 2:
+                continue
+            paths = [m["path"] for m in block]
+            clone_lines = next((m["lines"] for m in block if m["lines"]), None)
+            detail = f"{clone_lines} lines" if clone_lines else "duplicate block"
+            for match in block:
+                others = [p for p in paths if p != match["path"]]
                 findings.append(
                     {
                         "path": match["path"],
-                        "line": int(match["line"]),
+                        "line": int(match["start_line"]),
                         "rule": "jscpd",
                         "severity": "warn",
-                        "message": match["message"],
+                        "message": f"duplicates {', '.join(others)} ({detail})",
                     }
                 )
         return ToolResult(

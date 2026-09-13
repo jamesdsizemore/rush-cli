@@ -62,7 +62,10 @@ class TrustedPluginRecord:
 class PluginTrustStore:
     """Manages the user-owned cryptographic trust ledger for plugins and custom engines."""
 
-    DEFAULT_LEDGER_PATH = Path.home() / ".rush" / "plugin_trust_ledger.json"
+    @property
+    def DEFAULT_LEDGER_PATH(self) -> Path:
+        """Lazily resolved so importing this module never requires a resolvable home directory."""
+        return Path.home() / ".rush" / "plugin_trust_ledger.json"
 
     def __init__(
         self,

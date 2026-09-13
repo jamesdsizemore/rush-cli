@@ -39,8 +39,26 @@ jobs:
       - name: Build distribution artifacts
         run: uv build
 
+      - name: Build native release archive for installed-artifact probes
+        run: |
+          uv pip install pyinstaller
+          cat > rush_entry.py <<'PYEOF'
+          from rush.cli import cli
+
+          if __name__ == "__main__":
+              cli()
+          PYEOF
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run --no-sync python -c "
+          from pathlib import Path
+          from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
+          import rush
+          archive = build_release_archive(Path('dist/rush'), Path('dist'), 'rush-linux-x86_64.tar.gz', rush.__version__)
+          write_sha256sums([archive], Path('dist/SHA256SUMS'))
+          "
+
       - name: Run tests
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
@@ -53,6 +71,40 @@ jobs:
 
       - name: Check whitespace
         run: git diff --check
+
+  static-tool-acceptance:
+    name: Static tool acceptance (real binaries)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install test dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Install Python static-analysis engines
+        run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
+
+      - name: Install Node-based static-analysis and eval engines
+        run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0
+
+      - name: Run static-tool and ai-eval acceptance
+        run: uv run --no-sync pytest tests/test_static_tools.py tests/test_ai_eval.py tests/test_engines.py -q
 
   representative-engines:
     name: Representative Python engine smoke
@@ -136,6 +188,25 @@ jobs:
 
       - name: Build distribution artifacts
         run: uv build
+
+      - name: Build native release archive for installed-artifact probes
+        shell: bash
+        run: |
+          uv pip install pyinstaller
+          cat > rush_entry.py <<'PYEOF'
+          from rush.cli import cli
+
+          if __name__ == "__main__":
+              cli()
+          PYEOF
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run --no-sync python -c "
+          from pathlib import Path
+          from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
+          import rush
+          archive = build_release_archive(Path('dist/rush.exe'), Path('dist'), 'rush-windows-x86_64.zip', rush.__version__)
+          write_sha256sums([archive], Path('dist/SHA256SUMS'))
+          "
 
       - name: Verify Windows contracts
         run: uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py -q

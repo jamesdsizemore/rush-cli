@@ -10,9 +10,17 @@ import re
 import subprocess
 import sys
 import unicodedata
+import warnings
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
+
+from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
+
+# The MCP SDK's own pydantic-settings model has a `lifespan` field with an
+# incomplete forward-reference annotation; this is third-party, not ours
+# (matches the existing pytest filterwarnings entry in pyproject.toml).
+warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
 
 SCHEMA = "rush-doc-coverage/v1"
 REPORT_PATH = "docs/reports/phase-64-66-documentation-coverage.md"
