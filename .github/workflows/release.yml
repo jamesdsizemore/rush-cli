@@ -120,6 +120,7 @@ jobs:
   checksums:
     name: Publish SHA256SUMS
     needs: build-binaries
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
