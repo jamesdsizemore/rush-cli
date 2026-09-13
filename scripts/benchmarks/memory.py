@@ -71,7 +71,10 @@ def _probe_stale_record(
         root,
         operation="write",
         subject="domain_knowledge",
-        content={"id": "STALE1", "text": "benchmark stale artifact matching retrieval evidence"},
+        content={
+            "id": "STALE1",
+            "text": "benchmark stale artifact matching retrieval evidence",
+        },
         source="allowed",
         source_kind="human_derived",
         permissions=permissions,
@@ -136,7 +139,12 @@ def _probe_oversized_payload(
         subject="domain_knowledge",
         query="benchmark",
         session_allowlist=["allowed"],
-        request={"view": "compact", "max_bytes": 4096, "max_tokens": 100000, "limit": 100},
+        request={
+            "view": "compact",
+            "max_bytes": 4096,
+            "max_tokens": 100000,
+            "limit": 100,
+        },
     )
     if compact["status"] not in ("ok", "warn"):
         raise FixtureError(f"memory compact ask failed: {compact['summary']}")
@@ -343,7 +351,9 @@ def run_memory_probe(
         encoder = _get_encoder()
         token_count = _count_tokens(encoder, serialized)
         token_method = (
-            "tiktoken:cl100k_base" if encoder is not None else "tiktoken:cl100k_base:fallback"
+            "tiktoken:cl100k_base"
+            if encoder is not None
+            else "tiktoken:cl100k_base:fallback"
         )
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         visible_ids = {
@@ -371,9 +381,7 @@ def run_memory_probe(
             "evidence_mode": str(
                 scenario.input.get("evidence_mode", "legacy-baseline")
             ),
-            "operation_mode": str(
-                scenario.input.get("operation_mode", "current-ask")
-            ),
+            "operation_mode": str(scenario.input.get("operation_mode", "current-ask")),
             "source_hash": source_hash,
             "scenario_hash": _scenario_hash(scenario),
         }
