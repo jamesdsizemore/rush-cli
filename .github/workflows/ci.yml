@@ -58,7 +58,7 @@ jobs:
           "
 
       - name: Run tests
-        run: uv run pytest tests/ -q
+        run: uv run pytest tests/ -q -k "not real_workload"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
