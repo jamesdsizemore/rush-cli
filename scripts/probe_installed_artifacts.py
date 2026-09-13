@@ -218,7 +218,13 @@ def probe_native_artifact(
 
     if sys.platform == "win32":
         bare_path = "C:\\Windows\\System32"
-        env = {"PATH": bare_path, "USERPROFILE": str(work_dir)}
+        system_root = os.environ.get("SystemRoot", "C:\\Windows")
+        env = {
+            "PATH": bare_path,
+            "USERPROFILE": str(work_dir),
+            "SystemRoot": system_root,
+            "windir": system_root,
+        }
     else:
         bare_path = "/usr/bin:/bin"
         env = {"PATH": bare_path, "HOME": str(work_dir)}
