@@ -235,6 +235,8 @@ def probe_native_artifact(
 
     mcp_initialized = False
     mcp_error = ""
+    mcp_stderr = ""
+    stdout_line = ""
     proc: subprocess.Popen[str] | None = None
     try:
         proc = subprocess.Popen(
@@ -265,26 +267,54 @@ def probe_native_artifact(
         assert proc.stdout is not None
         proc.stdin.write(request)
         proc.stdin.flush()
-        line = proc.stdout.readline()
-        response = json.loads(line) if line else {}
+        stdout_line = proc.stdout.readline()
+        response = json.loads(stdout_line) if stdout_line else {}
         mcp_initialized = response.get("id") == 1 and "serverInfo" in response.get(
             "result", {}
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         mcp_error = str(exc)
     finally:
+        # Use communicate() (not wait()) so the MCP subprocess's own stderr is
+        # actually captured instead of silently discarded -- terminate() first
+        # so the process exits and communicate() can't block waiting for EOF.
         if proc is not None:
             proc.terminate()
             try:
-                proc.wait(timeout=5)
+                _, mcp_stderr = proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                try:
+                    _, mcp_stderr = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    mcp_stderr = ""
+
+    if not mcp_initialized and not mcp_error:
+        mcp_error = f"MCP handshake did not initialize: stdout_line={stdout_line!r}"
+    if mcp_stderr.strip():
+        stderr_suffix = f"mcp subprocess stderr={mcp_stderr.strip()!r}"
+        mcp_error = f"{mcp_error} | {stderr_suffix}" if mcp_error else stderr_suffix
 
     status = (
         "passed"
         if (version_probe.returncode == 0 and origin_verified and mcp_initialized)
         else "failed"
     )
+
+    if status == "failed":
+        failure_reasons = []
+        if version_probe.returncode != 0:
+            failure_reasons.append("version_probe failed")
+        if not origin_verified:
+            failure_reasons.append("origin not verified")
+        if not mcp_initialized:
+            failure_reasons.append("mcp not initialized")
+        detail = version_probe.stderr.strip() or mcp_error
+        combined_stderr = "; ".join(failure_reasons)
+        if detail:
+            combined_stderr = f"{combined_stderr}: {detail}"
+    else:
+        combined_stderr = version_probe.stderr or mcp_error
 
     return ArtifactProbeResult(
         artifact_type="native",
@@ -293,7 +323,7 @@ def probe_native_artifact(
         origin_verified=origin_verified,
         import_clean=version_probe.returncode == 0,
         stdout=version_probe.stdout,
-        stderr=version_probe.stderr or mcp_error,
+        stderr=combined_stderr,
         mcp_initialized=mcp_initialized,
     )
 
