@@ -45,7 +45,7 @@ def _terminate_owned_group(proc: subprocess.Popen[str]) -> None:
     """Terminate only this owned child's own process group (POSIX, started
     with `start_new_session=True`) or process tree (Windows, started with
     `CREATE_NEW_PROCESS_GROUP`) -- never a foreign process, never orphaned."""
-    if os.name == "nt":
+    if sys.platform == "win32":
         with suppress(OSError, subprocess.SubprocessError):
             subprocess.run(
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],

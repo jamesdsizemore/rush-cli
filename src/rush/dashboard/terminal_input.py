@@ -83,6 +83,9 @@ def raw_terminal(stream: int | _HasFileno | None = None) -> Iterator[None]:
     if not _POSIX or not os.isatty(fd):
         yield
         return
+    if sys.platform == "win32":  # pragma: no cover - unreachable, _POSIX excludes win32 above; satisfies mypy's per-platform stub check
+        yield
+        return
 
     import termios
     import tty

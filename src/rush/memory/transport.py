@@ -313,7 +313,7 @@ def _send_native(
             # SDK startup probes precede its cleanup context. Own the entire tree,
             # including a probe or CLI that ignores SIGTERM.
             try:
-                if os.name == "nt":
+                if sys.platform == "win32":
                     subprocess.run(
                         ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                         stdin=subprocess.DEVNULL,
@@ -339,7 +339,7 @@ def _send_native(
 def _native_process(
     sender, payload: str, options, allowed_tool_names: tuple[str, ...] = ()
 ) -> None:
-    if os.name != "nt":
+    if sys.platform != "win32":
         os.setsid()
     # SDK diagnostics must not reach stdio MCP stdout or reveal private content.
     with open(os.devnull, "w") as quiet:
