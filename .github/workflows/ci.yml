@@ -101,7 +101,7 @@ jobs:
         run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
 
       - name: Install Node-based static-analysis and eval engines
-        run: npm install -g knip@5.88.1 jscpd@3.5.10 prettier@3.9.6 promptfoo@0.123.0
+        run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0
 
       - name: Run static-tool and ai-eval acceptance
         run: uv run --no-sync pytest tests/test_static_tools.py tests/test_ai_eval.py tests/test_engines.py -q

@@ -256,10 +256,17 @@ def test_jscpd_normalizes_report_fixture() -> None:
 
     assert result["findings"] == [
         {
-            "path": "src/example.ts",
-            "line": 10,
+            "path": "a.ts",
+            "line": 4,
             "rule": "jscpd",
             "severity": "warn",
-            "message": "duplicate block",
-        }
+            "message": "duplicates b.ts (7 lines)",
+        },
+        {
+            "path": "b.ts",
+            "line": 4,
+            "rule": "jscpd",
+            "severity": "warn",
+            "message": "duplicates a.ts (7 lines)",
+        },
     ]
