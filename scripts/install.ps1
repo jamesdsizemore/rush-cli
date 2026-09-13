@@ -8,6 +8,11 @@
 # command for agent connection and (optional) project setup.
 $ErrorActionPreference = "Stop"
 
+# Older Windows PowerShell (5.1) defaults to a security protocol GitHub
+# rejects, which surfaces as a generic "could not create SSL/TLS secure
+# channel" failure on both this fetch and the Invoke-WebRequest calls below.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
 $Repo = "jamesdsizemore/rush-cli"
 $Machine = $env:PROCESSOR_ARCHITECTURE
 switch ($Machine) {
@@ -51,8 +56,15 @@ finally {
 }
 
 Write-Host "Installed Rush: $InstallDir\rush.exe"
+
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($UserPath -split ";") -notcontains $InstallDir) {
+    $NewUserPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
+    [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
+    Write-Host "Added $InstallDir to your PATH. Open a new terminal to run 'rush' directly."
+}
 if (($env:Path -split ";") -notcontains $InstallDir) {
-    Write-Host "Add $InstallDir to your PATH to run 'rush' directly."
+    $env:Path = "$env:Path;$InstallDir"
 }
 
 & (Join-Path $InstallDir "rush.exe") install --agents all --memory on @args
