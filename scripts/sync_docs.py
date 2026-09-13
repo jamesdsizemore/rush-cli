@@ -222,7 +222,11 @@ def _json_default(value: Any) -> Any:
     if isinstance(value, (tuple, list)):
         return [_json_default(item) for item in value]
     if isinstance(value, Path):
-        return str(value)
+        text = str(value)
+        home = str(Path.home())
+        if home and text.startswith(home):
+            return "~" + text[len(home) :]
+        return text
     if type(value).__name__ == "Sentinel":
         return {"sentinel": value.name}
     return str(value)
