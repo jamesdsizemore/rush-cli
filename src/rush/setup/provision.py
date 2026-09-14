@@ -18,6 +18,7 @@ independent of live network access.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import platform
@@ -545,55 +546,49 @@ def _safe_extract_binary(
     candidates = {binary_name, binary_name + ".exe"}
     lowered = url.lower()
     if lowered.endswith((".tar.gz", ".tgz")):
-        with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
-            tmp.write(archive_bytes)
-            tmp.flush()
-            with tarfile.open(tmp.name, mode="r:gz") as tar:
-                member = next(
-                    (
-                        m
-                        for m in tar.getmembers()
-                        if Path(m.name).name in candidates and m.isfile()
-                    ),
-                    None,
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+            member = next(
+                (
+                    m
+                    for m in tar.getmembers()
+                    if Path(m.name).name in candidates and m.isfile()
+                ),
+                None,
+            )
+            if member is None:
+                raise ProvisionError(
+                    "NO_COMPATIBLE_ASSET", f"no {binary_name} inside archive"
                 )
-                if member is None:
-                    raise ProvisionError(
-                        "NO_COMPATIBLE_ASSET", f"no {binary_name} inside archive"
-                    )
-                target = (dest_dir / Path(member.name).name).resolve()
-                if not target.is_relative_to(dest_dir.resolve()):
-                    raise ProvisionError(
-                        "NO_COMPATIBLE_ASSET", "archive member escapes destination"
-                    )
-                extracted = tar.extractfile(member)
-                if extracted is None:
-                    raise ProvisionError(
-                        "NO_COMPATIBLE_ASSET", f"could not read {member.name}"
-                    )
-                target.write_bytes(extracted.read())
-                target.chmod(0o755)
-                return target
+            target = (dest_dir / Path(member.name).name).resolve()
+            if not target.is_relative_to(dest_dir.resolve()):
+                raise ProvisionError(
+                    "NO_COMPATIBLE_ASSET", "archive member escapes destination"
+                )
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise ProvisionError(
+                    "NO_COMPATIBLE_ASSET", f"could not read {member.name}"
+                )
+            target.write_bytes(extracted.read())
+            target.chmod(0o755)
+            return target
     if lowered.endswith(".zip"):
-        with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
-            tmp.write(archive_bytes)
-            tmp.flush()
-            with zipfile.ZipFile(tmp.name) as zf:
-                zip_member = next(
-                    (n for n in zf.namelist() if Path(n).name in candidates), None
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+            zip_member = next(
+                (n for n in zf.namelist() if Path(n).name in candidates), None
+            )
+            if zip_member is None:
+                raise ProvisionError(
+                    "NO_COMPATIBLE_ASSET", f"no {binary_name} inside archive"
                 )
-                if zip_member is None:
-                    raise ProvisionError(
-                        "NO_COMPATIBLE_ASSET", f"no {binary_name} inside archive"
-                    )
-                target = (dest_dir / Path(zip_member).name).resolve()
-                if not target.is_relative_to(dest_dir.resolve()):
-                    raise ProvisionError(
-                        "NO_COMPATIBLE_ASSET", "archive member escapes destination"
-                    )
-                target.write_bytes(zf.read(zip_member))
-                target.chmod(0o755)
-                return target
+            target = (dest_dir / Path(zip_member).name).resolve()
+            if not target.is_relative_to(dest_dir.resolve()):
+                raise ProvisionError(
+                    "NO_COMPATIBLE_ASSET", "archive member escapes destination"
+                )
+            target.write_bytes(zf.read(zip_member))
+            target.chmod(0o755)
+            return target
     # Raw single-binary asset (no archive extension recognized).
     target = dest_dir / binary_name
     target.write_bytes(archive_bytes)

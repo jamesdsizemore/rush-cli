@@ -32,6 +32,7 @@ executable bytes rather than leaving a broken binary in place.
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import platform
 import shutil
@@ -174,41 +175,35 @@ def _extract_binary_bytes(
     """Return exactly the named binary's bytes from a tar.gz/zip archive."""
     lowered = asset_name.lower()
     if lowered.endswith((".tar.gz", ".tgz")):
-        with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
-            tmp.write(archive_bytes)
-            tmp.flush()
-            with tarfile.open(tmp.name, mode="r:gz") as tar:
-                member = next(
-                    (
-                        m
-                        for m in tar.getmembers()
-                        if Path(m.name).name == binary_name and m.isfile()
-                    ),
-                    None,
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+            member = next(
+                (
+                    m
+                    for m in tar.getmembers()
+                    if Path(m.name).name == binary_name and m.isfile()
+                ),
+                None,
+            )
+            if member is None:
+                raise InstallError(
+                    "NO_COMPATIBLE_ASSET", f"no {binary_name} inside {asset_name}"
                 )
-                if member is None:
-                    raise InstallError(
-                        "NO_COMPATIBLE_ASSET", f"no {binary_name} inside {asset_name}"
-                    )
-                extracted = tar.extractfile(member)
-                if extracted is None:
-                    raise InstallError(
-                        "NO_COMPATIBLE_ASSET", f"could not read {member.name}"
-                    )
-                return extracted.read()
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise InstallError(
+                    "NO_COMPATIBLE_ASSET", f"could not read {member.name}"
+                )
+            return extracted.read()
     if lowered.endswith(".zip"):
-        with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
-            tmp.write(archive_bytes)
-            tmp.flush()
-            with zipfile.ZipFile(tmp.name) as zf:
-                zip_member = next(
-                    (n for n in zf.namelist() if Path(n).name == binary_name), None
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+            zip_member = next(
+                (n for n in zf.namelist() if Path(n).name == binary_name), None
+            )
+            if zip_member is None:
+                raise InstallError(
+                    "NO_COMPATIBLE_ASSET", f"no {binary_name} inside {asset_name}"
                 )
-                if zip_member is None:
-                    raise InstallError(
-                        "NO_COMPATIBLE_ASSET", f"no {binary_name} inside {asset_name}"
-                    )
-                return zf.read(zip_member)
+            return zf.read(zip_member)
     raise InstallError(
         "NO_COMPATIBLE_ASSET", f"unrecognized archive format: {asset_name}"
     )
