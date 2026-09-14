@@ -22,6 +22,7 @@ AI coding agents move fast and occasionally make a mess: hallucinated imports, e
 
 - **Catch it before it ships** — deterministic AST review, linting, formatting, and test running across Python and JS/TS, dispatched to real engines (Ruff, ESLint, Biome, pytest, and more).
 - **Keep agents on a leash** — a command-safety firewall that blocks destructive shell commands, isolated git worktrees for patch attempts, and a failure ledger so agents stop repeating the same broken fix.
+- **Give agents a real memory** — a typed, queryable store per project (not a stuffed context window) that survives across sessions and agents, with a trust gate so nothing gets treated as fact until it's corroborated.
 - **Stop burning tokens** — context packing, AST skeletons, and compact result formats so you're not pasting whole files and 10,000-line stack traces into a chat window.
 - **Talk to your agent directly** — a stdio MCP server so Claude Code, Cursor, Windsurf, Zed, and other MCP-capable agents can call Rush's tools natively, not just from a shell.
 
@@ -160,6 +161,11 @@ Rush ships as one CLI with a lot of focused tools behind it (`rush --help` for t
 
 **Agent safety**
 `guard` (blocks destructive commands like `git reset --hard`/`rm -rf`) · isolated git-worktree sandboxes for patch attempts · `swarm-merge` (3-way AST merge for concurrent agents) · a failure ledger that stops agents from retrying known-bad fixes
+
+**Memory**
+`memory write` / `recall` / `ask` — a typed store (`.rush/memory.db`, one per project, WAL-mode SQLite) across 7 kinds: episodic, preference, failure, architectural decisions, domain knowledge, skill patterns, and active context. Nothing an agent writes is trusted outright — `memory promote` runs it through a corroboration gate that also screens for instruction-override/exfiltration patterns before anything is treated as fact. `context mistakes` mines actual git-revert history so an agent doesn't retry a fix that was already tried and reverted. `session save`/`restore` and `continuity` checkpoint a working session and resume it later. The `rush_memory` MCP tool bridges a bounded handoff between agents instead of each one keeping its own siloed context.
+
+Static analysis feeds directly into it: `memory plan-checks` ranks which checks actually matter for a change using real evidence pulled from memory — a prior test that failed against this exact code, measured coverage, a `blast-radius`/`api-diff` structural relation, a version-bound security finding — never a fabricated "this is covered" from a check that only ever ran in config. `memory last-success-diagnose` compares a current failure against the last time this code path actually passed. Scan results themselves become typed memory artifacts on handoff, so a finding an agent hands off is a durable, queryable record, not just terminal output that evaporates.
 
 **Token economy & context**
 `context pack` (AST-aware, budget-constrained context) · `context align-prompt` (prompt-cache-friendly formatting) · `context gain` (live token/cost savings HUD) · `token count` · `blast-radius`
