@@ -86,9 +86,28 @@ mv -f "${work_dir}/rush" "${install_dir}/rush"
 chmod +x "${install_dir}/rush"
 
 printf 'Installed Rush: %s/rush\n' "$install_dir"
+
 case ":$PATH:" in
     *":$install_dir:"*) ;;
-    *) printf 'Add %s to your PATH to run `rush` directly.\n' "$install_dir" ;;
+    *)
+        case "${SHELL:-}" in
+            */zsh) rc_file="$HOME/.zshrc" ;;
+            */bash)
+                if [ "$platform" = "darwin" ]; then
+                    rc_file="$HOME/.bash_profile"
+                else
+                    rc_file="$HOME/.bashrc"
+                fi
+                ;;
+            *) rc_file="$HOME/.profile" ;;
+        esac
+        if [ ! -f "$rc_file" ] || ! grep -qF "$install_dir" "$rc_file" 2>/dev/null; then
+            printf '\n# Added by rush install\nexport PATH="%s:$PATH"\n' "$install_dir" >> "$rc_file"
+            printf 'Added %s to PATH in %s. Restart your terminal, or run: source %s\n' "$install_dir" "$rc_file" "$rc_file"
+        fi
+        PATH="$install_dir:$PATH"
+        export PATH
+        ;;
 esac
 
 "${install_dir}/rush" install --agents all --memory on "$@"
