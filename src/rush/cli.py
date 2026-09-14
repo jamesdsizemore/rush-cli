@@ -9,10 +9,19 @@ from __future__ import annotations
 import json
 import os
 import sys
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
 import click
+from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
+
+# The MCP SDK's own pydantic-settings model has a `lifespan` field with an
+# incomplete forward-reference annotation; this is third-party, not ours
+# (matches the existing pytest filterwarnings entry in pyproject.toml and
+# scripts/sync_docs.py's identical suppression). Must run before any local
+# import below pulls in that model.
+warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
 
 from . import __version__
 from .cli_support.catalog_commands import build_catalog_path_command
