@@ -786,7 +786,20 @@ def apply_provision_plan(
                 argv = list(
                     _manager_install_command(engine, identity.version, dest_dir)
                 )
-                env = {"GOBIN": str(dest_dir)} if engine.source == "go" else None
+                if engine.source == "go":
+                    env = {"GOBIN": str(dest_dir)}
+                elif engine.source == "pypi":
+                    # `uv tool install` ignores the positional dest we pass it and
+                    # always installs into uv's own global tool directory; these two
+                    # env vars are uv's real mechanism for redirecting that (verified
+                    # directly: a shim lands at UV_TOOL_BIN_DIR pointing into
+                    # UV_TOOL_DIR, and is directly executable from there).
+                    env = {
+                        "UV_TOOL_DIR": str(dest_dir / "tools"),
+                        "UV_TOOL_BIN_DIR": str(dest_dir),
+                    }
+                else:
+                    env = None
                 try:
                     proc = runner(argv, env)
                 except OSError as exc:
