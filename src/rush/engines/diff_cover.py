@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
+from hashlib import sha256
 from pathlib import Path
 
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class DiffCoverEngine(Engine):
@@ -20,19 +23,86 @@ class DiffCoverEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
+        run_root = cwd or path
+        ownership = ownership_kwargs(owner_instance_id, run_id)
+
+        # P69-03h: resolve the comparison ref to its concrete commit sha
+        # *once*, before diff-cover ever runs, and pass that sha directly in
+        # place of the symbolic branch name -- pinning before invocation
+        # makes a moving `main` structurally impossible to race, rather than
+        # attempting to detect it after the fact. Independently compute the
+        # same diff diff-cover itself sees (our own real evidence, not a
+        # status summary) while we're at it. Skipped entirely outside a real
+        # Git repo -- nothing here can resolve or diff without one.
+        pinned_base = "main"
+        pinned_target: str | None = None
+        diff_digest: str | None = None
+        if (run_root / ".git").exists():
+            base_proc = run_subprocess(
+                ["git", "-C", str(run_root), "rev-parse", "main"],
+                timeout=30,
+                **ownership,
+            )
+            target_proc = run_subprocess(
+                ["git", "-C", str(run_root), "rev-parse", "HEAD"],
+                timeout=30,
+                **ownership,
+            )
+            if base_proc.returncode == 0 and target_proc.returncode == 0:
+                pinned_base = base_proc.stdout.strip()
+                pinned_target = target_proc.stdout.strip()
+                diff_proc = run_subprocess(
+                    [
+                        "git",
+                        "-C",
+                        str(run_root),
+                        "diff",
+                        f"{pinned_base}...{pinned_target}",
+                        "--",
+                        ".",
+                    ],
+                    timeout=60,
+                    **ownership,
+                )
+                if diff_proc.returncode == 0:
+                    diff_digest = sha256(diff_proc.stdout.encode("utf-8")).hexdigest()
+
+        # P69-03f/h: `coverage.xml` gets its own independent staged copy --
+        # a real copy, never a hardlink, so it cannot change out from under
+        # diff-cover mid-run -- passed via an explicit path argument, while
+        # `cwd` stays on the live repository for the Git access diff-cover
+        # genuinely needs.
+        coverage_source = run_root / "coverage.xml"
+        coverage_arg = "coverage.xml"
+        coverage_digest: str | None = None
+        if coverage_source.is_file():
+            stage_dir = Path(tempfile.mkdtemp(prefix="rush-diff-cover-"))
+            staged_coverage = stage_dir / "coverage.xml"
+            shutil.copy2(coverage_source, staged_coverage)
+            coverage_arg = str(staged_coverage)
+            coverage_digest = sha256(staged_coverage.read_bytes()).hexdigest()
+
         default_args = [
-            "coverage.xml",
-            "--compare-branch=main",
+            coverage_arg,
+            f"--compare-branch={pinned_base}",
             "--json-report=diff-cover.json",
         ]
         argv = [binary_path, *default_args, *args]
 
-        proc = run_subprocess(argv, cwd=cwd or path, timeout=120)
+        proc = run_subprocess(
+            argv,
+            cwd=run_root,
+            timeout=120,
+            **ownership,
+        )
 
         parsed = None
-        report_file = (cwd or path) / "diff-cover.json"
+        report_file = run_root / "diff-cover.json"
         if report_file.exists():
             try:
                 parsed = json.loads(report_file.read_text(encoding="utf-8"))
@@ -57,7 +127,7 @@ class DiffCoverEngine(Engine):
                         }
                     )
 
-        return EngineResult(
+        result = EngineResult(
             exit_code=proc.returncode,
             stdout=proc.stdout,
             stderr=proc.stderr,
@@ -66,6 +136,14 @@ class DiffCoverEngine(Engine):
             summary=f"diff-cover exit {proc.returncode}",
             duration_ms=0,
         )
+        result["provenance"] = {
+            "kind": "git-diff",
+            "digest": diff_digest,
+            "pinned_base": pinned_base,
+            "pinned_target": pinned_target,
+            "coverage_digest": coverage_digest,
+        }
+        return result
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         findings: list[Finding] = []

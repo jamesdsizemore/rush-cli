@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..tools.base import ToolResult
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class CdxgenEngine(Engine):
@@ -14,11 +14,20 @@ class CdxgenEngine(Engine):
     binary = "cdxgen"
     file_extensions = ()
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         proc = run_subprocess(
             [resolve_binary(self.binary) or self.binary, *args, str(path)],
             cwd=cwd,
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr

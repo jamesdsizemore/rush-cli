@@ -95,6 +95,7 @@ def _action(
     arguments: dict[str, Any] | None = None,
     grants: dict[str, Any] | None = None,
     request_id: str | None = None,
+    expected: dict[str, Any] | None = None,
 ):
     body = json.dumps(
         {
@@ -102,6 +103,7 @@ def _action(
             "operation": operation,
             "arguments": arguments or {},
             "grants": grants or {},
+            "expected": expected or {},
             "request_id": request_id or str(uuid.uuid4()),
         }
     ).encode("utf-8")

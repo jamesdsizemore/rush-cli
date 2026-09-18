@@ -376,3 +376,567 @@ def test_unknown_artifact_type_remains_visible() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_overview_and_setup_sections_return_dedicated_content_not_full_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        projects_module, "default_data_root", lambda: tmp_path / "rush-data"
+    )
+    repo = tmp_path / "repo-overview-setup"
+    repo.mkdir()
+
+    server, ctx, token = create_dashboard_server({})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+        add_body = json.dumps(
+            {
+                "operation": "add",
+                "path": str(repo),
+                "grants": _GRANTS,
+                "request_id": str(uuid.uuid4()),
+            }
+        ).encode()
+        added = _post(
+            f"{base_url}/api/projects",
+            headers={
+                "Cookie": cookie,
+                "X-Rush-CSRF": csrf,
+                "Content-Type": "application/json",
+                "Origin": base_url,
+            },
+            body=add_body,
+        )
+        assert added.status == 201
+        project_id = json.loads(added.read())["data"]["project_id"]
+
+        overview_resp = _get(
+            f"{base_url}/api/projects/{project_id}/snapshot?section=overview",
+            headers={"Cookie": cookie},
+        )
+        assert overview_resp.status == 200
+        overview = json.loads(overview_resp.read())["data"]
+        assert overview["project_id"] == project_id
+        assert overview["finding_count"] == 0
+        assert "findings" not in overview
+        assert "agents" not in overview
+
+        setup_resp = _get(
+            f"{base_url}/api/projects/{project_id}/snapshot?section=setup",
+            headers={"Cookie": cookie},
+        )
+        assert setup_resp.status == 200
+        setup = json.loads(setup_resp.read())["data"]
+        assert setup["project_id"] == project_id
+        assert "readiness" in setup
+        assert "findings" not in setup
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_add_project_rejects_non_boolean_grants_and_git_init(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        projects_module, "default_data_root", lambda: tmp_path / "rush-data"
+    )
+    repo = tmp_path / "repo-strict-bool"
+    repo.mkdir()
+
+    server, ctx, token = create_dashboard_server({})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+        headers = {
+            "Cookie": cookie,
+            "X-Rush-CSRF": csrf,
+            "Content-Type": "application/json",
+            "Origin": base_url,
+        }
+
+        truthy_string_grants = _post(
+            f"{base_url}/api/projects",
+            headers=headers,
+            body=json.dumps(
+                {
+                    "operation": "add",
+                    "path": str(repo),
+                    "grants": {"cache_write": "true", "artifact_write": True},
+                    "request_id": str(uuid.uuid4()),
+                }
+            ).encode(),
+        )
+        assert truthy_string_grants.status == 400
+
+        non_bool_git_init = _post(
+            f"{base_url}/api/projects",
+            headers=headers,
+            body=json.dumps(
+                {
+                    "operation": "create",
+                    "parent": str(tmp_path),
+                    "name": "repo-strict-bool-create",
+                    "git_init": 1,
+                    "grants": _GRANTS,
+                    "request_id": str(uuid.uuid4()),
+                }
+            ).encode(),
+        )
+        assert non_bool_git_init.status == 400
+
+        real_bools = _post(
+            f"{base_url}/api/projects",
+            headers=headers,
+            body=json.dumps(
+                {
+                    "operation": "add",
+                    "path": str(repo),
+                    "grants": _GRANTS,
+                    "request_id": str(uuid.uuid4()),
+                }
+            ).encode(),
+        )
+        assert real_bools.status == 201
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- P69-04.1 RED: browser application wiring (Phase 66 Sec 0 row 4) --------
+#
+# Structural assertions only (real HTTP responses, real served source) --
+# these prove markup/wiring exists, never that a click handler actually
+# fires in a real browser; the live browser session is a separate,
+# named verification step (P69-04.4) alongside this pytest run.
+
+_NAV_SECTIONS = (
+    "map",
+    "overview",
+    "scans",
+    "memory",
+    "tokens",
+    "git",
+    "artifacts",
+    "setup",
+)
+
+
+def test_topbar_navigation_controls_exist_and_are_wired() -> None:
+    server, ctx, _token = create_dashboard_server({})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        shell = _get(f"{base_url}/")
+        assert shell.status == 200
+        shell_body = shell.read()
+        assert b'data-role="topbar"' in shell_body
+        assert b'data-role="nav"' in shell_body
+        assert b'data-role="inspector"' in shell_body
+        assert b'data-role="project-select"' in shell_body
+        for section in _NAV_SECTIONS:
+            assert f'data-section="{section}"'.encode() in shell_body
+
+        app_js = _get(f"{base_url}/assets/application.js")
+        assert app_js.status == 200
+        app_body = app_js.read()
+        assert b"function wireTopbar" in app_body
+        assert b"function wireNav" in app_body
+        assert b"function switchSection" in app_body
+        assert b"SECTION_RENDERERS" in app_body
+        assert b"dispatchAction" in app_body
+        assert b"addOrCreateProject" in app_body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_select_add_create_choose_later_all_reachable_from_shell() -> None:
+    server, ctx, _token = create_dashboard_server({})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        shell = _get(f"{base_url}/")
+        shell_body = shell.read()
+        assert b'data-role="project-select"' in shell_body
+        assert b'data-role="project-add"' in shell_body
+        assert b'data-role="project-create"' in shell_body
+        assert b'data-role="project-choose-later"' in shell_body
+        assert b'data-role="project-add-form"' in shell_body
+        assert b'data-role="project-create-form"' in shell_body
+
+        app_js = _get(f"{base_url}/assets/application.js")
+        app_body = app_js.read()
+        assert b"function wireTopbar" in app_body
+        assert b'"project-add"' in app_body
+        assert b'"project-create"' in app_body
+        assert b'"project-choose-later"' in app_body
+        assert b"addOrCreateProject({" in app_body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_group_member_row_opens_its_evidence() -> None:
+    server, ctx, _token = create_dashboard_server({})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        map_js = _get(f"{base_url}/assets/project_map.js")
+        assert map_js.status == 200
+        body = map_js.read()
+        # Real actionable element (a <button>), not a plain <li> with no
+        # action -- and wired to the same selection mechanism a direct map
+        # node click already uses (opens its evidence via selectNodeInternal).
+        assert b'"member-row"' in body
+        assert b'createElement("button")' in body
+        assert b"selectNodeInternal(member.id)" in body
+        assert b'addEventListener("click"' in body
+        assert b'addEventListener("keydown"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_every_workflow_from_configure_through_artifact_export_has_a_visible_control() -> (
+    None
+):
+    server, ctx, _token = create_dashboard_server({})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        app_js = _get(f"{base_url}/assets/application.js")
+        assert app_js.status == 200
+        body = app_js.read()
+        for operation in (
+            "configure",
+            "provision_plan",
+            "provision_apply",
+            "scan_start",
+            "scan_cancel",
+            "scan_resume",
+            "rescan",
+            "handoff_preview",
+            "handoff_send",
+            "artifact_export",
+        ):
+            assert f'"{operation}"'.encode() in body, f"missing control for {operation}"
+        # Every visible control's own <form> carries data-operation so a
+        # live browser session can find it; the memory forms this packet
+        # owns building (write/promote/edit/archive/delete) and the
+        # agent-connect control (a distinct, non-project-scoped endpoint).
+        assert b"data-operation" in body
+        assert b"function buildActionForm" in body
+        assert b'"memory_propose"' in body
+        assert b'"memory_promote"' in body
+        assert b'"memory_edit"' in body
+        assert b'"memory_archive"' in body
+        assert b'"memory_delete"' in body
+        assert b"function connectAgent" in body
+        assert b"/api/agents/actions" in body
+        assert b"function buildAgentConnectControl" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# Shared minimal DOM shim (global.document.createElement + a `[attr="value"]`/
+# `[attr]` query-selector engine) so the real, unmodified application.js --
+# which this packet extends to build topbar/nav/section DOM via
+# `document.createElement` -- can run under plain Node without jsdom. Builds
+# a tree mirroring static_assets.py's real shell markup so `startApplication`
+# finds every element it queries for.
+_MINI_DOM_PRELUDE = """
+function makeElement(tag, attrs) {
+  attrs = attrs || {};
+  const el = {
+    tagName: tag.toUpperCase(),
+    _attrs: {},
+    _children: [],
+    _listeners: {},
+    dataset: {},
+    hidden: false,
+    checked: false,
+    value: "",
+    textContent: "",
+    setAttribute(name, value) {
+      this._attrs[name] = String(value);
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this._attrs, name)
+        ? this._attrs[name]
+        : null;
+    },
+    appendChild(child) {
+      this._children.push(child);
+      return child;
+    },
+    addEventListener(type, handler) {
+      (this._listeners[type] = this._listeners[type] || []).push(handler);
+    },
+    querySelector(sel) {
+      return findFirst(this, sel);
+    },
+    querySelectorAll(sel) {
+      return findAll(this, sel);
+    },
+  };
+  for (const name of Object.keys(attrs)) el.setAttribute(name, attrs[name]);
+  return el;
+}
+
+function matchesSelector(el, sel) {
+  const m = sel.match(/^\\[([a-zA-Z0-9-]+)(?:="([^"]*)")?\\]$/);
+  if (!m) return false;
+  const attr = m[1];
+  const value = m[2];
+  const actual = el.getAttribute(attr);
+  if (actual === null) return false;
+  return value === undefined || actual === value;
+}
+
+function findAll(root, sel) {
+  const out = [];
+  for (const child of root._children) {
+    if (matchesSelector(child, sel)) out.push(child);
+    out.push.apply(out, findAll(child, sel));
+  }
+  return out;
+}
+
+function findFirst(root, sel) {
+  const all = findAll(root, sel);
+  return all.length ? all[0] : null;
+}
+
+global.document = {
+  createElement: function (tag) {
+    return makeElement(tag);
+  },
+  createTextNode: function (text) {
+    return { nodeType: 3, textContent: text };
+  },
+};
+
+const projectSelect = makeElement("select", { "data-role": "project-select" });
+const addBtn = makeElement("button", { "data-role": "project-add" });
+const addForm = makeElement("form", { "data-role": "project-add-form" });
+addForm.appendChild(makeElement("input", { name: "path" }));
+const createBtn = makeElement("button", { "data-role": "project-create" });
+const createForm = makeElement("form", { "data-role": "project-create-form" });
+createForm.appendChild(makeElement("input", { name: "parent" }));
+createForm.appendChild(makeElement("input", { name: "name" }));
+createForm.appendChild(makeElement("input", { name: "git_init" }));
+const chooseLaterBtn = makeElement("button", { "data-role": "project-choose-later" });
+const topbar = makeElement("div", { "data-role": "topbar" });
+[projectSelect, addBtn, addForm, createBtn, createForm, chooseLaterBtn].forEach(function (c) {
+  topbar.appendChild(c);
+});
+
+const nav = makeElement("div", { "data-role": "nav" });
+["map", "overview", "scans", "memory", "tokens", "git", "artifacts", "setup"].forEach(
+  function (section) {
+    nav.appendChild(makeElement("button", { "data-section": section }));
+  }
+);
+
+const mapEl = makeElement("div", { "data-role": "map" });
+const inspector = makeElement("div", { "data-role": "inspector" });
+const errorBanner = makeElement("div", { "data-role": "error-banner" });
+
+const rootEl = makeElement("div", {});
+[topbar, nav, mapEl, inspector, errorBanner].forEach(function (c) {
+  rootEl.appendChild(c);
+});
+"""
+
+
+def _run_restore_project_id_harness(
+    tmp_path: Path, scenario_js: str
+) -> tuple[int, str, str]:
+    app_src = (
+        Path(__file__).parent.parent / "src" / "rush" / "dashboard" / "application.js"
+    )
+    harness_dir = tmp_path / "restore_project_id_harness"
+    harness_dir.mkdir()
+    shutil.copyfile(app_src, harness_dir / "application.js")
+    (harness_dir / "package.json").write_text(json.dumps({"type": "module"}))
+    (harness_dir / "project_map.js").write_text(_PROJECT_MAP_STUB)
+    (harness_dir / "run_harness.js").write_text(_MINI_DOM_PRELUDE + scenario_js)
+
+    node = shutil.which("node")
+    assert node is not None, "node must be installed to exercise application.js"
+    result = subprocess.run(
+        [node, "run_harness.js"],
+        cwd=harness_dir,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+_RESTORE_LANDS_ON_PROJECT_SCENARIO = """
+import { startApplication, getState } from "./application.js";
+
+global.fetch = (url) => {
+  const u = String(url);
+  let ok = true;
+  let data;
+  let extra = {};
+  if (u === "/api/session") {
+    extra = { csrf_token: "csrf-token" };
+  } else if (u === "/api/theme") {
+    data = { theme: {}, motion: {} };
+  } else if (u === "/api/projects") {
+    data = {
+      items: [
+        { project_id: "project-a", root: "/a" },
+        { project_id: "project-b", root: "/b" },
+      ],
+    };
+  } else if (u.indexOf("/api/projects/project-b/snapshot") === 0) {
+    data = { project_id: "project-b", nodes: [], edges: [] };
+  } else {
+    ok = false;
+  }
+  return Promise.resolve({
+    ok,
+    status: ok ? 200 : 404,
+    json: async () => Object.assign({ schema_version: 1, request_id: "r", data }, extra),
+  });
+};
+
+startApplication(rootEl, { restoreProjectId: "project-b", mapContainer: {} }).then(() => {
+  const selected = getState().selectedProjectId;
+  if (selected === "project-b") {
+    console.log("PASS");
+    process.exit(0);
+  } else {
+    console.error("FAIL: selectedProjectId=" + selected);
+    process.exit(1);
+  }
+});
+"""
+
+
+def test_restore_project_id_option_lands_on_that_project_not_the_chooser(
+    tmp_path: Path,
+) -> None:
+    """Phase 68's P68-04 browser-handoff step depends on this: a supplied
+    `restoreProjectId` lands the shell directly on that project, never the
+    chooser."""
+    returncode, stdout, stderr = _run_restore_project_id_harness(
+        tmp_path, _RESTORE_LANDS_ON_PROJECT_SCENARIO
+    )
+    assert returncode == 0, f"harness failed\\nstdout={stdout}\\nstderr={stderr}"
+    assert "PASS" in stdout
+
+
+_RESTORE_BEYOND_FIRST_PAGE_SCENARIO = """
+import { startApplication, getState } from "./application.js";
+
+global.fetch = (url) => {
+  const u = String(url);
+  let ok = true;
+  let data;
+  let extra = {};
+  if (u === "/api/session") {
+    extra = { csrf_token: "csrf-token" };
+  } else if (u === "/api/theme") {
+    data = { theme: {}, motion: {} };
+  } else if (u === "/api/projects") {
+    // project-b is NOT on this (simulated) first page of 50 -- the fix must
+    // resolve restoreProjectId via a direct existence check, never
+    // single-page `items` membership.
+    data = { items: [{ project_id: "project-a", root: "/a" }] };
+  } else if (u.indexOf("/api/projects/project-b/snapshot") === 0) {
+    data = { project_id: "project-b", nodes: [], edges: [] };
+  } else {
+    ok = false;
+  }
+  return Promise.resolve({
+    ok,
+    status: ok ? 200 : 404,
+    json: async () => Object.assign({ schema_version: 1, request_id: "r", data }, extra),
+  });
+};
+
+startApplication(rootEl, { restoreProjectId: "project-b", mapContainer: {} }).then(() => {
+  const selected = getState().selectedProjectId;
+  if (selected === "project-b") {
+    console.log("PASS");
+    process.exit(0);
+  } else {
+    console.error("FAIL: selectedProjectId=" + selected);
+    process.exit(1);
+  }
+});
+"""
+
+
+def test_restore_project_id_beyond_first_page_of_projects_still_resolves(
+    tmp_path: Path,
+) -> None:
+    returncode, stdout, stderr = _run_restore_project_id_harness(
+        tmp_path, _RESTORE_BEYOND_FIRST_PAGE_SCENARIO
+    )
+    assert returncode == 0, f"harness failed\\nstdout={stdout}\\nstderr={stderr}"
+    assert "PASS" in stdout
+
+
+_INVALID_RESTORE_WITH_LONE_PROJECT_SCENARIO = """
+import { startApplication, getState } from "./application.js";
+
+global.fetch = (url) => {
+  const u = String(url);
+  let ok = true;
+  let data;
+  let extra = {};
+  if (u === "/api/session") {
+    extra = { csrf_token: "csrf-token" };
+  } else if (u === "/api/theme") {
+    data = { theme: {}, motion: {} };
+  } else if (u === "/api/projects") {
+    data = { items: [{ project_id: "project-a", root: "/a" }] };
+  } else if (u.indexOf("/api/projects/project-x/snapshot") === 0) {
+    // Unknown/invalid restoreProjectId -- real _handle_snapshot 404s this.
+    ok = false;
+  } else {
+    ok = false;
+  }
+  return Promise.resolve({
+    ok,
+    status: ok ? 200 : 404,
+    json: async () => Object.assign({ schema_version: 1, request_id: "r", data }, extra),
+  });
+};
+
+startApplication(rootEl, { restoreProjectId: "project-x", mapContainer: {} }).then(() => {
+  const selected = getState().selectedProjectId;
+  // Must show the chooser (no selection) -- must NEVER silently auto-select
+  // the one other registered project instead.
+  if (selected === null) {
+    console.log("PASS");
+    process.exit(0);
+  } else {
+    console.error("FAIL: selectedProjectId=" + selected);
+    process.exit(1);
+  }
+});
+"""
+
+
+def test_invalid_restore_project_id_with_exactly_one_registered_project_shows_chooser_not_that_project(
+    tmp_path: Path,
+) -> None:
+    returncode, stdout, stderr = _run_restore_project_id_harness(
+        tmp_path, _INVALID_RESTORE_WITH_LONE_PROJECT_SCENARIO
+    )
+    assert returncode == 0, f"harness failed\\nstdout={stdout}\\nstderr={stderr}"
+    assert "PASS" in stdout

@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 import time
 from dataclasses import dataclass
+
+
+def _digest(value: str) -> str:
+    """One-way digest of a bearer/session secret (P69-01.3 CONNECT): stored in
+    place of the plaintext so a bootstrap token or session cookie can never be
+    lifted verbatim from `DashboardAuth`'s own internal state (e.g. `vars()`,
+    a serialization bug, a memory dump). `csrf_token` stays plaintext on the
+    `Session` record -- unlike a bootstrap/cookie secret, it is legitimately
+    re-served to its already-authenticated holder on every `GET /api/session`
+    reload (`test_reload_restores_cookie_session_without_bearer_storage`),
+    so it is never looked up by digest and has no round-trip-retrieval
+    requirement to violate."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 class SessionAuthManager:
@@ -35,7 +49,7 @@ SESSION_TTL_SECONDS = 8 * 60 * 60  # cookie session, 8 hours (spec 3.7)
 
 @dataclass
 class Session:
-    cookie_value: str
+    cookie_digest: str
     csrf_token: str
     created_at: float
     expires_at: float
@@ -43,7 +57,7 @@ class Session:
 
 @dataclass
 class _Bootstrap:
-    token: str
+    digest: str
     issued_at: float
     used: bool = False
 
@@ -62,7 +76,7 @@ class DashboardAuth:
     def issue_bootstrap(self) -> str:
         """Issue a fresh one-use launch token, invalidating any prior one."""
         token = secrets.token_urlsafe(32)
-        self._bootstrap = _Bootstrap(token=token, issued_at=time.time())
+        self._bootstrap = _Bootstrap(digest=_digest(token), issued_at=time.time())
         return token
 
     def verify_bootstrap(self, provided: str | None) -> bool:
@@ -71,35 +85,40 @@ class DashboardAuth:
             return False
         if time.time() - bootstrap.issued_at > BOOTSTRAP_TTL_SECONDS:
             return False
-        return hmac.compare_digest(bootstrap.token, provided)
+        return hmac.compare_digest(bootstrap.digest, _digest(provided))
 
-    def exchange_bootstrap(self, provided: str | None) -> Session | None:
-        """Consume the bootstrap token once and mint a new cookie session."""
+    def exchange_bootstrap(self, provided: str | None) -> tuple[Session, str] | None:
+        """Consume the bootstrap token once and mint a new cookie session.
+        Returns `(session, cookie_value)` -- `cookie_value` is the plaintext
+        secret the caller must hand to the browser via Set-Cookie; only its
+        digest is retained on `session` itself."""
         if not self.verify_bootstrap(provided):
             return None
         assert self._bootstrap is not None
         self._bootstrap.used = True
         return self._create_session()
 
-    def _create_session(self) -> Session:
+    def _create_session(self) -> tuple[Session, str]:
         now = time.time()
+        cookie_value = secrets.token_urlsafe(32)
         session = Session(
-            cookie_value=secrets.token_urlsafe(32),
+            cookie_digest=_digest(cookie_value),
             csrf_token=secrets.token_urlsafe(32),
             created_at=now,
             expires_at=now + SESSION_TTL_SECONDS,
         )
-        self._sessions[session.cookie_value] = session
-        return session
+        self._sessions[session.cookie_digest] = session
+        return session, cookie_value
 
     def get_session(self, cookie_value: str | None) -> Session | None:
         if not cookie_value:
             return None
-        session = self._sessions.get(cookie_value)
+        digest = _digest(cookie_value)
+        session = self._sessions.get(digest)
         if session is None:
             return None
         if time.time() > session.expires_at:
-            del self._sessions[cookie_value]
+            del self._sessions[digest]
             return None
         return session
 

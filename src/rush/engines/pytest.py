@@ -31,7 +31,7 @@ from pathlib import Path
 
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 _SUMMARY_RE = re.compile(
     r"=+\s*(?:(\d+)\s+failed)?[,\s]*(?:(\d+)\s+passed)?[,\s]*"
@@ -51,13 +51,21 @@ class PytestEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         # Try --json-report first; fall back to plain output if plugin missing.
         # Prefer the active interpreter over pytest.exe. On Windows, a console
         # script launched from an MCP stdio child can inherit a broken entrypoint
         # environment, while ``python -m pytest`` is bound to Rush's venv.
         argv = [sys.executable, "-m", "pytest", str(path), "--tb=line", "-q", *args]
-        proc = run_subprocess(argv, cwd=cwd, timeout=300)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd,
+            timeout=300,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         parsed = None
         findings_raw: list[dict] = []

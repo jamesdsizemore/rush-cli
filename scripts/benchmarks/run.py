@@ -802,6 +802,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         operation: str,
         arguments: dict[str, Any] | None = None,
         grants: dict[str, Any] | None = None,
+        expected: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         body = json.dumps(
             {
@@ -809,6 +810,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                 "operation": operation,
                 "arguments": arguments or {},
                 "grants": grants or {},
+                "expected": expected or {},
                 "request_id": str(uuid.uuid4()),
             }
         ).encode("utf-8")
@@ -823,6 +825,27 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
             body=body,
         )
         return resp.status, json.loads(resp.read())
+
+    def _poll_operation(
+        base_url: str,
+        project_id: str,
+        cookie: str,
+        operation_id: str,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            resp = _get(
+                f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+                headers={"Cookie": cookie},
+            )
+            if resp.status == 200:
+                payload = json.loads(resp.read())
+                if (payload.get("data") or {}).get("status") == "terminal":
+                    return payload
+            time.sleep(0.05)
+        return None
 
     def _snapshot(
         base_url: str, project_id: str, cookie: str, section: str, **query: str
@@ -1022,11 +1045,10 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                 },
                 grants=grants_all,
             )
-            handoff_id = body.get("data", {}).get("handoff_id")
-            session_capability = body.get("data", {}).get("session_capability")
+            content_hash = body.get("data", {}).get("handoff_id")
             send_status = None
-            send_body: dict[str, Any] = {}
-            if status == 200 and handoff_id and session_capability:
+            handoff_delivered = False
+            if status == 200 and content_hash:
                 send_status, send_body = _action(
                     base_url,
                     project_id,
@@ -1034,16 +1056,24 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                     csrf,
                     operation="handoff_send",
                     arguments={
-                        "handoff_id": handoff_id,
-                        "session_capability": session_capability,
+                        "run_id": run_id,
+                        "agent_id": "ui-journey-agent",
+                        "finding_ids": finding_ids,
+                        "handoff_id": content_hash,
                     },
                     grants=grants_all,
                 )
+                operation_id = send_body.get("data", {}).get("operation_id")
+                if send_status == 202 and operation_id:
+                    terminal = _poll_operation(
+                        base_url, project_id, cookie, operation_id
+                    )
+                    outcome = ((terminal or {}).get("data") or {}).get("payload") or {}
+                    handoff_delivered = outcome.get("status") == "success"
             timings_ms["handoff"] = round((time.monotonic() - start) * 1000, 3)
             _mark(
                 "handoff",
-                send_status == 200
-                and send_body.get("data", {}).get("state") == "delivered",
+                handoff_delivered,
                 f"preview_status={status} send_status={send_status}",
             )
 

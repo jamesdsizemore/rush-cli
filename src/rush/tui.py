@@ -20,6 +20,7 @@ from __future__ import annotations
 import threading
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -403,9 +404,32 @@ def _move_selection(project: ProjectState, delta: int) -> None:
     project.detail_page = project.selected_index // PAGE_SIZE
 
 
+_OWNER_INSTANCE: list[str] = []
+
+
+def _tui_owner_instance_id() -> str:
+    """P69-01.2j: this TUI process's own executor identity, minted once and
+    backed by a real owner-liveness lock held for the process's lifetime --
+    so recovery can tell "this owner is still working" from "this owner
+    died and its engine children need reaping" (subsection h's contract).
+
+    A lock that cannot be acquired never blocks a scan: the scan still runs
+    and still records its subprocesses; only the liveness signal is missing.
+    """
+    if not _OWNER_INSTANCE:
+        owner_instance_id = f"tui:{uuid.uuid4()}"
+        from rush.dashboard.state import OwnerLock
+
+        with suppress(Exception):  # never break a scan over the liveness lock
+            OwnerLock(owner_instance_id)
+        _OWNER_INSTANCE.append(owner_instance_id)
+    return _OWNER_INSTANCE[0]
+
+
 def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
     plan = actions.plan_scan(project.root)
     run_id = str(uuid.uuid4())
+    owner_instance_id = _tui_owner_instance_id()
     project.run_id = run_id
     project.plan_total = len(list(getattr(plan, "candidates", None) or []))
     project.status = "scanning"
@@ -414,7 +438,9 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
 
     def _worker() -> None:
         try:
-            run = actions.execute_scan(plan, run_id=run_id)
+            run = actions.execute_scan(
+                plan, run_id=run_id, owner_instance_id=owner_instance_id
+            )
             aggregate = getattr(run, "aggregate", None)
             if aggregate is not None:
                 # `actions.execute_scan` is `Callable[..., Any]` (injectable

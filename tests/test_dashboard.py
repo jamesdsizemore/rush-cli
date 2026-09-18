@@ -10,24 +10,47 @@ Verifies:
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import HTTPServer
 from pathlib import Path
+
+import pytest
 
 from rush.dashboard import (
     AuthenticatedDashboardHandler,
     init_in_memory_assets,
 )
 from rush.dashboard.server import (
+    _classify_mutating,
     bootstrap_launch_url,
     create_dashboard_server,
     reconnect_dashboard,
 )
+from rush.dashboard.state import MutationLedger, ProjectRegistry
+from rush.memory.handoff import prepare_handoff
+from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.tools.base import ToolResult
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "dashboard"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_dashboard_data_root(tmp_path, monkeypatch):
+    """P69-01.2d: `MutationLedger` now persists durably (previously pure
+    in-memory), so every test in this module gets an isolated data root by
+    default -- otherwise a test that never monkeypatches `default_data_root`
+    itself would read/write this OS user's real Rush data directory, leaking
+    state across test runs. A test that explicitly monkeypatches its own
+    `default_data_root` afterward still wins (it runs after this fixture)."""
+    isolated_root = tmp_path / "rush-data-default"
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: isolated_root)
+    monkeypatch.setattr(
+        "rush.workflows.projects.default_data_root", lambda: isolated_root
+    )
 
 
 def _start_test_server(results: list[ToolResult], token: str) -> tuple[HTTPServer, int]:
@@ -208,6 +231,37 @@ def test_browser_snapshot_contract() -> None:
             f"{base_url}/api/projects/nope/snapshot", headers={"Cookie": cookie}
         )
         assert missing.status == 404
+    finally:
+        server.shutdown()
+
+
+def test_unrecognized_section_query_value_returns_400_not_full_snapshot() -> None:
+    """P69-03.3 CONNECT: the section dispatch's real fallback branch used to
+    serve the full `record.snapshot` for *any* unmatched `section` value --
+    including a typo or a stale client's old section name -- instead of
+    rejecting it. A missing `section` (the default, bare `/snapshot` full
+    dict) must keep working unchanged; only a genuinely unrecognized,
+    non-empty value is rejected."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, _csrf = _bootstrap_session(base_url, token)
+
+        bad = _get(
+            f"{base_url}/api/projects/project-a/snapshot?section=bogus",
+            headers={"Cookie": cookie},
+        )
+        assert bad.status == 400
+        body = json.loads(bad.read())
+        assert body["error"]["code"] == "invalid_section"
+
+        # The bare, section-less request still returns the full snapshot.
+        still_works = _get(
+            f"{base_url}/api/projects/project-a/snapshot", headers={"Cookie": cookie}
+        )
+        assert still_works.status == 200
     finally:
         server.shutdown()
         server.server_close()
@@ -440,3 +494,516 @@ def test_restart_or_expiry_requires_reauthorization() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- P69-01.2 d-g: durable MutationLedger, reservation contract, per-operation-kind
+# recovery receipts, _prepare_write() atomicity -----------------------------------
+
+
+def _artifact(**overrides) -> MemoryArtifact:
+    defaults = {
+        "id": "artifact-default",
+        "family": "memory",
+        "subject": "domain_knowledge",
+        "trust_tier": "DERIVED",
+        "content": {"note": "default"},
+        "source": "test",
+        "created_at": time.time(),
+    }
+    defaults.update(overrides)
+    return MemoryArtifact(**defaults)
+
+
+def test_mutation_ledger_scoped_by_project_not_just_request_id(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = MutationLedger()
+    calls: list[str] = []
+
+    def _builder_a(op_id: str) -> tuple[int, bytes]:
+        calls.append("a")
+        return 200, b"response-a"
+
+    def _builder_b(op_id: str) -> tuple[int, bytes]:
+        calls.append("b")
+        return 200, b"response-b"
+
+    (_status_a, body_a), conflict_a = ledger.commit(
+        "project-a", "req-1", "same-hash", _builder_a
+    )
+    (_status_b, body_b), conflict_b = ledger.commit(
+        "project-b", "req-1", "same-hash", _builder_b
+    )
+
+    assert not conflict_a
+    assert not conflict_b
+    assert body_a == b"response-a"
+    assert body_b == b"response-b"
+    assert calls == ["a", "b"]
+
+
+def test_two_processes_reserving_the_same_request_id_only_one_succeeds(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    # Two independent MutationLedger instances pointed at the same durable db
+    # simulate two separate server processes racing the same request_id --
+    # exclusivity must come from the storage layer, not a shared in-process lock.
+    ledger_1 = MutationLedger()
+    ledger_2 = MutationLedger()
+
+    build_count = {"n": 0}
+    count_lock = threading.Lock()
+    start_barrier = threading.Barrier(2)
+
+    def _slow_builder(op_id: str) -> tuple[int, bytes]:
+        with count_lock:
+            build_count["n"] += 1
+        time.sleep(0.2)
+        return 200, f"result-{op_id}".encode()
+
+    results: list[tuple[tuple[int, bytes], bool]] = []
+    results_lock = threading.Lock()
+
+    def _run(ledger: MutationLedger) -> None:
+        start_barrier.wait()
+        outcome = ledger.commit("project-a", "req-race", "hash-race", _slow_builder)
+        with results_lock:
+            results.append(outcome)
+
+    t1 = threading.Thread(target=_run, args=(ledger_1,))
+    t2 = threading.Thread(target=_run, args=(ledger_2,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert build_count["n"] == 1
+    assert len(results) == 2
+    (response_1, conflict_1), (response_2, conflict_2) = results
+    assert not conflict_1
+    assert not conflict_2
+    assert response_1 == response_2
+
+
+def test_mutation_ledger_survives_restart_and_prunes_expired_entries(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = MutationLedger()
+    calls = {"n": 0}
+
+    def _builder(op_id: str) -> tuple[int, bytes]:
+        calls["n"] += 1
+        return 200, b"terminal-response"
+
+    ledger.commit("project-a", "req-restart", "hash-1", _builder)
+    assert calls["n"] == 1
+
+    # "Restart": a brand-new MutationLedger instance, same durable db path.
+    restarted = MutationLedger()
+    (_status, body), conflict = restarted.commit(
+        "project-a", "req-restart", "hash-1", _builder
+    )
+    assert not conflict
+    assert body == b"terminal-response"
+    assert calls["n"] == 1  # replayed from disk, builder never re-invoked
+
+    removed = restarted.prune_expired(ttl_seconds=0)
+    assert removed == 1
+
+    # Genuinely gone now: an identical retry reserves a brand-new entry.
+    restarted.commit("project-a", "req-restart", "hash-1", _builder)
+    assert calls["n"] == 2
+
+
+def test_202_accepted_row_is_not_pruned_before_operation_reaches_terminal_state(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = MutationLedger()
+    captured: dict[str, str] = {}
+
+    def _builder(op_id: str) -> tuple[int, bytes]:
+        captured["id"] = op_id
+        return 202, b'{"accepted": true}'
+
+    (status, body), conflict = ledger.commit(
+        "project-a", "req-async", "hash-async", _builder
+    )
+    assert status == 202
+    assert not conflict
+
+    assert ledger.prune_expired(ttl_seconds=0) == 0  # still pending, never pruned
+
+    # Identical retry still replays the 202 -- a valid ledger entry even
+    # though it is not yet this operation's terminal outcome.
+    (status2, body2), _conflict2 = ledger.commit(
+        "project-a", "req-async", "hash-async", _builder
+    )
+    assert status2 == 202
+    assert body2 == body
+
+    ledger.record_status_transition(captured["id"], "terminal", {"final_status": 200})
+    assert ledger.prune_expired(ttl_seconds=0) == 1
+
+
+def test_crash_between_effect_and_ledger_persist_is_recoverable_from_preallocated_id(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = MutationLedger()
+    store = TypedArtifactStore(tmp_path / "project")
+
+    def _crashing_builder(op_id: str) -> tuple[int, bytes]:
+        # The effect commits durably (its own transaction) before the
+        # process "crashes" -- commit() never reaches finalize().
+        store.write(_artifact(id="artifact-crash"), receipt_operation_id=op_id)
+        raise RuntimeError("simulated crash after effect committed")
+
+    with pytest.raises(RuntimeError):
+        ledger.commit("project-a", "req-crash", "hash-crash", _crashing_builder)
+
+    with sqlite3.connect(str(tmp_path / "dashboard" / "mutation_ledger.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT operation_id, status FROM mutation_ledger "
+            "WHERE project_id = ? AND request_id = ?",
+            ("project-a", "req-crash"),
+        ).fetchone()
+    assert row["status"] == "pending"
+    receipt = store.get_receipt(row["operation_id"])
+    assert receipt is not None
+    assert receipt["kind"] == "create"
+    assert receipt["artifact_id"] == "artifact-crash"
+
+
+def test_insertion_failure_after_conflict_delete_rolls_back_the_delete_too_p69_01(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    # Directly seed a STATED row (mirrors test_phase61_trust.py's
+    # `_insert_stated_row` pattern) rather than going through promote(),
+    # which would additionally require a real, resolvable symbol_ref.
+    with sqlite3.connect(str(store.db_path)) as conn:
+        conn.execute(
+            "INSERT INTO memory_artifacts "
+            "(id, family, subject, trust_tier, content, source, created_at, symbol_ref) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "artifact-existing",
+                "memory",
+                "domain_knowledge",
+                "STATED",
+                json.dumps({"flag": True}),
+                "test",
+                time.time(),
+                "sym-conflict",
+            ),
+        )
+        conn.commit()
+    assert store.get_current("artifact-existing").trust_tier == "STATED"
+
+    # Pre-seed a colliding (id, version=1) row so _insert_row's second INSERT
+    # fails mid-transaction, inside the same transaction as the conflict-delete
+    # evaluate_conflict() will trigger below.
+    with sqlite3.connect(str(store.db_path)) as conn:
+        conn.execute(
+            "INSERT INTO memory_artifact_versions "
+            "(artifact_id, artifact_version, content, source, trust_tier, created_at, deleted) "
+            "VALUES (?,1,?,?,?,?,0)",
+            ("artifact-colliding", "{}", "test", "DERIVED", time.time()),
+        )
+        conn.commit()
+
+    candidate = _artifact(
+        id="artifact-colliding", content={"flag": False}, symbol_ref="sym-conflict"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        store.write(candidate)
+
+    # The conflict-delete rolled back along with the failed insert.
+    assert store.get_current("artifact-existing") is not None
+
+
+def test_recovery_receipt_distinguishes_promotion_created_from_promotion_completed(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+
+    stored = store.write(
+        _artifact(id="artifact-promoted", content={"note": "will be promoted"}),
+        receipt_operation_id="op-create-1",
+    )
+    assert store.get_receipt("op-create-1")["kind"] == "create"
+
+    stored, decision = store.promote(
+        stored.id, user_stated=True, receipt_operation_id="op-promote-1"
+    )
+    assert decision.promoted is True
+    assert store.get_receipt("op-promote-1")["kind"] == "promote"
+
+    # A denied promotion gets a create receipt, never a promote receipt.
+    stored2 = store.write(
+        _artifact(id="artifact-denied", content={"note": "will not be promoted"}),
+        receipt_operation_id="op-create-2",
+    )
+    assert store.get_receipt("op-create-2") is not None
+    stored2, decision2 = store.promote(
+        stored2.id,
+        user_stated=False,
+        candidate_sources=["only_one"],
+        receipt_operation_id="op-promote-2",
+    )
+    assert decision2.promoted is False
+    assert store.get_receipt("op-promote-2") is None
+
+
+def test_recovery_receipt_correctly_attributes_edit_despite_intervening_unrelated_write(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    store.write(_artifact(id="artifact-edit-target", content={"note": "v1"}))
+
+    result_a = store.edit(
+        "artifact-edit-target",
+        {"note": "v2 by op-a"},
+        expected_version=1,
+        scope="domain_knowledge",
+        apply=True,
+        receipt_operation_id="op-a",
+    )
+    assert result_a["revision"] == 2
+
+    result_b = store.edit(
+        "artifact-edit-target",
+        {"note": "v3 by op-b"},
+        expected_version=2,
+        scope="domain_knowledge",
+        apply=True,
+        receipt_operation_id="op-b",
+    )
+    assert result_b["revision"] == 3
+
+    assert store.get_receipt("op-a")["revision"] == 2
+    assert store.get_receipt("op-b")["revision"] == 3
+
+
+def test_recovery_receipt_for_delete_exists_only_after_real_commit_not_before(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    store.write(_artifact(id="artifact-to-delete", content={"note": "delete me"}))
+
+    store.delete_batch(
+        ["artifact-to-delete"],
+        expected_revisions={"artifact-to-delete": 1},
+        scope="domain_knowledge",
+        apply=False,
+        receipt_operation_id="op-delete-1",
+    )
+    assert store.get_receipt("op-delete-1") is None
+
+    store.delete_batch(
+        ["artifact-to-delete"],
+        expected_revisions={"artifact-to-delete": 1},
+        scope="domain_knowledge",
+        apply=True,
+        receipt_operation_id="op-delete-1",
+    )
+    receipt = store.get_receipt("op-delete-1")
+    assert receipt is not None
+    assert receipt["kind"] == "delete"
+
+
+def test_crash_recovery_for_delete_uses_tombstone_not_object_lookup(tmp_path) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    store.write(_artifact(id="artifact-deleted", content={"note": "gone soon"}))
+    store.delete_batch(
+        ["artifact-deleted"],
+        expected_revisions={"artifact-deleted": 1},
+        scope="domain_knowledge",
+        apply=True,
+    )
+
+    def _delete_completed(artifact_id: str) -> bool:
+        with sqlite3.connect(str(store.db_path)) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM memory_changes WHERE artifact_id = ? AND tombstone = 1",
+                (artifact_id,),
+            ).fetchone()
+        return row is not None
+
+    assert _delete_completed("artifact-deleted") is True
+    assert store.get_current("artifact-deleted") is None
+
+    # An id that never existed is *also* absent from memory_artifacts, but has
+    # no tombstone -- mere absence can't distinguish "deleted" from "never
+    # existed"; the tombstone can.
+    assert store.get_current("artifact-never-existed") is None
+    assert _delete_completed("artifact-never-existed") is False
+
+
+def test_crash_recovery_for_edit_distinguishes_applied_from_not_applied_via_version_receipt(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    store.write(_artifact(id="artifact-edit-recovery", content={"note": "v1"}))
+
+    applied = store.edit(
+        "artifact-edit-recovery",
+        {"note": "v2"},
+        expected_version=1,
+        scope="domain_knowledge",
+        apply=True,
+        receipt_operation_id="op-applied",
+    )
+    applied_receipt = store.get_receipt("op-applied")
+    assert applied_receipt is not None
+    assert applied_receipt["revision"] == applied["revision"]
+
+    not_applied = store.edit(
+        "artifact-edit-recovery",
+        {"note": "preview only"},
+        expected_version=2,
+        scope="domain_knowledge",
+        apply=False,
+        receipt_operation_id="op-not-applied",
+    )
+    assert not_applied["applied"] is False
+    assert store.get_receipt("op-not-applied") is None
+
+
+def test_crash_recovery_for_handoff_reconciles_each_persisted_effect_independently(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    session_a, _cap_a, _delta_a = prepare_handoff(
+        store,
+        root=tmp_path,
+        audience="agent-a",
+        granted_ids=["seed"],
+        session_allowlist=["test"],
+        receipt_operation_id="op-handoff-a",
+    )
+    session_b, _cap_b, _delta_b = prepare_handoff(
+        store,
+        root=tmp_path,
+        audience="agent-b",
+        granted_ids=["seed"],
+        session_allowlist=["test"],
+        receipt_operation_id="op-handoff-b",
+    )
+
+    receipt_a = store.get_receipt("op-handoff-a")
+    receipt_b = store.get_receipt("op-handoff-b")
+    assert receipt_a is not None
+    assert receipt_b is not None
+    assert receipt_a["artifact_id"] == session_a.session_id
+    assert receipt_b["artifact_id"] == session_b.session_id
+    assert receipt_a["artifact_id"] != receipt_b["artifact_id"]
+
+
+def test_snapshot_memories_reads_inventory_and_generation_in_one_atomic_transaction(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    errors: list[tuple[int, int]] = []
+
+    def _writer() -> None:
+        for i in range(60):
+            store.write(_artifact(id=f"artifact-{i}", content={"note": f"n{i}"}))
+
+    writer = threading.Thread(target=_writer)
+    writer.start()
+
+    for _ in range(60):
+        memories, generation = store.snapshot_memories()
+        if generation != len(memories):
+            errors.append((generation, len(memories)))
+        time.sleep(0.001)
+    writer.join(timeout=10)
+
+    assert errors == []
+
+
+def test_current_generation_accepts_an_existing_connection_and_does_not_open_a_second_one(
+    tmp_path,
+) -> None:
+    store = TypedArtifactStore(tmp_path / "project")
+    connect_calls = {"n": 0}
+    original_connect = store._connect
+
+    def _counting_connect() -> sqlite3.Connection:
+        connect_calls["n"] += 1
+        return original_connect()
+
+    store._connect = _counting_connect
+
+    with store._connect() as conn:
+        pass
+    connect_calls["n"] = 0
+    store.current_generation(conn)
+    assert connect_calls["n"] == 0
+
+    store.current_generation()
+    assert connect_calls["n"] == 1
+
+
+def test_refresh_memories_rejects_a_stale_generation_pair_from_snapshot_memories() -> (
+    None
+):
+    registry = ProjectRegistry({"project-a": {"source_identity": "src-a"}})
+    assert registry.refresh_memories("project-a", [{"id": "m1"}], 5) is True
+    assert registry.get("project-a").snapshot["memories"] == [{"id": "m1"}]
+    assert registry.get("project-a").memory_generation == 5
+
+    assert registry.refresh_memories("project-a", [{"id": "stale"}], 3) is False
+    assert registry.get("project-a").snapshot["memories"] == [{"id": "m1"}]
+
+    assert registry.refresh_memories("project-a", [{"id": "same-gen"}], 5) is False
+    assert registry.get("project-a").snapshot["memories"] == [{"id": "m1"}]
+
+    assert registry.refresh_memories("project-a", [{"id": "m2"}], 6) is True
+    assert registry.get("project-a").snapshot["memories"] == [{"id": "m2"}]
+
+
+def test_preview_and_read_only_actions_write_no_durable_ledger_entry(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = MutationLedger()
+    calls = {"n": 0}
+
+    def _builder(op_id: str) -> tuple[int, bytes]:
+        calls["n"] += 1
+        assert op_id == ""  # a non-mutating call never gets a real reservation id
+        return 200, b"read-only-response"
+
+    for operation, arguments in (
+        ("provision_plan", {}),
+        ("data_export", {}),
+        ("memory_edit", {"apply": False}),
+    ):
+        mutating = _classify_mutating(operation, arguments)
+        assert mutating is False
+        ledger.commit(
+            "project-a",
+            f"req-{operation}",
+            "hash",
+            _builder,
+            operation_type=operation,
+            mutating=mutating,
+        )
+
+    with sqlite3.connect(str(tmp_path / "dashboard" / "mutation_ledger.db")) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM mutation_ledger").fetchone()[0]
+    assert count == 0
+    assert calls["n"] == 3
+
+
+def test_handoff_preview_classified_mutating_in_p69_01_matching_its_still_real_writes() -> (
+    None
+):
+    assert _classify_mutating("handoff_preview", {}) is True

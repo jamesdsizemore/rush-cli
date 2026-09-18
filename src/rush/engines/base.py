@@ -16,6 +16,23 @@ from ..tools.common import resolve_binary, run_subprocess
 RawFinding = dict[str, Any]
 
 
+def ownership_kwargs(
+    owner_instance_id: str | None, run_id: str | None
+) -> dict[str, str]:
+    """P69-01.2j: the ownership pair as `run_subprocess` kwargs, or `{}`.
+
+    An engine forwards its own `owner_instance_id`/`run_id` into its
+    `run_subprocess()` call through this helper so an *unowned* call keeps
+    today's exact kwargs, byte for byte -- the unowned contract that
+    `tests/test_subprocess_contract.py` and every engine reference test
+    assert on is not allowed to change just because ownership became
+    expressible.
+    """
+    if owner_instance_id is None or run_id is None:
+        return {}
+    return {"owner_instance_id": owner_instance_id, "run_id": run_id}
+
+
 class EngineResult(TypedDict, total=False):
     exit_code: int
     stdout: str
@@ -43,15 +60,27 @@ class Engine(ABC):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult: ...
 
     _cached_versions: ClassVar[dict[str, str]] = {}
 
-    def version(self) -> str | None:
+    def version(
+        self,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> str | None:
         """Capture the engine's version string. Return None if unavailable.
 
         Architecture §13 (Q1): cache after first call (subclasses override
         with functools.lru_cache if they want eager caching).
+
+        P69-01.2j: a cold-cache probe spawns a real child, exactly as
+        reachable by Detach's force-exit deadline as the main command, so it
+        carries the same ownership identity.
         """
         binary_path = resolve_binary(self.binary)
         if binary_path is None:
@@ -63,6 +92,7 @@ class Engine(ABC):
             r = run_subprocess(
                 [binary_path, "--version"],
                 timeout=10,
+                **ownership_kwargs(owner_instance_id, run_id),
             )
             if r.returncode != 0:
                 return None

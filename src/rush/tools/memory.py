@@ -213,10 +213,30 @@ _HANDOFF_REQUEST_KEYS = {
     "handoff_id",
 }
 _HANDOFF_ACTIONS = {"prepare", "dispatch", "status"}
-_DELETE_REQUEST_KEYS = {"artifact_ids", "expected_revisions", "scope", "apply"}
+_DELETE_REQUEST_KEYS = {
+    "artifact_ids",
+    "expected_revisions",
+    "scope",
+    "apply",
+    "receipt_operation_id",
+}
 _DELETE_MAX_BATCH = 100
-_EDIT_REQUEST_KEYS = {"scope", "id", "expected_version", "content", "apply"}
-_ARCHIVE_REQUEST_KEYS = {"scope", "id", "expected_version", "apply", "archived"}
+_EDIT_REQUEST_KEYS = {
+    "scope",
+    "id",
+    "expected_version",
+    "content",
+    "apply",
+    "receipt_operation_id",
+}
+_ARCHIVE_REQUEST_KEYS = {
+    "scope",
+    "id",
+    "expected_version",
+    "apply",
+    "archived",
+    "receipt_operation_id",
+}
 
 # Subject -> family mapping (Phase 61 §6.1): active_context/handoff rows, episodic/experience
 # rows, preference/failure/architectural_decision/domain_knowledge/memory rows, skill_pattern/skill rows.
@@ -319,6 +339,7 @@ class MemoryTool(ToolFn):
         include_archived: bool = False,
         permissions: ExecutionPermissions | None = None,
         request: dict[str, Any] | None = None,
+        receipt_operation_id: str | None = None,
     ) -> ToolResult:
         started = time.monotonic()
         root = Path(path).resolve()
@@ -411,6 +432,7 @@ class MemoryTool(ToolFn):
                 user_stated,
                 candidate_sources,
                 granted,
+                receipt_operation_id,
             ),
             "maintain": lambda: self._run_maintain(
                 started, root, task, batch_size, granted
@@ -1044,6 +1066,7 @@ class MemoryTool(ToolFn):
         user_stated: bool,
         candidate_sources: list[str] | None,
         granted: ExecutionPermissions,
+        receipt_operation_id: str | None = None,
     ) -> ToolResult:
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
@@ -1064,11 +1087,23 @@ class MemoryTool(ToolFn):
             subject, content, source, symbol_ref, source_kind
         )
         store = TypedArtifactStore(root)
-        stored = store.write(artifact)
+        # P69-01.2f: promotion is two separately-committed effects (candidate
+        # creation, then a distinct promotion decision) -- each gets its own
+        # preallocated receipt id so recovery can tell "created" apart from
+        # "created and promoted" via two independently-addressable receipts.
+        stored = store.write(
+            artifact,
+            receipt_operation_id=(
+                f"{receipt_operation_id}:create" if receipt_operation_id else None
+            ),
+        )
         stored, decision = store.promote(
             stored.id,
             user_stated=user_stated,
             candidate_sources=candidate_sources,
+            receipt_operation_id=(
+                f"{receipt_operation_id}:promote" if receipt_operation_id else None
+            ),
         )
         summary = (
             f"Promoted subject '{subject}' to STATED."
@@ -1909,7 +1944,12 @@ class MemoryTool(ToolFn):
         artifact_ids = request.get("artifact_ids")
         expected_revisions = request.get("expected_revisions")
         scope = request.get("scope")
-        apply = bool(request.get("apply", False))
+        raw_apply = request.get("apply", False)
+        if not isinstance(raw_apply, bool):
+            return self._envelope_result(
+                started, "delete", "E_INPUT", {"message": "apply must be a boolean."}
+            )
+        apply = raw_apply
 
         valid_ids = (
             isinstance(artifact_ids, list)
@@ -1975,6 +2015,7 @@ class MemoryTool(ToolFn):
                 expected_revisions=expected_revisions,
                 scope=scope,
                 apply=apply,
+                receipt_operation_id=request.get("receipt_operation_id"),
             )
         except KeyError as exc:
             return self._envelope_result(
@@ -2066,7 +2107,12 @@ class MemoryTool(ToolFn):
         scope = request.get("scope")
         artifact_id = request.get("id")
         expected_version = request.get("expected_version")
-        apply = bool(request.get("apply", False))
+        raw_apply = request.get("apply", False)
+        if not isinstance(raw_apply, bool):
+            return self._envelope_result(
+                started, operation, "E_INPUT", {"message": "apply must be a boolean."}
+            )
+        apply = raw_apply
 
         if scope not in _SUBJECT_FAMILY:
             return self._envelope_result(
@@ -2129,6 +2175,7 @@ class MemoryTool(ToolFn):
                 )
 
         store = TypedArtifactStore(root)
+        receipt_operation_id = request.get("receipt_operation_id")
         try:
             if operation == "edit":
                 result = store.edit(
@@ -2137,6 +2184,7 @@ class MemoryTool(ToolFn):
                     expected_version=expected_version,
                     scope=scope,
                     apply=apply,
+                    receipt_operation_id=receipt_operation_id,
                 )
             else:
                 result = store.archive(
@@ -2145,6 +2193,7 @@ class MemoryTool(ToolFn):
                     scope=scope,
                     apply=apply,
                     archived=archived,
+                    receipt_operation_id=receipt_operation_id,
                 )
         except KeyError as exc:
             return self._envelope_result(

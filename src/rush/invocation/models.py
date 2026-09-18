@@ -49,6 +49,10 @@ class InvocationContext:
     request_id: str = ""
     typed_args: tuple[tuple[str, Any], ...] | None = None
     memory_record: bool = False
+    # P69-01.2j: structural execution ownership, never a tool argument --
+    # additive and defaulted, so every existing construction is unaffected.
+    owner_instance_id: str = ""
+    run_id: str = ""
 
 
 @dataclass(frozen=True)

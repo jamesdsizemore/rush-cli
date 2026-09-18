@@ -760,23 +760,25 @@ def relink_project(
 
 
 def _iter_run_manifests(root: Path) -> list[dict[str, Any]]:
-    """Every persisted run's *latest* attempt manifest under `root` (plan §6.1 layout:
-    `.rush/runs/<run_id>/attempts/<attempt_id>/manifest.json`), oldest run first. Reads the
-    already-written JSON directly rather than importing `rush.workflows.project_run` --
-    that module imports this one (`resolve_project`), so importing it back here would be
-    circular."""
+    """Every persisted run's *latest* (highest-generation) attempt manifest under `root`
+    (plan §6.1 layout: `.rush/runs/<run_id>/attempts/<attempt_id>/manifest.json`), oldest
+    run first. P69-03r: uses the shared `_highest_generation_attempt_dir()` selector
+    (`project_run.py`, P69-02k) rather than this function's own independent
+    `sorted(attempts)[-1]` UUID-lexicographic guess -- the third, identical drift point the
+    plan's own P69-02k fix already warned about. A lazy, function-local import breaks the
+    circular-import edge: `project_run.py` imports `resolve_project` from this module at its
+    own module load time, so importing it back here at module scope would be circular."""
+    from rush.workflows.project_run import _highest_generation_attempt_dir
+
     runs_dir = root / ".rush" / "runs"
     manifests: list[dict[str, Any]] = []
     if not runs_dir.is_dir():
         return manifests
     for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
-        attempts_dir = run_dir / "attempts"
-        if not attempts_dir.is_dir():
+        attempt_dir = _highest_generation_attempt_dir(root, run_dir.name)
+        if attempt_dir is None:
             continue
-        attempts = sorted(p for p in attempts_dir.iterdir() if p.is_dir())
-        if not attempts:
-            continue
-        manifest_path = attempts[-1] / "manifest.json"
+        manifest_path = attempt_dir / "manifest.json"
         if not manifest_path.is_file():
             continue
         try:

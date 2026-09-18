@@ -83,6 +83,7 @@ def _action(
     arguments: dict[str, Any] | None = None,
     grants: dict[str, Any] | None = None,
     request_id: str | None = None,
+    expected: dict[str, Any] | None = None,
 ):
     body = json.dumps(
         {
@@ -90,6 +91,7 @@ def _action(
             "operation": operation,
             "arguments": arguments or {},
             "grants": grants or {},
+            "expected": expected or {},
             "request_id": request_id or str(uuid.uuid4()),
         }
     ).encode("utf-8")
@@ -438,6 +440,7 @@ def test_handoff_and_rescan_keep_evidence_identity(
         assert grouped_ids == {item["finding_id"] for item in items}
 
         # Connected-agent repair: hand off the still-active findings.
+        finding_ids = [persisting["finding_id"], new_finding["finding_id"]]
         status, body = _action(
             base_url,
             project_id,
@@ -447,14 +450,16 @@ def test_handoff_and_rescan_keep_evidence_identity(
             arguments={
                 "run_id": current_run_id,
                 "agent_id": "agent-1",
-                "finding_ids": [persisting["finding_id"], new_finding["finding_id"]],
+                "finding_ids": finding_ids,
             },
-            grants=_grant_all(),
         )
         assert status == 200
         assert body["data"]["state"] == "prepared"
-        handoff_id = body["data"]["handoff_id"]
-        session_capability = body["data"]["session_capability"]
+        content_hash = body["data"]["handoff_id"]
+        # A genuinely read-only preview never exposes a session capability.
+        assert "session_capability" not in body["data"] or not body["data"].get(
+            "session_capability"
+        )
 
         status, body = _action(
             base_url,
@@ -463,15 +468,43 @@ def test_handoff_and_rescan_keep_evidence_identity(
             csrf,
             operation="handoff_send",
             arguments={
-                "handoff_id": handoff_id,
-                "session_capability": session_capability,
+                "run_id": current_run_id,
+                "agent_id": "agent-1",
+                "finding_ids": finding_ids,
+                "handoff_id": content_hash,
             },
             grants=_grant_all(),
         )
+        assert status == 202
+        operation_id = body["data"]["operation_id"]
+
+        def _handoff_terminal() -> dict[str, Any]:
+            resp = _get(
+                f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+                headers={"Cookie": cookie},
+            )
+            return json.loads(resp.read())
+
+        def _is_terminal() -> bool:
+            return _handoff_terminal()["data"]["status"] == "terminal"
+
+        _wait_until(_is_terminal)
+        final = _handoff_terminal()["data"]["payload"]
+        assert final["status"] == "success"
+        real_handoff_id = final["handoff_id"]
+
+        status, status_body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="handoff_status",
+            arguments={"handoff_id": real_handoff_id},
+        )
         assert status == 200
-        assert body["data"]["state"] == "delivered"
+        assert status_body["data"]["state"] == "delivered"
         # Read-back never reveals the one-time capability again.
-        assert "session_capability" not in body["data"]
+        assert "session_capability" not in status_body["data"]
     finally:
         server.shutdown()
         server.server_close()

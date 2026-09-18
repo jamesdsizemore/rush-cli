@@ -59,10 +59,37 @@ BOOTSTRAP_HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <div id="rush-status" data-state="connecting">Connecting&hellip;</div>
   <div class="rush-app" id="rush-app" hidden>
-    <div class="rush-topbar" data-role="topbar"></div>
-    <div class="rush-nav" data-role="nav"></div>
+    <div class="rush-topbar" data-role="topbar">
+      <button type="button" data-role="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
+      <select data-role="project-select" aria-label="Select project"></select>
+      <button type="button" data-role="project-add">Add existing folder</button>
+      <button type="button" data-role="project-create">Create folder</button>
+      <button type="button" data-role="project-choose-later">Choose later</button>
+      <label class="rush-pref-toggle"><input type="checkbox" data-role="pref-reduced-motion"> Reduce motion</label>
+      <label class="rush-pref-toggle"><input type="checkbox" data-role="pref-high-contrast"> High contrast</label>
+      <form data-role="project-add-form" hidden>
+        <label>Path <input type="text" name="path" required></label>
+        <button type="submit">Add</button>
+      </form>
+      <form data-role="project-create-form" hidden>
+        <label>Parent <input type="text" name="parent" required></label>
+        <label>Name <input type="text" name="name" required></label>
+        <label><input type="checkbox" name="git_init"> git init</label>
+        <button type="submit">Create</button>
+      </form>
+    </div>
+    <div class="rush-nav" data-role="nav">
+      <button type="button" data-section="map">Map</button>
+      <button type="button" data-section="overview">Overview</button>
+      <button type="button" data-section="scans">Scans</button>
+      <button type="button" data-section="memory">Memory</button>
+      <button type="button" data-section="tokens">Tokens</button>
+      <button type="button" data-section="git">Git</button>
+      <button type="button" data-section="artifacts">Artifacts</button>
+      <button type="button" data-section="setup">Setup</button>
+    </div>
     <div class="rush-map" data-role="map"></div>
-    <div class="rush-inspector" data-role="inspector"></div>
+    <div class="rush-inspector" data-role="inspector" hidden></div>
     <div data-role="error-banner" role="alert"></div>
   </div>
   <script src="/assets/bootstrap.js"></script>
@@ -105,12 +132,35 @@ BOOTSTRAP_JS = """(function () {
   var hash = window.location.hash;
   var token = hash.indexOf("#token=") === 0 ? hash.slice("#token=".length) : null;
 
+  // Row 15: the one localStorage key preferences persist under, read here
+  // before application.js boots so reducedMotion/highContrast/the selected
+  // project apply from the very first render, not after a flash of
+  // defaults -- never a second storage mechanism (application.js writes to
+  // this same key on every toggle/selection).
+  function loadPrefs() {
+    try {
+      var raw = window.localStorage.getItem("rush-dashboard-prefs");
+      return raw ? JSON.parse(raw) : {};
+    } catch (_err) {
+      return {};
+    }
+  }
+
   function startApp() {
     setState("connected", "Connected.");
     var appEl = document.getElementById("rush-app");
     if (appEl) appEl.hidden = false;
+    var prefs = loadPrefs();
+    var reducedMotion =
+      typeof prefs.reducedMotion === "boolean"
+        ? prefs.reducedMotion
+        : !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     import("/assets/application.js").then(function (module) {
-      module.startApplication(appEl || document.body, {});
+      module.startApplication(appEl || document.body, {
+        reducedMotion: reducedMotion,
+        highContrast: !!prefs.highContrast,
+        restoreProjectId: prefs.selectedProjectId || null,
+      });
     }).catch(function () {});
   }
 
@@ -177,6 +227,122 @@ body {{
 .rush-node-file, .rush-node-directory, .rush-node-project {{ stroke: var(--color-blue); }}
 .rush-node-finding {{ stroke: var(--color-pink); }}
 .rush-node-memory, .rush-node-agent {{ stroke: var(--color-purple); }}
+
+/* Phase 69 P69-05 (row 15/24): visually-hidden utility for the semantic
+   relationship list -- an accessible mirror of the SVG graph, never a
+   second visible copy of it. */
+.rush-sr-only {{
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}}
+
+[data-role="map-tooltip"] {{
+  position: absolute;
+  pointer-events: none;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 10;
+}}
+
+.rush-topbar button,
+.rush-nav button {{
+  transition: background-color {MOTION["hover_focus_ms"]}ms var(--motion-easing),
+    color {MOTION["hover_focus_ms"]}ms var(--motion-easing);
+}}
+
+.rush-nav {{
+  transition: transform {MOTION["menu_ms"]}ms var(--motion-easing), width {MOTION["menu_ms"]}ms var(--motion-easing);
+}}
+
+.rush-inspector {{
+  transition: opacity {MOTION["exit_ms"]}ms var(--motion-easing-exit),
+    transform {MOTION["menu_ms"]}ms var(--motion-easing);
+}}
+
+@media (prefers-reduced-motion: reduce) {{
+  .rush-topbar button,
+  .rush-nav button,
+  .rush-nav,
+  .rush-inspector {{
+    transition-duration: {MOTION["reduced_motion_opacity_ms"]}ms !important;
+  }}
+}}
+
+/* Row 15/24: below 1024px the nav collapses to an icon rail -- labels
+   hidden, `data-section` shown as a compact glyph via ::before.
+   ponytail: reuses the existing data-section attribute as the glyph text
+   instead of a real icon asset; upgrade to real icons if the plain-text
+   rail ever needs to look less placeholder-ish. */
+@media (max-width: 1024px) {{
+  .rush-nav {{
+    width: 64px;
+  }}
+  .rush-nav[data-role="nav"] button {{
+    font-size: 0;
+    width: 100%;
+    padding: 8px 0;
+  }}
+  .rush-nav[data-role="nav"] button::before {{
+    content: attr(data-section);
+    font-size: 10px;
+    text-transform: uppercase;
+  }}
+}}
+
+/* Row 15/24: below 768px the nav and inspector become off-canvas mobile
+   drawers; `data-open="true"` (toggled by application.js, which also
+   contains keyboard focus inside the open drawer) slides them in. */
+@media (max-width: 768px) {{
+  .rush-nav {{
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    width: 216px;
+    transform: translateX(-100%);
+    z-index: 20;
+  }}
+  .rush-nav[data-open="true"] {{
+    transform: translateX(0);
+  }}
+  .rush-inspector {{
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    right: 0;
+    width: 85vw;
+    max-width: 360px;
+    transform: translateX(100%);
+    z-index: 20;
+  }}
+  .rush-inspector[data-open="true"] {{
+    transform: translateX(0);
+  }}
+}}
+
+/* Row 15: toggled by application.js's `highContrast` preference --
+   stronger borders and no muted text color, never touches authorization
+   (purely presentational, this packet never edits server.py). */
+.rush-high-contrast {{
+  --color-border: #FFFFFF;
+  --color-text-muted: var(--color-text);
+}}
+.rush-high-contrast .rush-topbar,
+.rush-high-contrast .rush-nav,
+.rush-high-contrast .rush-inspector {{
+  border-width: 2px;
+}}
 """
 
 

@@ -9,7 +9,7 @@ from typing import Any
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 from .iac_parser import StructuredIacReportError, parse_structured_iac_report
 
 
@@ -20,7 +20,15 @@ class CheckovEngine(Engine):
     binary = "checkov"
     file_extensions = ("tf",)
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         """Scan one local Terraform directory with downloads and remote data disabled."""
         del args, cwd
         target = path if path.is_dir() else path.parent
@@ -40,6 +48,7 @@ class CheckovEngine(Engine):
             cwd=target,
             timeout=180,
             env=_checkov_environment(),
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr

@@ -22,6 +22,7 @@ uses -- so every scenario here is deterministic and fast:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -36,13 +37,17 @@ import pytest
 from rush.permissions import ExecutionPermissions
 from rush.workflows import project_run
 from rush.workflows.project_run import (
+    ScanBusyError,
     ScanInvalidRequestError,
     ScanResumeStaleError,
     build_handoff,
     cancel_scan_run,
+    compare_runs,
     execute_scan,
+    latest_attempt_id,
     load_scan_events,
     plan_scan,
+    rescan_project_run,
     resume_scan_run,
 )
 from rush.workflows.projects import register_project
@@ -464,3 +469,355 @@ def test_load_scan_events_exposes_ordered_sequence_and_terminal_state(
     assert "candidate_started" in event_names
     assert "candidate_completed" in event_names
     assert event_names[-1] == "run_completed"
+
+
+# --- P69-02j/k/l/m: execution identity, attempt-ordering fix, locking -----
+
+
+def _write_legacy_attempt_header(
+    root: Path, run_id: str, attempt_id: str, *, started_at: str
+) -> None:
+    """A pre-fix attempt header: no `attempt_generation` field at all."""
+    attempt_dir = root / ".rush" / "runs" / run_id / "attempts" / attempt_id
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    header = {
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "plan_id": "fixture-plan",
+        "project_id": "fixture-project",
+        "started_at": started_at,
+        "source_signature": "fixture-signature",
+    }
+    (attempt_dir / "attempt.json").write_text(json.dumps(header), encoding="utf-8")
+
+
+def test_generation_counter_file_does_not_appear_inside_attempts_dir_and_does_not_change_its_entry_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    root = Path(plan.root)
+
+    run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+
+    run_dir = root / ".rush" / "runs" / run.run_id
+    attempts_dir = run_dir / "attempts"
+    assert len(list(attempts_dir.iterdir())) == 1
+
+    generation_path = run_dir / ".generation"
+    assert generation_path.is_file(), (
+        "generation counter must be a sibling of attempts/"
+    )
+    assert not (attempts_dir / ".generation").exists()
+    # The counter file's existence must never itself count as an attempt.
+    assert len(list(attempts_dir.iterdir())) == 1
+
+
+def test_generation_counter_bootstraps_from_existing_attempt_count_not_zero_for_a_run_with_pre_fix_attempts(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root = _register(tmp_path)
+    root = Path(project_run.resolve_project(project_id, data_root=data_root)["root"])
+    run_id = str(uuid.uuid4())
+    for _ in range(2):
+        _write_legacy_attempt_header(
+            root, run_id, str(uuid.uuid4()), started_at="2020-01-01T00:00:00+00:00"
+        )
+
+    first = project_run._next_attempt_generation(root, run_id)
+    assert first == 3, "bootstraps from the 2 existing legacy attempts, not 0"
+    second = project_run._next_attempt_generation(root, run_id)
+    assert second == 4, (
+        "a persisted counter is read-and-incremented, not re-bootstrapped"
+    )
+
+
+def test_a_single_post_fix_attempt_always_outranks_every_legacy_attempt_for_the_same_run_regardless_of_started_at(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root = _register(tmp_path)
+    root = Path(project_run.resolve_project(project_id, data_root=data_root)["root"])
+    run_id = str(uuid.uuid4())
+    _write_legacy_attempt_header(
+        root, run_id, "legacy-attempt", started_at="2999-01-01T00:00:00+00:00"
+    )
+    post_fix_dir = root / ".rush" / "runs" / run_id / "attempts" / "post-fix-attempt"
+    post_fix_dir.mkdir(parents=True, exist_ok=True)
+    (post_fix_dir / "attempt.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "attempt_id": "post-fix-attempt",
+                "started_at": "2000-01-01T00:00:00+00:00",
+                "attempt_generation": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    selected = project_run._highest_generation_attempt_dir(root, run_id)
+    assert selected is not None
+    assert selected.name == "post-fix-attempt"
+
+
+def test_latest_attempt_selection_falls_back_to_started_at_when_every_attempt_for_a_run_is_still_legacy(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root = _register(tmp_path)
+    root = Path(project_run.resolve_project(project_id, data_root=data_root)["root"])
+    run_id = str(uuid.uuid4())
+    _write_legacy_attempt_header(
+        root, run_id, "earlier", started_at="2020-01-01T00:00:00+00:00"
+    )
+    _write_legacy_attempt_header(
+        root, run_id, "later", started_at="2021-01-01T00:00:00+00:00"
+    )
+
+    selected = project_run._highest_generation_attempt_dir(root, run_id)
+    assert selected is not None
+    assert selected.name == "later"
+
+
+def test_two_legacy_attempts_sharing_an_identical_started_at_select_deterministically_regardless_of_directory_enumeration_order(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root = _register(tmp_path)
+    root = Path(project_run.resolve_project(project_id, data_root=data_root)["root"])
+    run_id = str(uuid.uuid4())
+    _write_legacy_attempt_header(
+        root, run_id, "zzz-attempt", started_at="2020-01-01T00:00:00+00:00"
+    )
+    _write_legacy_attempt_header(
+        root, run_id, "aaa-attempt", started_at="2020-01-01T00:00:00+00:00"
+    )
+
+    first = project_run._highest_generation_attempt_dir(root, run_id)
+    second = project_run._highest_generation_attempt_dir(root, run_id)
+    assert first is not None
+    assert first.name == second.name == "zzz-attempt", (
+        "attempt_id is the final tie-break, deterministic regardless of call order"
+    )
+
+
+def test_execute_scan_and_resume_and_rescan_accept_attempt_id_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+
+    run = execute_scan(
+        plan,
+        attempt_id="custom-attempt-1",
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+    )
+    assert run.attempt_id == "custom-attempt-1"
+
+    resumed = resume_scan_run(
+        project_id,
+        run.run_id,
+        attempt_id="custom-attempt-2",
+        expected_attempt_id="custom-attempt-1",
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+    )
+    assert resumed.attempt_id == "custom-attempt-2"
+
+    result = rescan_project_run(
+        project_id,
+        run.run_id,
+        new_run_id="custom-run-3",
+        attempt_id="custom-attempt-3",
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+    )
+    assert result["run"]["run_id"] == "custom-run-3"
+    assert result["run"]["attempt_id"] == "custom-attempt-3"
+
+
+def test_resume_raises_structured_conflict_when_a_concurrent_resume_lands_a_newer_attempt_between_dispatch_capture_and_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    root = Path(plan.root)
+
+    run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    attempts_dir = root / ".rush" / "runs" / run.run_id / "attempts"
+    assert len(list(attempts_dir.iterdir())) == 1
+
+    with pytest.raises(ScanBusyError):
+        resume_scan_run(
+            project_id,
+            run.run_id,
+            expected_attempt_id="stale-attempt-id-not-the-real-one",
+            permissions=_WRITE_PERMISSIONS,
+            data_root=data_root,
+        )
+    assert len(list(attempts_dir.iterdir())) == 1, (
+        "a rejected conflict must not create a new attempt"
+    )
+
+
+def test_cancellation_is_not_cleared_when_the_locked_expected_attempt_id_check_rejects_the_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    root = Path(plan.root)
+
+    run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    cancel_scan_run(project_id, run.run_id, data_root=data_root)
+    assert project_run._cancel_requested(root, run.run_id)
+
+    with pytest.raises(ScanBusyError):
+        resume_scan_run(
+            project_id,
+            run.run_id,
+            expected_attempt_id="stale-attempt-id-not-the-real-one",
+            permissions=_WRITE_PERMISSIONS,
+            data_root=data_root,
+        )
+    assert project_run._cancel_requested(root, run.run_id), (
+        "a rejected conflict must not clear a pending cancel request"
+    )
+
+
+def test_rescan_raises_structured_conflict_when_the_baseline_advances_between_dispatch_capture_and_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+
+    baseline = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    stale_attempt_id = baseline.attempt_id
+
+    # Advance the baseline run with a real resume before the rescan executes.
+    resume_scan_run(
+        project_id, baseline.run_id, permissions=_WRITE_PERMISSIONS, data_root=data_root
+    )
+
+    with pytest.raises(ScanBusyError):
+        rescan_project_run(
+            project_id,
+            baseline.run_id,
+            expected_attempt_id=stale_attempt_id,
+            permissions=_WRITE_PERMISSIONS,
+            data_root=data_root,
+        )
+
+
+def test_rescan_conflict_path_handles_a_missing_baseline_manifest_without_raising_typeerror(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root = _register(tmp_path)
+    root = Path(project_run.resolve_project(project_id, data_root=data_root)["root"])
+    run_id = str(uuid.uuid4())
+    # A concurrent resume can publish a newer attempt directory without ever
+    # finishing -- the run directory exists, but no attempt of it has a
+    # terminal manifest yet.
+    (root / ".rush" / "runs" / run_id / "attempts" / "in-flight").mkdir(
+        parents=True, exist_ok=True
+    )
+
+    with pytest.raises(ScanBusyError):
+        rescan_project_run(project_id, run_id, data_root=data_root)
+
+
+def test_compare_runs_pinned_to_baseline_attempt_id_ignores_a_newer_baseline_attempt_published_after_execute_scan_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seeded_finding = {
+        "path": "app.py",
+        "line": 1,
+        "rule": "seeded-rule",
+        "severity": "warn",
+        "message": "seeded finding",
+    }
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(
+        project_run,
+        "ALL_TOOLS",
+        [_InstantTool("only-check", findings=[seeded_finding])],
+    )
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+
+    baseline = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    original_attempt_id = baseline.attempt_id
+    original_finding_ids = {
+        f["finding_id"] for f in baseline.aggregate.get("findings") or []
+    }
+    assert original_finding_ids
+
+    current = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+
+    pinned = compare_runs(
+        project_id,
+        baseline.run_id,
+        current.run_id,
+        baseline_attempt_id=original_attempt_id,
+        data_root=data_root,
+    )
+    assert set(pinned["persisting"]) == original_finding_ids
+    assert pinned["resolved"] == []
+    assert pinned["new"] == []
+
+    # Advance the baseline run's own latest attempt to a clean one (zero
+    # findings) -- a naive re-derivation of "latest" for the baseline side
+    # would now see nothing to compare against.
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    advanced = execute_scan(
+        plan,
+        run_id=baseline.run_id,
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+    )
+    assert advanced.attempt_id != original_attempt_id
+    assert not (advanced.aggregate.get("findings") or [])
+
+    still_pinned = compare_runs(
+        project_id,
+        baseline.run_id,
+        current.run_id,
+        baseline_attempt_id=original_attempt_id,
+        data_root=data_root,
+    )
+    assert set(still_pinned["persisting"]) == original_finding_ids, (
+        "pinning must ignore the baseline run's newer, unrelated attempt"
+    )
+
+    unpinned = compare_runs(
+        project_id, baseline.run_id, current.run_id, data_root=data_root
+    )
+    assert unpinned["persisting"] == [], (
+        "without a pin, comparison re-selects the baseline's now-empty latest attempt"
+    )
+    assert set(unpinned["new"]) == original_finding_ids
+
+
+def test_latest_attempt_id_returns_the_current_latest_attempt_and_none_for_unknown_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+
+    run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    assert latest_attempt_id(project_id, run.run_id, data_root=data_root) == (
+        run.attempt_id
+    )
+    assert (
+        latest_attempt_id(project_id, "not-a-real-run-id", data_root=data_root) is None
+    )

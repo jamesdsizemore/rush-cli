@@ -9,7 +9,7 @@ from typing import Any
 
 from ..tools.base import Finding, Severity, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 DEFAULT_CONFIG = Path(__file__).with_name("_hadolint-empty.yaml")
 
@@ -21,7 +21,15 @@ class HadolintEngine(Engine):
     binary = "hadolint"
     file_extensions = ("dockerfile", "containerfile")
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         del args, cwd
         source = path
         proc = run_subprocess(
@@ -37,6 +45,7 @@ class HadolintEngine(Engine):
             cwd=source.parent if source.is_file() else source,
             timeout=120,
             env=_hadolint_environment(),
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr

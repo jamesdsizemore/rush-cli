@@ -50,6 +50,10 @@ RESERVED_REQUEST_KEYS: frozenset[str] = frozenset(
         "args",
         "ordered_args",
         "typed_args",
+        # P69-01.2j: consumed as structural context, never surfaced through
+        # the tool-argument parsing path.
+        "owner_instance_id",
+        "run_id",
     }
 )
 
@@ -333,6 +337,8 @@ def resolve_invocation(
         request_id=req_id,
         typed_args=typed_args,
         memory_record=memory_record,
+        owner_instance_id=str(req.get("owner_instance_id") or ""),
+        run_id=str(req.get("run_id") or ""),
     )
 
 

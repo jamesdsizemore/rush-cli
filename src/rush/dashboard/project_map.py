@@ -49,14 +49,78 @@ def _file_id(path: str) -> str:
     return f"file:{digest}"
 
 
-def _cursor_encode(payload: dict[str, Any]) -> str:
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+class CursorRejected(ValueError):
+    """P69-03t: raised when a cursor's embedded `(project_id,
+    source_identity, sequence, filter_hash, view_id)` tuple -- or, for a
+    group/group-edge cursor, its own scope name -- doesn't match the request
+    it's being replayed against (a different project, a rescan that bumped
+    `sequence`, different active filters, or a malformed/corrupt cursor
+    string). `server.py` turns this into an HTTP 409, never a silent
+    fallback to offset 0."""
+
+
+def _filter_hash(
+    *,
+    node_types: tuple[str, ...],
+    severity: tuple[str, ...],
+    status: tuple[str, ...],
+    query: str,
+) -> str:
+    raw = json.dumps(
+        {
+            "node_types": sorted(node_types),
+            "severity": sorted(severity),
+            "status": sorted(status),
+            "query": query,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def _cursor_tuple(
+    *,
+    project_id: str,
+    source_identity: str,
+    sequence: int,
+    filter_hash: str,
+    view_id: tuple[Any, ...],
+) -> dict[str, Any]:
+    """P69-03t: the exact tuple a map/group cursor is bound to. `view_id` is
+    `("current",)` for the live map, or `("run", run_id, attempt_id)` for a
+    caller-selected historical run (P69-03r: pinned to that run's exact
+    attempt, never bare `run_id` -- a later resume of the same `run_id`
+    mints a new attempt and must not invalidate or change an already-issued
+    historical cursor)."""
+    return {
+        "project_id": project_id,
+        "source_identity": source_identity,
+        "sequence": sequence,
+        "filter_hash": filter_hash,
+        "view_id": list(view_id),
+    }
+
+
+def _cursor_encode(payload: dict[str, Any], *, tuple_key: dict[str, Any]) -> str:
+    raw = json.dumps(
+        {"payload": payload, "key": tuple_key}, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _cursor_decode(cursor: str) -> dict[str, Any]:
+def _cursor_decode(cursor: str, *, tuple_key: dict[str, Any]) -> dict[str, Any]:
     padded = cursor + "=" * (-len(cursor) % 4)
-    return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except (ValueError, UnicodeDecodeError, TypeError) as exc:
+        raise CursorRejected("malformed map cursor") from exc
+    if not isinstance(decoded, dict) or decoded.get("key") != tuple_key:
+        raise CursorRejected(
+            "cursor was issued under a different project/source/sequence/filter/view"
+        )
+    payload = decoded.get("payload")
+    return payload if isinstance(payload, dict) else {}
 
 
 def _node(
@@ -87,7 +151,15 @@ def _node(
 
 
 def _edge(
-    *, edge_id: str, source: str, target: str, relation: str, source_identity: str
+    *,
+    edge_id: str,
+    source: str,
+    target: str,
+    relation: str,
+    source_identity: str,
+    count: int | None = None,
+    expandable: bool = False,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": edge_id,
@@ -96,6 +168,9 @@ def _edge(
         "relation": relation,
         "evidence_ids": [],
         "source_identity": source_identity,
+        "count": count,
+        "expandable": expandable,
+        "cursor": cursor,
     }
 
 
@@ -302,6 +377,7 @@ def _grouped_overview(
     *,
     source_identity: str,
     offset: int = 0,
+    tuple_key: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], bool]:
     project_node = next(n for n in nodes if n["kind"] == "project")
     groupable = [n for n in nodes if n["kind"] != "project" and n.get("path")]
@@ -312,10 +388,17 @@ def _grouped_overview(
         top = _normalize_path(node["path"]).split("/", 1)[0] or "(root)"
         buckets.setdefault(top, []).append(node)
 
+    # P69-03q: every grouped-away node's own group id, so a relationship
+    # edge whose endpoint got hidden behind a group can be re-homed onto
+    # that group instead of silently dropped.
+    member_group_id: dict[str, str] = {}
+
     group_nodes: list[dict[str, Any]] = []
     groups_meta: list[dict[str, Any]] = []
     for top, members in sorted(buckets.items()):
         group_id = f"group:{top}"
+        for member in members:
+            member_group_id[member["id"]] = group_id
         group_nodes.append(
             _node(
                 node_id=group_id,
@@ -336,7 +419,9 @@ def _grouped_overview(
                 "kind": "group",
                 "label": top,
                 "member_count": len(members),
-                "cursor": _cursor_encode({"group": group_id, "offset": 0}),
+                "cursor": _cursor_encode(
+                    {"group": group_id, "offset": 0}, tuple_key=tuple_key
+                ),
             }
         )
 
@@ -348,6 +433,8 @@ def _grouped_overview(
         extra_group_nodes = []
         for kind, members in sorted(kind_buckets.items()):
             group_id = f"group:{kind}"
+            for member in members:
+                member_group_id[member["id"]] = group_id
             extra_group_nodes.append(
                 _node(
                     node_id=group_id,
@@ -368,7 +455,9 @@ def _grouped_overview(
                     "kind": "group",
                     "label": kind,
                     "member_count": len(members),
-                    "cursor": _cursor_encode({"group": group_id, "offset": 0}),
+                    "cursor": _cursor_encode(
+                        {"group": group_id, "offset": 0}, tuple_key=tuple_key
+                    ),
                 }
             )
         ungroupable_nodes = extra_group_nodes
@@ -399,7 +488,100 @@ def _grouped_overview(
     kept_edges = [
         e for e in edges if e["source"] in visible_ids and e["target"] in visible_ids
     ]
-    visible_edges = contains_edges + kept_edges
+
+    # P69-03q: group-edge budget. A `reports`/`cites`/`assigned_to` edge
+    # whose endpoint was hidden behind grouping is never silently dropped --
+    # it's re-homed onto that endpoint's group and counted, one summary edge
+    # per (resolved source, resolved target, relation) triple, never one
+    # edge per individual dropped relationship (which is exactly what let
+    # summary edges themselves exceed the 400-edge bound on a graph with
+    # many groups).
+    summary_counts: dict[tuple[str, str, str], int] = {}
+    for e in edges:
+        if e["source"] in visible_ids and e["target"] in visible_ids:
+            continue
+        resolved_source = (
+            e["source"]
+            if e["source"] in visible_ids
+            else member_group_id.get(e["source"])
+        )
+        resolved_target = (
+            e["target"]
+            if e["target"] in visible_ids
+            else member_group_id.get(e["target"])
+        )
+        if resolved_source is None or resolved_target is None:
+            continue
+        if resolved_source == resolved_target:
+            continue
+        if resolved_source.startswith("group:") and resolved_source not in page_ids:
+            continue
+        if resolved_target.startswith("group:") and resolved_target not in page_ids:
+            continue
+        key = (resolved_source, resolved_target, e["relation"])
+        summary_counts[key] = summary_counts.get(key, 0) + 1
+
+    summary_edges = [
+        _edge(
+            edge_id=f"edge:{relation}:{src}:{tgt}:summary",
+            source=src,
+            target=tgt,
+            relation=relation,
+            source_identity=source_identity,
+            count=count,
+            expandable=True,
+            cursor=_cursor_encode(
+                {
+                    "edge": f"edge:{relation}:{src}:{tgt}:summary",
+                    "relation": relation,
+                    "source": src,
+                    "target": tgt,
+                    "offset": 0,
+                },
+                tuple_key=tuple_key,
+            ),
+        )
+        for (src, tgt, relation), count in sorted(summary_counts.items())
+    ]
+
+    visible_edges = contains_edges + kept_edges + summary_edges
+    if len(visible_edges) > RENDER_EDGE_LIMIT:
+        # ponytail: even one summary edge per (group, relation) pair can
+        # still exceed the bound on a graph with very many groups times
+        # relation types. Collapse further to one edge per relation type,
+        # project-wide, sacrificing per-group granularity -- still counted
+        # and expandable, never a silent drop. Ceiling: a genuinely
+        # multi-level drill-down (collapse groups of groups) is real future
+        # work if this path is ever hit in practice.
+        by_relation: dict[str, int] = {}
+        for (_src, _tgt, relation), count in summary_counts.items():
+            by_relation[relation] = by_relation.get(relation, 0) + count
+        collapsed_edges = [
+            _edge(
+                edge_id=f"edge:{relation}:{project_node['id']}:overflow:summary",
+                source=project_node["id"],
+                target=project_node["id"],
+                relation=relation,
+                source_identity=source_identity,
+                count=count,
+                expandable=True,
+                cursor=_cursor_encode(
+                    {
+                        "edge": f"edge:{relation}:{project_node['id']}:overflow:summary",
+                        "relation": relation,
+                        "source": project_node["id"],
+                        "target": project_node["id"],
+                        "offset": 0,
+                    },
+                    tuple_key=tuple_key,
+                ),
+            )
+            for relation, count in sorted(by_relation.items())
+        ]
+        visible_edges = (contains_edges + kept_edges + collapsed_edges)[
+            :RENDER_EDGE_LIMIT
+        ]
+
     visible_groups_meta = [g for g in groups_meta if g["id"] in page_ids]
 
     return (
@@ -414,6 +596,7 @@ def build_project_map(
     snapshot: dict[str, Any],
     *,
     run_id: str | None = None,
+    attempt_id: str | None = None,
     node_types: tuple[str, ...] = (),
     severity: tuple[str, ...] = (),
     status: tuple[str, ...] = (),
@@ -422,10 +605,31 @@ def build_project_map(
     cursor: str | None = None,
     limit: int = RENDER_NODE_LIMIT,
 ) -> dict[str, Any]:
-    """Project a scoped snapshot into typed node/edge map data (spec 3.5)."""
+    """Project a scoped snapshot into typed node/edge map data (spec 3.5).
+    `run_id`/`attempt_id` (P69-03r) only affect the cursor's `view_id`
+    binding and the echoed identity fields -- the caller is responsible for
+    passing a `snapshot` already resolved to that specific historical
+    attempt (frozen memory/agent data included, per P69-03s), never the
+    live current snapshot."""
     project_id = snapshot["project_id"]
     source_identity = snapshot.get("source_identity", project_id)
     sequence = snapshot.get("sequence", 1)
+    # P69-03t: cursor/cache tuple -- (project_id, source_identity, sequence,
+    # filter_hash, view_id). `view_id` is `("current",)` for the live map
+    # or `("run", run_id, attempt_id)` for a caller-selected historical run.
+    filter_hash = _filter_hash(
+        node_types=node_types, severity=severity, status=status, query=query
+    )
+    view_id: tuple[Any, ...] = (
+        ("current",) if run_id is None else ("run", run_id, attempt_id)
+    )
+    tuple_key = _cursor_tuple(
+        project_id=project_id,
+        source_identity=source_identity,
+        sequence=sequence,
+        filter_hash=filter_hash,
+        view_id=view_id,
+    )
 
     all_nodes, all_edges = _build_full_graph(snapshot, source_identity)
     total_nodes = len(all_nodes)
@@ -455,21 +659,27 @@ def build_project_map(
     else:
         offset = 0
         if cursor:
-            offset = int(_cursor_decode(cursor).get("overview_offset", 0))
+            offset = int(
+                _cursor_decode(cursor, tuple_key=tuple_key).get("overview_offset", 0)
+            )
         nodes, edges, groups, has_more = _grouped_overview(
             filtered_nodes,
             filtered_edges,
             source_identity=source_identity,
             offset=offset,
+            tuple_key=tuple_key,
         )
         if has_more:
             next_offset = offset + max(RENDER_NODE_LIMIT - 1, 0)
-            next_cursor = _cursor_encode({"overview_offset": next_offset})
+            next_cursor = _cursor_encode(
+                {"overview_offset": next_offset}, tuple_key=tuple_key
+            )
 
     return {
         "schema_version": 1,
         "project_id": project_id,
         "run_id": run_id,
+        "attempt_id": attempt_id,
         "source_identity": source_identity,
         "sequence": sequence,
         "nodes": nodes,
@@ -502,7 +712,19 @@ def expand_group(
     ``_apply_filters`` pass so ``member_count`` never diverges from what this
     function actually returns for that group under those filters.
     """
-    source_identity = snapshot.get("source_identity", snapshot["project_id"])
+    project_id = snapshot["project_id"]
+    source_identity = snapshot.get("source_identity", project_id)
+    sequence = snapshot.get("sequence", 1)
+    filter_hash = _filter_hash(
+        node_types=node_types, severity=severity, status=status, query=query
+    )
+    tuple_key = _cursor_tuple(
+        project_id=project_id,
+        source_identity=source_identity,
+        sequence=sequence,
+        filter_hash=filter_hash,
+        view_id=("current",),
+    )
     all_nodes, _all_edges = _build_full_graph(snapshot, source_identity)
     filtered_nodes = _apply_filters(
         all_nodes, node_types=node_types, severity=severity, status=status, query=query
@@ -521,11 +743,17 @@ def expand_group(
 
     offset = 0
     if cursor:
-        offset = int(_cursor_decode(cursor).get("offset", 0))
+        decoded = _cursor_decode(cursor, tuple_key=tuple_key)
+        # P69-03t: a cursor minted for a *different* group must never be
+        # replayed here -- two groups sharing the same project/source/
+        # sequence/filter tuple would otherwise collide on one cursor space.
+        if decoded.get("group") != group_id:
+            raise CursorRejected(f"cursor does not belong to group {group_id!r}")
+        offset = int(decoded.get("offset", 0))
     page = members[offset : offset + page_size]
     next_offset = offset + page_size
     next_cursor = (
-        _cursor_encode({"group": group_id, "offset": next_offset})
+        _cursor_encode({"group": group_id, "offset": next_offset}, tuple_key=tuple_key)
         if next_offset < len(members)
         else None
     )
@@ -535,6 +763,103 @@ def expand_group(
         "members": page,
         "next_cursor": next_cursor,
         "total": len(members),
+    }
+
+
+def expand_group_edge(
+    snapshot: dict[str, Any],
+    edge_id: str,
+    *,
+    node_types: tuple[str, ...] = (),
+    severity: tuple[str, ...] = (),
+    status: tuple[str, ...] = (),
+    query: str = "",
+    cursor: str,
+    page_size: int = GROUP_PAGE_SIZE,
+) -> dict[str, Any]:
+    """P69-03q: page through the real, individual relationships a summary
+    group-edge (`_grouped_overview`'s counted, expandable group-edge)
+    collapsed -- reuses the exact member-pagination cursor contract
+    `expand_group` uses, so every relationship a group-edge counts stays
+    reachable, never silently dropped. `cursor` is required: it's always the
+    summary edge's own `cursor` field (or a previous page's `next_cursor`),
+    which is what actually carries the `(relation, source, target)` triple
+    this function pages through -- `edge_id` alone is not enough to recover
+    which real nodes were collapsed together."""
+    project_id = snapshot["project_id"]
+    source_identity = snapshot.get("source_identity", project_id)
+    sequence = snapshot.get("sequence", 1)
+    filter_hash = _filter_hash(
+        node_types=node_types, severity=severity, status=status, query=query
+    )
+    tuple_key = _cursor_tuple(
+        project_id=project_id,
+        source_identity=source_identity,
+        sequence=sequence,
+        filter_hash=filter_hash,
+        view_id=("current",),
+    )
+    decoded = _cursor_decode(cursor, tuple_key=tuple_key)
+    if decoded.get("edge") != edge_id:
+        raise CursorRejected(f"cursor does not belong to group-edge {edge_id!r}")
+    relation = decoded.get("relation")
+    src = decoded.get("source")
+    tgt = decoded.get("target")
+    offset = int(decoded.get("offset", 0))
+
+    all_nodes, all_edges = _build_full_graph(snapshot, source_identity)
+    filtered_nodes = _apply_filters(
+        all_nodes, node_types=node_types, severity=severity, status=status, query=query
+    )
+    filtered_ids = {n["id"] for n in filtered_nodes}
+    filtered_edges = [
+        e
+        for e in all_edges
+        if e["source"] in filtered_ids and e["target"] in filtered_ids
+    ]
+    nodes_by_id = {n["id"]: n for n in filtered_nodes}
+
+    def _bucket(node_id: str) -> str:
+        node = nodes_by_id.get(node_id)
+        if node is None:
+            return node_id
+        if node.get("path"):
+            top = _normalize_path(node["path"]).split("/", 1)[0] or "(root)"
+            return f"group:{top}"
+        return f"group:{node['kind']}"
+
+    matches = [
+        e
+        for e in filtered_edges
+        if e["relation"] == relation
+        and (e["source"] if e["source"] == src else _bucket(e["source"])) == src
+        and (e["target"] if e["target"] == tgt else _bucket(e["target"])) == tgt
+    ]
+    matches = sorted(matches, key=lambda e: e["id"])
+
+    page = matches[offset : offset + page_size]
+    next_offset = offset + page_size
+    next_cursor = (
+        _cursor_encode(
+            {
+                "edge": edge_id,
+                "relation": relation,
+                "source": src,
+                "target": tgt,
+                "offset": next_offset,
+            },
+            tuple_key=tuple_key,
+        )
+        if next_offset < len(matches)
+        else None
+    )
+    return {
+        "schema_version": 1,
+        "edge_id": edge_id,
+        "relation": relation,
+        "members": page,
+        "next_cursor": next_cursor,
+        "total": len(matches),
     }
 
 
@@ -579,7 +904,9 @@ __all__ = [
     "GROUP_PAGE_SIZE",
     "RENDER_EDGE_LIMIT",
     "RENDER_NODE_LIMIT",
+    "CursorRejected",
     "build_project_map",
     "compute_layout",
     "expand_group",
+    "expand_group_edge",
 ]

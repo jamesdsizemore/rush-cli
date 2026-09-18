@@ -35,6 +35,23 @@ from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
 from rush.workflows import projects as projects_module
 from rush.workflows.projects import register_project
 
+
+@pytest.fixture(autouse=True)
+def _isolated_dashboard_data_root(tmp_path, monkeypatch):
+    """P69-02.2f: `MutationLedger` now also owns the durable scan-admission
+    table, so every test in this module gets an isolated data root by default
+    -- otherwise a test that never monkeypatches `rush.setup.provision.
+    default_data_root` itself would read/write this OS user's real Rush data
+    directory, leaking admission/ledger state across test runs. A test that
+    explicitly monkeypatches its own `default_data_root` afterward still wins
+    (it runs after this fixture)."""
+    isolated_root = tmp_path / "rush-data-default"
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: isolated_root)
+    monkeypatch.setattr(
+        "rush.workflows.projects.default_data_root", lambda: isolated_root
+    )
+
+
 # --- shared HTTP helpers (mirrors tests/test_dashboard_scan_actions.py) -----
 
 
@@ -80,6 +97,7 @@ def _action(
     arguments: dict[str, Any] | None = None,
     grants: dict[str, Any] | None = None,
     request_id: str | None = None,
+    expected: dict[str, Any] | None = None,
 ):
     body = json.dumps(
         {
@@ -87,6 +105,7 @@ def _action(
             "operation": operation,
             "arguments": arguments or {},
             "grants": grants or {},
+            "expected": expected or {},
             "request_id": request_id or str(uuid.uuid4()),
         }
     ).encode("utf-8")
@@ -338,7 +357,7 @@ def test_memory_edit_version_conflict_denied_and_unchanged(
             },
             grants=_grant_all(),
         )
-        assert status == 200
+        assert status == 409
         assert body["data"]["status"] == "fail"
         assert body["data"]["raw"]["code"] == "E_VERSION"
 
@@ -727,6 +746,10 @@ def test_memory_never_exposes_raw_sqlite_write_path() -> None:
         "memory_archive",
         "memory_delete",
         "memory_promote",
+        "memory_query",
+        "memory_expand",
+        "memory_propose",
+        "memory_maintain",
     }
 
 

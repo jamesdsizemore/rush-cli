@@ -73,6 +73,7 @@ def prepare_handoff(
     namespace: str = "",
     budgets: Mapping[str, Any] | None = None,
     now: float | None = None,
+    receipt_operation_id: str | None = None,
 ) -> tuple[HandoffSession, str, dict[str, Any]]:
     """Create a brand-new bounded handoff session bound to `root`/`audience`/`granted_ids`
     (versions authorized are always the artifacts' *current* version, re-checked fresh on
@@ -126,6 +127,7 @@ def prepare_handoff(
         constraints=constraints_payload,
         created_at=ts,
         expires_at=ts + SESSION_TTL_SECONDS,
+        receipt_operation_id=receipt_operation_id,
     )
     delta = receive_handoff(
         store, session_id=session_id, capability=raw_capability, now=ts

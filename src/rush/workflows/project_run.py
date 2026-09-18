@@ -75,15 +75,18 @@ executable route is unavailable/ENGINE_ROUTE_MISSING, not excluded").
 
 from __future__ import annotations
 
+import fcntl
 import hmac
 import json
 import os
 import secrets
+import subprocess
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -92,6 +95,13 @@ from typing import Any, ClassVar, Literal, cast
 import tiktoken
 
 from rush.catalog import ENGINE_SPECS, TOOL_SPECS
+from rush.engines.staging import (
+    PROVENANCE_FORMAT,
+    active_staging,
+    aggregate_content_identity,
+    stage_inventory,
+    staging_scope,
+)
 from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.memory.handoff import HandoffError, prepare_handoff, receive_handoff
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
@@ -130,6 +140,7 @@ _ENGINE_ROUTE_MISSING = "ENGINE_ROUTE_MISSING"
 _RUN_LOCK_RELATIVE = ".rush/runs/.scan.lock"
 _MANIFEST_RELATIVE = ".rush/runs/{run_id}/attempts/{attempt_id}/manifest.json"
 _ATTEMPT_HEADER_RELATIVE = ".rush/runs/{run_id}/attempts/{attempt_id}/attempt.json"
+_GENERATION_RELATIVE = ".rush/runs/{run_id}/.generation"
 _EVENTS_RELATIVE = ".rush/runs/{run_id}/attempts/{attempt_id}/events.json"
 _CANDIDATE_EVIDENCE_RELATIVE = (
     ".rush/runs/{run_id}/attempts/{attempt_id}/candidates/{digest}.json"
@@ -137,7 +148,6 @@ _CANDIDATE_EVIDENCE_RELATIVE = (
 _CANCEL_REQUEST_RELATIVE = ".rush/runs/{run_id}/cancel_requested.json"
 _PLAN_RELATIVE = ".rush/scan_plans/{plan_id}.json"
 
-_LOCK_STALE_SECONDS = 30.0
 _LOCK_POLL_SECONDS = 0.02
 
 
@@ -172,29 +182,33 @@ def _canonical_json(value: Any) -> bytes:
 
 @contextmanager
 def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
-    """Real mutual exclusion over one project's run directory.
+    """Scan-exclusion lock over one project's run directory (P69-01
+    subsection h): a real kernel-held `fcntl.flock`, not the prior
+    `O_CREAT|O_EXCL`-plus-age-based-staleness scheme, which unlinked a lock
+    file purely on elapsed time with no check of whether its holder was
+    still alive -- letting a second process steal a still-live scan's lock.
+    Held only for the duration of an actual scan (acquired here, released
+    on exit from this context, including a crash: the kernel releases the
+    lock the instant the holding process exits, no staleness window). The
+    5s acquisition-attempt timeout (`ScanBusyError`) is unchanged, and is
+    purely a waiting caller's own patience -- decoupled from any staleness
+    concept, since there is none anymore.
 
-    Mirrors `rush.workflows.projects._registry_lock`'s O_EXCL pattern so scan
-    runs reuse the same atomic-lock discipline as the project registry
-    (plan §6.1: "Mutations ... compare under existing lock; lock timeout 5
-    seconds returns BUSY").
+    POSIX only (`fcntl.flock`) -- the real Windows-equivalent named-mutex
+    primitive named in the plan is not implemented here.
     """
     lock_dir = root / ".rush" / "runs"
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / ".scan.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     start = time.monotonic()
-    fd: int | None = None
-    while fd is None:
+    while True:
         try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            try:
-                if time.time() - lock_path.stat().st_mtime > _LOCK_STALE_SECONDS:
-                    lock_path.unlink(missing_ok=True)
-                    continue
-            except OSError:
-                pass
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
             if time.monotonic() - start >= timeout:
+                os.close(fd)
                 raise ScanBusyError(
                     f"timed out after {timeout}s waiting for the scan run lock"
                 ) from None
@@ -202,9 +216,8 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     try:
         yield
     finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
-        with suppress(OSError):
-            lock_path.unlink()
 
 
 @dataclass(frozen=True)
@@ -288,12 +301,19 @@ class CandidateResult:
     candidate: ScanCandidate
     outcome: ExecutionOutcome
     result: ToolResult
+    #: P69-03e: the per-file content digests of the staged bytes this
+    #: candidate actually ran against. Persisted with the candidate's evidence
+    #: so a resume that *retains* this candidate carries its original digests
+    #: forward verbatim instead of manufacturing a fresh consumption event for
+    #: content nothing re-read.
+    source_digests: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.candidate.to_dict(),
             "outcome": self.outcome,
             "child": dict(self.result),
+            "source_digests": dict(self.source_digests),
         }
 
 
@@ -515,15 +535,23 @@ def load_scan_plan(root: Path, plan_id: str) -> ScanPlan | None:
     return ScanPlan.from_dict(payload)
 
 
-def load_run_manifest(root: Path, run_id: str) -> dict[str, Any] | None:
-    """Load the terminal manifest for `run_id`, or `None` if it never ran."""
-    attempts_dir = root / ".rush" / "runs" / run_id / "attempts"
-    if not attempts_dir.is_dir():
-        return None
-    attempts = sorted(p for p in attempts_dir.iterdir() if p.is_dir())
-    if not attempts:
-        return None
-    manifest_path = attempts[-1] / "manifest.json"
+def load_run_manifest(
+    root: Path, run_id: str, *, attempt_id: str | None = None
+) -> dict[str, Any] | None:
+    """Load the terminal manifest for `run_id`'s given `attempt_id`, or its
+    highest-generation (latest) attempt when `attempt_id` is omitted (plan
+    §6.4/P69-02m, mirroring `load_scan_events()`'s existing `attempt_id`
+    parameter). `None` if it never ran, or the requested attempt never
+    reached a terminal manifest."""
+    if attempt_id is not None:
+        manifest_path = (
+            root / ".rush" / "runs" / run_id / "attempts" / attempt_id / "manifest.json"
+        )
+    else:
+        selected = _highest_generation_attempt_dir(root, run_id)
+        if selected is None:
+            return None
+        manifest_path = selected / "manifest.json"
     if not manifest_path.is_file():
         return None
     try:
@@ -564,6 +592,8 @@ def _execute_candidate(
     config: Any,
     tools_by_name: dict[str, Any],
     cancel_check: Callable[[], bool] | None = None,
+    owner_instance_id: str | None = None,
+    run_id: str | None = None,
 ) -> tuple[ExecutionOutcome, ToolResult]:
     """Run exactly one applicable candidate exactly once. Never retries on
     exception (plan §3.3/§6.4: "no exception retry"); a raised exception
@@ -609,6 +639,12 @@ def _execute_candidate(
         "path": str(root),
         **targets.get(candidate.candidate_id, {}),
     }
+    # P69-01.2j: structural ownership travels with the request, so the
+    # invocation layer binds it onto `tool.__call__` by name and each
+    # engine's own `run_subprocess()` call is fenced and reapable.
+    if owner_instance_id is not None and run_id is not None:
+        request["owner_instance_id"] = owner_instance_id
+        request["run_id"] = run_id
     try:
         executor = InvocationExecutor()
         executor.register(candidate.candidate_id, tool.__call__)
@@ -642,10 +678,15 @@ def _build_manifest(
     run_state: RunState,
     scheduled: list[CandidateResult],
     aggregate: ToolResult,
+    source_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "run_id": run_id,
+        # P69-03d/j: the format-tagged consumption identity, written only once
+        # a scan has actually executed -- never the pre-execution signature the
+        # attempt header carries, and never comparable to one.
+        "source_identity": source_identity or {},
         "attempt_id": attempt_id,
         "plan_id": plan.plan_id,
         "project_id": plan.project_id,
@@ -673,9 +714,11 @@ def execute_scan(
     plan: ScanPlan,
     *,
     run_id: str | None = None,
+    attempt_id: str | None = None,
     permissions: ExecutionPermissions | None = None,
     config: Any = None,
     data_root: Path | None = None,
+    owner_instance_id: str | None = None,
 ) -> ScanRun:
     """Execute every `applicable` candidate exactly once, aggregate every
     scheduled child through the canonical `aggregate_results`, and persist
@@ -692,19 +735,30 @@ def execute_scan(
     run's identity before this call returns -- `cancel_scan_run` targets it
     by that same ID. `data_root` is accepted for signature symmetry with the
     rest of this module's `project`-taking entry points; `plan.root` is
-    already the resolved filesystem root."""
+    already the resolved filesystem root.
+
+    P69-01.2j: `owner_instance_id` is the caller's own executor identity (the
+    TUI's or the dashboard server's), threaded all the way down to each
+    engine's `run_subprocess()` call so a crash of this process leaves a
+    durable, reapable record of every subprocess it started.
+
+    P69-02d: `attempt_id` mirrors `run_id`'s own preallocation pattern -- a
+    dispatcher that must return this attempt's real id before its own
+    background thread runs (e.g. a 202 response) mints it here instead of
+    letting this call mint its own."""
     resolved_permissions = permissions or ExecutionPermissions()
     root = Path(plan.root)
     resolved_run_id = run_id or str(uuid.uuid4())
-    attempt_id = str(uuid.uuid4())
+    resolved_attempt_id = attempt_id or str(uuid.uuid4())
     return _execute_attempt(
         plan,
         root=root,
         run_id=resolved_run_id,
-        attempt_id=attempt_id,
+        attempt_id=resolved_attempt_id,
         permissions=resolved_permissions,
         config=config,
         already_completed={},
+        owner_instance_id=owner_instance_id,
     )
 
 
@@ -717,18 +771,16 @@ def _execute_attempt(
     permissions: ExecutionPermissions,
     config: Any,
     already_completed: dict[str, CandidateResult],
+    owner_instance_id: str | None = None,
 ) -> ScanRun:
-    """Shared attempt pipeline for both a fresh `execute_scan` and a
-    `resume_scan_run` retry: persist the attempt header first (so a crash
-    before the aggregate still leaves a recoverable `plan_id`/source
-    signature), run whatever candidates aren't already retained, then
-    finalize one immutable terminal manifest."""
+    """`execute_scan`'s own lock-acquiring entry point (P69-02l): acquires
+    `_run_lock` once and delegates the whole attempt pipeline to
+    `_execute_attempt_locked`. `resume_scan_run`/`rescan_project_run` call
+    `_execute_attempt_locked` directly instead -- `_run_lock` is a real file
+    lock, not reentrant, so calling this wrapper from inside a lock either of
+    them already holds would deadlock."""
     with _run_lock(root):
-        _write_attempt_header(root, run_id, attempt_id, plan)
-        _append_event(
-            root, run_id, attempt_id, event="attempt_started", candidate_id=None
-        )
-        scheduled, cancelled = _run_candidates(
+        return _execute_attempt_locked(
             plan,
             root=root,
             run_id=run_id,
@@ -736,7 +788,46 @@ def _execute_attempt(
             permissions=permissions,
             config=config,
             already_completed=already_completed,
+            owner_instance_id=owner_instance_id,
         )
+
+
+def _execute_attempt_locked(
+    plan: ScanPlan,
+    *,
+    root: Path,
+    run_id: str,
+    attempt_id: str,
+    permissions: ExecutionPermissions,
+    config: Any,
+    already_completed: dict[str, CandidateResult],
+    owner_instance_id: str | None = None,
+) -> ScanRun:
+    """Shared attempt pipeline for a fresh `execute_scan`, a `resume_scan_run`
+    retry, and a `rescan_project_run` (P69-02l/m): persist the attempt header
+    first (so a crash before the aggregate still leaves a recoverable
+    `plan_id`/source signature), run whatever candidates aren't already
+    retained, then finalize one immutable terminal manifest. The caller must
+    already hold `_run_lock(root)`."""
+    _write_attempt_header(root, run_id, attempt_id, plan.plan_id, plan.project_id)
+    _append_event(root, run_id, attempt_id, event="attempt_started", candidate_id=None)
+    # P69-03e/f: stage the bounded inventory as genuinely independent copies
+    # *before* any engine runs. `_run_lock` mutex-excludes concurrent scans but
+    # never locks the project's source files -- only a private copy nothing
+    # else can touch makes "these are the bytes that were scanned" true.
+    with tempfile.TemporaryDirectory(prefix="rush-stage-") as staging_dir:
+        staging = stage_inventory(root, Path(staging_dir), _scan_inventory(root))
+        with staging_scope(staging):
+            scheduled, cancelled = _run_candidates(
+                plan,
+                root=root,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                permissions=permissions,
+                config=config,
+                already_completed=already_completed,
+                owner_instance_id=owner_instance_id,
+            )
         return _finalize_attempt(
             root=root,
             run_id=run_id,
@@ -744,6 +835,7 @@ def _execute_attempt(
             plan=plan,
             scheduled=scheduled,
             cancelled=cancelled,
+            staging_findings=staging.findings,
         )
 
 
@@ -756,6 +848,7 @@ def _run_candidates(
     permissions: ExecutionPermissions,
     config: Any,
     already_completed: dict[str, CandidateResult],
+    owner_instance_id: str | None = None,
 ) -> tuple[list[CandidateResult], bool]:
     """Run every scheduled candidate not already in `already_completed`
     (retained evidence from a prior attempt), persisting each finished
@@ -798,6 +891,8 @@ def _run_candidates(
             config=config,
             tools_by_name=tools_by_name,
             cancel_check=cancel_check,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
         )
         for finding in result.get("findings") or []:
             cast(dict[str, Any], finding)["finding_id"] = _finding_id(
@@ -805,8 +900,26 @@ def _run_candidates(
                 result.get("engine"),
                 finding,
             )
+        staging = active_staging()
+        source_digests = (
+            dict(staging.take_candidate_digests()) if staging is not None else {}
+        )
+        # P69-03h: a repository-state-dependent engine (git-guard/diff-cover/
+        # undercover) never enters staging, so it contributes nothing above --
+        # fold its own real-evidence digest (subprocesses.py's `run_engine`)
+        # in here instead, so `_source_identity`'s aggregate still reflects
+        # what it actually read.
+        provenance = (result.get("metadata") or {}).get("repository_state_provenance")
+        if isinstance(provenance, dict) and provenance.get("digest"):
+            key = (
+                f"{candidate.candidate_id}:{provenance.get('kind', 'repository-state')}"
+            )
+            source_digests[key] = provenance["digest"]
         candidate_result = CandidateResult(
-            candidate=candidate, outcome=outcome, result=result
+            candidate=candidate,
+            outcome=outcome,
+            result=result,
+            source_digests=source_digests,
         )
         results.append(candidate_result)
         _persist_candidate_evidence(root, run_id, attempt_id, candidate_result)
@@ -832,8 +945,29 @@ def _finalize_attempt(
     plan: ScanPlan,
     scheduled: list[CandidateResult],
     cancelled: bool,
+    staging_findings: list[dict[str, Any]] | None = None,
 ) -> ScanRun:
     children = [item.result for item in scheduled]
+    if staging_findings:
+        # P69-03i: a symlink resolving outside the project root is reported,
+        # never silently followed into the staged copy.
+        children = [
+            *children,
+            cast(
+                "ToolResult",
+                {
+                    "tool": "scan",
+                    "engine": "staging",
+                    "engine_version": None,
+                    "status": "fail",
+                    "duration_ms": 0,
+                    "summary": (
+                        f"staging rejected {len(staging_findings)} escaping symlink(s)"
+                    ),
+                    "findings": list(staging_findings),
+                },
+            ),
+        ]
     aggregate = aggregate_results("scan", children)
 
     run_state: RunState
@@ -852,6 +986,12 @@ def _finalize_attempt(
     else:
         run_state = "completed"
 
+    # P69-03d/e: the consumption aggregate over every scheduled candidate's own
+    # per-file digests -- freshly read ones for candidates this attempt
+    # executed, carried-forward ones for candidates a resume retained.
+    digests: dict[str, str] = {}
+    for item in scheduled:
+        digests.update(item.source_digests)
     manifest = _build_manifest(
         run_id=run_id,
         attempt_id=attempt_id,
@@ -859,6 +999,7 @@ def _finalize_attempt(
         run_state=run_state,
         scheduled=scheduled,
         aggregate=aggregate,
+        source_identity=_source_identity(digests, root),
     )
     manifest_bytes = (
         json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8") + b"\n"
@@ -883,16 +1024,101 @@ def _finalize_attempt(
     )
 
 
+def _generation_path(root: Path, run_id: str) -> Path:
+    """Sibling of `attempts/`, never inside it -- existing lifecycle tests
+    assert `attempts/`'s own entry count exactly matches real attempt
+    directories (P69-02k)."""
+    return root / ".rush" / "runs" / run_id / ".generation"
+
+
+def _fsync_dir(path: Path) -> None:
+    """`atomic_write_bytes` fsyncs its temp file's content before
+    `os.replace` but not the containing directory afterward -- fsync it here
+    so the generation counter's rename itself survives a crash (P69-02k)."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _next_attempt_generation(root: Path, run_id: str) -> int:
+    """Persisted, monotonic per-run generation counter (P69-02k): read the
+    last-stamped value (or bootstrap from this run's existing attempt-
+    directory count, never `0`, on this run's first post-fix write) and
+    persist the incremented result *before* the caller stamps it into the
+    new attempt's header -- a crash between the two can only ever leave an
+    unused counter value, never two attempts sharing one. Must run inside
+    the caller's already-held `_run_lock`."""
+    path = _generation_path(root, run_id)
+    if path.is_file():
+        try:
+            current = int(path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            current = 0
+    else:
+        attempts_dir = root / ".rush" / "runs" / run_id / "attempts"
+        current = (
+            sum(1 for p in attempts_dir.iterdir() if p.is_dir())
+            if attempts_dir.is_dir()
+            else 0
+        )
+    generation = current + 1
+    written = atomic_write_bytes(
+        root,
+        _GENERATION_RELATIVE.format(run_id=run_id),
+        str(generation).encode("utf-8"),
+    )
+    _fsync_dir(written.parent)
+    return generation
+
+
+def _highest_generation_attempt_dir(root: Path, run_id: str) -> Path | None:
+    """Shared 'latest attempt' selector (P69-02k), used by
+    `_latest_attempt_dir()` and `load_run_manifest()`: any attempt carrying a
+    persisted `attempt_generation` outranks any that doesn't (a legacy,
+    pre-fix attempt), so a legacy attempt is never selected once even one
+    post-fix attempt exists for this run. Among attempts that all lack
+    `attempt_generation`, falls back to `started_at`, with `attempt_id` as a
+    final deterministic tie-break -- enumeration-order-independent, though it
+    does not recover true chronology between two equal-timestamp legacy
+    attempts."""
+    attempts_dir = root / ".rush" / "runs" / run_id / "attempts"
+    if not attempts_dir.is_dir():
+        return None
+    attempt_dirs = [p for p in attempts_dir.iterdir() if p.is_dir()]
+    if not attempt_dirs:
+        return None
+
+    def _sort_key(attempt_dir: Path) -> tuple[bool, Any, str]:
+        header = _load_attempt_header(attempt_dir) or {}
+        generation = header.get("attempt_generation")
+        if isinstance(generation, int):
+            return (True, generation, attempt_dir.name)
+        return (False, str(header.get("started_at", "")), attempt_dir.name)
+
+    return max(attempt_dirs, key=_sort_key)
+
+
 def _write_attempt_header(
-    root: Path, run_id: str, attempt_id: str, plan: ScanPlan
+    root: Path, run_id: str, attempt_id: str, plan_id: str, project_id: str
 ) -> None:
     header = {
         "run_id": run_id,
         "attempt_id": attempt_id,
-        "plan_id": plan.plan_id,
-        "project_id": plan.project_id,
+        "plan_id": plan_id,
+        "project_id": project_id,
         "started_at": datetime.now(UTC).isoformat(),
+        # P69-03d/j: the *pre-execution* guard only. `source_identity` (the
+        # consumption aggregate) cannot exist here -- no engine has run yet --
+        # and is written into the terminal manifest instead. The format tag
+        # keeps an old, untagged path/size/mtime value from ever being compared
+        # as though it were a content hash.
         "source_signature": _source_signature(root),
+        "source_signature_format": PROVENANCE_FORMAT,
+        # P69-02k: the real ordering key -- `started_at` above is kept only
+        # as informational metadata, no longer load-bearing for selection.
+        "attempt_generation": _next_attempt_generation(root, run_id),
     }
     body = json.dumps(header, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     atomic_write_bytes(
@@ -962,6 +1188,10 @@ def _load_completed_candidates(attempt_dir: Path) -> dict[str, CandidateResult]:
             candidate=candidate,
             outcome="executed",
             result=cast("ToolResult", dict(payload.get("child") or {})),
+            # P69-03e: carried forward verbatim -- this candidate is not
+            # re-executed, so nothing re-reads its content and no fresh
+            # consumption event is manufactured for it.
+            source_digests=dict(payload.get("source_digests") or {}),
         )
     return retained
 
@@ -1021,11 +1251,24 @@ def _append_event(
 
 
 def _latest_attempt_dir(root: Path, run_id: str) -> Path | None:
-    attempts_dir = root / ".rush" / "runs" / run_id / "attempts"
-    if not attempts_dir.is_dir():
-        return None
-    attempt_dirs = sorted(p for p in attempts_dir.iterdir() if p.is_dir())
-    return attempt_dirs[-1] if attempt_dirs else None
+    """Delegates to the shared, generation-based selector (P69-02k) -- kept
+    as its own name since `load_scan_events()`/`resume_scan_run()` already
+    call it by this name."""
+    return _highest_generation_attempt_dir(root, run_id)
+
+
+def latest_attempt_id(
+    project: str | Path, run_id: str, *, data_root: Path | None = None
+) -> str | None:
+    """Public helper (P69-02j): `run_id`'s current latest attempt id, for a
+    dispatcher to capture synchronously before handing work to a background
+    thread. `None` means an unknown `run_id` -- the caller should reject the
+    request synchronously rather than discovering this only after the
+    background thread's own error handling swallows it."""
+    record = resolve_project(project, data_root=data_root)
+    root = Path(record["root"])
+    latest = _highest_generation_attempt_dir(root, run_id)
+    return latest.name if latest is not None else None
 
 
 def load_scan_events(
@@ -1091,6 +1334,8 @@ def resume_scan_run(
     permissions: ExecutionPermissions | None = None,
     config: Any = None,
     data_root: Path | None = None,
+    attempt_id: str | None = None,
+    expected_attempt_id: str | None = None,
 ) -> ScanRun:
     """`rush_scan.resume(project,run_id)` (plan §6.1/§6.4, P65-08). Starts a
     new attempt under the *same* `run_id`, retaining every previously
@@ -1100,45 +1345,77 @@ def resume_scan_run(
     the project's source changed since the run's most recent attempt
     started -- the same `_source_signature` staleness check
     `dispatch_handoff` already applies to a handoff's own project source.
-    Always mints a fresh `attempt_id` on a valid retry; clears any pending
-    cancel request so the new attempt starts clean."""
+    Clears any pending cancel request so the new attempt starts clean.
+
+    P69-02l: validates and mutates under one held `_run_lock`, closing the
+    race between a dispatcher capturing this run's latest attempt id
+    (`latest_attempt_id()`, P69-02j) and this call actually executing.
+    `expected_attempt_id`, when supplied, must still match the current
+    latest attempt at the moment the lock is acquired; a mismatch (a
+    concurrent resume already landed a newer attempt) raises a structured
+    conflict *before* clearing any pending cancel request or minting a new
+    attempt id. `attempt_id` mirrors `execute_scan`'s own preallocation
+    pattern (P69-02d) -- `attempt_id or str(uuid.uuid4())` -- for a
+    dispatcher that must return the real id before its own background
+    thread runs."""
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
-    latest_attempt = _latest_attempt_dir(root, run_id)
-    if latest_attempt is None:
-        raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
-    header = _load_attempt_header(latest_attempt)
-    if header is None:
-        raise ScanInvalidRequestError(
-            f"run {run_id} has no recoverable attempt state to resume"
-        )
-
-    plan_id = header.get("plan_id")
-    plan = load_scan_plan(root, str(plan_id)) if plan_id else None
-    if plan is None:
-        raise ScanPlanStaleError(f"run {run_id}'s plan {plan_id!r} is no longer staged")
-
-    current_signature = _source_signature(root)
-    if current_signature != header.get("source_signature"):
-        raise ScanResumeStaleError(
-            "project source changed since this run's last attempt started; "
-            "resume refuses to apply"
-        )
-
-    already_completed = _load_completed_candidates(latest_attempt)
-    _clear_cancel_request(root, run_id)
-
     resolved_permissions = permissions or ExecutionPermissions()
-    new_attempt_id = str(uuid.uuid4())
-    return _execute_attempt(
-        plan,
-        root=root,
-        run_id=run_id,
-        attempt_id=new_attempt_id,
-        permissions=resolved_permissions,
-        config=config,
-        already_completed=already_completed,
-    )
+
+    with _run_lock(root):
+        latest_attempt = _highest_generation_attempt_dir(root, run_id)
+        if latest_attempt is None:
+            raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
+        current_attempt_id = latest_attempt.name
+        if (
+            expected_attempt_id is not None
+            and current_attempt_id != expected_attempt_id
+        ):
+            raise ScanBusyError(
+                f"run {run_id}'s latest attempt changed since dispatch "
+                f"(expected {expected_attempt_id}, now {current_attempt_id})"
+            )
+        header = _load_attempt_header(latest_attempt)
+        if header is None:
+            raise ScanInvalidRequestError(
+                f"run {run_id} has no recoverable attempt state to resume"
+            )
+
+        plan_id = header.get("plan_id")
+        plan = load_scan_plan(root, str(plan_id)) if plan_id else None
+        if plan is None:
+            raise ScanPlanStaleError(
+                f"run {run_id}'s plan {plan_id!r} is no longer staged"
+            )
+
+        # P69-03d/j: the cheap pre-execution guard, never the consumption
+        # aggregate -- and only ever compared against a value the same
+        # algorithm produced.
+        if not _signature_comparable(header.get("source_signature_format")):
+            raise ScanResumeStaleError(
+                "this run's attempt header carries an old-format source "
+                "signature that cannot be compared against the current "
+                "algorithm; start a fresh scan"
+            )
+        current_signature = _source_signature(root)
+        if current_signature != header.get("source_signature"):
+            raise ScanResumeStaleError(
+                "project source changed since this run's last attempt started; "
+                "resume refuses to apply"
+            )
+
+        already_completed = _load_completed_candidates(latest_attempt)
+        _clear_cancel_request(root, run_id)
+        new_attempt_id = attempt_id or str(uuid.uuid4())
+        return _execute_attempt_locked(
+            plan,
+            root=root,
+            run_id=run_id,
+            attempt_id=new_attempt_id,
+            permissions=resolved_permissions,
+            config=config,
+            already_completed=already_completed,
+        )
 
 
 HandoffState = Literal[
@@ -1173,10 +1450,22 @@ class ScanHandoffAuthError(ScanError):
 
 
 def _source_signature(root: Path) -> str:
-    """Deterministic fingerprint of every tracked file's path/size/mtime under
-    `root` (excluding Rush's own `.rush`/`.git` state) -- detects a project
-    mutated between a scan run and a later handoff dispatch or rescan (plan
-    §6.1/§6.4: "stale source identity refuses apply", `SOURCE_CHANGED`)."""
+    """The cheap, *pre-execution* guard -- deliberately not `source_identity`.
+
+    Deterministic fingerprint of every tracked file's path/size/mtime/ctime
+    under `root` (excluding Rush's own `.rush`/`.git` state). Its only job is
+    "is it even worth starting" for the three call sites that must decide
+    before any engine has run (`_write_attempt_header`, `resume_scan_run`,
+    `dispatch_handoff`) -- a false negative there costs an unnecessary rescan,
+    never a false provenance claim. Certifying *what was actually scanned* is
+    `source_identity`'s job (P69-03d/e), computed only once a scan executes.
+
+    P69-03d: `st_ctime_ns` is read from the same `path.stat()` call this
+    function already made, closing the equal-length-content-replacement-at-a-
+    preserved-mtime gap for free -- `ctime` changes on any content or metadata
+    write and cannot be reset through `utime()` (mtime/atime only) without
+    root.
+    """
     entries: list[str] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
@@ -1188,8 +1477,85 @@ def _source_signature(root: Path) -> str:
             stat = path.stat()
         except OSError:
             continue
-        entries.append(f"{rel.as_posix()}:{stat.st_size}:{stat.st_mtime_ns}")
+        entries.append(
+            f"{rel.as_posix()}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+        )
     return sha256("\n".join(entries).encode("utf-8")).hexdigest()
+
+
+def _scan_inventory(root: Path) -> list[str]:
+    """The bounded file inventory staged for one attempt (P69-03b/e).
+
+    Reuses the repo's single ignore convention (`rush.review.collection`'s
+    `SKIP_DIRS` plus dotted directories) rather than inventing a second one --
+    the excluded dependency/build directories are symlinked back to the live
+    tree by `stage_inventory` so config/plugin/module resolution is unchanged.
+    """
+    from rush.review.collection import SKIP_DIRS
+
+    if not root.is_dir():
+        return []
+    inventory: list[str] = []
+    for directory, subdirs, filenames in root.walk():
+        subdirs[:] = [
+            name
+            for name in subdirs
+            if name not in SKIP_DIRS and not name.startswith(".")
+        ]
+        for name in filenames:
+            inventory.append((directory / name).relative_to(root).as_posix())
+    return sorted(inventory)
+
+
+def _signature_comparable(stored_format: Any) -> bool:
+    """P69-03j: a pre-execution signature is comparable only against one
+    computed by the same algorithm. An untagged (format-1 path/size/mtime)
+    record predates the `ctime` change and is unsupported/stale -- never
+    silently compared as though the two numbers meant the same thing."""
+    return stored_format == PROVENANCE_FORMAT
+
+
+def _git_link(root: Path) -> dict[str, Any]:
+    """P69-03d: the Git half of `source_identity` -- HEAD commit plus an
+    explicit dirty/clean flag for the working tree at scan start. Absent
+    (`{"repository": False}`) for a non-Git project, which still gets a real
+    content-based identity from the per-file digests."""
+
+    def _git(*args: str) -> str | None:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return proc.stdout if proc.returncode == 0 else None
+
+    head = _git("rev-parse", "HEAD")
+    if head is None:
+        return {"repository": False}
+    status = _git("status", "--porcelain")
+    return {
+        "repository": True,
+        "head": head.strip(),
+        "dirty": bool((status or "").strip()),
+    }
+
+
+def _source_identity(digests: dict[str, str], root: Path) -> dict[str, Any]:
+    """P69-03d/e/j: the consumption identity of one completed attempt -- a
+    format-tagged record carrying the Git link and a deterministic aggregate
+    over the per-file digests of the staged content engines actually ran
+    against. Never the pre-execution signature, and never comparable to one."""
+    return {
+        "provenance_format": PROVENANCE_FORMAT,
+        "git": _git_link(root),
+        "content": aggregate_content_identity(digests),
+        "file_count": len(digests),
+    }
 
 
 def _measure_packet(items: list[dict[str, Any]]) -> tuple[int, int]:
@@ -1282,6 +1648,7 @@ class ScanHandoff:
     artifact_id: str
     artifact_version: int
     source_signature: str
+    source_signature_format: int
     memory_session_id: str
     session_capability: str
     delivery_nonce: str
@@ -1304,6 +1671,7 @@ class ScanHandoff:
             "artifact_id": self.artifact_id,
             "artifact_version": self.artifact_version,
             "source_signature": self.source_signature,
+            "source_signature_format": self.source_signature_format,
             "memory_session_id": self.memory_session_id,
             "session_capability": self.session_capability,
             "delivery_nonce": self.delivery_nonce,
@@ -1330,6 +1698,10 @@ class ScanHandoff:
             artifact_id=str(payload["artifact_id"]),
             artifact_version=int(payload["artifact_version"]),
             source_signature=str(payload["source_signature"]),
+            # P69-03j: an untagged persisted handoff predates the algorithm
+            # change -- it stays format 1 and `dispatch_handoff` refuses to
+            # compare it rather than reinterpreting it.
+            source_signature_format=int(payload.get("source_signature_format", 1)),
             memory_session_id=str(payload["memory_session_id"]),
             session_capability=str(payload["session_capability"]),
             delivery_nonce=str(payload["delivery_nonce"]),
@@ -1378,6 +1750,7 @@ def build_handoff(
     acceptance_checks: tuple[str, ...] = (),
     granted_actions: tuple[str, ...] = (),
     data_root: Path | None = None,
+    persist: bool = True,
 ) -> ScanHandoff:
     """`rush_scan_handoff.prepare` (plan §6.1, F35). Empty `finding_ids`
     selects every finding on `run_id`'s aggregate. Preserves the exact
@@ -1388,7 +1761,14 @@ def build_handoff(
     (`rush.memory.handoff.prepare_handoff`) over that one artifact. Writes an
     immutable packet and `delivery_nonce`, state `prepared` -- never
     `delivered` until `dispatch_handoff` gets an actual transport
-    acceptance."""
+    acceptance.
+
+    P69-02.2n: `persist=False` (dashboard `handoff_preview`) builds the
+    identical packet from identical selected findings but writes nothing --
+    no `MemoryArtifact`, no transport session, no handoff descriptor -- so a
+    genuinely read-only preview never durably mutates anything. The caller
+    hashes the returned packet/identity for tamper/staleness detection and
+    only a later `persist=True` call (`handoff_send`) actually writes."""
     if not agent_id:
         raise ScanInvalidRequestError("build_handoff requires agent_id")
     record = resolve_project(project, data_root=data_root)
@@ -1415,6 +1795,31 @@ def build_handoff(
     packet = _build_packet(selected, max_tokens=max_tokens, max_bytes=max_bytes)
 
     handoff_id = str(uuid.uuid4())
+
+    if not persist:
+        now = datetime.now(UTC).isoformat()
+        return ScanHandoff(
+            handoff_id=handoff_id,
+            run_id=run_id,
+            project_id=record["project_id"],
+            root=str(root),
+            agent_id=agent_id,
+            state="prepared",
+            finding_ids=tuple(str(f.get("finding_id")) for f in selected),
+            packet=packet,
+            artifact_id="",
+            artifact_version=0,
+            source_signature=_source_signature(root),
+            source_signature_format=PROVENANCE_FORMAT,
+            memory_session_id="",
+            session_capability="",
+            delivery_nonce="",
+            granted_actions=tuple(granted_actions),
+            acceptance_checks=tuple(acceptance_checks),
+            created_at=now,
+            updated_at=now,
+        )
+
     store = TypedArtifactStore(root)
     artifact = store.write(
         MemoryArtifact(
@@ -1458,6 +1863,7 @@ def build_handoff(
         artifact_id=artifact.id,
         artifact_version=artifact.artifact_version,
         source_signature=_source_signature(root),
+        source_signature_format=PROVENANCE_FORMAT,
         memory_session_id=session.session_id,
         session_capability=session_capability,
         delivery_nonce=secrets.token_urlsafe(32),
@@ -1490,6 +1896,13 @@ def dispatch_handoff(
     if handoff.state != "prepared":
         raise ScanHandoffInvalidStateError(
             f"dispatch requires state 'prepared', got {handoff.state!r}"
+        )
+    # P69-03j: never reinterpret an old-format (untagged path/size/mtime)
+    # signature as though it were comparable to the current algorithm's value.
+    if not _signature_comparable(handoff.source_signature_format):
+        raise ScanHandoffSourceChangedError(
+            "this handoff carries an old-format source signature that cannot be "
+            "compared against the current algorithm; prepare the handoff again"
         )
     if _source_signature(root) != handoff.source_signature:
         raise ScanHandoffSourceChangedError(
@@ -1608,6 +2021,8 @@ def compare_runs(
     current_run_id: str,
     *,
     data_root: Path | None = None,
+    baseline_attempt_id: str | None = None,
+    current_attempt_id: str | None = None,
 ) -> dict[str, Any]:
     """Rescan comparison (plan §6.1/§6.4, F35): marks every baseline finding
     `resolved`, `persisting`, or `unverified`, and every current-only finding
@@ -1616,11 +2031,17 @@ def compare_runs(
     coverage in the current run and no longer reports it; a missing,
     permission-blocked, or failed engine can never make a finding `resolved`
     -- it stays `unverified` (plan: "a missing engine cannot make a finding
-    resolved")."""
+    resolved").
+
+    P69-02m: `baseline_attempt_id`/`current_attempt_id`, when supplied, pin
+    the comparison to those exact attempts instead of re-selecting "latest"
+    on either side -- a rescan's own `_run_lock` has already released by the
+    time this runs, and a different resume/rescan can otherwise land a newer
+    attempt on either `run_id` in that gap."""
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
-    baseline = load_run_manifest(root, baseline_run_id)
-    current = load_run_manifest(root, current_run_id)
+    baseline = load_run_manifest(root, baseline_run_id, attempt_id=baseline_attempt_id)
+    current = load_run_manifest(root, current_run_id, attempt_id=current_attempt_id)
     if baseline is None:
         raise ScanInvalidRequestError(f"unknown run_id: {baseline_run_id}")
     if current is None:
@@ -1681,26 +2102,84 @@ def rescan_project_run(
     permissions: ExecutionPermissions | None = None,
     config: Any = None,
     data_root: Path | None = None,
+    new_run_id: str | None = None,
+    attempt_id: str | None = None,
+    expected_attempt_id: str | None = None,
 ) -> dict[str, Any]:
     """`rush_scan.rescan(project,run_id)` (plan §6.1): re-executes `run_id`'s
     own staged plan against the project's *current* source and compares the
     fresh run against `run_id` via `compare_runs`. New source is expected
     here (unlike `dispatch_handoff`/stale resume, which forbid it) -- a
-    rescan's entire purpose is re-evaluating changed source."""
+    rescan's entire purpose is re-evaluating changed source.
+
+    P69-02m: validates the baseline and mutates under one held `_run_lock`,
+    calling `_execute_attempt_locked` directly rather than `execute_scan` --
+    `execute_scan` acquires `_run_lock` itself, and calling it from inside a
+    lock this function already holds would be a nested, non-reentrant
+    acquisition that blocks for the full timeout and raises `ScanBusyError`.
+    `new_run_id`/`attempt_id` mirror `execute_scan`'s own preallocation
+    pattern (P69-02d) for a dispatcher that must return these ids before its
+    own background thread runs. `expected_attempt_id`, when supplied, is the
+    baseline's latest attempt id a dispatcher captured synchronously before
+    dispatch (`load_run_manifest(...)["attempt_id"]`, per P69-02j); a
+    mismatch at execution time (a concurrent resume advanced the baseline in
+    the gap) raises a structured conflict instead of silently comparing
+    against a baseline the caller never actually reviewed."""
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
-    baseline = load_run_manifest(root, run_id)
-    if baseline is None:
-        raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
-    plan_id = baseline.get("plan_id")
-    plan = load_scan_plan(root, str(plan_id)) if plan_id else None
-    if plan is None:
-        raise ScanPlanStaleError(f"run {run_id}'s plan {plan_id!r} is no longer staged")
+    resolved_permissions = permissions or ExecutionPermissions()
+    resolved_new_run_id = new_run_id or str(uuid.uuid4())
 
-    run = execute_scan(
-        plan, permissions=permissions, config=config, data_root=data_root
+    with _run_lock(root):
+        run_dir = root / ".rush" / "runs" / run_id
+        if not run_dir.is_dir():
+            raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
+        baseline = load_run_manifest(root, run_id)
+        if baseline is None:
+            # A concurrent resume can publish a newer attempt's header
+            # without yet finishing -- load_run_manifest() then finds no
+            # terminal manifest for this run's current latest attempt. A
+            # real, distinct condition from an unknown run_id (checked
+            # above), never a TypeError from indexing into None.
+            raise ScanBusyError(
+                f"run {run_id} has no terminal attempt available for rescan "
+                "right now (a concurrent operation may be in progress)"
+            )
+        current_baseline_attempt_id = baseline.get("attempt_id")
+        if (
+            expected_attempt_id is not None
+            and current_baseline_attempt_id != expected_attempt_id
+        ):
+            raise ScanBusyError(
+                f"run {run_id}'s baseline attempt changed since dispatch "
+                f"(expected {expected_attempt_id}, now "
+                f"{current_baseline_attempt_id})"
+            )
+        plan_id = baseline.get("plan_id")
+        plan = load_scan_plan(root, str(plan_id)) if plan_id else None
+        if plan is None:
+            raise ScanPlanStaleError(
+                f"run {run_id}'s plan {plan_id!r} is no longer staged"
+            )
+        resolved_attempt_id = attempt_id or str(uuid.uuid4())
+        run = _execute_attempt_locked(
+            plan,
+            root=root,
+            run_id=resolved_new_run_id,
+            attempt_id=resolved_attempt_id,
+            permissions=resolved_permissions,
+            config=config,
+            already_completed={},
+        )
+
+    comparison = compare_runs(
+        project,
+        run_id,
+        run.run_id,
+        data_root=data_root,
+        baseline_attempt_id=expected_attempt_id or current_baseline_attempt_id,
+        current_attempt_id=run.attempt_id,
     )
-    comparison = compare_runs(project, run_id, run.run_id, data_root=data_root)
     return {"run": run.to_dict(), "comparison": comparison}
 
 
@@ -1726,6 +2205,7 @@ __all__ = [
     "complete_handoff",
     "dispatch_handoff",
     "execute_scan",
+    "latest_attempt_id",
     "load_run_manifest",
     "load_scan_events",
     "load_scan_plan",

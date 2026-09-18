@@ -1055,17 +1055,54 @@ def _dashboard_descriptor_path(server_id: str) -> Path:
     return default_data_root() / "dashboard" / f"{server_id}.json"
 
 
+def _check_windows_data_dir_acl(directory: Path) -> bool:
+    """Best-effort check (via `icacls`) that `directory` grants no access
+    to a broad principal (Everyone/Authenticated Users/BUILTIN\\Users).
+    Fails closed: an unparseable or failing check counts as not private."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["icacls", str(directory)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, ValueError):
+        return False
+    if result.returncode != 0:
+        return False
+    broad_principals = ("Everyone", "BUILTIN\\Users", "Authenticated Users")
+    return not any(
+        principal in line
+        for line in result.stdout.splitlines()
+        for principal in broad_principals
+    )
+
+
 def _write_dashboard_descriptor(ctx: Any) -> Path:
     """Private per-instance descriptor for `--reconnect` discovery (plan
     3.7): schema_version, PID, start nonce, bound port, control capability.
-    Never a project artifact or browser response. POSIX-only 0700/0600
-    modes; on non-POSIX platforms `os.chmod` is a no-op and this descriptor
-    is skipped entirely rather than persisting an unverified-ACL secret."""
+    Never a project artifact or browser response. POSIX 0700/0600 modes;
+    on Windows the data directory's ACL is checked before the control
+    capability is persisted -- launch fails with a privacy error instead
+    of silently skipping descriptor creation."""
+    from rush.runtime.filesystem import atomic_write_bytes
+
     path = _dashboard_descriptor_path(ctx.server_id)
-    if os.name != "posix":
-        return path
     path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
+    if os.name == "posix":
+        os.chmod(path.parent, 0o700)
+    elif os.name == "nt":
+        if not _check_windows_data_dir_acl(path.parent):
+            raise click.ClickException(
+                "DASHBOARD_DESCRIPTOR_PRIVACY: cannot confirm the dashboard "
+                "data directory is private to this user on this filesystem; "
+                "refusing to persist the reconnect control capability."
+            )
+    else:
+        return path
     payload = {
         "schema_version": 1,
         "pid": ctx.pid,
@@ -1074,9 +1111,12 @@ def _write_dashboard_descriptor(ctx: Any) -> Path:
         "bound_port": ctx.bound_port,
         "control_capability": ctx.auth.control_capability,
     }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    os.chmod(path, 0o600)
-    return path
+    written = atomic_write_bytes(
+        path.parent, Path(path.name), json.dumps(payload).encode("utf-8")
+    )
+    if os.name == "posix":
+        os.chmod(written, 0o600)
+    return written
 
 
 def _remove_dashboard_descriptor(path: Path) -> None:
@@ -1084,6 +1124,32 @@ def _remove_dashboard_descriptor(path: Path) -> None:
         path.unlink()
     except OSError:
         pass
+
+
+def _check_descriptor_liveness(descriptor: dict[str, Any]) -> bool | None:
+    """Probe whether a descriptor's own recorded server is still the
+    process actually listening at that address. Returns True (live,
+    identity matches), False (reachable but a different process/pid now
+    owns that address -- proven stale ownership), or None (unreachable or
+    unparseable -- unknown, never treated as proof of staleness)."""
+    import urllib.error
+    import urllib.request
+
+    base_url = f"http://{descriptor.get('bound_host')}:{descriptor.get('bound_port')}"
+    request = urllib.request.Request(
+        f"{base_url}/api/control/health",
+        headers={"X-Rush-Control": descriptor.get("control_capability", "")},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            if response.status != 200:
+                return None
+            body = json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return body.get("pid") == descriptor.get("pid") and body.get(
+        "start_nonce"
+    ) == descriptor.get("start_nonce")
 
 
 def _newest_dashboard_descriptor(server_id: str | None) -> Path | None:
@@ -1096,7 +1162,19 @@ def _newest_dashboard_descriptor(server_id: str | None) -> Path | None:
     candidates = sorted(
         directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
     )
-    return candidates[0] if candidates else None
+    for candidate in candidates:
+        try:
+            descriptor = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        liveness = _check_descriptor_liveness(descriptor)
+        if liveness is True:
+            return candidate
+        if liveness is False:
+            # Reachable, but a different process now owns this address --
+            # proven stale ownership, safe to remove.
+            _remove_dashboard_descriptor(candidate)
+    return None
 
 
 def _reconnect_existing_dashboard(
@@ -1114,7 +1192,9 @@ def _reconnect_existing_dashboard(
     try:
         new_token = reconnect_dashboard(base_url, descriptor["control_capability"])
     except Exception as exc:
-        _remove_dashboard_descriptor(descriptor_path)
+        # Never delete on a bare exception here -- only a health check that
+        # actually connects and proves a mismatched owner (see
+        # `_check_descriptor_liveness`) establishes stale ownership.
         raise click.ClickException(
             f"dashboard server is no longer reachable: {exc}"
         ) from exc
@@ -1184,7 +1264,12 @@ def dashboard_cmd(
     import threading
     import webbrowser
 
-    from .dashboard.server import bootstrap_launch_url, create_dashboard_server
+    from .dashboard.server import (
+        bootstrap_launch_url,
+        capture_initial_scan_provenance,
+        create_dashboard_server,
+        publish_check_suite_scan,
+    )
     from .workflows.projects import register_project
     from .workflows.suites import CHECK_SUITE, run_workflow_suite
 
@@ -1235,7 +1320,29 @@ def dashboard_cmd(
             pass
 
     def _run_initial_scan() -> None:
-        run_workflow_suite(suite=CHECK_SUITE, path=resolved_path, permissions=perms)
+        # P69-03k: capture the pre-execution provenance header before a
+        # single tool runs -- the same guarantee execute_scan/resume_scan_run/
+        # rescan_project_run already give via _write_attempt_header.
+        run_id, attempt_id = capture_initial_scan_provenance(
+            resolved_path, record.project_id
+        )
+        # P69-03m: this launch's ordering number is allocated here, at
+        # acceptance, before a single tool runs -- this bare thread is outside
+        # ScanRunTracker and can finish after a faster user-requested scan, so
+        # a publish-time number would let it overwrite the newer result.
+        scan_generation = ctx.mutations.allocate_scan_generation(record.project_id)
+        aggregate = run_workflow_suite(
+            suite=CHECK_SUITE, path=resolved_path, permissions=perms
+        )
+        publish_check_suite_scan(
+            ctx,
+            record.project_id,
+            resolved_path,
+            aggregate,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            scan_generation=scan_generation,
+        )
 
     scan_thread = threading.Thread(target=_run_initial_scan, daemon=True)
     scan_thread.start()

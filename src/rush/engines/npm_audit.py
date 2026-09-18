@@ -28,7 +28,7 @@ from pathlib import Path
 
 from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class NpmAuditEngine(Engine):
@@ -41,6 +41,9 @@ class NpmAuditEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
 
@@ -55,7 +58,12 @@ class NpmAuditEngine(Engine):
             "--offline",
             *args,
         ]
-        proc = run_subprocess(argv, cwd=run_dir, timeout=180)
+        proc = run_subprocess(
+            argv,
+            cwd=run_dir,
+            timeout=180,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         # npm sometimes writes non-JSON noise to stdout around the JSON
         # payload. Try to parse the first { ... } block.

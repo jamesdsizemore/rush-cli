@@ -274,6 +274,23 @@ CREATE TABLE IF NOT EXISTS memory_embeddings (
 );
 """
 
+# P69-01.2f: per-operation-kind recovery receipts. Written inside the exact same
+# transaction as the effect itself (write()/edit()/archive()/delete_batch()/promote()/
+# create_handoff_session() each pass their own open connection through), keyed by the
+# dashboard MutationLedger's preallocated operation_id -- a receipt existing means that
+# specific operation committed, regardless of what any other request did to the artifact
+# afterward; absent means never committed, resume as never-attempted.
+_MUTATION_RECEIPTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS mutation_receipts (
+    operation_id TEXT PRIMARY KEY,
+    artifact_id TEXT,
+    kind TEXT NOT NULL,
+    revision INTEGER,
+    payload TEXT,
+    created_at REAL NOT NULL
+);
+"""
+
 _SCHEMA_SQL = (
     """
 PRAGMA journal_mode=WAL;
@@ -322,6 +339,7 @@ END;
     + _BEHAVIOR_SUCCESS_TABLE_SQL
     + _HANDOFF_TABLES_SQL
     + _EMBEDDING_TABLE_SQL
+    + _MUTATION_RECEIPTS_TABLE_SQL
 )
 
 _INSERT_SQL = """
@@ -559,15 +577,97 @@ class TypedArtifactStore:
             ).fetchone()
         return bytes(row["key"])
 
-    def current_generation(self) -> int:
+    def current_generation(self, conn: sqlite3.Connection | None = None) -> int:
         """MC02 §9.0 "store generation": the latest `memory_changes` sequence number. A
         `recall_page()` cursor binds this; any write between pages changes it, forcing
-        `E_RESTART` instead of silently paging over a mutated candidate set."""
-        with self._connect() as conn:
+        `E_RESTART` instead of silently paging over a mutated candidate set.
+
+        P69-01.2n: an already-open `conn` runs this query inside the caller's own
+        transaction instead of opening a second connection -- required by
+        `snapshot_memories()`'s atomic (memories, generation) read."""
+        if conn is not None:
             row = conn.execute(
                 "SELECT COALESCE(MAX(sequence), 0) FROM memory_changes"
             ).fetchone()
+            return int(row[0])
+        with self._connect() as own_conn:
+            row = own_conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM memory_changes"
+            ).fetchone()
         return int(row[0])
+
+    def snapshot_memories(
+        self, owner_filter: str | None = None
+    ) -> tuple[list[dict[str, Any]], int]:
+        """P69-01.2n shared primitive: reads the memory inventory and calls
+        `current_generation()` inside the same read transaction/connection,
+        returning `(memories, generation)` as one atomic pair -- never a
+        memory list from before a generation bump paired with the bumped
+        generation, or vice versa."""
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            rows = conn.execute(
+                "SELECT id, subject, trust_tier, source, artifact_version, archived_at "
+                "FROM memory_artifacts ORDER BY id ASC"
+            ).fetchall()
+            generation = self.current_generation(conn)
+            conn.commit()
+        memories = [
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "trust_tier": row["trust_tier"],
+                "source": row["source"],
+                "artifact_version": row["artifact_version"],
+                "archived": row["archived_at"] is not None,
+            }
+            for row in rows
+            if owner_filter is None or row["source"] == owner_filter
+        ]
+        return memories, generation
+
+    def _write_receipt(
+        self,
+        conn: sqlite3.Connection,
+        operation_id: str,
+        artifact_id: str | None,
+        kind: str,
+        revision: int | None,
+        payload: dict[str, Any],
+    ) -> None:
+        """P69-01.2f: caller owns the transaction -- this only inserts."""
+        conn.execute(
+            "INSERT OR REPLACE INTO mutation_receipts "
+            "(operation_id, artifact_id, kind, revision, payload, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                operation_id,
+                artifact_id,
+                kind,
+                revision,
+                json.dumps(payload),
+                time.time(),
+            ),
+        )
+
+    def get_receipt(self, operation_id: str) -> dict[str, Any] | None:
+        """P69-01.2f recovery read: `None` means this operation id never
+        committed its effect."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM mutation_receipts WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "operation_id": row["operation_id"],
+            "artifact_id": row["artifact_id"],
+            "kind": row["kind"],
+            "revision": row["revision"],
+            "payload": json.loads(row["payload"]),
+            "created_at": row["created_at"],
+        }
 
     def search_candidates(
         self,
@@ -693,6 +793,7 @@ class TypedArtifactStore:
         expected_revisions: dict[str, int],
         scope: str,
         apply: bool = False,
+        receipt_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Batch memory deletion (P65-07.3, plan §6.4 transaction/outbox algorithm).
 
@@ -772,6 +873,15 @@ class TypedArtifactStore:
                     "DELETE FROM memory_embeddings WHERE artifact_id = ?",
                     (artifact_id,),
                 )
+            if receipt_operation_id:
+                self._write_receipt(
+                    conn,
+                    receipt_operation_id,
+                    None,
+                    "delete",
+                    None,
+                    {"affected": affected},
+                )
             conn.commit()
             return {"applied": True, "affected": affected}
 
@@ -783,6 +893,7 @@ class TypedArtifactStore:
         expected_version: int,
         scope: str,
         apply: bool = False,
+        receipt_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Single-artifact content edit under compare-and-swap (P65-07.3, plan §6.4).
 
@@ -844,6 +955,15 @@ class TypedArtifactStore:
                     artifact_id,
                 ),
             )
+            if receipt_operation_id:
+                self._write_receipt(
+                    conn,
+                    receipt_operation_id,
+                    artifact_id,
+                    "edit",
+                    new_version,
+                    {"trust_tier": new_trust_tier},
+                )
             conn.commit()
             return {
                 "applied": True,
@@ -860,6 +980,7 @@ class TypedArtifactStore:
         scope: str,
         apply: bool = False,
         archived: bool = True,
+        receipt_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Sets/clears an archived marker under compare-and-swap (P65-07.3, plan §6.4).
 
@@ -907,6 +1028,15 @@ class TypedArtifactStore:
                 "WHERE id = ?",
                 (time.time() if archived else None, new_version, artifact_id),
             )
+            if receipt_operation_id:
+                self._write_receipt(
+                    conn,
+                    receipt_operation_id,
+                    artifact_id,
+                    "archive",
+                    new_version,
+                    {"archived": archived},
+                )
             conn.commit()
             return {
                 "applied": True,
@@ -1138,21 +1268,53 @@ class TypedArtifactStore:
         )
 
     def _find_stated_conflict(
-        self, subject: str, symbol_ref: str
+        self, conn: sqlite3.Connection, subject: str, symbol_ref: str
     ) -> MemoryArtifact | None:
-        with self._connect() as conn:
-            cur = conn.execute(
-                "SELECT * FROM memory_artifacts WHERE subject = ? AND symbol_ref = ? "
-                "AND trust_tier = 'STATED' LIMIT 1",
-                (subject, symbol_ref),
-            )
-            row = cur.fetchone()
+        cur = conn.execute(
+            "SELECT * FROM memory_artifacts WHERE subject = ? AND symbol_ref = ? "
+            "AND trust_tier = 'STATED' LIMIT 1",
+            (subject, symbol_ref),
+        )
+        row = cur.fetchone()
         return _row_to_artifact(row) if row else None
 
-    def _prepare_write(self, artifact: MemoryArtifact) -> MemoryArtifact:
+    def _delete_tx(
+        self,
+        conn: sqlite3.Connection,
+        artifact_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Shared delete body for `delete()`/`_prepare_write()`'s conflict-eviction path.
+        Caller owns the transaction (BEGIN/commit) -- this never opens its own connection,
+        so a conflict-delete and the insert that follows it (P69-01.2g) share one atomic
+        transaction instead of two separately-committed ones."""
+        row = conn.execute(
+            "SELECT content, source, trust_tier FROM memory_artifacts WHERE id = ?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return
+        _write_version(
+            conn,
+            artifact_id,
+            content=json.loads(row["content"]),
+            source=row["source"],
+            trust_tier=row["trust_tier"],
+            expected_version=expected_version,
+            tombstone=True,
+        )
+        conn.execute("DELETE FROM memory_artifacts WHERE id = ?", (artifact_id,))
+
+    def _prepare_write(
+        self, conn: sqlite3.Connection, artifact: MemoryArtifact
+    ) -> MemoryArtifact:
         """Shared pre-insert step for `write()`/`write_pass()`: enforces Invariant 1
         (no-STATED-on-entry), resolves any STATED conflict, and redacts content
-        (Invariant 2). Does not touch the database itself -- callers own the transaction.
+        (Invariant 2). Runs inside the caller's own open transaction (P69-01.2g) --
+        a process death between the conflict-delete and the insert that follows it
+        can no longer permanently remove the original artifact with nothing
+        replacing it, since both are now one atomic unit.
         """
         if artifact.trust_tier == "STATED":
             raise TrustTierError(
@@ -1160,12 +1322,14 @@ class TypedArtifactStore:
                 "promotion is the only path to STATED"
             )
         if artifact.symbol_ref is not None:
-            existing = self._find_stated_conflict(artifact.subject, artifact.symbol_ref)
+            existing = self._find_stated_conflict(
+                conn, artifact.subject, artifact.symbol_ref
+            )
             if (
                 existing is not None
                 and evaluate_conflict(artifact, existing) == "delete"
             ):
-                self.delete(existing.id)
+                self._delete_tx(conn, existing.id)
         sanitized_content = sanitize_value(artifact.content).value
         return dataclasses.replace(
             artifact, content=sanitized_content, artifact_version=1
@@ -1216,11 +1380,27 @@ class TypedArtifactStore:
             (stored.id, stored.artifact_version, now),
         )
 
-    def write(self, artifact: MemoryArtifact) -> MemoryArtifact:
-        """Persist an artifact. Enforces Invariant 1 (no-STATED-on-entry) and 2 (redact-before-store)."""
-        stored = self._prepare_write(artifact)
+    def write(
+        self, artifact: MemoryArtifact, *, receipt_operation_id: str | None = None
+    ) -> MemoryArtifact:
+        """Persist an artifact. Enforces Invariant 1 (no-STATED-on-entry) and 2
+        (redact-before-store). The conflict lookup/delete `_prepare_write()` may run,
+        this insert, and the optional creation receipt all share one transaction
+        (P69-01.2g) -- an insertion failure after a conflict-delete rolls the delete
+        back too, rather than leaving the deleted artifact permanently gone."""
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            stored = self._prepare_write(conn, artifact)
             self._insert_row(conn, stored)
+            if receipt_operation_id:
+                self._write_receipt(
+                    conn,
+                    receipt_operation_id,
+                    stored.id,
+                    "create",
+                    stored.artifact_version,
+                    {},
+                )
             conn.commit()
         return stored
 
@@ -1239,10 +1419,10 @@ class TypedArtifactStore:
         A cache hit, skip, tag, or caller label never reaches this method; only a
         genuinely executed pass does, via `rush.memory.experience.record_behavior_success`.
         """
-        stored = self._prepare_write(artifact)
         now = time.time()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            stored = self._prepare_write(conn, artifact)
             self._insert_row(conn, stored)
             conn.execute(
                 "INSERT INTO memory_behavior_success "
@@ -1306,6 +1486,7 @@ class TypedArtifactStore:
         constraints: dict[str, Any],
         created_at: float,
         expires_at: float,
+        receipt_operation_id: str | None = None,
     ) -> None:
         """MC11 §9.0: persist one bounded-handoff session descriptor. `granted_ids` is the
         exact, immutable authorized artifact-ID set for this session -- widening scope
@@ -1328,6 +1509,15 @@ class TypedArtifactStore:
                     expires_at,
                 ),
             )
+            if receipt_operation_id:
+                self._write_receipt(
+                    conn,
+                    receipt_operation_id,
+                    session_id,
+                    "handoff_session",
+                    None,
+                    {"audience": audience},
+                )
             conn.commit()
 
     def get_handoff_session(self, session_id: str) -> dict[str, Any] | None:
@@ -1467,11 +1657,18 @@ class TypedArtifactStore:
         user_stated: bool,
         candidate_sources: list[str] | None = None,
         expected_version: int | None = None,
+        receipt_operation_id: str | None = None,
     ) -> tuple[MemoryArtifact, PromotionResult]:
-        """Evaluate persisted bytes and atomically persist their signed promotion."""
+        """Evaluate persisted bytes and atomically persist their signed promotion.
+
+        Promotion is a distinct, separately-committed effect from the candidate
+        artifact's own creation (P69-01.2f) -- a receipt is only written here when
+        `decision.promoted` is actually True, so recovery can tell "candidate created"
+        apart from "candidate created *and* promoted" via two independently-addressable
+        receipts rather than one conflated id."""
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            return promote_stored_artifact(
+            artifact, decision = promote_stored_artifact(
                 conn,
                 artifact_id,
                 project_root=self.project_root,
@@ -1479,6 +1676,16 @@ class TypedArtifactStore:
                 candidate_sources=candidate_sources,
                 expected_version=expected_version,
             )
+            if receipt_operation_id and decision.promoted:
+                self._write_receipt(
+                    conn,
+                    receipt_operation_id,
+                    artifact_id,
+                    "promote",
+                    artifact.artifact_version,
+                    {"promoted": True},
+                )
+            return artifact, decision
 
     def delete(self, artifact_id: str, *, expected_version: int | None = None) -> None:
         """Delete a row by id, exercising the AFTER DELETE FTS trigger.
@@ -1490,22 +1697,7 @@ class TypedArtifactStore:
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT content, source, trust_tier FROM memory_artifacts WHERE id = ?",
-                (artifact_id,),
-            ).fetchone()
-            if row is None:
-                return
-            _write_version(
-                conn,
-                artifact_id,
-                content=json.loads(row["content"]),
-                source=row["source"],
-                trust_tier=row["trust_tier"],
-                expected_version=expected_version,
-                tombstone=True,
-            )
-            conn.execute("DELETE FROM memory_artifacts WHERE id = ?", (artifact_id,))
+            self._delete_tx(conn, artifact_id, expected_version=expected_version)
             conn.commit()
 
     def search(

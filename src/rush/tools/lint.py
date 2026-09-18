@@ -64,6 +64,9 @@ def _run_selected_engines(
     targets: list[Path],
     path: Path,
     engine_args: list[str] | None = None,
+    *,
+    owner_instance_id: str | None = None,
+    run_id: str | None = None,
 ) -> tuple[list[Finding], ToolStatus, list[str]]:
     """Execute each applicable engine sequentially and aggregate findings."""
     from ..engines import ENGINES
@@ -76,14 +79,28 @@ def _run_selected_engines(
         files = engine_files.get(name, [])
         if files:
             args = [str(p) for p in files] + (engine_args or [])
-            r = run_engine(ENGINES[name], path, args, tool_name="lint")
+            r = run_engine(
+                ENGINES[name],
+                path,
+                args,
+                tool_name="lint",
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+            )
             findings_all.extend(r.get("findings", []))
             engines_used.append(name)
             last_status = combine_status(last_status, r.get("status", "ok"))
 
     if engine_on_path("globstar"):
         globstar_args = [str(p) for p in targets] + (engine_args or [])
-        r = run_engine(ENGINES["globstar"], path, globstar_args, tool_name="lint")
+        r = run_engine(
+            ENGINES["globstar"],
+            path,
+            globstar_args,
+            tool_name="lint",
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
+        )
         findings_all.extend(r.get("findings", []))
         engines_used.append("globstar")
         last_status = combine_status(last_status, r.get("status", "ok"))
@@ -156,11 +173,28 @@ class LintTool(ToolFn):
             "Engines: ruff (Python), eslint (JS/TS). status='skipped' means engine not on PATH."
         )
 
-    def __call__(self, path: Path, engine_args: list[str] | None = None) -> ToolResult:
-        return self.run(path, engine_args=engine_args)
+    def __call__(
+        self,
+        path: Path,
+        engine_args: list[str] | None = None,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> ToolResult:
+        return self.run(
+            path,
+            engine_args=engine_args,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
+        )
 
     def run(
-        self, path: Path, *, engine_args: list[str] | None = None, config=None
+        self,
+        path: Path,
+        *,
+        engine_args: list[str] | None = None,
+        config=None,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> ToolResult:
         start = now_ms()
         targets, engine_files, languages = _select_engines(path, config)
@@ -175,7 +209,12 @@ class LintTool(ToolFn):
             return _build_skipped_result(start, summary)
 
         findings, last_status, engines_used = _run_selected_engines(
-            engine_files, targets, path, engine_args
+            engine_files,
+            targets,
+            path,
+            engine_args,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
         )
         if not engines_used:
             return _check_missing_engines_result(engine_files, start)

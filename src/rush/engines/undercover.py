@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class UndercoverEngine(Engine):
@@ -20,12 +21,20 @@ class UndercoverEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         default_args = ["--format", "json"]
         argv = [binary_path, *default_args, *args]
 
-        proc = run_subprocess(argv, cwd=cwd or path, timeout=120)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd or path,
+            timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         parsed = None
         findings_raw: list[dict] = []
@@ -39,7 +48,7 @@ class UndercoverEngine(Engine):
             except json.JSONDecodeError:
                 parsed = None
 
-        return EngineResult(
+        result = EngineResult(
             exit_code=proc.returncode,
             stdout=proc.stdout,
             stderr=proc.stderr,
@@ -48,6 +57,16 @@ class UndercoverEngine(Engine):
             summary=f"undercover exit {proc.returncode}",
             duration_ms=0,
         )
+        # P69-03h: undercover's own adapter exposes no comparison-ref
+        # argument at all (only `--format json` plus caller args) -- there is
+        # no symbolic ref to pin. Its real evidence is the exact stdout bytes
+        # already produced and consumed to build `findings_raw` above, the
+        # same principle git-guard uses.
+        result["provenance"] = {
+            "kind": "undercover-stdout",
+            "digest": sha256(proc.stdout.encode("utf-8")).hexdigest(),
+        }
+        return result
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         findings: list[Finding] = []

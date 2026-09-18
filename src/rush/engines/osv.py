@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class OsvScannerEngine(Engine):
@@ -17,7 +17,15 @@ class OsvScannerEngine(Engine):
     binary = "osv-scanner"
     file_extensions: tuple[str, ...] = ()
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         proc = run_subprocess(
             [
                 resolve_binary(self.binary) or self.binary,
@@ -31,6 +39,7 @@ class OsvScannerEngine(Engine):
             ],
             cwd=cwd,
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         parsed = None
         if proc.stdout.strip():

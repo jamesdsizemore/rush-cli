@@ -14,7 +14,15 @@ class SemanticDriftEngine(Engine):
     binary = "semantic-drift"
     file_extensions = ()
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         return {"exit_code": 0, "summary": "semantic drift requires configured target"}
 
     def parse_report(self, payload: str) -> list[Finding]:

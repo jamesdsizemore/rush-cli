@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class LighthouseEngine(Engine):
@@ -20,6 +20,9 @@ class LighthouseEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         target = str(path) if str(path).startswith("http") else "http://localhost:3000"
@@ -31,7 +34,12 @@ class LighthouseEngine(Engine):
         ]
         argv = [binary_path, *default_args, *args]
 
-        proc = run_subprocess(argv, cwd=cwd or path, timeout=180)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd or path,
+            timeout=180,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         parsed = None
         report_file = (cwd or path) / "lighthouse-report.json"

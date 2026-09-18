@@ -44,8 +44,19 @@ RECOGNIZED_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
         "effective_config_digest",
         "config_digest",
         "environment_digest",
+        # P69-01.2j: bound from the context only. A tool whose `__call__`
+        # doesn't declare them is unaffected.
+        "owner_instance_id",
+        "run_id",
     }
 )
+
+OWNERSHIP_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
+    {"owner_instance_id", "run_id"}
+)
+"""P69-01.2j: structural execution ownership. Filtered out of every tool
+argument path so a request can never smuggle a forged owner identity in as a
+tool argument, and so an unopted-in `**kwargs` handler never receives them."""
 
 POSITIONAL_BINDABLE_NAMES: frozenset[str] = frozenset(
     {
@@ -109,10 +120,20 @@ def _parse_ordered_args(ordered_args: tuple[str, ...]) -> dict[str, Any]:
 
 
 def invocation_arguments(context: InvocationContext) -> dict[str, Any]:
-    """Return typed request arguments, falling back only for legacy ordered records."""
+    """Return typed request arguments, falling back only for legacy ordered records.
+
+    P69-01.2j: the ownership pair is stripped here, inside the one function
+    both `general_signature_adapter` and `var_args_adapter` call, and in both
+    branches -- a legacy request smuggling `--owner-instance-id=leak` through
+    hyphen-normalization is blocked exactly like a modern typed-args one.
+    """
     if context.typed_args is not None:
-        return copy.deepcopy(dict(context.typed_args))
-    return _parse_ordered_args(context.ordered_args)
+        arguments = copy.deepcopy(dict(context.typed_args))
+    else:
+        arguments = _parse_ordered_args(context.ordered_args)
+    for name in OWNERSHIP_CONTEXT_PARAM_NAMES:
+        arguments.pop(name, None)
+    return arguments
 
 
 def _is_bindable_context_param(
@@ -191,6 +212,12 @@ def _resolve_context_val(
 
     if name == "environment_digest":
         return context.environment_digest
+
+    if name == "owner_instance_id":
+        return context.owner_instance_id or None
+
+    if name == "run_id":
+        return context.run_id or None
 
     return _SENTINEL
 
