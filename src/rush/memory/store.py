@@ -64,6 +64,109 @@ class TrojanSourceFoundError(Exception):
     """Raised by recall() when a returned record's content contains Trojan Source Unicode chars."""
 
 
+class OwnerScopeError(Exception):
+    """Raised when a mutation's declared `owner_scope` doesn't match the stored row's owner.
+
+    P69-07 ownership contract subsections e/g/i: an owner mismatch behaves exactly like a
+    version mismatch -- reject the whole operation, never silently allow it -- so ownership
+    is an enforced boundary rather than a label. Deliberately *not* a `MemoryScopeError`
+    subclass: that exception means "wrong `subject`", a completely separate check this
+    packet leaves untouched.
+    """
+
+    def __init__(self, message: str, *, code: str = "E_OWNER") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class MemoryMigrationRequiredError(Exception):
+    """Raised by a read-only preview against a database that predates `artifact_version`.
+
+    P69-07 ownership contract subsection f: a preview (`apply=False`) is genuinely
+    read-only, so it can never run the migration a legacy database needs; it reports the
+    requirement instead of silently migrating (which would make a "preview" write).
+    """
+
+
+OwnerScopeKind = Literal["user", "project", "session", "agent"]
+_OWNER_SCOPE_KINDS: frozenset[str] = frozenset({"user", "project", "session", "agent"})
+
+
+@dataclass(frozen=True)
+class OwnerScope:
+    """Who owns a memory artifact (P69-07 ownership contract).
+
+    Subsection a -- `id` namespace per kind: a `project`-kind `id` is the project
+    identifier already used elsewhere; `user`/`agent`/`session`-kind ids are opaque
+    caller-supplied strings this phase does not authenticate (no identity provider
+    exists yet), so validation here is structural only: a known kind and a non-blank
+    string id. Subsection d -- ownership is immutable after write: no mutation in this
+    module ever updates a row's owner columns; changing an owner means archiving and
+    re-writing, exactly like changing `subject`.
+    """
+
+    kind: OwnerScopeKind
+    id: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in _OWNER_SCOPE_KINDS:
+            raise ValueError(
+                f"owner_scope kind must be one of {sorted(_OWNER_SCOPE_KINDS)}, "
+                f"got {self.kind!r}"
+            )
+        if not isinstance(self.id, str) or not self.id.strip():
+            raise ValueError("owner_scope id must be a non-empty string")
+
+    def as_dict(self) -> dict[str, str]:
+        return {"kind": self.kind, "id": self.id}
+
+    @classmethod
+    def from_value(cls, value: Any) -> OwnerScope:
+        """Build one from an `OwnerScope` or a `{"kind": ..., "id": ...}` mapping
+        (the wire shape the tool/HTTP/TUI layers carry). Raises `ValueError` on
+        anything else, so a malformed owner can never reach storage."""
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, dict) or set(value) != {"kind", "id"}:
+            raise ValueError(
+                "owner_scope must be an object with exactly 'kind' and 'id' keys"
+            )
+        return cls(value["kind"], value["id"])
+
+
+def legacy_owner_scope(project_root: Path) -> OwnerScope:
+    """The ownership contract's legacy/default owner (subsection c).
+
+    A row migrated from a database that predates `owner_scope` -- and any row written
+    without an explicit owner -- belongs to `{kind: "project", id: <that row's own
+    project>}`: the most conservative default available, never granting broader access
+    than the row already implicitly had. `store.py` has no project registry of its own
+    (resolving a registered project's UUID lives in `workflows/projects.py`), so the
+    project identity available here is its resolved root path.
+    """
+    return OwnerScope("project", str(Path(project_root).resolve()))
+
+
+def _row_value(row: sqlite3.Row, name: str) -> Any:
+    """Column value, or `None` when the column doesn't exist on this row at all --
+    the real shape of a database opened read-only before any migration has run."""
+    return row[name] if name in row.keys() else None  # noqa: SIM118 -- sqlite3.Row
+
+
+def owner_scope_for_row(row: sqlite3.Row, project_root: Path) -> OwnerScope:
+    """This row's owner, falling back to the legacy default (subsection c).
+
+    Public because `open_readonly()` never runs a migration: a read-only caller gets rows
+    whose `owner_scope_kind`/`owner_scope_id` columns may not exist yet, and still needs a
+    usable owner for every one of them.
+    """
+    kind = _row_value(row, "owner_scope_kind")
+    identifier = _row_value(row, "owner_scope_id")
+    if kind and identifier:
+        return OwnerScope(kind, identifier)
+    return legacy_owner_scope(project_root)
+
+
 @dataclass(frozen=True)
 class MemoryArtifact:
     """One row of the unified typed-artifact schema (§6.1)."""
@@ -85,6 +188,12 @@ class MemoryArtifact:
     origin_id: str | None = None
     expired: bool = False
     artifact_version: int = 1
+    # P69-07 ownership contract. Optional rather than required: 17 `MemoryArtifact(...)`
+    # construction sites across 14 production files predate this field, and a required
+    # field would break every one of them at construction time. `None` means "no explicit
+    # owner declared"; `_prepare_write()` resolves it to `legacy_owner_scope(project_root)`
+    # (subsection c) before storage, so a persisted row always has a real owner.
+    owner_scope: OwnerScope | None = None
 
 
 _VERSION_TABLE_STATEMENTS: tuple[str, ...] = (
@@ -314,7 +423,9 @@ CREATE TABLE IF NOT EXISTS memory_artifacts (
     expired_at REAL,
     expired_by TEXT,
     artifact_version INTEGER NOT NULL DEFAULT 1,
-    archived_at REAL
+    archived_at REAL,
+    owner_scope_kind TEXT,
+    owner_scope_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_memory_trust ON memory_artifacts(trust_tier);
@@ -346,8 +457,9 @@ _INSERT_SQL = """
 INSERT INTO memory_artifacts (
     id, family, subject, trust_tier, content, source, created_at,
     symbol_ref, content_hash, corroboration_count, promoted_at, stale,
-    signature, origin_kind, origin_id, artifact_version
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    signature, origin_kind, origin_id, artifact_version,
+    owner_scope_kind, owner_scope_id
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 """
 
 
@@ -449,7 +561,16 @@ def _handoff_blob_relpath(artifact_id: str, family: str) -> str | None:
     return f".rush/handoffs/{artifact_id[len(prefix) :]}.json"
 
 
-def _row_to_artifact(row: sqlite3.Row) -> MemoryArtifact:
+def _row_to_artifact(
+    row: sqlite3.Row, *, default_owner_scope: OwnerScope | None = None
+) -> MemoryArtifact:
+    owner_scope = None
+    kind = _row_value(row, "owner_scope_kind")
+    identifier = _row_value(row, "owner_scope_id")
+    if kind and identifier:
+        owner_scope = OwnerScope(kind, identifier)
+    elif default_owner_scope is not None:
+        owner_scope = default_owner_scope
     return MemoryArtifact(
         id=row["id"],
         family=row["family"],
@@ -468,6 +589,7 @@ def _row_to_artifact(row: sqlite3.Row) -> MemoryArtifact:
         origin_id=row["origin_id"],
         expired=row["expired_at"] is not None,
         artifact_version=row["artifact_version"],
+        owner_scope=owner_scope,
     )
 
 
@@ -488,6 +610,7 @@ class TypedArtifactStore:
             Path(project_root).resolve() if project_root else Path.cwd().resolve()
         )
         self.db_path = self.project_root / ".rush" / "memory.db"
+        self._owner_scope_default = legacy_owner_scope(self.project_root)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._merkle = MerkleInvalidator(project_root=self.project_root)
         self._init_db()
@@ -511,6 +634,7 @@ class TypedArtifactStore:
             self._migrate_version_column(conn)
             self._migrate_changes_subject_column(conn)
             self._migrate_archived_column(conn)
+            self._migrate_owner_scope_columns(conn)
             self._ensure_cursor_key(conn)
             if not candidate_fts_existed:
                 self._backfill_candidate_fts(conn)
@@ -731,13 +855,21 @@ class TypedArtifactStore:
         source_allowlist: Iterable[str],
         trust_tiers: Iterable[str] | None = None,
         include_expired: bool = False,
+        include_archived: bool = False,
+        scan_offset: int = 0,
         scan_limit: int = 512,
     ) -> list[sqlite3.Row]:
         """MC12 §6.7 hybrid-retrieval candidate scope: the same subject/source/trust/expiry
         filters `search_candidates()` applies, without requiring an FTS text match -- vector
         similarity ranks these, so a candidate a lexical query would never match (no shared
         terms) is still eligible to be embedded and recovered by cosine rank. Ordered by ID
-        for a deterministic, boundable scan (never BM25 order, which doesn't apply here)."""
+        for a deterministic, boundable scan (never BM25 order, which doesn't apply here).
+
+        P69-07 subsection g: `include_archived=False` (the default) excludes archived rows,
+        matching `search()`'s existing `include_archived` precedent -- this method predated
+        that filter entirely, letting an archived record leak into an ordinary browse.
+        `scan_offset` (mirrors `search_candidates()`'s own offset/limit pair) lets a caller
+        page past one `scan_limit`-sized batch instead of being permanently capped at it."""
         sources = list(source_allowlist)
         if not sources:
             return []
@@ -749,11 +881,13 @@ class TypedArtifactStore:
             params.extend(tiers)
         if not include_expired:
             clauses.append("expired_at IS NULL")
-        params.append(scan_limit)
+        if not include_archived:
+            clauses.append("archived_at IS NULL")
+        params.extend([scan_limit, scan_offset])
         sql = (
             "SELECT * FROM memory_artifacts "
             f"WHERE {' AND '.join(clauses)} "
-            "ORDER BY id ASC LIMIT ?"
+            "ORDER BY id ASC LIMIT ? OFFSET ?"
         )
         with self._connect() as conn:
             cur = conn.execute(sql, params)
@@ -792,14 +926,17 @@ class TypedArtifactStore:
         *,
         expected_revisions: dict[str, int],
         scope: str,
+        owner_scope: OwnerScope | None = None,
         apply: bool = False,
         receipt_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Batch memory deletion (P65-07.3, plan §6.4 transaction/outbox algorithm).
 
-        Validates every member's existence, declared `scope` (its `subject`) match, and
-        `expected_revisions` inside one transaction before any write; a missing id, a
-        cross-scope id (`MemoryScopeError`), or a stale revision (`VersionConflictError`)
+        Validates every member's existence, declared `scope` (its `subject`) match,
+        declared `owner_scope` match, and `expected_revisions` inside one transaction
+        before any write; a missing id, a cross-scope id (`MemoryScopeError`), a
+        wrong-owner id (`OwnerScopeError`, P69-07 subsection g -- even one wrong-owner
+        member writes zero rows), or a stale revision (`VersionConflictError`)
         refuses the *entire* batch atomically -- never a partial apply. Preview
         (`apply=False`) only ever runs the validation `SELECT`s. Apply replaces each row's
         version-history entry with a content-free tombstone (`content={}`, never the real
@@ -828,6 +965,9 @@ class TypedArtifactStore:
                         f"artifact {artifact_id!r} has subject {row['subject']!r}, "
                         f"outside declared scope {scope!r}"
                     )
+
+            for artifact_id, row in rows.items():
+                self._require_owner(row, artifact_id, owner_scope)
 
             for artifact_id, row in rows.items():
                 expected = expected_revisions[artifact_id]
@@ -892,13 +1032,18 @@ class TypedArtifactStore:
         *,
         expected_version: int,
         scope: str,
+        owner_scope: OwnerScope | None = None,
         apply: bool = False,
         receipt_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Single-artifact content edit under compare-and-swap (P65-07.3, plan §6.4).
 
         Mirrors `delete_batch()`'s validate-then-write shape but for one id: verifies
-        existence, declared `scope` match, and `expected_version` before any write. Preview
+        existence, declared `scope` match, declared `owner_scope` match (P69-07
+        subsection e -- a mismatched owner rejects exactly like a mismatched version,
+        inside the same compare-and-swap; the owner columns themselves are never
+        rewritten, per subsection d's immutability rule), and `expected_version`
+        before any write. Preview
         (`apply=False`) only ever runs the validation `SELECT`. Apply routes the new content
         through `_write_version` (preserving the prior version's content as history, same as
         every other mutation here) and, if the row's current `trust_tier` is `STATED`
@@ -921,6 +1066,7 @@ class TypedArtifactStore:
                     f"artifact {artifact_id!r} has subject {row['subject']!r}, "
                     f"outside declared scope {scope!r}"
                 )
+            self._require_owner(row, artifact_id, owner_scope)
             if row["artifact_version"] != expected_version:
                 raise VersionConflictError(
                     f"artifact {artifact_id!r} expected version {expected_version}, "
@@ -978,11 +1124,17 @@ class TypedArtifactStore:
         *,
         expected_version: int,
         scope: str,
+        owner_scope: OwnerScope | None = None,
         apply: bool = False,
         archived: bool = True,
         receipt_operation_id: str | None = None,
     ) -> dict[str, Any]:
         """Sets/clears an archived marker under compare-and-swap (P65-07.3, plan §6.4).
+
+        Carries the identical ownership enforcement `edit()` does (P69-07 subsection g):
+        a wrong `owner_scope` raises `OwnerScopeError` before any write, because
+        forwarding ownership through the HTTP/tool layers does nothing unless this
+        method validates it inside its own compare-and-swap.
 
         Never touches `content` -- history and bytes are fully retained, only excluded from
         normal `recall()`/`search()` (see their `include_archived` parameter). The marker
@@ -1002,6 +1154,7 @@ class TypedArtifactStore:
                     f"artifact {artifact_id!r} has subject {row['subject']!r}, "
                     f"outside declared scope {scope!r}"
                 )
+            self._require_owner(row, artifact_id, owner_scope)
             if row["artifact_version"] != expected_version:
                 raise VersionConflictError(
                     f"artifact {artifact_id!r} expected version {expected_version}, "
@@ -1113,7 +1266,11 @@ class TypedArtifactStore:
             row = conn.execute(
                 "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
             ).fetchone()
-        return _row_to_artifact(row) if row else None
+        return (
+            _row_to_artifact(row, default_owner_scope=self._owner_scope_default)
+            if row
+            else None
+        )
 
     def get_version_content(self, artifact_id: str, version: int) -> str | None:
         """MC02 §9.0 `expand_artifact()` support: the exact stored bytes (as originally
@@ -1161,6 +1318,56 @@ class TypedArtifactStore:
         if "subject" not in existing:
             conn.execute("ALTER TABLE memory_changes ADD COLUMN subject TEXT")
 
+    def _migrate_owner_scope_columns(self, conn: sqlite3.Connection) -> None:
+        """Additive migration (P69-07 ownership contract): a pre-P69-07 DB predates
+        `owner_scope_kind`/`owner_scope_id`; add them, defaulting existing rows to NULL,
+        which every reader resolves to `legacy_owner_scope(project_root)` (subsection c)
+        via `owner_scope_for_row()`. Mirrors `_migrate_expiry_columns`'s pattern exactly.
+
+        Deliberately additive-only, with no `UPDATE ... SET owner_scope_* ` backfill
+        here: `_SCHEMA_SQL` creates the external-content `memory_fts` table and its
+        AFTER UPDATE trigger in this same `_init_db()` call, so on a database whose rows
+        predate that table, any UPDATE fires a trigger that deletes an FTS entry which
+        was never inserted -- SQLite reports "database disk image is malformed". The
+        explicit legacy path (`upgrade()`), which never creates those triggers, does
+        materialize the default on disk.
+        """
+        existing = {
+            row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+        }
+        for column in ("owner_scope_kind", "owner_scope_id"):
+            if column not in existing:
+                conn.execute(f"ALTER TABLE memory_artifacts ADD COLUMN {column} TEXT")
+        # Created here rather than in `_SCHEMA_SQL`: that script runs *before* this
+        # migration, so on a pre-P69-07 database the columns don't exist yet.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_owner "
+            "ON memory_artifacts(owner_scope_kind, owner_scope_id)"
+        )
+
+    def _require_owner(
+        self,
+        row: sqlite3.Row,
+        artifact_id: str,
+        owner_scope: OwnerScope | None,
+    ) -> None:
+        """Ownership half of the compare-and-swap (P69-07 subsections e/g/i).
+
+        Runs inside the caller's own open transaction, next to the `subject` and
+        `expected_version` checks, and rejects exactly like a version mismatch does.
+        `owner_scope=None` means the caller declared no owner -- the pre-P69-07
+        contract, still used by internal callers that have no owner to declare; the
+        dashboard/TUI/tool layers always declare one.
+        """
+        if owner_scope is None:
+            return
+        stored = owner_scope_for_row(row, self.project_root)
+        if stored != owner_scope:
+            raise OwnerScopeError(
+                f"artifact {artifact_id!r} is owned by "
+                f"{stored.kind}:{stored.id!r}, not {owner_scope.kind}:{owner_scope.id!r}"
+            )
+
     def _migrate_expiry_columns(self, conn: sqlite3.Connection) -> None:
         """Additive migration (P62.7 §6.3): a pre-P62.7 DB predates `expires_at`/`expired_at`/
         `expired_by`; `CREATE TABLE IF NOT EXISTS` doesn't retrofit columns onto an existing
@@ -1201,6 +1408,80 @@ class TypedArtifactStore:
         return ReadOnlyOpenResult(available=True, connection=conn)
 
     @classmethod
+    def preview_mutation(
+        cls,
+        project_root: Path,
+        artifact_id: str,
+        *,
+        expected_version: int,
+        scope: str,
+        owner_scope: OwnerScope | None = None,
+        operation: Literal["edit", "archive"],
+    ) -> dict[str, Any]:
+        """Genuinely read-only `apply=False` validation for `edit()`/`archive()`.
+
+        P69-07 subsection f: constructing a `TypedArtifactStore` is itself write-adjacent
+        (`__init__` creates `.rush/`, runs `executescript` on the schema, mints a cursor
+        key, and now runs this packet's own `owner_scope` migration), so routing a preview
+        through it made "preview" touch disk -- and this packet's migration would have
+        widened that footprint on legacy databases. This runs the identical existence /
+        `subject` / `owner_scope` / `expected_version` checks over `open_readonly()`
+        instead, applying the ownership contract's legacy default in memory, and never
+        creates a directory, journal, or schema.
+
+        Raises `KeyError` (no database or no such row), `MemoryScopeError`,
+        `OwnerScopeError`, `VersionConflictError`, or `MemoryMigrationRequiredError`
+        (a database that predates `artifact_version`, which only a real write-path
+        migration can fix).
+        """
+        root = Path(project_root).resolve()
+        opened = cls.open_readonly(root)
+        if not opened.available:
+            raise KeyError(artifact_id)
+        if opened.migration_required or opened.connection is None:
+            raise MemoryMigrationRequiredError(
+                f"{root / '.rush' / 'memory.db'} predates artifact_version; "
+                "run an apply-mode operation or `upgrade()` before previewing"
+            )
+        conn = opened.connection
+        try:
+            row = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(artifact_id)
+            if row["subject"] != scope:
+                raise MemoryScopeError(
+                    f"artifact {artifact_id!r} has subject {row['subject']!r}, "
+                    f"outside declared scope {scope!r}"
+                )
+            if owner_scope is not None:
+                stored = owner_scope_for_row(row, root)
+                if stored != owner_scope:
+                    raise OwnerScopeError(
+                        f"artifact {artifact_id!r} is owned by "
+                        f"{stored.kind}:{stored.id!r}, not "
+                        f"{owner_scope.kind}:{owner_scope.id!r}"
+                    )
+            if row["artifact_version"] != expected_version:
+                raise VersionConflictError(
+                    f"artifact {artifact_id!r} expected version {expected_version}, "
+                    f"found {row['artifact_version']}"
+                )
+            preview: dict[str, Any] = {
+                "applied": False,
+                "id": artifact_id,
+                "revision": row["artifact_version"],
+            }
+            if operation == "edit":
+                preview["trust_tier"] = row["trust_tier"]
+            else:
+                preview["archived"] = _row_value(row, "archived_at") is not None
+            return preview
+        finally:
+            conn.close()
+
+    @classmethod
     def upgrade(cls, project_root: Path, *, cache_write: bool) -> int:
         """Explicit legacy-schema migration (MC01 §6.1): adds `artifact_version` if missing and
         backfills `memory_artifact_versions`/`memory_changes` history for every pre-existing
@@ -1235,6 +1516,20 @@ class TypedArtifactStore:
             }
             if "subject" not in changes_columns:
                 conn.execute("ALTER TABLE memory_changes ADD COLUMN subject TEXT")
+            # P69-07 ownership contract: the explicit legacy path adds the owner
+            # columns and backfills subsection c's default in the same transaction,
+            # so a failure here rolls the whole migration back exactly as before.
+            for column in ("owner_scope_kind", "owner_scope_id"):
+                if column not in columns:
+                    conn.execute(
+                        f"ALTER TABLE memory_artifacts ADD COLUMN {column} TEXT"
+                    )
+            default_owner = legacy_owner_scope(root)
+            conn.execute(
+                "UPDATE memory_artifacts SET owner_scope_kind = ?, owner_scope_id = ? "
+                "WHERE owner_scope_kind IS NULL OR owner_scope_id IS NULL",
+                (default_owner.kind, default_owner.id),
+            )
             already_migrated = conn.execute(
                 "SELECT COUNT(*) FROM memory_artifact_versions"
             ).fetchone()[0]
@@ -1268,15 +1563,44 @@ class TypedArtifactStore:
         )
 
     def _find_stated_conflict(
-        self, conn: sqlite3.Connection, subject: str, symbol_ref: str
+        self,
+        conn: sqlite3.Connection,
+        subject: str,
+        symbol_ref: str,
+        owner_scope: OwnerScope,
     ) -> MemoryArtifact | None:
+        """The incoming write's *own* conflicting STATED row (P69-07 subsection i).
+
+        Scoped to `owner_scope` as well as `(subject, symbol_ref)`: a STATED record
+        belonging to a different owner is not this write's conflict to resolve -- it is
+        a separate artifact that happens to share subject/symbol_ref, not a stale
+        duplicate, and silently deleting it was a fourth unguarded deletion path.
+        """
+        # COALESCE applies the ownership contract's legacy default (subsection c) in the
+        # query itself: a row migrated by `_migrate_owner_scope_columns` keeps NULL owner
+        # columns on disk (see that method for why it cannot rewrite them), and must
+        # still behave as project-owned here.
+        default = self._owner_scope_default
         cur = conn.execute(
             "SELECT * FROM memory_artifacts WHERE subject = ? AND symbol_ref = ? "
-            "AND trust_tier = 'STATED' LIMIT 1",
-            (subject, symbol_ref),
+            "AND trust_tier = 'STATED' "
+            "AND COALESCE(owner_scope_kind, ?) = ? AND COALESCE(owner_scope_id, ?) = ? "
+            "LIMIT 1",
+            (
+                subject,
+                symbol_ref,
+                default.kind,
+                owner_scope.kind,
+                default.id,
+                owner_scope.id,
+            ),
         )
         row = cur.fetchone()
-        return _row_to_artifact(row) if row else None
+        return (
+            _row_to_artifact(row, default_owner_scope=self._owner_scope_default)
+            if row
+            else None
+        )
 
     def _delete_tx(
         self,
@@ -1284,17 +1608,24 @@ class TypedArtifactStore:
         artifact_id: str,
         *,
         expected_version: int | None = None,
+        owner_scope: OwnerScope | None = None,
     ) -> None:
         """Shared delete body for `delete()`/`_prepare_write()`'s conflict-eviction path.
         Caller owns the transaction (BEGIN/commit) -- this never opens its own connection,
         so a conflict-delete and the insert that follows it (P69-01.2g) share one atomic
-        transaction instead of two separately-committed ones."""
+        transaction instead of two separately-committed ones.
+
+        P69-07 subsection i: the ownership check happens *here*, inside the caller's
+        transaction, so both the explicit `delete()` operation and `_prepare_write()`'s
+        internal conflict eviction go through one owner-checked path rather than the
+        conflict path bypassing ownership entirely."""
         row = conn.execute(
-            "SELECT content, source, trust_tier FROM memory_artifacts WHERE id = ?",
+            "SELECT * FROM memory_artifacts WHERE id = ?",
             (artifact_id,),
         ).fetchone()
         if row is None:
             return
+        self._require_owner(row, artifact_id, owner_scope)
         _write_version(
             conn,
             artifact_id,
@@ -1321,18 +1652,22 @@ class TypedArtifactStore:
                 "write() cannot insert trust_tier='STATED' directly; "
                 "promotion is the only path to STATED"
             )
+        owner_scope = artifact.owner_scope or self._owner_scope_default
         if artifact.symbol_ref is not None:
             existing = self._find_stated_conflict(
-                conn, artifact.subject, artifact.symbol_ref
+                conn, artifact.subject, artifact.symbol_ref, owner_scope
             )
             if (
                 existing is not None
                 and evaluate_conflict(artifact, existing) == "delete"
             ):
-                self._delete_tx(conn, existing.id)
+                self._delete_tx(conn, existing.id, owner_scope=owner_scope)
         sanitized_content = sanitize_value(artifact.content).value
         return dataclasses.replace(
-            artifact, content=sanitized_content, artifact_version=1
+            artifact,
+            content=sanitized_content,
+            artifact_version=1,
+            owner_scope=owner_scope,
         )
 
     def _insert_row(self, conn: sqlite3.Connection, stored: MemoryArtifact) -> None:
@@ -1359,6 +1694,8 @@ class TypedArtifactStore:
                 stored.origin_kind,
                 stored.origin_id,
                 stored.artifact_version,
+                (stored.owner_scope or self._owner_scope_default).kind,
+                (stored.owner_scope or self._owner_scope_default).id,
             ),
         )
         conn.execute(
@@ -1687,7 +2024,13 @@ class TypedArtifactStore:
                 )
             return artifact, decision
 
-    def delete(self, artifact_id: str, *, expected_version: int | None = None) -> None:
+    def delete(
+        self,
+        artifact_id: str,
+        *,
+        expected_version: int | None = None,
+        owner_scope: OwnerScope | None = None,
+    ) -> None:
         """Delete a row by id, exercising the AFTER DELETE FTS trigger.
 
         Routed through `_write_version` (MC01 §6.1) with `tombstone=True` before the row is
@@ -1697,7 +2040,12 @@ class TypedArtifactStore:
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            self._delete_tx(conn, artifact_id, expected_version=expected_version)
+            self._delete_tx(
+                conn,
+                artifact_id,
+                expected_version=expected_version,
+                owner_scope=owner_scope,
+            )
             conn.commit()
 
     def search(
@@ -1724,7 +2072,10 @@ class TypedArtifactStore:
                 (query, subject),
             )
             rows = cur.fetchall()
-        return [_row_to_artifact(row) for row in rows]
+        return [
+            _row_to_artifact(row, default_owner_scope=self._owner_scope_default)
+            for row in rows
+        ]
 
     def recall(
         self,
@@ -1817,7 +2168,9 @@ def promote_stored_artifact(
     ).fetchone()
     if row is None:
         raise KeyError(artifact_id)
-    artifact = _row_to_artifact(row)
+    artifact = _row_to_artifact(
+        row, default_owner_scope=legacy_owner_scope(project_root)
+    )
     artifact = dataclasses.replace(
         artifact, content=sanitize_value(artifact.content).value
     )

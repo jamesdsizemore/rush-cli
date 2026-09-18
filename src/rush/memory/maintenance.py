@@ -18,8 +18,10 @@ from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
     MemoryArtifact,
+    OwnerScope,
     TypedArtifactStore,
     _write_version,
+    legacy_owner_scope,
     promote_stored_artifact,
 )
 from rush.memory.trust import count_corroboration
@@ -33,22 +35,35 @@ _LOCK_PATH = Path(".rush/memory-maintenance.lock")
 _AGENT_ID = "memory-maintenance"
 _RENEW_EVERY = 50
 
+# P69-07 subsection h: every sweep is scoped by exact owner_scope (kind, id) equality --
+# never a wildcard, even for a `project`-kind sweep, since a project store legitimately
+# holds rows owned by other kinds too. A legacy row (owner_scope_kind/_id both NULL)
+# resolves to `legacy_owner_scope(root)`, mirroring `owner_scope_for_row()`'s own
+# read-time resolution in `store.py`.
+_OWNER_CLAUSE = (
+    "AND COALESCE(owner_scope_kind, :legacy_kind) = :owner_kind "
+    "AND COALESCE(owner_scope_id, :legacy_id) = :owner_id "
+)
+
 _SELECT_SQL: dict[str, str] = {
     "promotion_sweep": (
         "SELECT id, family, subject, trust_tier, content, source, created_at, "
         "symbol_ref, content_hash, corroboration_count, promoted_at, stale, signature "
         "FROM memory_artifacts WHERE trust_tier != 'STATED' AND promoted_at IS NULL "
-        "ORDER BY created_at ASC LIMIT :batch_size"
+        + _OWNER_CLAUSE
+        + "ORDER BY created_at ASC LIMIT :batch_size"
     ),
     "staleness_sweep": (
         "SELECT id, symbol_ref, content_hash FROM memory_artifacts "
-        "WHERE symbol_ref IS NOT NULL AND stale = 0 ORDER BY created_at ASC LIMIT :batch_size"
+        "WHERE symbol_ref IS NOT NULL AND stale = 0 " + _OWNER_CLAUSE + "ORDER BY "
+        "created_at ASC LIMIT :batch_size"
     ),
     "skill_admission_check": (
         "SELECT id, family, subject, trust_tier, content, source, created_at, "
         "symbol_ref, content_hash, corroboration_count, promoted_at, stale, signature "
         "FROM memory_artifacts WHERE subject = 'skill_pattern' AND trust_tier != 'STATED' "
-        "AND promoted_at IS NULL ORDER BY created_at ASC LIMIT :batch_size"
+        "AND promoted_at IS NULL " + _OWNER_CLAUSE + "ORDER BY created_at ASC "
+        "LIMIT :batch_size"
     ),
 }
 
@@ -64,10 +79,22 @@ class MaintenanceRunResult:
 
 
 def run_maintenance_cycle(
-    task: MaintenanceTask, *, batch_size: int = 500, project_root: Path | None = None
+    task: MaintenanceTask,
+    *,
+    batch_size: int = 500,
+    project_root: Path | None = None,
+    owner_scope: OwnerScope | None = None,
 ) -> MaintenanceRunResult:
-    """Runs one bounded maintenance sweep under a capability-scoped lock lease (§6.2)."""
+    """Runs one bounded maintenance sweep under a capability-scoped lock lease (§6.2).
+
+    P69-07 subsection h: `owner_scope` scopes the sweep to exactly that owner (kind, id)
+    -- omitting it defaults to `legacy_owner_scope(root)` (this project's own path-form
+    owner, the same default a plain unscoped `store.write()` already uses), never a
+    wildcard sweep across every owner in this project's store.
+    """
     root = (project_root or Path.cwd()).resolve()
+    scope = owner_scope or legacy_owner_scope(root)
+    legacy_default = legacy_owner_scope(root)
     lock_manager = MeshLockManager(root)
     lease = lock_manager.acquire(
         _LOCK_PATH,
@@ -85,7 +112,7 @@ def run_maintenance_cycle(
         if task == "expiry_sweep":
             from rush.memory.expiry import sweep_expired
 
-            changed = sweep_expired(root, batch_size=batch_size)
+            changed = sweep_expired(root, batch_size=batch_size, owner_scope=scope)
             return MaintenanceRunResult(
                 task=task, processed=changed, changed=changed, errors=()
             )
@@ -95,7 +122,14 @@ def run_maintenance_cycle(
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
-                _SELECT_SQL[task], {"batch_size": batch_size}
+                _SELECT_SQL[task],
+                {
+                    "batch_size": batch_size,
+                    "owner_kind": scope.kind,
+                    "owner_id": scope.id,
+                    "legacy_kind": legacy_default.kind,
+                    "legacy_id": legacy_default.id,
+                },
             ).fetchall()
 
             processed = 0

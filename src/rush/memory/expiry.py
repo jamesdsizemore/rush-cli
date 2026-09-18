@@ -14,7 +14,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from rush.memory.store import TypedArtifactStore, _write_version
+from rush.memory.store import (
+    OwnerScope,
+    TypedArtifactStore,
+    _write_version,
+    legacy_owner_scope,
+)
 
 _DAY_SECONDS = 86400
 
@@ -51,14 +56,23 @@ def _policy_for(
     return None
 
 
-def sweep_expired(project_root: Path | None = None, *, batch_size: int = 500) -> int:
+def sweep_expired(
+    project_root: Path | None = None,
+    *,
+    batch_size: int = 500,
+    owner_scope: OwnerScope | None = None,
+) -> int:
     """Stamps `expires_at`/`expired_at`/`expired_by="expiry_sweep"` on rows whose TTL has
     elapsed. Returns the count of rows stamped this pass.
 
     Scoped to `expired_at IS NULL` so a row is never re-stamped by a later sweep, and `STATED`
-    rows (policy `ttl_seconds=None`) are never touched.
+    rows (policy `ttl_seconds=None`) are never touched. P69-07 subsection h: also scoped to
+    exactly `owner_scope` (kind, id) -- omitted, defaults to `legacy_owner_scope(root)`
+    (this project's own path-form owner), never a wildcard sweep across owners.
     """
     store = TypedArtifactStore(project_root)
+    scope = owner_scope or legacy_owner_scope(store.project_root)
+    legacy_default = legacy_owner_scope(store.project_root)
     now = time.time()
     changed = 0
     ttl_cases = []
@@ -75,8 +89,17 @@ def sweep_expired(project_root: Path | None = None, *, batch_size: int = 500) ->
         rows = conn.execute(
             "SELECT id, subject, trust_tier, created_at, content, source FROM memory_artifacts "
             f"WHERE expired_at IS NULL AND created_at + ({ttl_sql}) <= ? "
+            "AND COALESCE(owner_scope_kind, ?) = ? AND COALESCE(owner_scope_id, ?) = ? "
             "ORDER BY created_at ASC LIMIT ?",
-            (*parameters, now, batch_size),
+            (
+                *parameters,
+                now,
+                legacy_default.kind,
+                scope.kind,
+                legacy_default.id,
+                scope.id,
+                batch_size,
+            ),
         ).fetchall()
         for row in rows:
             row_policy = _policy_for(row["subject"], row["trust_tier"])

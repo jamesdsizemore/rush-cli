@@ -14,6 +14,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import runpy
 import select
 import struct
@@ -30,6 +31,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 _REPO_SRC = str(Path(__file__).resolve().parent.parent / "src")
+
+# SGR escape carrying a real foreground/background colour parameter (30-38
+# or 90-97, including the 256-colour/truecolor `38;5;N` / `38;2;R;G;B`
+# forms Rich uses for styles like "grey50"). Deliberately excludes
+# non-colour attributes (bold=1, reset=0) that `Console(no_color=True)`
+# still legitimately emits.
+_ANSI_COLOR_CODE = re.compile(rb"\x1b\[[0-9;]*(?:3[0-8]|9[0-7])(?:;[0-9]+)*m")
 
 _HARNESS_TEMPLATE = """
 import json, sys
@@ -93,6 +101,7 @@ def _run_pty_harness(
     actions_expr: str = "actions",
     rows: int = 24,
     cols: int = 80,
+    capture: list[bytes] | None = None,
 ) -> tuple[int, int, Path]:
     import pty
 
@@ -130,7 +139,10 @@ def _run_pty_harness(
         os._exit(0)
 
     _set_pty_size(master_fd, rows, cols)
-    _start_drain_thread(master_fd)
+    if capture is not None:
+        _start_capture_thread(master_fd, capture)
+    else:
+        _start_drain_thread(master_fd)
     _wait_ready(ready_path)
     time.sleep(0.05)  # small margin past the readiness marker into `raw_terminal()`
     return pid, master_fd, result_path
@@ -166,6 +178,31 @@ def _start_drain_thread(master_fd: int) -> None:
                 return
             if not chunk:
                 return
+
+    threading.Thread(target=_drain, daemon=True).start()
+
+
+def _start_capture_thread(master_fd: int, buffer: list[bytes]) -> None:
+    """Same read loop as `_start_drain_thread`, but appends the real
+    rendered bytes to `buffer` instead of discarding them -- used only by
+    the NO_COLOR test, which needs to inspect actual PTY output for ANSI
+    colour escapes rather than just observing final `TuiState`."""
+
+    def _drain() -> None:
+        while True:
+            try:
+                ready, _, _ = select.select([master_fd], [], [], 0.05)
+            except OSError:
+                return
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master_fd, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            buffer.append(chunk)
 
     threading.Thread(target=_drain, daemon=True).start()
 
@@ -220,6 +257,20 @@ def test_keyboard_project_switch(tmp_path: Path, capfd: pytest.CaptureFixture) -
     assert state["active_index"] == 1
 
 
+def test_question_mark_shows_real_current_bindings(
+    tmp_path: Path, capfd: pytest.CaptureFixture
+) -> None:
+    """P69-06c: a real `?` binding opens a help view rendering the actual
+    current `_KEYMAP` bindings, not a hardcoded string."""
+    with capfd.disabled():
+        pid, master_fd, result_path = _run_pty_harness(tmp_path)
+        _send(master_fd, "?")  # show_help
+        _send(master_fd, "q")
+        state = _collect(pid, master_fd, result_path)
+
+    assert state["mode"] == "help"
+
+
 def test_search_filter_narrows_findings(
     tmp_path: Path, capfd: pytest.CaptureFixture
 ) -> None:
@@ -248,6 +299,38 @@ def test_escape_cancels_search_without_keeping_filter(
 
     assert state["mode"] == "list"
     assert state["filter_text"] == ""
+
+
+def test_no_color_env_suppresses_ansi_color_codes(
+    tmp_path: Path, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run_interactive_tui` reads NO_COLOR itself (tui.py:2006-2009) and
+    builds its own `Console(no_color=...)` when no console is injected --
+    this drives that real path over a real PTY and inspects the actual
+    rendered bytes, proving NO_COLOR=1 suppresses colour output rather
+    than just confirming the env var is read."""
+    with capfd.disabled():
+        colored: list[bytes] = []
+        pid, master_fd, result_path = _run_pty_harness(tmp_path, capture=colored)
+        _send(master_fd, "q")
+        _collect(pid, master_fd, result_path)
+    colored_output = b"".join(colored)
+    assert _ANSI_COLOR_CODE.search(colored_output), (
+        "expected real ANSI colour codes without NO_COLOR"
+    )
+
+    no_color_dir = tmp_path / "no_color"
+    no_color_dir.mkdir()
+    monkeypatch.setenv("NO_COLOR", "1")
+    with capfd.disabled():
+        no_color: list[bytes] = []
+        pid, master_fd, result_path = _run_pty_harness(no_color_dir, capture=no_color)
+        _send(master_fd, "q")
+        _collect(pid, master_fd, result_path)
+    no_color_output = b"".join(no_color)
+    assert not _ANSI_COLOR_CODE.search(no_color_output), (
+        "NO_COLOR=1 should suppress ANSI colour codes"
+    )
 
 
 _CANCEL_ACTIONS_SRC = """
@@ -313,6 +396,35 @@ def test_scan_start_and_cancellation_retains_partial_progress(
     assert history, "expected at least one progress observation before cancellation"
     assert history[-1]["executed"] < history[-1]["total"], (
         "scan should have stopped early, not run to completion"
+    )
+
+
+def test_q_offers_detach_cancel_return_when_run_active(
+    tmp_path: Path, capfd: pytest.CaptureFixture
+) -> None:
+    """P69-06g: quitting with an active run offers a real three-way choice
+    (Detach/Cancel run and stay/Return), never an immediate exit. There is
+    no live dashboard server in this harness, so Detach here is
+    Cancel-with-saved-partial-result (Phase 66 S3.9's superseding clause,
+    this plan's own S3) -- the run's own cooperative-cancel path stops it
+    and the loop then exits with the menu dismissed."""
+    with capfd.disabled():
+        pid, master_fd, result_path = _run_pty_harness(
+            tmp_path, actions_src=_CANCEL_ACTIONS_SRC
+        )
+        _send(master_fd, "s")  # start_scan -> grant review
+        _send(master_fd, "y", settle=0.15)  # confirm -> real background scan starts
+        time.sleep(0.12)  # let a few candidates complete first
+        _send(master_fd, "q")  # opens the three-way quit_confirm menu
+        _send(master_fd, "d", settle=0.3)  # Detach -- waits for the real cancel ack
+        state = _collect(pid, master_fd, result_path)
+
+    assert state["mode"] == "list"
+    assert state["status"] == "cancelled"
+    history = state["progress_history"]
+    assert history, "expected at least one progress observation before Detach"
+    assert history[-1]["executed"] < history[-1]["total"], (
+        "scan should have stopped early via Detach's cancel, not run to completion"
     )
 
 

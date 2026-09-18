@@ -201,8 +201,8 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 188
-    assert manifest_data.get("manifest", {}).get("total_operations") == 188
+    assert len(operations) == 189
+    assert manifest_data.get("manifest", {}).get("total_operations") == 189
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -236,17 +236,17 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         else:
             declared_transports[op_id] = "mcp"
 
-    assert len(declared_transports) == 188
-    # 61 dual-transport, 109 cli-only, 18 mcp-only
-    assert sum(1 for t in declared_transports.values() if t == "both") == 61
+    assert len(declared_transports) == 189
+    # 62 dual-transport, 109 cli-only, 18 mcp-only
+    assert sum(1 for t in declared_transports.values() if t == "both") == 62
     assert sum(1 for t in declared_transports.values() if t == "cli") == 109
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 188
-    assert report["tool_count"] == 78
+    assert report["total"] == 189
+    assert report["tool_count"] == 79
     assert report["admin_count"] == 92
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
@@ -375,7 +375,7 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     paired_ops = [
         op for op in operations if op.get("cli_command") and op.get("mcp_tool")
     ]
-    assert len(paired_ops) == 61
+    assert len(paired_ops) == 62
 
     # 1. All paired operations MUST be kind == "tool" and enforce ToolResultV1,
     #    except deliberately dual-transport admin mutations (e.g. memory
@@ -518,7 +518,7 @@ def test_unprobed_route_is_not_advertised() -> None:
             f"Advertised MCP tool '{tool_name}' is unprobed / unmanifested in governance/public-operations.toml"
         )
 
-    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 170
+    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 171
     assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 79
 
 

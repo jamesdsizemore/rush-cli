@@ -15,7 +15,12 @@ from pathlib import Path
 
 from rush.memory.expiry import sweep_expired
 from rush.memory.merkle_invalidator import MerkleInvalidator
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import (
+    MemoryArtifact,
+    OwnerScope,
+    TypedArtifactStore,
+    legacy_owner_scope,
+)
 
 _DAY = 86400
 
@@ -73,7 +78,9 @@ def test_stated_records_never_expire(tmp_path: Path) -> None:
     _insert_stated_row(store.db_path, artifact_id, created_at=time.time() - 365 * _DAY)
 
     for _ in range(3):
-        sweep_expired(store.project_root)
+        sweep_expired(
+            store.project_root, owner_scope=legacy_owner_scope(store.project_root)
+        )
 
     row = _expiry_columns(store.db_path, artifact_id)
     assert row["expired_at"] is None
@@ -87,7 +94,9 @@ def test_derived_record_expires_after_configured_ttl(tmp_path: Path) -> None:
     artifact = _artifact(trust_tier="DERIVED", created_at=time.time() - 15 * _DAY)
     store.write(artifact)
 
-    changed = sweep_expired(store.project_root)
+    changed = sweep_expired(
+        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
+    )
 
     assert changed == 1
     row = _expiry_columns(store.db_path, artifact.id)
@@ -105,7 +114,9 @@ def test_external_write_record_expires_after_configured_ttl(tmp_path: Path) -> N
     )
     store.write(artifact)
 
-    changed = sweep_expired(store.project_root)
+    changed = sweep_expired(
+        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
+    )
 
     assert changed == 1
     row = _expiry_columns(store.db_path, artifact.id)
@@ -120,12 +131,35 @@ def test_imported_record_expires_after_configured_ttl(tmp_path: Path) -> None:
     artifact = _artifact(trust_tier="IMPORTED", created_at=time.time() - 91 * _DAY)
     store.write(artifact)
 
-    changed = sweep_expired(store.project_root)
+    changed = sweep_expired(
+        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
+    )
 
     assert changed == 1
     row = _expiry_columns(store.db_path, artifact.id)
     assert row["expired_at"] is not None
     assert row["expired_by"] == "expiry_sweep"
+
+
+def test_sweep_expired_never_touches_a_different_owners_rows(tmp_path: Path) -> None:
+    """P69-07 subsection h: an owner-scoped expiry sweep leaves a different owner's
+    due-for-expiry row untouched."""
+    store = TypedArtifactStore(project_root=tmp_path)
+    mine = _artifact(trust_tier="DERIVED", created_at=time.time() - 15 * _DAY)
+    store.write(mine)
+    someone_elses = _artifact(
+        trust_tier="DERIVED",
+        created_at=time.time() - 15 * _DAY,
+        owner_scope=OwnerScope("user", "someone-else"),
+    )
+    store.write(someone_elses)
+
+    changed = sweep_expired(
+        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
+    )
+    assert changed == 1
+    assert _expiry_columns(store.db_path, mine.id)["expired_at"] is not None
+    assert _expiry_columns(store.db_path, someone_elses.id)["expired_at"] is None
 
 
 def test_expiry_and_staleness_are_independent(tmp_path: Path) -> None:
@@ -153,7 +187,9 @@ def test_expiry_and_staleness_are_independent(tmp_path: Path) -> None:
     )
     store.write(expired_not_stale)
 
-    sweep_expired(store.project_root)
+    sweep_expired(
+        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
+    )
 
     results = store.recall("domain_knowledge", "default", session_allowlist=["test"])
     by_id = {a.id: a for a in results}

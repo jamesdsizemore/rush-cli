@@ -79,6 +79,7 @@ from rush.workflows.projects import (
     create_project,
     expand_artifact_reference,
     export_project_data,
+    git_link_matches_commit,
     list_project_artifacts,
     project_git_commit_diff,
     project_git_history,
@@ -86,6 +87,7 @@ from rush.workflows.projects import (
     register_project,
     resolve_project,
 )
+from rush.workflows.suites import CHECK_SUITE, run_workflow_suite
 
 _IN_MEMORY_ASSETS: dict[str, bytes] = {}
 
@@ -257,12 +259,14 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     "handoff_status": frozenset({"handoff_id"}),
     "configure": frozenset({"settings", "expected_revision", "apply", "plan_id"}),
-    "memory_edit": frozenset({"scope", "id", "expected_version", "content", "apply"}),
+    "memory_edit": frozenset(
+        {"scope", "id", "expected_version", "content", "apply", "owner_scope"}
+    ),
     "memory_archive": frozenset(
-        {"scope", "id", "expected_version", "apply", "archived"}
+        {"scope", "id", "expected_version", "apply", "archived", "owner_scope"}
     ),
     "memory_delete": frozenset(
-        {"artifact_ids", "expected_revisions", "scope", "apply"}
+        {"artifact_ids", "expected_revisions", "scope", "apply", "owner_scope"}
     ),
     "memory_promote": frozenset(
         {
@@ -273,6 +277,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
             "symbol_ref",
             "user_stated",
             "candidate_sources",
+            "owner_scope",
         }
     ),
     "memory_query": frozenset(
@@ -301,7 +306,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
         }
     ),
     "memory_propose": frozenset(
-        {"subject", "content", "source", "source_kind", "symbol_ref"}
+        {"subject", "content", "source", "source_kind", "symbol_ref", "owner_scope"}
     ),
     "memory_maintain": frozenset({"task", "batch_size"}),
     "data_export": frozenset(),
@@ -1248,6 +1253,108 @@ def publish_check_suite_scan(
     return run_id, attempt_id
 
 
+def _dispatch_check_suite(
+    ctx: DashboardContext,
+    project_id: str,
+    *,
+    operation_id: str = "",
+) -> tuple[int, dict[str, Any]]:
+    """P69-06e: run `CHECK_SUITE` inside *this* dashboard process, on behalf
+    of a TUI/CLI caller that reached us through the private control channel.
+
+    A same-process function call cannot cross a process boundary -- calling
+    an "internal dashboard-server function" from `tui.py` would execute in
+    the TUI's own process against no `DashboardContext` at all. `scan_start`
+    is equally wrong for this: it demands an explicitly-reviewed staged
+    `plan_id` plus `cache_write`/`artifact_write` grants, none of which this
+    lighter suite has, so routing through it means either fabricating both or
+    silently substituting a full scan.
+
+    So this is its own operation, but never its own *mechanism*: admission
+    (`_admit_and_launch` -> `ctx.mutations.admit()`), supervision
+    (`_run_supervised`), terminal outcome (`ctx.outcomes`), and publication
+    (`publish_check_suite_scan`) are the exact shared primitives every other
+    async operation uses. Its execution identity is
+    `check_suite:<suite name>`, so a concurrent full scan conflicts (rather
+    than silently attaching to a different operation) through that same one
+    admission check, and a second CHECK_SUITE request attaches to the
+    already-running one.
+    """
+    root = Path(resolve_project(project_id)["root"])
+    # P69-03k: the pre-execution provenance header lands before a single
+    # tool runs, exactly as `cli.py::_run_initial_scan` already does.
+    run_id, attempt_id = capture_initial_scan_provenance(root, project_id)
+    scan_generation = ctx.mutations.allocate_scan_generation(project_id)
+    slot_id = operation_id or uuid.uuid4().hex
+    identity = f"check_suite:{CHECK_SUITE.name}"
+    cancelled = threading.Event()
+
+    def _on_tool_complete(child: ToolResult) -> None:
+        # P69-06f: each completed tool is durable before the suite finishes,
+        # so a cancel or a kill leaves a reconstructable partial result.
+        with suppress(Exception):
+            ctx.mutations.record_status_transition(
+                operation_id,
+                "running",
+                {
+                    "suite": CHECK_SUITE.name,
+                    "tool": child.get("tool"),
+                    "status": child.get("status"),
+                },
+            )
+
+    def _body() -> dict[str, Any]:
+        aggregate = run_workflow_suite(
+            suite=CHECK_SUITE,
+            path=root,
+            # CHECK_SUITE negotiates no grants of its own -- denied by
+            # default, never `scan_start`'s cache_write/artifact_write.
+            permissions=ExecutionPermissions(),
+            cancel_check=cancelled.is_set,
+            on_tool_complete=_on_tool_complete,
+            owner_instance_id=ctx.owner_instance_id,
+            run_id=run_id,
+        )
+        publish_check_suite_scan(
+            ctx,
+            project_id,
+            root,
+            aggregate,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            scan_generation=scan_generation,
+        )
+        return {
+            "status": "success",
+            "suite": CHECK_SUITE.name,
+            "run_id": run_id,
+            "cancelled": bool((aggregate.get("metadata") or {}).get("cancelled")),
+        }
+
+    thread = threading.Thread(
+        target=_run_supervised,
+        args=(ctx, slot_id, operation_id, _body),
+        daemon=True,
+    )
+    attached_run_id, attached_plan_id, started = _admit_and_launch(
+        ctx,
+        project_id,
+        execution_identity=identity,
+        slot_id=slot_id,
+        operation_id=operation_id,
+        run_id=run_id,
+        plan_id=identity,
+        thread=thread,
+    )
+    return 202, {
+        "operation_id": operation_id,
+        "suite": CHECK_SUITE.name,
+        "run_id": attached_run_id,
+        "plan_id": attached_plan_id,
+        "attached_to_existing": not started,
+    }
+
+
 def _dispatch_scan_start(
     ctx: DashboardContext,
     project_id: str,
@@ -1721,7 +1828,14 @@ def _dispatch_memory_edit(
     root = Path(resolve_project(project_id)["root"])
     request: dict[str, Any] = {
         key: arguments[key]
-        for key in ("scope", "id", "expected_version", "content", "apply")
+        for key in (
+            "scope",
+            "id",
+            "expected_version",
+            "content",
+            "apply",
+            "owner_scope",
+        )
         if key in arguments
     }
     if operation_id:
@@ -1746,7 +1860,14 @@ def _dispatch_memory_archive(
     root = Path(resolve_project(project_id)["root"])
     request: dict[str, Any] = {
         key: arguments[key]
-        for key in ("scope", "id", "expected_version", "apply", "archived")
+        for key in (
+            "scope",
+            "id",
+            "expected_version",
+            "apply",
+            "archived",
+            "owner_scope",
+        )
         if key in arguments
     }
     if operation_id:
@@ -1776,7 +1897,13 @@ def _dispatch_memory_delete(
     root = Path(resolve_project(project_id)["root"])
     request: dict[str, Any] = {
         key: arguments[key]
-        for key in ("artifact_ids", "expected_revisions", "scope", "apply")
+        for key in (
+            "artifact_ids",
+            "expected_revisions",
+            "scope",
+            "apply",
+            "owner_scope",
+        )
         if key in arguments
     }
     if operation_id:
@@ -1838,6 +1965,7 @@ def _dispatch_memory_promote(
         source_kind=source_kind,
         user_stated=bool(arguments.get("user_stated", False)),
         candidate_sources=candidate_sources,
+        owner_scope=arguments.get("owner_scope"),
         permissions=_permissions_from_grants(grants),
         receipt_operation_id=operation_id or None,
     )
@@ -2145,6 +2273,7 @@ def _dispatch_memory_propose(
         source=source,
         symbol_ref=arguments.get("symbol_ref"),
         source_kind=source_kind,
+        owner_scope=arguments.get("owner_scope"),
         permissions=_permissions_from_grants(grants),
     )
     status_code, body = _tool_result_response(result)
@@ -2350,6 +2479,41 @@ def _read_excerpt(root: Path, rel_path: str, *, start: int, end: int) -> dict[st
     }
 
 
+_MAX_ARTIFACT_PAGE_BYTES = 1024 * 1024
+
+
+def _read_artifact_page(
+    root: Path, rel_path: str, *, offset: int, limit: int
+) -> dict[str, Any]:
+    """Bounded, path-traversal-safe byte-range content page for the
+    artifact-download route (plan §3.6: artifact reads paginate at
+    1MiB/page) -- real content, not the excerpt/metadata-only view."""
+    try:
+        target = (root / rel_path).resolve()
+        target.relative_to(root.resolve())
+    except (ValueError, OSError):
+        return {"path": rel_path, "error": "invalid_path", "content": None}
+    if not target.is_file():
+        return {"path": rel_path, "error": "not_found", "content": None}
+    offset = max(0, offset)
+    limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
+    try:
+        size = target.stat().st_size
+        with target.open("rb") as handle:
+            handle.seek(offset)
+            chunk = handle.read(limit)
+    except OSError:
+        return {"path": rel_path, "error": "read_failed", "content": None}
+    next_offset = offset + len(chunk) if offset + len(chunk) < size else None
+    return {
+        "path": rel_path,
+        "offset": offset,
+        "size": size,
+        "content": chunk.decode("utf-8", errors="replace"),
+        "next_offset": next_offset,
+    }
+
+
 def _build_overview_section(project_id: str, record: ProjectRecord) -> dict[str, Any]:
     """`section=overview` (P69-02.2n, row 6): a curated summary -- identity
     and counts -- never the full snapshot's raw findings/agents/memories
@@ -2546,6 +2710,15 @@ def _build_scans_section(
 # `list`/`expand`/`related` dispatch -- never a hand-rolled SQL query.
 
 
+# P69-07 subsection g: `scope_artifacts()`'s own default `scan_limit` (512) once capped
+# browse to whatever fit in one call; this batches past it, `_MEMORY_BROWSE_MAX_BATCHES`
+# batches deep (10,240 rows/subject).
+# ponytail: bounded loop, not unbounded pagination -- raise the cap or add real
+# server-side cursoring here if a project needs deeper same-subject browse than that.
+_MEMORY_BROWSE_BATCH = 512
+_MEMORY_BROWSE_MAX_BATCHES = 20
+
+
 def _all_known_sources(store: TypedArtifactStore) -> list[str]:
     """Every distinct `source` this project's memory store has ever recorded.
     This dashboard is the project's own local admin surface, so it sees
@@ -2622,13 +2795,25 @@ def _build_memory_section(
             items = [i for i in items if i.get("trust_tier") in trust_filter]
     elif all_sources:
         for subject in subjects:
-            rows = store.scope_artifacts(
-                subject,
-                source_allowlist=all_sources,
-                trust_tiers=trust_filter or None,
-                include_expired=include_archived,
-            )
-            items.extend(_scope_artifact_row(row) for row in rows)
+            # P69-07 subsection g: batch past scope_artifacts()'s own scan_limit default
+            # instead of one capped call, and exclude archived rows by default (matching
+            # search()'s existing include_archived precedent) -- both real leaks in the
+            # pre-P69-07 browse path.
+            subject_offset = 0
+            for _ in range(_MEMORY_BROWSE_MAX_BATCHES):
+                batch = store.scope_artifacts(
+                    subject,
+                    source_allowlist=all_sources,
+                    trust_tiers=trust_filter or None,
+                    include_expired=include_archived,
+                    include_archived=include_archived,
+                    scan_offset=subject_offset,
+                    scan_limit=_MEMORY_BROWSE_BATCH,
+                )
+                items.extend(_scope_artifact_row(row) for row in batch)
+                if len(batch) < _MEMORY_BROWSE_BATCH:
+                    break
+                subject_offset += len(batch)
 
     if source_filter:
         items = [i for i in items if i.get("source") in source_filter]
@@ -2803,22 +2988,31 @@ def _build_tokens_section(
 
 def _build_git_section(project_id: str, query: dict[str, list[str]]) -> dict[str, Any]:
     """`section=git` (plan §3/§6.4 P66-06): bounded paginated commit history,
-    working-tree/index status, and an optional single-commit diff. Linking a
-    commit to scan-output evidence only ever uses an exact literal path match
-    between the commit's changed files and an artifact's recorded path --
-    never a fabricated or inferred association (plan: "Link commits/source
-    revisions to scans... only where actual identity matches")."""
+    working-tree/index status, and an optional single-commit diff. History
+    pages by an opaque, revision-bound cursor (P69-03u's non-map-section
+    cursor contract, reused verbatim) with a 50-commit default page size --
+    never the old default offset (`skip`) pagination. Linking a commit to
+    scan-output evidence requires an exact source-revision match (P69-03.2's
+    Git-link predicate) -- never a merely intersecting file path (plan:
+    "Link commits/source revisions to scans... only where actual identity
+    matches")."""
     status = project_snapshot(project_id)["git"]
+    revision = str(status["head"])
 
     try:
-        limit = int(query.get("limit", ["20"])[0])
+        limit = int(query.get("limit", ["50"])[0])
     except ValueError:
-        limit = 20
-    try:
-        skip = int(query.get("skip", ["0"])[0])
-    except ValueError:
-        skip = 0
-    history_page = project_git_history(project_id, limit=limit, skip=skip)
+        limit = 50
+    limit = max(1, min(limit, 50))
+    cursor = query.get("cursor", [None])[0]
+    offset = _decode_revision_cursor(cursor, revision=revision)
+    history_page = project_git_history(project_id, limit=limit, skip=offset)
+    next_skip = history_page["next_skip"]
+    next_cursor = (
+        _encode_revision_cursor(next_skip, revision=revision)
+        if next_skip is not None
+        else None
+    )
 
     result: dict[str, Any] = {
         "has_git": status["has_git"],
@@ -2826,21 +3020,19 @@ def _build_git_section(project_id: str, query: dict[str, list[str]]) -> dict[str
         "dirty": status["dirty"],
         "dirty_files": status["dirty_files"],
         "history": history_page["commits"],
-        "next_skip": history_page["next_skip"],
+        "next_cursor": next_cursor,
     }
 
     commit = query.get("commit", [None])[0]
     if commit:
         diff = project_git_commit_diff(project_id, commit)
-        changed = set(diff.get("changed_paths") or [])
-        linked: list[str] = []
-        if changed:
-            artifacts = list_project_artifacts(project_id)
-            linked = [
-                a["artifact_ref"]
-                for a in artifacts.get("scan_outputs") or []
-                if changed.intersection(a.get("paths") or [])
-            ]
+        artifacts = list_project_artifacts(project_id)
+        root = Path(resolve_project(project_id)["root"])
+        linked = [
+            a["artifact_ref"]
+            for a in artifacts.get("scan_outputs") or []
+            if git_link_matches_commit(root, a.get("git_link"), commit)
+        ]
         diff["linked_scan_outputs"] = linked
         result["diff"] = diff
     return result
@@ -3259,6 +3451,14 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 self._handle_reconnect_bootstrap(request_id)
                 return
 
+            # P69-06e: control-channel CHECK_SUITE dispatch -- authenticated
+            # by the same private `X-Rush-Control` capability as the other
+            # control endpoints above, never the browser session/CSRF pair,
+            # so it is routed before the browser-facing origin check below.
+            if path == "/api/control/check-suite":
+                self._handle_control_check_suite(request_id, declared_length)
+                return
+
             if path == "/api/session":
                 if not self._check_origin(request_id, require_exact=False):
                     return
@@ -3324,6 +3524,137 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     "utf-8"
                 ),
             )
+
+        def _handle_control_check_suite(
+            self, request_id: str, declared_length: int
+        ) -> None:
+            """P69-06e: dispatch `CHECK_SUITE` inside this server process for
+            a control-channel caller (the TUI/CLI at startup).
+
+            Same credential boundary as `_handle_reconnect_bootstrap`: a
+            browser cookie or an `Origin` header is rejected outright rather
+            than accepted alongside the control capability. Idempotency,
+            operation-id minting, and status transitions go through the exact
+            `ctx.mutations.commit()` path the browser action route uses, so
+            the returned operation id is pollable and cancellable through the
+            same `/api/projects/{id}/operations/{op}` surface as any other
+            async operation.
+            """
+            if self.headers.get("Origin") is not None or self._cookie() is not None:
+                self._send_error(
+                    401,
+                    "unauthorized",
+                    "control endpoint rejects browser credentials",
+                    request_id,
+                )
+                return
+            if not ctx.auth.verify_control(self.headers.get("X-Rush-Control")):
+                self._send_error(
+                    401, "unauthorized", "control capability required", request_id
+                )
+                return
+            payload = self._read_json_body(declared_length, request_id)
+            if payload is None:
+                return
+            schema_version = payload.get("schema_version", 1)
+            if schema_version != 1:
+                self._send_error(
+                    400,
+                    "unsupported_schema_version",
+                    f"schema_version must be 1, got {schema_version!r}",
+                    request_id,
+                )
+                return
+            project_id = payload.get("project_id")
+            mutation_id = payload.get("request_id")
+            if not isinstance(project_id, str) or not project_id:
+                self._send_error(
+                    400, "malformed_request", "project_id required", request_id
+                )
+                return
+            if not isinstance(mutation_id, str) or not mutation_id:
+                self._send_error(
+                    400, "malformed_request", "request_id required", request_id
+                )
+                return
+            record = ctx.projects.get(project_id)
+            if record is None:
+                self._send_error(
+                    404, "not_found", "unknown project", request_id, project_id
+                )
+                return
+
+            body_hash = hashlib.sha256(
+                json.dumps(payload, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+
+            def _build(operation_id: str) -> tuple[int, bytes]:
+                try:
+                    status_code, data = _dispatch_check_suite(
+                        ctx, project_id, operation_id=operation_id
+                    )
+                except ScanConflictError as exc:
+                    return 409, _error_body(
+                        request_id,
+                        project_id,
+                        "conflict",
+                        str(exc),
+                        retryable=True,
+                        redact=ctx.live_secrets(),
+                    )
+                except _ActionDenied as exc:
+                    return exc.status, _error_body(
+                        request_id,
+                        project_id,
+                        exc.code,
+                        str(exc),
+                        retryable=exc.retryable,
+                        redact=ctx.live_secrets(),
+                    )
+                except ProjectError as exc:
+                    return 404, _error_body(
+                        request_id,
+                        project_id,
+                        "not_found",
+                        str(exc),
+                        redact=ctx.live_secrets(),
+                    )
+                return status_code, _success_body(
+                    request_id,
+                    project_id,
+                    record.sequence,
+                    data,
+                    redact=ctx.live_secrets(),
+                )
+
+            try:
+                (status_code, body), conflict = ctx.mutations.commit(
+                    project_id,
+                    mutation_id,
+                    body_hash,
+                    _build,
+                    operation_type="check_suite",
+                    mutating=True,
+                )
+            except (TypeError, ValueError):
+                self._send_error(
+                    500,
+                    "serialization_error",
+                    "failed to serialize result",
+                    request_id,
+                    project_id,
+                )
+                return
+            if conflict:
+                self._send_error(
+                    409,
+                    "conflict",
+                    "request_id reused with a different body",
+                    request_id,
+                    project_id,
+                )
+                return
+            self._send_json(status_code, body)
 
         def _handle_session_exchange(self, request_id: str) -> None:
             client_key = self.client_address[0]
@@ -3662,6 +3993,11 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 except ProjectError as exc:
                     _send_project_error(self, exc, request_id, project_id)
                     return
+                except _CursorError as exc:
+                    self._send_error(
+                        exc.status, exc.code, str(exc), request_id, project_id
+                    )
+                    return
                 except Exception as exc:  # noqa: BLE001 -- see section == "memory"
                     self._send_error(
                         500,
@@ -3839,6 +4175,25 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     404, "not_found", "unknown artifact_id", request_id, project_id
                 )
                 return
+            paths = (result.get("entry") or {}).get("paths") or []
+            if paths:
+                query = parse_qs(urlparse(self.path).query)
+                rel_path = query.get("path", [None])[0] or paths[0]
+                if rel_path in paths:
+                    try:
+                        offset = int(query.get("offset", ["0"])[0])
+                    except ValueError:
+                        offset = 0
+                    try:
+                        limit = int(
+                            query.get("limit", [str(_MAX_ARTIFACT_PAGE_BYTES)])[0]
+                        )
+                    except ValueError:
+                        limit = _MAX_ARTIFACT_PAGE_BYTES
+                    root = Path(resolve_project(project_id)["root"])
+                    result["content"] = _read_artifact_page(
+                        root, rel_path, offset=offset, limit=limit
+                    )
             body = _success_body(
                 request_id,
                 project_id,
@@ -4295,3 +4650,106 @@ def reconnect_dashboard(base_url: str, control_token: str) -> str:
     with urllib.request.urlopen(bootstrap_request, timeout=5) as response:
         payload = json.loads(response.read())
     return payload["bootstrap_token"]
+
+
+def dispatch_control_check_suite(
+    base_url: str,
+    control_token: str,
+    project_id: str,
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """P69-06e: client side of `POST /api/control/check-suite`.
+
+    The TUI process holds the control capability (read from the running
+    server's own descriptor), never a browser session -- so this sends no
+    cookie, no CSRF token, and no `Origin`, exactly like
+    `reconnect_dashboard` above. Returns the 202 payload, whose
+    `operation_id` polls/cancels through the ordinary operation surface.
+    """
+    import urllib.request
+
+    body = json.dumps(
+        {
+            "schema_version": 1,
+            "project_id": project_id,
+            "request_id": request_id or uuid.uuid4().hex,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}/api/control/check-suite",
+        data=body,
+        method="POST",
+        headers={
+            "X-Rush-Control": control_token,
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = json.loads(response.read())
+    return dict(payload.get("data") or {})
+
+
+def _control_session(base_url: str, control_token: str) -> tuple[str, str]:
+    """Exchange a control capability for a real browser-shaped session
+    (cookie + CSRF token). The action routes below are deliberately
+    browser-facing -- a local control-capability holder reaches them by
+    minting a genuine session through the same public exchange, never by
+    bypassing that boundary."""
+    import urllib.request
+
+    token = reconnect_dashboard(base_url, control_token)
+    request = urllib.request.Request(
+        f"{base_url}/api/session",
+        data=b"",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Length": "0"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        cookie = (response.headers.get("Set-Cookie") or "").split(";")[0]
+        payload = json.loads(response.read())
+    return cookie, payload["csrf_token"]
+
+
+def dispatch_dashboard_action(
+    base_url: str,
+    control_token: str,
+    project_id: str,
+    operation: str,
+    *,
+    arguments: dict[str, Any] | None = None,
+    grants: dict[str, Any] | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """P69-06d: dispatch one real scan-lifecycle action (`scan_start`,
+    `scan_resume`, `rescan`) into an already-running dashboard server.
+
+    Used by the TUI when a live dashboard server owns the project at
+    scan-*start* time: that process is the executor from the first moment,
+    so nothing is ever transferred to it mid-flight."""
+    import urllib.request
+
+    cookie, csrf = _control_session(base_url, control_token)
+    body = json.dumps(
+        {
+            "schema_version": 1,
+            "operation": operation,
+            "request_id": request_id or uuid.uuid4().hex,
+            "arguments": arguments or {},
+            "grants": grants or {},
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}/api/projects/{project_id}/actions",
+        data=body,
+        method="POST",
+        headers={
+            "Cookie": cookie,
+            "X-Rush-CSRF": csrf,
+            "Origin": base_url,
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read())
+    return dict(payload.get("data") or {})

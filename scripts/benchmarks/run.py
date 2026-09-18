@@ -804,11 +804,23 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         grants: dict[str, Any] | None = None,
         expected: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
+        # P69-07 (round-7 correction, moved from P69-02): every memory-mutation call this
+        # helper makes carries a real `owner_scope` -- P69-07's own ownership contract
+        # (subsection a) accepts `owner_scope=None` gracefully (legacy default), so this
+        # is additive, never a behavior change to what the dashboard already accepts.
+        final_arguments = dict(arguments or {})
+        if operation.startswith("memory_") and "owner_scope" not in final_arguments:
+            final_arguments["owner_scope"] = {
+                "kind": "project",
+                "id": str(project_root),
+            }
+        if operation.startswith("memory_"):
+            memory_mutation_arguments_sent.append(dict(final_arguments))
         body = json.dumps(
             {
                 "schema_version": 1,
                 "operation": operation,
-                "arguments": arguments or {},
+                "arguments": final_arguments,
                 "grants": grants or {},
                 "expected": expected or {},
                 "request_id": str(uuid.uuid4()),
@@ -860,6 +872,10 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
     timings_ms: dict[str, float] = {}
     coverage: dict[str, bool] = {}
     errors: list[str] = []
+    # P69-07 (round-7 correction): every `_action()` call whose operation starts with
+    # "memory_" records its actual sent arguments here, so a caller can assert
+    # `owner_scope` was really on the wire, not just injected in the code.
+    memory_mutation_arguments_sent: list[dict[str, Any]] = []
     grants_all = {"cache_write": True, "artifact_write": True, "download": True}
 
     def _mark(stage: str, ok: bool, detail: str = "") -> None:
@@ -1195,6 +1211,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         "timings_ms": timings_ms,
         "coverage": coverage,
         "errors": errors,
+        "memory_mutation_arguments_sent": memory_mutation_arguments_sent,
         "blockers": [
             (
                 "actual pixel layout at 360px/1280px and a real visual "

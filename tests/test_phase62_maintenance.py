@@ -14,7 +14,12 @@ import pytest
 import rush.tools.memory as memory_module
 from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.memory.maintenance import MaintenanceRunResult, run_maintenance_cycle
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import (
+    MemoryArtifact,
+    OwnerScope,
+    TypedArtifactStore,
+    legacy_owner_scope,
+)
 from rush.tools.memory import MemoryTool
 
 _LOCK_PATH = Path(".rush/memory-maintenance.lock")
@@ -27,7 +32,11 @@ def test_maintenance_rejects_missing_lock_capability(tmp_path: Path) -> None:
             RuntimeError, match="memory-maintenance: failed to acquire maintenance lock"
         ),
     ):
-        run_maintenance_cycle("promotion_sweep", project_root=tmp_path)
+        run_maintenance_cycle(
+            "promotion_sweep",
+            project_root=tmp_path,
+            owner_scope=legacy_owner_scope(tmp_path),
+        )
 
 
 def _seed_candidate_rows(root: Path, count: int) -> None:
@@ -61,7 +70,9 @@ def test_maintenance_cycle_acquires_and_releases_lock(
         spy_acquire.side_effect = original_acquire
         spy_release.side_effect = original_release
 
-        result = run_maintenance_cycle("promotion_sweep")
+        result = run_maintenance_cycle(
+            "promotion_sweep", owner_scope=legacy_owner_scope(tmp_path)
+        )
         assert isinstance(result, MaintenanceRunResult)
         assert spy_acquire.call_count == 1
         assert spy_release.call_count == 1
@@ -69,7 +80,9 @@ def test_maintenance_cycle_acquires_and_releases_lock(
         # An unrecognized task isn't in _SELECT_SQL, so the cycle body raises KeyError
         # before any row processing — release() must still fire (T-62.05's actual intent).
         with pytest.raises(KeyError):
-            run_maintenance_cycle("not_a_real_task")  # type: ignore[arg-type]
+            run_maintenance_cycle(  # type: ignore[arg-type]
+                "not_a_real_task", owner_scope=legacy_owner_scope(tmp_path)
+            )
         assert spy_acquire.call_count == 2
         assert spy_release.call_count == 2
 
@@ -84,15 +97,59 @@ def test_maintenance_cycle_respects_batch_size_parameter(
     root_500.mkdir()
     monkeypatch.chdir(root_500)
     _seed_candidate_rows(root_500, 600)
-    result_500 = run_maintenance_cycle("promotion_sweep", batch_size=500)
+    result_500 = run_maintenance_cycle(
+        "promotion_sweep", batch_size=500, owner_scope=legacy_owner_scope(root_500)
+    )
     assert result_500.processed == 500
 
     root_50 = tmp_path / "run-50"
     root_50.mkdir()
     monkeypatch.chdir(root_50)
     _seed_candidate_rows(root_50, 600)
-    result_50 = run_maintenance_cycle("promotion_sweep", batch_size=50)
+    result_50 = run_maintenance_cycle(
+        "promotion_sweep", batch_size=50, owner_scope=legacy_owner_scope(root_50)
+    )
     assert result_50.processed == 50
+
+
+def test_maintenance_sweep_never_touches_a_different_owners_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """P69-07 subsection h: a sweep scoped to one owner never touches another owner's
+    rows in the same project store, and omitting `owner_scope` defaults to this
+    project's own legacy owner rather than a wildcard sweep."""
+    monkeypatch.chdir(tmp_path)
+    store = TypedArtifactStore(tmp_path)
+    project_owned = MemoryArtifact(
+        id="project-owned",
+        family="memory",
+        subject="domain_knowledge",
+        trust_tier="DERIVED",
+        content={"note": "default owner"},
+        source="tool",
+        created_at=time.time(),
+    )
+    store.write(project_owned)
+    user_owned = MemoryArtifact(
+        id="user-owned",
+        family="memory",
+        subject="domain_knowledge",
+        trust_tier="DERIVED",
+        content={"note": "user owner"},
+        source="tool",
+        created_at=time.time(),
+        owner_scope=OwnerScope("user", "u-1"),
+    )
+    store.write(user_owned)
+
+    result = run_maintenance_cycle(
+        "promotion_sweep", owner_scope=OwnerScope("user", "u-1")
+    )
+    assert result.processed == 1
+    assert result.errors == ()
+
+    default_result = run_maintenance_cycle("promotion_sweep")
+    assert default_result.processed == 1
 
 
 def test_expired_lease_reclaimed_by_second_cycle_survives_first_cycles_stale_release(

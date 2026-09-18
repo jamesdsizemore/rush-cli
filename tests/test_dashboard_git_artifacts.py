@@ -24,6 +24,7 @@ after every code path in this file is exercised.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -40,7 +41,9 @@ import pytest
 from rush.dashboard.server import create_dashboard_server
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
+from rush.workflows import project_run as project_run_module
 from rush.workflows import projects as projects_module
+from rush.workflows.project_run import ScanPlan
 from rush.workflows.projects import (
     expand_artifact_reference,
     export_project_data,
@@ -225,12 +228,15 @@ def _write_manifest(
     *,
     run_id: str,
     scheduled: list[dict[str, Any]],
+    attempt_id: str | None = None,
+    git_link: dict[str, Any] | None = None,
 ) -> None:
-    attempt_id = f"{run_id}-attempt-1"
+    attempt_id = attempt_id or f"{run_id}-attempt-1"
     manifest = {
         "schema_version": 1,
         "run_id": run_id,
         "attempt_id": attempt_id,
+        "git_link": git_link or {},
         "plan_id": f"plan-{run_id}",
         "project_id": "unused-by-reader",
         "root": str(root),
@@ -433,7 +439,7 @@ def test_git_section_non_git_project_returns_has_git_false(
             "dirty": None,
             "dirty_files": [],
             "history": [],
-            "next_skip": None,
+            "next_cursor": None,
         }
     finally:
         server.shutdown()
@@ -484,19 +490,47 @@ def test_git_commit_diff_is_bounded_for_a_large_diff(
         server.server_close()
 
 
-def test_git_commit_diff_links_scan_output_only_on_exact_path_identity_match(
+def test_git_scan_link_requires_matching_source_revision_not_just_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """P69-07.2b: linking a commit to scan output requires the persisted
+    `git_link` to match that exact commit (HEAD, clean tree, per-path
+    digests against the commit's tree) -- a merely intersecting recorded
+    path is never sufficient on its own (P69-03.2's Git-link predicate,
+    reused verbatim)."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path, "connect-repo")
     head = _commit_file(root, "src/app.py", "print('changed')\n", "touch src/app.py")
+    real_digest = hashlib.sha256((root / "src/app.py").read_bytes()).hexdigest()
+
+    # Matches the commit exactly: linked.
     _write_manifest(
         root,
         run_id="run-connect",
         scheduled=[
             _scheduled_item("matching-tool", "quality", artifacts=["src/app.py"]),
-            _scheduled_item("unrelated-tool", "quality", artifacts=["other.py"]),
         ],
+        git_link={
+            "repository": True,
+            "head": head,
+            "dirty": False,
+            "path_digests": {"src/app.py": real_digest},
+        },
+    )
+    # Recorded path intersects the diff, but its own source revision does
+    # not match this commit -- must NOT be linked despite the path overlap.
+    _write_manifest(
+        root,
+        run_id="run-stale",
+        scheduled=[
+            _scheduled_item("stale-tool", "quality", artifacts=["src/app.py"]),
+        ],
+        git_link={
+            "repository": True,
+            "head": "0" * 40,
+            "dirty": False,
+            "path_digests": {"src/app.py": real_digest},
+        },
     )
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
@@ -506,50 +540,64 @@ def test_git_commit_diff_links_scan_output_only_on_exact_path_identity_match(
         )
         assert status == 200
         linked = body["data"]["diff"]["linked_scan_outputs"]
-        assert linked == ["run:run-connect:matching-tool"]
+        assert linked == ["run:run-connect:run-connect-attempt-1:matching-tool"]
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_git_section_history_pagination_is_bounded_and_advances(
+def test_git_history_uses_50_commit_cursor_not_offset_pagination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """P69-07.2b/Phase66 §3.1/§3.6: Git history pages by an opaque,
+    revision-bound cursor with a 50-commit default page size -- not the old
+    default 20-entry `skip`/`limit` offset pagination."""
     _isolate_data_roots(tmp_path, monkeypatch)
-    project_id, root = _register(tmp_path, "paged-repo")
+    project_id, root = _register(tmp_path, "cursor-repo")
     expected_subjects = []
-    for i in range(5):
+    for i in range(25):
         subject = f"commit number {i}"
         _commit_file(root, f"f{i}.txt", f"{i}\n", subject)
         expected_subjects.append(subject)
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
-        status, _headers, page1 = _snapshot(
-            base_url, project_id, cookie, "git", limit="2"
-        )
+        # Default page size is 50, not the old 20 -- all 25 real commits fit
+        # on one page with no limit specified.
+        status, _headers, page1 = _snapshot(base_url, project_id, cookie, "git")
         assert status == 200
-        assert len(page1["data"]["history"]) == 2
-        assert page1["data"]["next_skip"] == 2
+        assert len(page1["data"]["history"]) == 25
+        assert page1["data"]["next_cursor"] is None
+        assert "next_skip" not in page1["data"]
 
-        status, _headers, page2 = _snapshot(
-            base_url, project_id, cookie, "git", limit="2", skip="2"
+        # Cursor-based pagination: the returned cursor is opaque, not a bare
+        # offset integer, and advances correctly across pages.
+        status, _headers, small_page1 = _snapshot(
+            base_url, project_id, cookie, "git", limit="10"
         )
-        assert len(page2["data"]["history"]) == 2
-        assert page2["data"]["next_skip"] == 4
+        assert len(small_page1["data"]["history"]) == 10
+        cursor = small_page1["data"]["next_cursor"]
+        assert cursor is not None
+        assert cursor != "10"
 
-        status, _headers, page3 = _snapshot(
-            base_url, project_id, cookie, "git", limit="2", skip="4"
+        status, _headers, small_page2 = _snapshot(
+            base_url, project_id, cookie, "git", limit="10", cursor=cursor
         )
-        assert len(page3["data"]["history"]) == 1
-        assert page3["data"]["next_skip"] is None
+        assert len(small_page2["data"]["history"]) == 10
 
-        seen = [
-            c["subject"]
-            for page in (page1, page2, page3)
-            for c in page["data"]["history"]
+        seen = [c["subject"] for c in small_page1["data"]["history"]] + [
+            c["subject"] for c in small_page2["data"]["history"]
         ]
-        assert seen == list(reversed(expected_subjects))
+        assert seen == list(reversed(expected_subjects))[:20]
+
+        # A cursor issued against a stale revision is rejected -- a new
+        # commit landing between page requests invalidates it.
+        _commit_file(root, "late.txt", "late\n", "a later commit")
+        status, _headers, body = _snapshot(
+            base_url, project_id, cookie, "git", limit="10", cursor=cursor
+        )
+        assert status == 409
+        assert body["error"]["code"] == "cursor_rejected"
     finally:
         server.shutdown()
         server.server_close()
@@ -598,8 +646,8 @@ def test_artifacts_section_lists_every_manifest_entry_with_bounded_pagination(
                 break
 
         assert len(seen_refs) == 7  # 2 scan_outputs + 1 handoff + 4 memory
-        assert "run:run-1:tool-a" in seen_refs
-        assert "run:run-1:tool-b" in seen_refs
+        assert "run:run-1:run-1-attempt-1:tool-a" in seen_refs
+        assert "run:run-1:run-1-attempt-1:tool-b" in seen_refs
         assert "handoff:handoff-1" in seen_refs
     finally:
         server.shutdown()
@@ -660,7 +708,7 @@ def test_artifacts_section_unknown_output_type_gets_generic_safe_redacted_view(
             project_id,
             cookie,
             "artifacts",
-            expand_ref="run:run-profiler:profiler-tool",
+            expand_ref="run:run-profiler:run-profiler-attempt-1:profiler-tool",
         )
         assert status == 200
         assert headers.get("Content-Type", "").startswith("application/json")
@@ -672,6 +720,162 @@ def test_artifacts_section_unknown_output_type_gets_generic_safe_redacted_view(
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_artifact_content_route_supports_paged_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P69-07.2b: `GET /api/projects/{id}/artifacts/{ref}` supports real
+    paged content download for a scan-output artifact's recorded file, not
+    metadata-only (Phase 66 §3.6: artifact reads paginate, 1MiB/page)."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "download-repo")
+    content = "line\n" * 500
+    (root / "report.txt").write_text(content, encoding="utf-8")
+    _write_manifest(
+        root,
+        run_id="run-dl",
+        scheduled=[_scheduled_item("dl-tool", "quality", artifacts=["report.txt"])],
+    )
+    artifact_ref = "run:run-dl:run-dl-attempt-1:dl-tool"
+
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        collected = ""
+        offset = 0
+        pages = 0
+        while True:
+            resp = _get(
+                f"{base_url}/api/projects/{project_id}/artifacts/{artifact_ref}"
+                f"?limit=1000&offset={offset}",
+                headers={"Cookie": cookie},
+            )
+            assert resp.status == 200
+            page = json.loads(resp.read())["data"]["content"]
+            assert page["path"] == "report.txt"
+            assert page["offset"] == offset
+            assert len(page["content"].encode("utf-8")) <= 1000
+            collected += page["content"]
+            pages += 1
+            assert pages <= 10  # bounded loop guard, never an infinite paginate
+            if page["next_offset"] is None:
+                break
+            offset = page["next_offset"]
+        assert pages > 1  # actually paginated, not one giant blob
+        assert collected == content
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_two_attempts_of_same_run_produce_distinct_artifact_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P69-07.2c: `list_project_artifacts()` built `artifact_ref` as
+    `run:{run_id}:{candidate_id}` with no `attempt_id` -- two attempts of the
+    same `run_id` produced identical references, so a stale reference minted
+    against one attempt silently resolved whichever attempt was currently
+    highest-generation instead of the one it was minted for."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "two-attempts-repo")
+
+    _write_manifest(
+        root,
+        run_id="run-1",
+        attempt_id="run-1-attempt-a",
+        scheduled=[_scheduled_item("tool-a", "quality")],
+    )
+    payload_a = projects_module.list_project_artifacts(project_id)
+    ref_a = next(
+        item["artifact_ref"]
+        for item in payload_a["scan_outputs"]
+        if item["tool_id"] == "tool-a"
+    )
+    assert ref_a == "run:run-1:run-1-attempt-a:tool-a"
+
+    _write_manifest(
+        root,
+        run_id="run-1",
+        attempt_id="run-1-attempt-b",
+        scheduled=[_scheduled_item("tool-a", "quality")],
+    )
+    payload_b = projects_module.list_project_artifacts(project_id)
+    ref_b = next(
+        item["artifact_ref"]
+        for item in payload_b["scan_outputs"]
+        if item["tool_id"] == "tool-a"
+    )
+    assert ref_b == "run:run-1:run-1-attempt-b:tool-a"
+    assert ref_a != ref_b
+
+
+def test_list_project_artifacts_surfaces_persisted_git_link_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P69-07.2b: the manifest's persisted `git_link` (HEAD/dirty/per-path
+    digests, reusing P69-03.2's Git-link metadata) is passed through verbatim
+    on every scan-output artifact reference."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "git-link-artifacts-repo")
+    git_link = {
+        "repository": True,
+        "head": "abc123",
+        "dirty": False,
+        "path_digests": {"app.py": "deadbeef"},
+    }
+    _write_manifest(
+        root,
+        run_id="run-1",
+        scheduled=[_scheduled_item("tool-a", "quality")],
+        git_link=git_link,
+    )
+
+    payload = projects_module.list_project_artifacts(project_id)
+    item = next(item for item in payload["scan_outputs"] if item["tool_id"] == "tool-a")
+    assert item["git_link"] == git_link
+
+
+def test_build_manifest_persists_git_link_provenance_reusing_source_identity(
+    tmp_path: Path,
+) -> None:
+    """P69-07.2b: `_build_manifest`'s `git_link` field reuses the exact
+    `_git_link()` result already computed for `source_identity` -- one shared
+    provenance contract, never a second, independently computed Git read that
+    could drift from `source_identity`'s own snapshot."""
+    root = tmp_path
+    _init_repo(root)
+    _commit_file(root, "app.py", "print('x')\n", "init")
+
+    digests = {"app.py": "deadbeef"}
+    identity = project_run_module._source_identity(digests, root)
+    plan = ScanPlan(
+        plan_id="plan-x",
+        project_id="proj-x",
+        root=str(root),
+        candidates=(),
+        exclude=(),
+        targets={},
+        severity="warn",
+        concurrency=1,
+        timeout_seconds=300,
+    )
+    manifest = project_run_module._build_manifest(
+        run_id="run-x",
+        attempt_id="attempt-x",
+        plan=plan,
+        run_state="completed",
+        scheduled=[],
+        aggregate={},
+        source_identity=identity,
+        digests=digests,
+    )
+
+    assert manifest["git_link"] == {
+        "repository": True,
+        "head": identity["git"]["head"],
+        "dirty": False,
+        "path_digests": digests,
+    }
 
 
 # --- P66-06.3 CONNECT: per-project data export ------------------------------

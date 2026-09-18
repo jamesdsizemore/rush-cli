@@ -237,35 +237,15 @@ own full-journey test; 0 sections unmapped.
 Coverage: all 4 blockers identified this session are listed below; 0 additional blockers found and
 withheld.
 
-1. **Actual pixel layout at 360px/1280px and a real visual keyboard focus ring** are unverifiable
-   without a real browser in this sandbox. Source-level token values (breakpoints, focus ring) are
-   confirmed present and correct by direct read; their rendered effect is not. No headless-Chromium
-   or Selenium binary is usable here — confirmed absent, matching every prior packet this session
-   (T301, T306, T308, T309, T310, T311 — 6 of 6 prior packets that checked this reported the same
-   absence).
-2. **No Windows console is reachable from this Darwin sandbox.** The terminal journey is proven for
-   POSIX only (real `pty.fork()`, 6 of 6 tests passing). The Windows terminal lane remains an
-   explicit, unresolved blocker — never claimed complete by proxy of the POSIX evidence.
-3. **`NO_COLOR`'s real terminal effect has no dedicated automated test** (`tui.py:1307-1314`'s real
-   implementation is confirmed by source read, but asserting its effect requires editing
-   `tests/test_tui.py` or `tests/test_tui_terminal.py`, neither in this packet's `allowed_files`).
-   Named here, not silently claimed as covered by the web-side reduced-motion/theme test.
-4. **`scripts/sync_docs.py --check` fails** on 2 of the 5 docs this packet edited
-   (`docs/ARCHITECTURE.md`, `docs/CLI_REFERENCE.md`; `stale sha256` / `historical body changed`) as a
-   direct, expected consequence of this packet's own required doc corrections. Fixing it requires
-   regenerating `docs/reports/phase-64-66-documentation-coverage.md` via `scripts/sync_docs.py`'s own
-   helper functions — that file is not in this packet's `allowed_files`, and this session's standing
-   rule forbids ever hand-patching it (see the T316→T318 precedent, where a narrow patch from a stale
-   baseline destroyed the session's accumulated doc-coverage history). A dedicated follow-up task
-   with that file in its `allowed_files` should regenerate it, exactly mirroring T318.
+1. **CLOSED (P69-08, 2026-09-18).** Actual pixel layout at 360px/1280px and a real visual keyboard focus ring, originally unobservable for lack of a real browser: a real `agent-browser` CDP session opened a running `rush dashboard --port 8823` instance and at both 1280x900 and 360x800 viewports a real Tab keypress produced `document.activeElement.matches(':focus-visible') === true` with computed `outline: rgb(255, 255, 255) solid 2px` / `outline-offset: 3px` (matching `theme.py`'s declared focus token exactly) plus PNG screenshots at both breakpoints showing the rendered white focus ring on a real button, dashboard process killed and `lsof :8823` shown empty after (verified-by: this session's live `agent-browser` transcript above). See `phase-66-interactive-tui-and-local-web-plan.md` §0 row 13.
+2. **No Windows console is reachable from this Darwin sandbox** (verified-by: `uname -a` this session returning `Darwin`, unchanged since Phase 66). The terminal journey is proven for POSIX only (real `pty.fork()`, 6 of 6 tests passing). The Windows terminal lane remains an explicit, unresolved blocker — never claimed complete by proxy of the POSIX evidence.
+3. **`NO_COLOR`'s real terminal effect still has no dedicated automated test** (`tui.py:2007-2009`'s real implementation still present, checked by direct source read this session — line numbers shifted from `1307-1314` to `2007-2009` since this document was first written, symbol and behavior unchanged; asserting its effect requires editing `tests/test_tui.py` or `tests/test_tui_terminal.py`, neither in P69-08's `allowed_files` either, same gap as P66-07's original session). Named here, not silently claimed as covered by the web-side reduced-motion/theme test.
+4. **CLOSED (T316→T318, reconfirmed by P69-08 2026-09-18).** `scripts/sync_docs.py --check` no longer fails on `docs/ARCHITECTURE.md`/`docs/CLI_REFERENCE.md` — the T316→T318 doc-coverage regeneration already fixed this before P69-08 started; this session's own fresh `env -u VIRTUAL_ENV -u PYTHONPATH .venv/bin/python scripts/sync_docs.py --check` run contains zero entries naming either file (verified-by: that command's actual stdout this session, checked line by line).
 
 ## Whole-Phase-66 completion statement
 
-F36 (P66-03), F37/F39/F40 (P66-01), and F38 (P66-02, P66-04, P66-05, P66-06) — 6 of 6 Phase-66-owned
-findings — are each backed by real, integrated, independently-judged source and test evidence per the
-packet table above — none closed by a plan or a first-pass judge alone; every `needs_fix` finding was
-genuinely fixed and re-verified by live execution before its packet's final `integrated` decision.
-F41 is closed by this document plus P65-09's own prior evidence, with two explicit, honestly-named
-open blockers (browser pixel/focus-ring rendering, Windows console) that no environment change
-available in this session can close, and one named, scoped-out-of-`allowed_files` doc-regeneration
-blocker for a dedicated follow-up task.
+F36 (P66-03), F37/F39/F40 (P66-01), and F38 (P66-02, P66-04, P66-05, P66-06) — 6 of 6 Phase-66-owned findings — are each backed by real, integrated, independently-judged source and test evidence per the packet table above; none closed by a plan or a first-pass judge alone, every `needs_fix` finding genuinely fixed and re-verified by live execution before its packet's final `integrated` decision (verified-by: the packet table's own board-task links above). F41 is closed by this document plus P65-09's own prior evidence.
+
+Of the 4 named blockers this document originally tracked (§ above), 2 are closed for real by Phase 69's P69-08 (2026-09-18): browser pixel/focus-ring rendering (live `agent-browser` check, item 1 above) and the `sync_docs.py --check` ARCHITECTURE/CLI_REFERENCE failure (already fixed by T316→T318, reconfirmed still holding, item 4 above). 2 stay genuinely, honestly open: the Windows console terminal journey (no Windows machine reachable in any session this phase has run in) and the `NO_COLOR` terminal test (needs `tests/test_tui.py`/`tests/test_tui_terminal.py`, outside every P66-07 and P69-08 Worker's `allowed_files` so far). F38's own real interface-acceptance closure — proof the components P66-02/04/05/06 built are actually usable end-to-end, which is what P66-07's own acceptance run existed to prove — is completed by Phase 69's P69-04 (browser-application wiring) and P69-05 (motion, responsive layout, recovery) packets, each independently checked via live `agent-browser` VERIFY sessions per those packets' own board receipts (verified-by: `docs/goals/phase-69-dashboard-tui-contract-remediation/state.yaml` tasks T020/T021, each showing a live browser session plus a passing pytest run), plus every other P69-01 through P69-07 packet closing the remaining named gaps against Phase 66's own §0. See `phase-66-interactive-tui-and-local-web-plan.md` §0 rows 13 and 20 for the row-level closure record.
+
+**P69-08.2 threshold sign-off:** `phase-66-interactive-tui-and-local-web-plan.md` §0 row 18's 250ms `test_large_map_pagination_is_complete` requirement is resolved as: keep the existing sustainable 1.0s bound rather than restore 250ms, a named, evidenced sign-off (not a silent pick) recorded in full at that row — this session's own local measurements stay well under 250ms, but cannot substitute for the actual shared CI runner where the test's own code comment already documents a real 0.2514s breach, and that runner isn't reachable from this environment to re-confirm a 250ms bound would hold there.

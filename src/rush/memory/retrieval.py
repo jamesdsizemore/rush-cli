@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import json
 import math
+import uuid
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -188,12 +189,18 @@ def _record_memory_event(
     *,
     request_id: str | None,
     event_id: str | None,
+    invocation_id: str | None,
+    project_id: str,
     opt_in: bool,
     cache_write: bool,
 ) -> None:
     """No-op unless a caller opts into real cost accounting by passing `telemetry` plus both
     IDs — existing `recall_page()`/`expand_artifact()` callers that pass none of this see zero
-    behavior change."""
+    behavior change. P69-07 subsection e: `invocation_id` identifies this call, never the
+    content-derived `request_id` — a caller (`tools/memory.py`, out of this fix's reach)
+    passing the same content-derived `request_id` twice for two genuinely distinct calls no
+    longer collides, since `invocation_id` is minted per call by `recall_page()`/
+    `expand_artifact()`/`hybrid_page()`, not reused from `request_id`."""
     if telemetry is None or not request_id or not event_id:
         return
     telemetry.record_memory_event(
@@ -201,6 +208,8 @@ def _record_memory_event(
         tokens,
         request_id=request_id,
         event_id=event_id,
+        invocation_id=invocation_id,
+        project_id=project_id,
         opt_in=opt_in,
         cache_write=cache_write,
     )
@@ -319,6 +328,7 @@ def recall_page(
     telemetry: TelemetryStore | None = None,
     request_id: str | None = None,
     event_id: str | None = None,
+    invocation_id: str | None = None,
     opt_in: bool = False,
     cache_write: bool = False,
 ) -> dict[str, Any]:
@@ -340,6 +350,11 @@ def recall_page(
     allowed_sources = sorted(set(session_allowlist or ()))
     if not allowed_sources:
         return _page("OK", complete=True, encoding=encoding)
+
+    # P69-07 subsection e: mint a real per-call identity when the caller doesn't supply
+    # one (today's only caller, `tools/memory.py`, passes a content-derived `request_id`
+    # instead) so two distinct calls sharing identical content never collide.
+    real_invocation_id = invocation_id or str(uuid.uuid4())
 
     key = store.cursor_key()
     namespace = str(store.project_root)
@@ -442,6 +457,8 @@ def recall_page(
         size_tokens,
         request_id=request_id,
         event_id=event_id,
+        invocation_id=real_invocation_id,
+        project_id=str(store.project_root),
         opt_in=opt_in,
         cache_write=cache_write,
     )
@@ -509,6 +526,7 @@ def expand_artifact(
     telemetry: TelemetryStore | None = None,
     request_id: str | None = None,
     event_id: str | None = None,
+    invocation_id: str | None = None,
     opt_in: bool = False,
     cache_write: bool = False,
 ) -> dict[str, Any]:
@@ -526,6 +544,8 @@ def expand_artifact(
     MC04: passing `telemetry` plus `request_id`/`event_id` records a real successful
     expansion's token cost as an `"expansion"` event; omitted (the default), nothing persists.
     """
+    # P69-07 subsection e: see `recall_page()`'s identical rationale.
+    real_invocation_id = invocation_id or str(uuid.uuid4())
     allowed_sources = set(session_allowlist or ())
     current = store.get_current(artifact_id)
     if current is None or not allowed_sources or current.source not in allowed_sources:
@@ -577,6 +597,8 @@ def expand_artifact(
             size[1],
             request_id=request_id,
             event_id=event_id,
+            invocation_id=real_invocation_id,
+            project_id=str(store.project_root),
             opt_in=opt_in,
             cache_write=cache_write,
         )
@@ -622,6 +644,8 @@ def expand_artifact(
         size[1],
         request_id=request_id,
         event_id=event_id,
+        invocation_id=real_invocation_id,
+        project_id=str(store.project_root),
         opt_in=opt_in,
         cache_write=cache_write,
     )
@@ -808,6 +832,7 @@ def hybrid_page(
     telemetry: TelemetryStore | None = None,
     request_id: str | None = None,
     event_id: str | None = None,
+    invocation_id: str | None = None,
     opt_in: bool = False,
 ) -> dict[str, Any]:
     """MC12 §6.7 hybrid retrieval page: `hybrid_candidates()`'s RRF-fused ranking, applying
@@ -829,6 +854,10 @@ def hybrid_page(
         page["retrieval"] = "hybrid"
         page["candidates_truncated"] = False
         return page
+
+    # P69-07 subsection e: minted once, forwarded to the lexical fallback below so a
+    # fallback call never mints a second, different identity for this one logical call.
+    real_invocation_id = invocation_id or str(uuid.uuid4())
 
     fused = hybrid_candidates(
         store,
@@ -852,6 +881,7 @@ def hybrid_page(
             telemetry=telemetry,
             request_id=request_id,
             event_id=event_id,
+            invocation_id=real_invocation_id,
             opt_in=opt_in,
             cache_write=cache_write,
         )
@@ -880,6 +910,8 @@ def hybrid_page(
         size_tokens,
         request_id=request_id,
         event_id=event_id,
+        invocation_id=real_invocation_id,
+        project_id=str(store.project_root),
         opt_in=opt_in,
         cache_write=cache_write,
     )

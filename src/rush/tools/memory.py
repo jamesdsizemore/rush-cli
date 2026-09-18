@@ -33,8 +33,11 @@ from ..memory.retrieval import DEFAULT_LIMIT as _COMPACT_DEFAULT_LIMIT
 from ..memory.store import (
     MemoryArtifact,
     MemoryFamily,
+    MemoryMigrationRequiredError,
     MemoryScopeError,
     MemorySubject,
+    OwnerScope,
+    OwnerScopeError,
     SignatureMismatchError,
     TrojanSourceFoundError,
     TypedArtifactStore,
@@ -125,6 +128,9 @@ _CODE_STATUS: dict[str, str] = {
     "E_EMBEDDING_UNAVAILABLE": "warn",
     "UNRESOLVED": "warn",
     "E_SCOPE": "fail",
+    # P69-07 ownership contract: an owner mismatch is a rejected mutation, exactly
+    # like E_VERSION -- deliberately distinct from E_SCOPE, which means wrong `subject`.
+    "E_OWNER": "fail",
 }
 _COMPACT_REQUEST_KEYS = {
     "view",
@@ -213,10 +219,14 @@ _HANDOFF_REQUEST_KEYS = {
     "handoff_id",
 }
 _HANDOFF_ACTIONS = {"prepare", "dispatch", "status"}
+# `owner_scope` (P69-07) is accepted by all three request-gated operations below --
+# each has its own independent allowlist, so adding it to only one would silently
+# reject it on the other two.
 _DELETE_REQUEST_KEYS = {
     "artifact_ids",
     "expected_revisions",
     "scope",
+    "owner_scope",
     "apply",
     "receipt_operation_id",
 }
@@ -226,6 +236,7 @@ _EDIT_REQUEST_KEYS = {
     "id",
     "expected_version",
     "content",
+    "owner_scope",
     "apply",
     "receipt_operation_id",
 }
@@ -233,6 +244,7 @@ _ARCHIVE_REQUEST_KEYS = {
     "scope",
     "id",
     "expected_version",
+    "owner_scope",
     "apply",
     "archived",
     "receipt_operation_id",
@@ -284,6 +296,7 @@ class MemoryTool(ToolFn):
         task: MaintenanceTask | None = None,
         batch_size: int = 500,
         include_archived: bool = False,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
         allow_cache_write: bool = False,
         allow_artifact_write: bool = False,
         allow_build: bool = False,
@@ -308,6 +321,7 @@ class MemoryTool(ToolFn):
             task=task,
             batch_size=batch_size,
             include_archived=include_archived,
+            owner_scope=owner_scope,
             permissions=ExecutionPermissions(
                 cache_write=allow_cache_write,
                 artifact_write=allow_artifact_write,
@@ -337,6 +351,10 @@ class MemoryTool(ToolFn):
         task: MaintenanceTask | None = None,
         batch_size: int = 500,
         include_archived: bool = False,
+        # P69-07: `write`/`promote` take their inputs as named parameters (not a
+        # request dict with an allowlist), so ownership has to be a real parameter
+        # here, threaded through the dispatch lambdas below, to reach storage at all.
+        owner_scope: dict[str, str] | OwnerScope | None = None,
         permissions: ExecutionPermissions | None = None,
         request: dict[str, Any] | None = None,
         receipt_operation_id: str | None = None,
@@ -420,6 +438,7 @@ class MemoryTool(ToolFn):
                 symbol_ref,
                 source_kind,
                 granted,
+                owner_scope,
             ),
             "promote": lambda: self._run_promote(
                 started,
@@ -433,6 +452,7 @@ class MemoryTool(ToolFn):
                 candidate_sources,
                 granted,
                 receipt_operation_id,
+                owner_scope,
             ),
             "maintain": lambda: self._run_maintain(
                 started, root, task, batch_size, granted
@@ -1016,6 +1036,31 @@ class MemoryTool(ToolFn):
             metadata={"operation": operation},
         )
 
+    @staticmethod
+    def _parse_owner_scope(
+        value: dict[str, str] | OwnerScope | None, root: Path
+    ) -> OwnerScope | None:
+        """Validate a caller-supplied `owner_scope` (P69-07 subsection a).
+
+        Structural validation only for `user`/`agent`/`session` kinds -- this phase has
+        no identity provider to authenticate an opaque id against. A `project`-kind id
+        written as a filesystem path must be *this* request's own project: a registered
+        project's canonical id is a registry UUID (resolved a layer up, in the dashboard
+        adapter, which is the only layer that knows it), so a UUID passes through here
+        untouched while a path naming a different project is rejected outright.
+        """
+        if value is None:
+            return None
+        owner_scope = OwnerScope.from_value(value)
+        if owner_scope.kind == "project":
+            candidate = Path(owner_scope.id)
+            if candidate.is_absolute() and candidate.resolve() != root:
+                raise ValueError(
+                    f"project-kind owner_scope {owner_scope.id!r} names a different "
+                    f"project than {str(root)!r}"
+                )
+        return owner_scope
+
     def _run_write(
         self,
         started: float,
@@ -1026,6 +1071,7 @@ class MemoryTool(ToolFn):
         symbol_ref: str | None,
         source_kind: SourceKind,
         granted: ExecutionPermissions,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
@@ -1042,9 +1088,17 @@ class MemoryTool(ToolFn):
                 "memory write requires subject, content, and source.",
                 operation="write",
             )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation="write"
+            )
         store = TypedArtifactStore(root)
         stored = store.write(
-            self._build_artifact(subject, content, source, symbol_ref, source_kind)
+            self._build_artifact(
+                subject, content, source, symbol_ref, source_kind, owner
+            )
         )
         return self._result(
             started,
@@ -1067,6 +1121,7 @@ class MemoryTool(ToolFn):
         candidate_sources: list[str] | None,
         granted: ExecutionPermissions,
         receipt_operation_id: str | None = None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
@@ -1083,8 +1138,14 @@ class MemoryTool(ToolFn):
                 "memory promote requires subject, content, and source.",
                 operation="promote",
             )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation="promote"
+            )
         artifact = self._build_artifact(
-            subject, content, source, symbol_ref, source_kind
+            subject, content, source, symbol_ref, source_kind, owner
         )
         store = TypedArtifactStore(root)
         # P69-01.2f: promotion is two separately-committed effects (candidate
@@ -1998,6 +2059,13 @@ class MemoryTool(ToolFn):
 
         assert isinstance(expected_revisions, dict)  # narrowed by valid_revisions above
 
+        try:
+            owner = self._parse_owner_scope(request.get("owner_scope"), root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started, "delete", "E_INPUT", {"message": f"invalid owner_scope: {exc}"}
+            )
+
         if apply:
             allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
             if not allowed:
@@ -2014,12 +2082,17 @@ class MemoryTool(ToolFn):
                 artifact_ids,
                 expected_revisions=expected_revisions,
                 scope=scope,
+                owner_scope=owner,
                 apply=apply,
                 receipt_operation_id=request.get("receipt_operation_id"),
             )
         except KeyError as exc:
             return self._envelope_result(
                 started, "delete", "E_INPUT", {"message": f"unknown artifact_id: {exc}"}
+            )
+        except OwnerScopeError as exc:
+            return self._envelope_result(
+                started, "delete", "E_OWNER", {"message": str(exc)}
             )
         except MemoryScopeError as exc:
             return self._envelope_result(
@@ -2162,6 +2235,16 @@ class MemoryTool(ToolFn):
                 )
             archived = requested_archived
 
+        try:
+            owner = self._parse_owner_scope(request.get("owner_scope"), root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+
         if apply:
             allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
             if not allowed:
@@ -2174,24 +2257,38 @@ class MemoryTool(ToolFn):
                     },
                 )
 
-        store = TypedArtifactStore(root)
         receipt_operation_id = request.get("receipt_operation_id")
         try:
-            if operation == "edit":
-                result = store.edit(
+            if not apply:
+                # P69-07 subsection f: a preview is genuinely read-only -- it never
+                # constructs a writable `TypedArtifactStore`, whose mere construction
+                # creates `.rush/`, runs the schema script, mints a cursor key, and
+                # (as of this packet) runs the `owner_scope` migration.
+                result = TypedArtifactStore.preview_mutation(
+                    root,
+                    artifact_id,
+                    expected_version=expected_version,
+                    scope=scope,
+                    owner_scope=owner,
+                    operation=operation,
+                )
+            elif operation == "edit":
+                result = TypedArtifactStore(root).edit(
                     artifact_id,
                     content,
                     expected_version=expected_version,
                     scope=scope,
-                    apply=apply,
+                    owner_scope=owner,
+                    apply=True,
                     receipt_operation_id=receipt_operation_id,
                 )
             else:
-                result = store.archive(
+                result = TypedArtifactStore(root).archive(
                     artifact_id,
                     expected_version=expected_version,
                     scope=scope,
-                    apply=apply,
+                    owner_scope=owner,
+                    apply=True,
                     archived=archived,
                     receipt_operation_id=receipt_operation_id,
                 )
@@ -2201,6 +2298,14 @@ class MemoryTool(ToolFn):
                 operation,
                 "E_INPUT",
                 {"message": f"unknown artifact_id: {exc}"},
+            )
+        except MemoryMigrationRequiredError as exc:
+            return self._envelope_result(
+                started, operation, "E_MIGRATION", {"message": str(exc)}
+            )
+        except OwnerScopeError as exc:
+            return self._envelope_result(
+                started, operation, "E_OWNER", {"message": str(exc)}
             )
         except MemoryScopeError as exc:
             return self._envelope_result(
@@ -2220,6 +2325,7 @@ class MemoryTool(ToolFn):
         source: str,
         symbol_ref: str | None,
         source_kind: SourceKind,
+        owner_scope: OwnerScope | None = None,
     ) -> MemoryArtifact:
         return MemoryArtifact(
             id=str(uuid.uuid4()),
@@ -2230,6 +2336,7 @@ class MemoryTool(ToolFn):
             source=source,
             created_at=time.time(),
             symbol_ref=symbol_ref,
+            owner_scope=owner_scope,
         )
 
     @staticmethod

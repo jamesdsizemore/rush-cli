@@ -9,6 +9,8 @@ no randomness, no iterative physics).
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -16,11 +18,18 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import rush.tools.common  # noqa: F401 -- import first: avoids a circular
+
+# import through `rush.runtime` when `rush.runtime.subprocesses` is imported
+# on its own (same rationale as `tests/test_subprocess_contract.py`).
+import rush.tui as tui_module
 from rush.dashboard import server as server_module
 from rush.dashboard.project_map import (
     RENDER_EDGE_LIMIT,
@@ -32,8 +41,17 @@ from rush.dashboard.project_map import (
     expand_group_edge,
 )
 from rush.dashboard.server import create_dashboard_server, publish_check_suite_scan
-from rush.dashboard.state import MutationLedger
+from rush.dashboard.state import (
+    MutationLedger,
+    OwnerLock,
+    claim_dead_owner,
+    reconcile_admissions,
+)
 from rush.permissions import ExecutionPermissions
+from rush.runtime.subprocesses import (
+    _record_owned_process,
+    read_owned_process_records,
+)
 from rush.setup import provision as provision_module
 from rush.tools.review import ReviewTool
 from rush.workflows import project_run as project_run_module
@@ -294,6 +312,11 @@ def test_large_map_pagination_is_complete() -> None:
     # Bounded-time guard, not a precision benchmark: 0.25s tripped on a loaded
     # shared CI runner (measured 0.2514s), 1s still catches a real regression
     # (e.g. an accidental quadratic blowup) for 40k nodes.
+    # P69-08.2 sign-off (2026-09-18): kept at 1.0s rather than restoring the
+    # original 250ms figure -- see phase-66-interactive-tui-and-local-web-plan.md
+    # sec0 row 18 for the full evidenced decision record (this environment's
+    # own local runs measure well under 250ms, but that can't stand in for the
+    # actual shared CI runner where the 0.2514s breach above was measured).
     assert elapsed < 1.0
 
     group_ids = {g["id"] for g in result["groups"]}
@@ -2365,3 +2388,606 @@ def test_current_map_reloads_memory_mutated_entirely_outside_this_dashboard(
     finally:
         _server.shutdown()
         _server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# P69-06g/h/i -- the q-with-running-work three-way menu (Detach/Cancel run
+# and stay/Return, per Phase 66 S3.9 and this plan's own S3 Detach-ownership
+# clarification), Detach's force-exit actually stopping owned subprocess
+# groups (P69-01's `reap_owner_processes`, reused as-is), and
+# `recovery_required` replacing `unresolved_cancellation` as the durable,
+# never-TTL-pruned status a dead local run's row is left in for a later
+# invocation's generic recovery sweep (`reconcile_admissions`, unmodified)
+# to reconcile through the same owner-liveness lock as any other row.
+#
+# NOTE (plan-doc inconsistency, flagged in this packet's own receipt): the
+# plan's official P69-06.4 VERIFY command line does not list this file even
+# though its own RED step (P69-06.2h/i, "Add tests/test_dashboard_map.py::
+# ...") names these tests as belonging here -- this packet's real verify
+# gate runs this file alongside the official command.
+# ---------------------------------------------------------------------------
+
+
+def _local_scan_actions(**overrides: object) -> tui_module.ScanActions:
+    base: dict[str, object] = {
+        "plan_scan": lambda root, **k: SimpleNamespace(
+            plan_id="plan-1", candidates=[1, 2]
+        ),
+        "execute_scan": lambda plan, **k: SimpleNamespace(
+            aggregate={"tool": "x", "status": "ok", "findings": []}
+        ),
+        "cancel_scan_run": lambda *a, **k: {},
+        "rescan_project_run": lambda *a, **k: {"run": {"run_id": "r2"}},
+        "build_handoff": lambda *a, **k: None,
+        "dispatch_handoff": lambda *a, **k: None,
+        "load_scan_events": lambda *a, **k: {"events": [], "run_state": None},
+        "list_agents": list,
+    }
+    base.update(overrides)
+    return tui_module.ScanActions(**base)
+
+
+def _local_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[tui_module.ProjectState, str]:
+    """Isolated data root, a registered project, and a fresh
+    `tui._OWNER_INSTANCE` mint. `_tui_owner_instance_id()` caches its result
+    for this whole process's lifetime, so each test that needs its own fresh
+    owner lock (against its own tmp_path data root) must reset it."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    tui_module._OWNER_INSTANCE.clear()
+    project_id, root = _register(tmp_path)
+    return tui_module.ProjectState(name="demo", root=root), project_id
+
+
+class _FakeDashboardOwner:
+    """Stand-in for a live dashboard server discovered at scan-start time --
+    same contract as `tests/test_tui.py`'s own `_FakeDashboardOwner`, kept
+    local here since it is a private test helper, not a shared fixture."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def dispatch(self, operation: str, **arguments: object) -> dict:
+        self.calls.append((operation, dict(arguments)))
+        return {"operation_id": f"op-{len(self.calls)}", "run_id": "dashboard-run"}
+
+
+def test_standalone_tui_process_acquires_its_own_owner_lock_before_reserving_local_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, project_id = _local_project(tmp_path, monkeypatch)
+    gate = threading.Event()
+    actions = _local_scan_actions(
+        execute_scan=lambda plan, **k: (
+            gate.wait(timeout=5),
+            SimpleNamespace(aggregate={}),
+        )[1]
+    )
+    tui_module._start_scan_thread(project, actions)
+    try:
+        assert project.owner == "local"
+        assert project.owner_instance_id
+        lock_path = (
+            tmp_path / "rush-data" / "owners" / f"{project.owner_instance_id}.lock"
+        )
+        assert lock_path.exists(), (
+            "no owner-liveness lock acquired before reserving local work"
+        )
+        assert project.ledger_admitted
+        admission = MutationLedger().admission_for_project(project_id)
+        assert admission is not None
+        assert admission["owner_instance_id"] == project.owner_instance_id
+    finally:
+        gate.set()
+        project.scan_thread.join(timeout=5)
+
+
+def test_recovery_rejects_a_claim_while_the_actual_tui_process_is_still_alive(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "rush-data"
+    owner_id = "tui:alive"
+    OwnerLock(owner_id, data_root=data_root)  # held for this process's lifetime
+    with claim_dead_owner(owner_id, data_root=data_root) as claimed:
+        assert claimed is False, "recovery must not claim a live owner's lock"
+
+
+def test_q_menu_offers_all_three_choices_detach_cancel_and_stay_return_distinctly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    project.status = "scanning"
+    project.run_id = "run-1"
+    cancel_calls: list[str] = []
+    actions = _local_scan_actions(
+        cancel_scan_run=lambda root, run_id: cancel_calls.append(run_id)
+    )
+    state = tui_module.TuiState(projects=[project])
+
+    tui_module._dispatch_key(state, "q", actions)
+    assert state.mode == "quit_confirm"
+
+    tui_module._dispatch_key(state, "r", actions)
+    assert state.mode == "list"
+    assert state.should_quit is False
+
+    project.status = "scanning"
+    tui_module._dispatch_key(state, "q", actions)
+    tui_module._dispatch_key(state, "c", actions)
+    assert state.mode == "list"
+    assert state.should_quit is False
+    assert cancel_calls == ["run-1"]
+    assert project.status == "cancelling"
+
+    project.owner = "dashboard"  # trivial Detach case (a): no wait, no cancel
+    project.status = "scanning"
+    tui_module._dispatch_key(state, "q", actions)
+    tui_module._dispatch_key(state, "d", actions)
+    assert state.should_quit is True
+
+
+def test_cancel_and_stay_does_not_exit_the_tui_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    project.status = "scanning"
+    project.run_id = "run-1"
+    calls: list[str] = []
+    actions = _local_scan_actions(
+        cancel_scan_run=lambda root, run_id: calls.append(run_id)
+    )
+    state = tui_module.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+
+    tui_module._handle_cancel_and_stay(state, project, actions)
+
+    assert state.should_quit is False
+    assert state.mode == "list"
+    assert calls == ["run-1"]
+    assert project.status == "cancelling"
+
+
+def test_cancel_and_stay_never_exits_even_past_the_5s_window_a_late_worker_acknowledgment_still_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    project.status = "scanning"
+    project.run_id = "run-1"
+    project.plan_total = 1
+    events_state: dict[str, object] = {"events": [], "run_state": "running"}
+    actions = _local_scan_actions(
+        cancel_scan_run=lambda *a, **k: None,
+        load_scan_events=lambda *a, **k: dict(events_state),
+    )
+    state = tui_module.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+
+    t0 = time.monotonic()
+    tui_module._handle_cancel_and_stay(state, project, actions)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0, "Cancel run and stay must never block waiting for ack"
+    assert state.should_quit is False
+
+    # A worker acknowledgment arriving well past Detach's own 5s window --
+    # Cancel-run-and-stay has no timeout, so the still-open TUI's normal
+    # render-tick polling must still observe it correctly, whenever it lands.
+    events_state["run_state"] = "cancelled"
+    tui_module._poll_running_scans(state, actions)
+    assert project.status == "cancelled"
+    assert state.should_quit is False
+
+
+def test_detach_force_exit_terminates_owned_subprocess_groups_before_process_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    owner_id = "tui:detach-reap"
+    project.owner = "local"
+    project.owner_instance_id = owner_id
+    project.status = "scanning"
+    project.run_id = "run-1"
+    project.plan_total = 1
+
+    child = subprocess.Popen(
+        ["sleep", "60"], start_new_session=True, stdin=subprocess.DEVNULL
+    )
+    pgid = child.pid
+    # `child` is this test's own direct child -- a killed-but-unreaped
+    # direct child is a zombie, and `kill(pid, 0)` still succeeds against a
+    # zombie, so `terminate_owned_group`'s confirmation poll never observes
+    # it as gone without something waiting on it. Production `.procs`
+    # entries are not necessarily this process's own children (recovery
+    # commonly reaps another process's), so this reaping is this test's own
+    # harness concern, not something `terminate_owned_group` itself owns.
+    threading.Thread(target=child.wait, daemon=True).start()
+    _record_owned_process(owner_id, "run-1", pgid)
+    try:
+        actions = _local_scan_actions(
+            cancel_scan_run=lambda *a, **k: None,
+            load_scan_events=lambda *a, **k: {"events": [], "run_state": "running"},
+        )
+        state = tui_module.TuiState(projects=[project])
+        state.mode = "quit_confirm"
+
+        # A generous timeout here: `sleep 60` normally dies within
+        # milliseconds of SIGTERM, but the confirmation poll's own interval
+        # plus process-scheduling jitter under a loaded CI runner can miss a
+        # tight deadline -- this is about giving `_wait_group_gone` enough
+        # headroom to observe a real, fast termination, not about masking a
+        # slow one.
+        tui_module._handle_detach(state, project, actions, timeout=1.0)
+
+        assert state.should_quit is True
+        # A racy re-probe of `pgid` via `os.killpg` after the fact is not
+        # reliable (the OS may already have recycled the pgid to an
+        # unrelated process) -- `reap_owner_processes` only clears a
+        # `.procs` record once its own confirmation poll (`_wait_group_gone`)
+        # positively observed the group gone, so an empty record set here is
+        # the real, non-racy contract this subsection guarantees.
+        assert (
+            read_owned_process_records(owner_id, data_root=tmp_path / "rush-data") == []
+        )
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
+def test_detach_force_exit_escalates_to_sigkill_when_a_descendant_ignores_sigterm_past_the_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    owner_id = "tui:detach-sigkill"
+    project.owner = "local"
+    project.owner_instance_id = owner_id
+    project.status = "scanning"
+    project.run_id = "run-1"
+    project.plan_total = 1
+
+    pid_file = tmp_path / "descendant-pid"
+    leader = subprocess.Popen(
+        [
+            "/bin/sh",
+            "-c",
+            f"sh -c 'trap \"\" TERM; sleep 60' & echo $! > {pid_file}; exit 0",
+        ],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+    )
+    pgid = leader.pid
+    _record_owned_process(owner_id, "run-1", pgid)
+    try:
+        deadline = time.monotonic() + 5.0
+        while not (pid_file.exists() and pid_file.read_text().strip()):
+            assert time.monotonic() < deadline, "descendant never recorded its pid"
+            time.sleep(0.02)
+        leader.wait(timeout=5)
+
+        actions = _local_scan_actions(
+            cancel_scan_run=lambda *a, **k: None,
+            load_scan_events=lambda *a, **k: {"events": [], "run_state": "running"},
+        )
+        state = tui_module.TuiState(projects=[project])
+        state.mode = "quit_confirm"
+
+        tui_module._handle_detach(state, project, actions, timeout=1.0)
+
+        assert state.should_quit is True
+        # See the identical comment in the SIGTERM-only test above: a
+        # non-racy `.procs`-record check, not a re-probe of a pgid the OS
+        # may already have recycled.
+        assert (
+            read_owned_process_records(owner_id, data_root=tmp_path / "rush-data") == []
+        )
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
+def test_recovery_required_is_never_ttl_pruned_like_pending(tmp_path: Path) -> None:
+    ledger = MutationLedger(db_path=tmp_path / "ledger.db")
+    reservation = ledger.reserve(
+        "proj-1", request_id="req-1", body_hash="", operation_type="scan_start"
+    )
+    op_id = reservation.operation_id
+    ledger.record_status_transition(
+        op_id, "recovery_required", {"status": "recovery_required"}
+    )
+
+    pruned = ledger.prune_expired(ttl_seconds=0)
+
+    assert pruned == 0
+    status = ledger.get_operation_status(op_id)
+    assert status is not None
+    assert status["status"] == "recovery_required"
+
+
+def test_late_worker_acknowledgment_racing_the_timeout_uses_cas_not_a_blind_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    project.operation_id = "op-race"
+    project.owner_instance_id = "tui:race"
+    project.ledger_admitted = True
+    project.run_resolved = False
+
+    winner = tui_module._resolve_local_run(project)
+    loser = tui_module._resolve_local_run(project)
+
+    assert winner is True
+    assert loser is False
+
+
+def test_recovery_claims_a_recovery_required_row_through_the_same_ownership_lock_as_any_other_pending_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_data_roots(tmp_path, monkeypatch)
+    data_root = tmp_path / "rush-data"
+    project_id, _root = _register(tmp_path)
+    owner_id = "tui:recovery-claim"
+    op_id_file = tmp_path / "op_id.txt"
+
+    child_pid = os.fork()
+    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
+        try:
+            OwnerLock(owner_id, data_root=data_root)
+            ledger = MutationLedger()
+            reservation = ledger.reserve(
+                project_id,
+                request_id="tui-local:run-x",
+                body_hash="",
+                operation_type="scan_start:plan-1",
+            )
+            op_id = reservation.operation_id
+            ledger.admit(
+                project_id,
+                execution_identity="scan_start:plan-1",
+                slot_id=op_id,
+                operation_id=op_id,
+                run_id="run-x",
+                plan_id="plan-1",
+                owner_instance_id=owner_id,
+            )
+            ledger.record_status_transition(
+                op_id, "recovery_required", {"status": "recovery_required"}
+            )
+            op_id_file.write_text(op_id)
+        finally:
+            os._exit(0)
+    os.waitpid(child_pid, 0)
+
+    op_id = op_id_file.read_text()
+    ledger = MutationLedger()
+    assert ledger.get_operation_status(op_id)["status"] == "recovery_required"
+    assert ledger.admission_for_project(project_id) is not None
+
+    reconciled = reconcile_admissions(ledger, data_root=data_root)
+
+    assert reconciled == 1
+    assert ledger.admission_for_project(project_id) is None
+    assert ledger.get_operation_status(op_id)["status"] == "terminal"
+
+
+def test_recovery_required_is_reconciled_by_a_later_invocations_recovery_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_data_roots(tmp_path, monkeypatch)
+    data_root = tmp_path / "rush-data"
+    _project_id, root = _register(tmp_path)
+    result_file = tmp_path / "result.json"
+
+    child_pid = os.fork()
+    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
+        try:
+            tui_module._OWNER_INSTANCE.clear()
+            project = tui_module.ProjectState(name="demo", root=root)
+            never = threading.Event()
+            actions = _local_scan_actions(
+                execute_scan=lambda plan, **k: (
+                    never.wait(timeout=30),
+                    SimpleNamespace(aggregate={}),
+                )[1],
+            )
+            tui_module._start_scan_thread(project, actions)
+            time.sleep(0.2)
+            state = tui_module.TuiState(projects=[project])
+            tui_module._handle_detach(state, project, actions, timeout=0.2)
+            result_file.write_text(
+                json.dumps(
+                    {
+                        "op_id": project.operation_id,
+                        "owner_id": project.owner_instance_id,
+                    }
+                )
+            )
+        finally:
+            os._exit(0)
+    os.waitpid(child_pid, 0)
+
+    result = json.loads(result_file.read_text())
+    op_id, owner_id = result["op_id"], result["owner_id"]
+
+    ledger = MutationLedger()
+    assert ledger.get_operation_status(op_id)["status"] == "recovery_required"
+    with claim_dead_owner(owner_id, data_root=data_root) as claimed:
+        assert claimed is True  # the crashed child's owner lock is provably gone
+
+    reconciled = reconcile_admissions(ledger, data_root=data_root)
+    assert reconciled == 1
+    assert ledger.get_operation_status(op_id)["status"] == "terminal"
+
+
+def test_cancel_waits_for_worker_acknowledgment_before_process_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    project.owner = "local"
+    project.owner_instance_id = "tui:ack-test"
+    project.status = "scanning"
+    project.run_id = "run-1"
+    project.plan_total = 1
+    events_state: dict[str, object] = {"events": [], "run_state": "running"}
+
+    def _cancel(*_a: object, **_k: object) -> dict:
+        events_state["run_state"] = "cancelled"
+        return {}
+
+    actions = _local_scan_actions(
+        cancel_scan_run=_cancel,
+        load_scan_events=lambda *a, **k: dict(events_state),
+    )
+    state = tui_module.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+
+    t0 = time.monotonic()
+    tui_module._handle_detach(state, project, actions, timeout=5.0)
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 4.0, "must return promptly once acknowledged, not the full timeout"
+    assert state.should_quit is True
+    assert project.status == "cancelled"
+
+
+def test_cancel_timeout_marks_recovery_required_not_silent_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, project_id = _local_project(tmp_path, monkeypatch)
+    gate = threading.Event()
+    actions = _local_scan_actions(
+        execute_scan=lambda plan, **k: (
+            gate.wait(timeout=10),
+            SimpleNamespace(aggregate={}),
+        )[1],
+        cancel_scan_run=lambda *a, **k: None,  # accepted; the fake worker never stops
+        load_scan_events=lambda *a, **k: {"events": [], "run_state": "running"},
+    )
+    tui_module._start_scan_thread(project, actions)
+    time.sleep(0.2)
+    state = tui_module.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+
+    tui_module._handle_detach(state, project, actions, timeout=0.3)
+
+    assert state.should_quit is True
+    ledger = MutationLedger()
+    status = ledger.get_operation_status(project.operation_id)
+    assert status is not None
+    assert status["status"] == "recovery_required", status
+    assert ledger.admission_for_project(project_id) is not None, (
+        "the row must stay present for recovery, never silently dropped"
+    )
+    gate.set()
+
+
+def test_dashboard_owned_scan_then_rescan_stays_dashboard_owned_not_silently_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    owner = _FakeDashboardOwner()
+    actions = _local_scan_actions(dashboard_owner=lambda root: owner)
+
+    tui_module._start_scan_thread(project, actions)
+    project.scan_thread.join(timeout=5)
+    assert project.owner == "dashboard"
+
+    tui_module._start_rescan_thread(project, actions)
+    project.scan_thread.join(timeout=5)
+    assert project.owner == "dashboard"
+    assert [call[0] for call in owner.calls] == ["scan_start", "rescan"]
+
+
+def test_quit_after_dashboard_owned_rescan_cancels_the_correct_run_not_a_stale_local_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    project.run_id = "stale-local-run"
+    owner = _FakeDashboardOwner()
+    actions = _local_scan_actions(dashboard_owner=lambda root: owner)
+
+    tui_module._start_rescan_thread(project, actions)
+    project.scan_thread.join(timeout=5)
+    assert project.owner == "dashboard"
+    assert project.run_id == "dashboard-run"
+
+    cancel_calls: list[str] = []
+    project.status = "scanning"
+    actions_with_cancel = _local_scan_actions(
+        dashboard_owner=lambda root: owner,
+        cancel_scan_run=lambda root, run_id: cancel_calls.append(run_id),
+    )
+    tui_module._request_cancel(project, actions_with_cancel)
+    assert cancel_calls == ["dashboard-run"], (
+        "Cancel run and stay must target the current run, never the stale "
+        "pre-rescan local one"
+    )
+
+
+def test_scan_start_with_live_dashboard_server_dispatches_through_its_http_action_not_a_local_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    owner = _FakeDashboardOwner()
+    local_calls: list[int] = []
+    actions = _local_scan_actions(
+        dashboard_owner=lambda root: owner,
+        execute_scan=lambda plan, **k: local_calls.append(1),
+    )
+
+    tui_module._start_scan_thread(project, actions)
+    project.scan_thread.join(timeout=5)
+
+    assert project.owner == "dashboard"
+    assert owner.calls and owner.calls[0][0] == "scan_start"
+    assert local_calls == [], "must never fall back to a local daemon thread"
+
+
+def test_detach_with_dashboard_owned_scan_survives_tui_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _ = _local_project(tmp_path, monkeypatch)
+    owner = _FakeDashboardOwner()
+    actions = _local_scan_actions(dashboard_owner=lambda root: owner)
+
+    tui_module._start_scan_thread(project, actions)
+    state = tui_module.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+
+    t0 = time.monotonic()
+    tui_module._handle_detach(state, project, actions)
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 1.0, "case (a) Detach is trivial -- it must never wait or cancel"
+    assert state.should_quit is True
+    assert all(call[0] != "cancel" for call in owner.calls)
+    if project.scan_thread is not None:
+        project.scan_thread.join(timeout=2)
+
+
+def test_detach_with_no_dashboard_server_running_is_cancel_with_saved_partial_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, _project_id = _local_project(tmp_path, monkeypatch)
+    events_state: dict[str, object] = {"events": [], "run_state": "running"}
+
+    def _cancel(*_a: object, **_k: object) -> dict:
+        events_state["run_state"] = "cancelled"
+        return {}
+
+    actions = _local_scan_actions(
+        cancel_scan_run=_cancel,
+        load_scan_events=lambda *a, **k: dict(events_state),
+    )
+    tui_module._start_scan_thread(project, actions)
+    time.sleep(0.05)
+    state = tui_module.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+
+    tui_module._handle_detach(state, project, actions, timeout=2.0)
+
+    assert project.owner == "local"
+    assert state.should_quit is True
+    assert project.status == "cancelled", (
+        "Detach with no dashboard server is cancel-with-saved-partial-result"
+    )
+    if project.scan_thread is not None:
+        project.scan_thread.join(timeout=5)

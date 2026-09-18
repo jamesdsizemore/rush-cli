@@ -679,7 +679,16 @@ def _build_manifest(
     scheduled: list[CandidateResult],
     aggregate: ToolResult,
     source_identity: dict[str, Any] | None = None,
+    digests: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    # P69-07.2b: the persisted Git-link provenance a later Git-section reader
+    # uses to decide whether this attempt's output can be linked to a
+    # specific commit -- reuses `source_identity["git"]` verbatim (the exact
+    # `_git_link()` result already computed for `source_identity`) plus the
+    # same per-path digest set, never a second, independently computed Git
+    # read that could drift from `source_identity`'s own snapshot.
+    git_link = dict((source_identity or {}).get("git") or {"repository": False})
+    git_link["path_digests"] = dict(digests or {})
     return {
         "schema_version": 1,
         "run_id": run_id,
@@ -687,6 +696,7 @@ def _build_manifest(
         # a scan has actually executed -- never the pre-execution signature the
         # attempt header carries, and never comparable to one.
         "source_identity": source_identity or {},
+        "git_link": git_link,
         "attempt_id": attempt_id,
         "plan_id": plan.plan_id,
         "project_id": plan.project_id,
@@ -1000,6 +1010,7 @@ def _finalize_attempt(
         scheduled=scheduled,
         aggregate=aggregate,
         source_identity=_source_identity(digests, root),
+        digests=digests,
     )
     manifest_bytes = (
         json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8") + b"\n"
@@ -1282,7 +1293,11 @@ def load_scan_events(
         if latest is None:
             raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
         attempt_id = latest.name
-    manifest = load_run_manifest(root, run_id)
+    # P69-07.2c: terminal state must come from this exact attempt, not
+    # whichever attempt is currently highest-generation -- an explicitly
+    # requested (non-latest) `attempt_id` would otherwise silently read a
+    # different attempt's `run_state`.
+    manifest = load_run_manifest(root, run_id, attempt_id=attempt_id)
     return {
         "run_id": run_id,
         "attempt_id": attempt_id,

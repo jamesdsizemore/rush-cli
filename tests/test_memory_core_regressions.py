@@ -17,6 +17,7 @@ from rush.memory.store import (
     MemoryArtifact,
     TypedArtifactStore,
     compute_content_signature,
+    legacy_owner_scope,
 )
 from rush.permissions import ExecutionPermissions
 from rush.token_economy.memory_cache_gate import check_memory_before_pack
@@ -256,13 +257,14 @@ def test_expiry_selects_due_rows_before_limit(tmp_path):
     store.write(artifact("not_due", tier="IMPORTED", age=40 * 86400))
     store.write(artifact("due_first", age=30 * 86400))
     store.write(artifact("due_second", age=20 * 86400))
-    assert sweep_expired(tmp_path, batch_size=1) == 1
+    owner_scope = legacy_owner_scope(tmp_path)
+    assert sweep_expired(tmp_path, batch_size=1, owner_scope=owner_scope) == 1
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute(
             "SELECT id FROM memory_artifacts WHERE expired_at IS NOT NULL"
         ).fetchall() == [("due_first",)]
-    assert sweep_expired(tmp_path, batch_size=1) == 1
-    assert sweep_expired(tmp_path, batch_size=1) == 0
+    assert sweep_expired(tmp_path, batch_size=1, owner_scope=owner_scope) == 1
+    assert sweep_expired(tmp_path, batch_size=1, owner_scope=owner_scope) == 0
 
 
 def test_cli_maintenance_permission_and_list_session(tmp_path, monkeypatch):

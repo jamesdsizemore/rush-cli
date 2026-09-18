@@ -5,6 +5,7 @@ Architecture §8, Phase 24.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,11 @@ def run_workflow_suite(
     permissions: ExecutionPermissions,
     config: RushConfig | None = None,
     fail_fast: bool = False,
+    *,
+    cancel_check: Callable[[], bool] | None = None,
+    on_tool_complete: Callable[[ToolResult], None] | None = None,
+    owner_instance_id: str = "",
+    run_id: str = "",
 ) -> ToolResult:
     """Execute a sequence of tools defined by a workflow suite and combine results.
 
@@ -68,6 +74,23 @@ def run_workflow_suite(
     status/findings reuse the canonical `aggregate_results` (Phase 65 P65-04)
     instead of a hand-rolled status merge, so suites and full-project scans
     share one aggregation rule and one child-metadata shape.
+
+    P69-06f: wrapping this in status transitions alone gives a cancel request
+    nothing to interrupt and leaves nothing durable behind mid-flight, so the
+    capabilities live here instead:
+
+    * `cancel_check` is polled *between* tools -- the suite returns promptly
+      with whatever completed, marked `metadata["cancelled"] = True`, rather
+      than only after the whole sequence has run.
+    * `on_tool_complete` receives each finished child's `ToolResult` as it
+      completes, so the caller can persist it under the job's own operation
+      id and reconstruct a real partial aggregate from whatever landed
+      before a cancel or a kill.
+    * `owner_instance_id`/`run_id` travel into this function's own
+      `resolve_invocation()` request exactly as `_execute_candidate` does
+      (P69-01.2j) -- this is a separate invocation-construction site, so
+      without them every subprocess a suite run spawns records no owner and
+      Detach's force-exit/recovery reap path has nothing to act on.
     """
     log_subsystem(
         "workflow", "INFO", f"Starting workflow suite '{suite.name}' on {path}"
@@ -76,8 +99,17 @@ def run_workflow_suite(
     tools_by_name = {tool.name: tool for tool in ALL_TOOLS}
     children: list[ToolResult] = []
     executed_tools: list[str] = []
+    cancelled = False
 
     for tool_name in suite.tool_sequence:
+        if cancel_check is not None and cancel_check():
+            cancelled = True
+            log_subsystem(
+                "workflow",
+                "WARN",
+                f"Workflow suite '{suite.name}' cancelled before '{tool_name}'",
+            )
+            break
         tool = tools_by_name.get(tool_name)
         if tool is None:
             children.append(
@@ -92,8 +124,17 @@ def run_workflow_suite(
             executor = InvocationExecutor()
             executor.register(tool_name, tool.__call__)
             target = path.resolve()
+            request: dict[str, object] = {
+                "operation_id": tool_name,
+                "path": str(target),
+            }
+            # P69-01.2j: structural ownership travels with the request, so
+            # each tool's own `run_subprocess()` call is fenced and reapable.
+            if owner_instance_id and run_id:
+                request["owner_instance_id"] = owner_instance_id
+                request["run_id"] = run_id
             context = resolve_invocation(
-                {"operation_id": tool_name, "path": str(target)},
+                request,
                 transport="cli",
                 workspace_root=target if target.is_dir() else target.parent,
                 config=config,
@@ -102,6 +143,8 @@ def run_workflow_suite(
             res: ToolResult = executor.execute(context)
             children.append(res)
             executed_tools.append(tool_name)
+            if on_tool_complete is not None:
+                on_tool_complete(res)
 
             if fail_fast and res["status"] in {"fail", "error"}:
                 log_subsystem(
@@ -129,5 +172,9 @@ def run_workflow_suite(
             for child in children
         ],
         "executed_tools": tuple(executed_tools),
+        # P69-06f: the aggregate reconstructed from whichever children
+        # actually completed is real partial evidence, explicitly labelled
+        # as cancelled rather than silently presented as a full run.
+        "cancelled": cancelled,
     }
     return aggregate

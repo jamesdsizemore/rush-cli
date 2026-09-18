@@ -17,7 +17,9 @@ always executes.
 
 from __future__ import annotations
 
+import json
 import threading
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import suppress
@@ -34,8 +36,13 @@ from rich.tree import Tree
 
 from rush import __version__
 from rush.dashboard.keymaps import DEFAULT_KEYBINDINGS, KeybindingAction, KeymapManager
+from rush.dashboard.state import MutationLedger
 from rush.dashboard.terminal_input import KeyReader, make_key_reader, raw_terminal
 from rush.permissions import ExecutionPermissions
+from rush.runtime.subprocesses import (
+    OWNED_TERMINATION_TIMEOUT_SECONDS,
+    reap_owner_processes,
+)
 from rush.tools.base import ToolResult
 
 PAGE_SIZE = 20
@@ -240,9 +247,22 @@ class ScanActions:
     # `section=artifacts` HTTP endpoints render, so a commit/artifact ID
     # inspected in the TUI always matches the browser.
     git_snapshot: Callable[..., Any] | None = None
+    # P69-06a: same trailing + defaulted contract as `memory_run` above.
+    # `run_check_suite(root)` runs the initial `CHECK_SUITE` as the
+    # background job `_start_initial_check_thread` attaches to at loop
+    # startup, instead of `ui_cmd` blocking interface startup on it.
+    run_check_suite: Callable[..., Any] | None = None
+    # P69-06d: `dashboard_owner(root)` answers the one ownership question
+    # every scan-triggering action asks at *start* time -- "is a dashboard
+    # server live for this project right now?" -- returning that server's
+    # dispatch handle, or None for local ownership. Production wires
+    # `_find_live_dashboard_owner`; tests inject a fake.
+    dashboard_owner: Callable[..., Any] | None = None
 
 
-def default_scan_actions() -> ScanActions:
+def default_scan_actions(
+    permissions: ExecutionPermissions | None = None,
+) -> ScanActions:
     from rush.tools.agent_connection import AgentConnectionTool
     from rush.tools.memory import MemoryTool
     from rush.workflows import project_run as pr
@@ -258,6 +278,27 @@ def default_scan_actions() -> ScanActions:
             if isinstance(entry, dict) and entry.get("agent_id")
         ]
 
+    def _run_check_suite(
+        root: Path,
+        *,
+        owner_instance_id: str = "",
+        run_id: str = "",
+        **kwargs: object,
+    ) -> Any:
+        from rush.workflows.suites import CHECK_SUITE, run_workflow_suite
+
+        assert permissions is not None
+        # P69-06f: this process's own identity travels into the suite, so
+        # every subprocess it spawns is fenced under an owner recovery can
+        # probe and Detach's force-exit can terminate.
+        return run_workflow_suite(
+            suite=CHECK_SUITE,
+            path=root,
+            permissions=permissions,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
+        )
+
     return ScanActions(
         plan_scan=pr.plan_scan,
         execute_scan=pr.execute_scan,
@@ -269,6 +310,8 @@ def default_scan_actions() -> ScanActions:
         list_agents=_list_agents,
         memory_run=MemoryTool().run,
         git_snapshot=project_snapshot,
+        run_check_suite=_run_check_suite,
+        dashboard_owner=_find_live_dashboard_owner,
     )
 
 
@@ -295,10 +338,36 @@ class ProjectState:
     progress: ScanProgress | None = None
     progress_history: list[ScanProgress] = field(default_factory=list)
     status: str = "idle"  # idle | scanning | cancelling | cancelled | complete | error
+    # P69-06d: which process owns the run currently reflected here --
+    # "dashboard" (a live server is the executor) or "local" (this TUI
+    # process's own daemon thread). Decided at scan-*start* time and never
+    # transferred mid-flight: the two processes share no memory, and no
+    # handshake in this phase can move a live thread between them.
+    owner: str = "local"
     last_message: str = ""
     scan_thread: threading.Thread | None = field(
         default=None, repr=False, compare=False
     )
+    # P69-06g/h/i: the currently-admitted local run's own identity -- unset
+    # (empty) whenever `owner != "local"` or no admission was made (best-
+    # effort; see `_admit_local_run`). `operation_id` doubles as the
+    # `MutationLedger` slot_id, matching the dashboard's own
+    # `slot_id = operation_id` convention (`server.py`).
+    owner_instance_id: str = ""
+    operation_id: str = ""
+    # True only once `_admit_local_run` durably registered `operation_id` in
+    # the `MutationLedger` -- gates whether Detach's timeout/the worker's own
+    # completion may write a ledger outcome at all. Subprocess-group reaping
+    # (subsection h) never depends on this: it acts on `.procs` records keyed
+    # by `owner_instance_id` alone, real for every local run.
+    ledger_admitted: bool = False
+    # P69-06i CAS guard: only the first of {the worker's own completion,
+    # Detach's force-exit timeout} to observe an unresolved run may write its
+    # terminal/`recovery_required` ledger outcome -- see `_resolve_local_run`.
+    resolution_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
+    run_resolved: bool = True
 
     def flattened_findings(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -347,6 +416,14 @@ class TuiState:
     memory_expanded: dict[str, Any] | None = None
     memory_edit_buffer: str | None = None
     memory_message: str = ""
+    # P69-07 CONNECT: the owner every memory mutation this admin session makes is
+    # attributed to (mode == "memory_owner" is the selector). `project`/`session`
+    # kinds have a real derived default id (`_default_owner_scope_id`), so an empty
+    # `memory_owner_scope_id` still produces a valid owner; `user`/`agent` kinds are
+    # opaque caller-supplied strings and must be typed in.
+    memory_owner_scope_kind: str = "project"
+    memory_owner_scope_id: str = ""
+    memory_owner_buffer: str | None = None
     # P66-06: Git history and every generated artifact (mode == "git").
     # `git_data` is the real `project_snapshot()` result loaded by
     # `_load_git_view` below -- reset on every project switch so a stale
@@ -426,8 +503,245 @@ def _tui_owner_instance_id() -> str:
     return _OWNER_INSTANCE[0]
 
 
+def _admit_local_run(
+    project: ProjectState,
+    *,
+    owner_instance_id: str,
+    run_id: str,
+    execution_identity: str,
+    plan_id: str,
+) -> None:
+    """P69-06i: durably register this locally-owned run in the same
+    `scan_admission`/`mutation_ledger` tables the dashboard's own
+    `_admit_and_launch` uses, so recovery's existing generic dead-owner sweep
+    (`reconcile_admissions`, `state.py` -- unmodified, out of this packet's
+    file scope) finds a real row for this TUI process's own owner-instance
+    lock, not nothing.
+
+    A real `mutation_ledger` row (not just the `scan_admission` one) is what
+    lets `record_status_transition`/`terminalize_and_release` -- and
+    `prune_expired`'s TTL check -- actually apply to this run later; that row
+    only exists with a caller-chosen `operation_id` via `ledger.reserve()`
+    (the one public primitive that mints one), which is why `operation_id`
+    here is that reservation's own id, distinct from `run_id`, and stored as
+    `project.operation_id` for every later ledger write against this run --
+    the dashboard's own `slot_id = operation_id` convention (`server.py`),
+    reused as-is.
+
+    Best-effort like `_tui_owner_instance_id`'s own lock acquisition: a
+    failure here (a locked-out ledger, an unreadable data root) must never
+    block a scan -- it only means this particular run stays unrecoverable if
+    this process dies mid-run, the same as before this subsection existed.
+    """
+    project.owner_instance_id = owner_instance_id
+    project.run_resolved = False
+    project.ledger_admitted = False
+    try:
+        from rush.workflows.projects import resolve_project
+
+        project_id = resolve_project(project.root)["project_id"]
+        ledger = MutationLedger()
+        reservation = ledger.reserve(
+            project_id,
+            request_id=f"tui-local:{run_id}",
+            body_hash="",
+            operation_type=execution_identity,
+        )
+        operation_id = reservation.operation_id
+        project.operation_id = operation_id
+        ledger.admit(
+            project_id,
+            execution_identity=execution_identity,
+            slot_id=operation_id,
+            operation_id=operation_id,
+            run_id=run_id,
+            plan_id=plan_id,
+            owner_instance_id=owner_instance_id,
+        )
+        project.ledger_admitted = True
+    except Exception:  # noqa: BLE001 -- best-effort admission; see docstring.
+        project.run_resolved = True
+
+
+def _resolve_local_run(project: ProjectState) -> bool:
+    """P69-06i CAS guard: True only for the caller that wins the race to
+    resolve this run -- the loser must not write a second, possibly
+    contradictory, ledger outcome. Both racers (the worker thread's own
+    completion, and Detach's force-exit timeout on the main thread) live in
+    this one process for a locally-owned run, so an in-process lock is the
+    real compare-and-swap here; `record_status_transition`'s own primitive
+    (`state.py`) is an unconditional overwrite and adding a durable CAS
+    primitive there is out of this packet's file scope."""
+    with project.resolution_lock:
+        if project.run_resolved:
+            return False
+        project.run_resolved = True
+        return True
+
+
+def _finalize_local_run(project: ProjectState, payload: dict[str, Any]) -> None:
+    """The worker's own normal-completion path (success, error, or a
+    cooperative-cancel acknowledgment) -- releases the admission slot and
+    records a real terminal outcome. No-ops if Detach's force-exit timeout
+    already won the CAS and marked `recovery_required` first."""
+    if not project.operation_id or not _resolve_local_run(project):
+        return
+    with suppress(Exception):
+        # `_admit_local_run` docstring. A failure here must never crash the
+        # worker thread or surface as a scan failure to the user.
+        MutationLedger().terminalize_and_release(
+            project.operation_id,
+            operation_id=project.operation_id,
+            payload=payload,
+        )
+
+
+@dataclass(frozen=True)
+class DashboardOwner:
+    """P69-06d case (a): a dashboard server that is live for this project
+    *right now*, and therefore the executor of any scan started from here on.
+
+    Every dispatch crosses a real process boundary: `check_suite` through the
+    private `X-Rush-Control` control command (P69-06e), the scan-lifecycle
+    operations through that server's own HTTP action route. There is no
+    same-process shortcut, because an internal server function called from
+    this process would run here, against no `DashboardContext` at all."""
+
+    base_url: str
+    control_capability: str
+    project_id: str
+
+    def dispatch(self, operation: str, **arguments: Any) -> dict[str, Any]:
+        from rush.dashboard.server import (
+            dispatch_control_check_suite,
+            dispatch_dashboard_action,
+        )
+
+        if operation == "check_suite":
+            return dispatch_control_check_suite(
+                self.base_url, self.control_capability, self.project_id
+            )
+        return dispatch_dashboard_action(
+            self.base_url,
+            self.control_capability,
+            self.project_id,
+            operation,
+            arguments=arguments,
+            # The dashboard executes the run, so the grants it needs to write
+            # its own cache/artifacts are this dispatch's, not a fabrication:
+            # these are the exact two `scan_start`/`rescan` require.
+            grants={"cache_write": True, "artifact_write": True},
+        )
+
+
+def _find_live_dashboard_owner(root: Path) -> DashboardOwner | None:
+    """P69-06d: the production ownership probe, using the identical
+    descriptor + `/api/control/health` liveness mechanism
+    `rush dashboard --reconnect` already uses (`_newest_dashboard_descriptor`
+    returns a descriptor only after proving the recorded pid/start-nonce is
+    still the process listening at that address).
+
+    Returns None -- local ownership -- for any unreachable, unparseable, or
+    unregistered case; a liveness probe that cannot prove a live server is
+    never treated as one.
+    """
+    try:
+        from rush.cli import _newest_dashboard_descriptor
+        from rush.workflows.projects import resolve_project
+
+        descriptor_path = _newest_dashboard_descriptor(None)
+        if descriptor_path is None:
+            return None
+        descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+        project_id = resolve_project(root)["project_id"]
+    except Exception:  # noqa: BLE001 -- descriptor discovery is best-effort:
+        # an unreadable descriptor, an unregistered project, or an
+        # unreachable server all mean exactly one thing here (no live
+        # dashboard owner), and none of them may break starting a scan.
+        return None
+    return DashboardOwner(
+        base_url=f"http://{descriptor.get('bound_host')}:{descriptor.get('bound_port')}",
+        control_capability=str(descriptor.get("control_capability", "")),
+        project_id=project_id,
+    )
+
+
+def _dashboard_owner_for(project: ProjectState, actions: ScanActions) -> Any | None:
+    """The single ownership decision every scan-triggering TUI action makes
+    at its own start. One shared adapter, not three independent checks that
+    can drift apart -- and re-asked per action, so a rescan after a
+    dashboard-owned scan cannot silently fall back to local ownership."""
+    finder = actions.dashboard_owner
+    if finder is None:
+        return None
+    try:
+        return finder(project.root)
+    except Exception:  # noqa: BLE001 -- see `_find_live_dashboard_owner`:
+        # failing to prove a live owner means local ownership, never a crash.
+        return None
+
+
+def _start_dashboard_owned(
+    project: ProjectState,
+    owner: Any,
+    operation: str,
+    arguments: dict[str, Any],
+) -> None:
+    """Hand one scan-triggering action to the live dashboard server that
+    already owns this project, and observe it from here.
+
+    The work is never TUI-owned for a moment, so Detach is trivially correct
+    for this case: this process simply stops observing, and the dashboard's
+    own durable status record is what a later `rush ui`/`rush dashboard`
+    invocation reads to find the result."""
+    project.owner = "dashboard"
+    project.status = "scanning"
+    project.progress = None
+    project.progress_history = []
+
+    def _worker() -> None:
+        try:
+            response = owner.dispatch(operation, **arguments)
+        except Exception as exc:  # noqa: BLE001 -- the dispatch crosses a
+            # real network boundary into another process; its failure space
+            # is unbounded. Surface it, and never silently re-run the work
+            # locally: ownership is decided once, visibly.
+            project.last_message = f"{operation} failed on dashboard: {exc}"
+            project.status = "error"
+            return
+        run_id = response.get("run_id") if isinstance(response, dict) else None
+        if isinstance(run_id, str) and run_id:
+            project.run_id = run_id
+        if project.plan_total <= 0:
+            # No candidate-events protocol for this operation (CHECK_SUITE has
+            # no plan), so `_poll_running_scans` cannot observe it -- this
+            # thread reports its own terminal status, like the local
+            # rescan/check-suite workers do.
+            project.status = "complete"
+            project.last_message = (
+                f"{operation} running in dashboard "
+                f"(operation {response.get('operation_id', '?')})"
+            )
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    project.scan_thread = thread
+    thread.start()
+
+
 def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
     plan = actions.plan_scan(project.root)
+    owner = _dashboard_owner_for(project, actions)
+    if owner is not None:
+        project.plan_total = len(list(getattr(plan, "candidates", None) or []))
+        _start_dashboard_owned(
+            project,
+            owner,
+            "scan_start",
+            {"plan_id": getattr(plan, "plan_id", "")},
+        )
+        return
+
+    project.owner = "local"
     run_id = str(uuid.uuid4())
     owner_instance_id = _tui_owner_instance_id()
     project.run_id = run_id
@@ -435,8 +749,16 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
+    _admit_local_run(
+        project,
+        owner_instance_id=owner_instance_id,
+        run_id=run_id,
+        execution_identity=f"scan_start:{getattr(plan, 'plan_id', '')}",
+        plan_id=str(getattr(plan, "plan_id", "")),
+    )
 
     def _worker() -> None:
+        outcome_status = "success"
         try:
             run = actions.execute_scan(
                 plan, run_id=run_id, owner_instance_id=owner_instance_id
@@ -456,6 +778,10 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
             # genuinely unbounded by design (network, filesystem, arbitrary
             # tool errors, test-injected failures).
             project.last_message = f"scan error: {exc}"
+            outcome_status = "error"
+        finally:
+            outcome = "cancelled" if project.status == "cancelling" else outcome_status
+            _finalize_local_run(project, {"status": outcome})
 
     thread = threading.Thread(target=_worker, daemon=True)
     project.scan_thread = thread
@@ -464,9 +790,33 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
 
 def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
     baseline_run_id = project.run_id
+    owner = _dashboard_owner_for(project, actions)
+    if owner is not None:
+        # P69-06d: the identical check applies to every scan-triggering
+        # action -- a rescan after a dashboard-owned scan must not silently
+        # become locally owned mid-session.
+        # `rescan`'s real argument name is `run_id` (the baseline run being
+        # re-executed), per the server's own argument allowlist.
+        _start_dashboard_owned(
+            project, owner, "rescan", {"run_id": baseline_run_id or ""}
+        )
+        return
+
+    project.owner = "local"
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
+    owner_instance_id = _tui_owner_instance_id()
+    operation_id = str(uuid.uuid4())
+    # P69-06h: tag this local run's owner identity even without a durable
+    # admission row -- `reap_owner_processes` reads `.procs` by
+    # `owner_instance_id` alone, so Detach's force-exit can still stop this
+    # run's owned subprocess groups. Full ledger admission (recovery
+    # reconciliation) is `_start_scan_thread`'s scope, not duplicated here.
+    project.owner_instance_id = owner_instance_id
+    project.operation_id = operation_id
+    project.run_resolved = True
+    project.ledger_admitted = False
 
     def _worker() -> None:
         try:
@@ -486,6 +836,64 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
             # is an injectable Phase65 seam whose failure space this
             # background thread cannot enumerate; surface it, never crash.
             project.last_message = f"rescan error: {exc}"
+            project.status = "error"
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    project.scan_thread = thread
+    thread.start()
+
+
+def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> None:
+    """P69-06a: runs the initial `CHECK_SUITE` as a background job the
+    interactive loop attaches to at startup, instead of `ui_cmd` blocking
+    interface startup on it. Self-contained like `_start_rescan_thread`
+    above -- the worker sets `project.status` itself on completion, since
+    CHECK_SUITE doesn't go through the run_id/events-polling protocol
+    `_poll_running_scans` understands.
+
+    P69-06d/e: ownership is decided here too, by the same shared adapter. A
+    live dashboard server runs the suite in its *own* process, reached
+    through the private control command -- never a same-process call into a
+    `DashboardContext` this process does not have. Otherwise it falls back to
+    a local daemon thread carrying this process's own owner-instance lock id
+    and run id, so the subprocesses it spawns stay fenced and reapable."""
+    owner = _dashboard_owner_for(project, actions)
+    if owner is not None:
+        _start_dashboard_owned(project, owner, "check_suite", {})
+        return
+
+    project.owner = "local"
+    project.status = "scanning"
+    owner_instance_id = _tui_owner_instance_id()
+    run_id = str(uuid.uuid4())
+    # P69-06h: tag this local run's owner identity so Detach's force-exit can
+    # still reap its owned subprocess groups (see `_start_rescan_thread`'s
+    # identical comment -- ledger admission stays `_start_scan_thread`'s
+    # scope, not duplicated here).
+    project.owner_instance_id = owner_instance_id
+    project.operation_id = run_id
+    project.run_resolved = True
+    project.ledger_admitted = False
+
+    def _worker() -> None:
+        try:
+            res = (
+                actions.run_check_suite(
+                    project.root,
+                    owner_instance_id=owner_instance_id,
+                    run_id=run_id,
+                )
+                if actions.run_check_suite
+                else None
+            )
+            if isinstance(res, dict):
+                project.results = [cast(ToolResult, res)]
+            project.status = "complete"
+        except Exception as exc:  # noqa: BLE001 -- same contract as
+            # `_start_rescan_thread._worker` above: `actions.run_check_suite`
+            # is an injectable seam whose failure space this background
+            # thread cannot enumerate; surface it, never crash the loop.
+            project.last_message = f"initial check error: {exc}"
             project.status = "error"
 
     thread = threading.Thread(target=_worker, daemon=True)
@@ -675,6 +1083,38 @@ def _memory_refresh(
         state.memory_message = f"{len(state.memory_items)} result(s)"
 
 
+_MEMORY_OWNER_SCOPE_KINDS = ("project", "user", "session", "agent")
+
+
+def _tui_session_owner_scope_id() -> str:
+    """This standalone TUI invocation's `session`-kind owner id (P69-07 subsection b).
+
+    A `rush ui` run with no dashboard server never creates a `DashboardAuth` session, so
+    there is no browser session id to reuse. This process's own invocation identity
+    (`_tui_owner_instance_id()`, minted once per process) is that identity: non-secret,
+    already scoped to exactly this invocation, and never an authentication credential.
+    """
+    return _tui_owner_instance_id()
+
+
+def _default_owner_scope_id(kind: str, project: ProjectState) -> str:
+    """The derived id for an owner kind that has one. `project` is this project's own
+    root (store.py's project identity, per `legacy_owner_scope`); `session` is this
+    invocation's session id. `user`/`agent` are opaque and have no derivable default."""
+    if kind == "project":
+        return str(project.root)
+    if kind == "session":
+        return _tui_session_owner_scope_id()
+    return ""
+
+
+def _memory_owner_scope(state: TuiState, project: ProjectState) -> dict[str, str]:
+    """The `owner_scope` payload every TUI memory mutation sends (P69-07 CONNECT)."""
+    kind = state.memory_owner_scope_kind
+    identifier = state.memory_owner_scope_id or _default_owner_scope_id(kind, project)
+    return {"kind": kind, "id": identifier}
+
+
 def _memory_selected_item(state: TuiState) -> dict[str, Any] | None:
     if not state.memory_items or state.memory_selected_index >= len(state.memory_items):
         return None
@@ -728,6 +1168,7 @@ def _memory_promote_selected(
             source_kind="local_tool",
             user_stated=False,
             candidate_sources=[item.get("source", "")],
+            owner_scope=_memory_owner_scope(state, project),
             permissions=ExecutionPermissions(cache_write=True),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
@@ -755,6 +1196,7 @@ def _memory_delete_preview(
         for item in state.memory_items
         if item.get("id") in state.memory_selected_ids
     }
+    owner_scope = _memory_owner_scope(state, project)
     try:
         result = actions.memory_run(
             project.root,
@@ -763,6 +1205,7 @@ def _memory_delete_preview(
                 "artifact_ids": ids,
                 "expected_revisions": revisions,
                 "scope": state.memory_subject,
+                "owner_scope": owner_scope,
                 "apply": False,
             },
         )
@@ -775,6 +1218,7 @@ def _memory_delete_preview(
         "artifact_ids": ids,
         "expected_revisions": revisions,
         "scope": state.memory_subject,
+        "owner_scope": owner_scope,
         "affected": (data or {}).get("affected", []),
     }
     state.memory_message = (
@@ -800,6 +1244,10 @@ def _memory_delete_apply(
                 "artifact_ids": pending["artifact_ids"],
                 "expected_revisions": pending["expected_revisions"],
                 "scope": pending["scope"],
+                # The exact owner the preview validated against, never re-derived:
+                # a scope change between preview and apply must not silently widen
+                # what the confirmed 'y' actually deletes.
+                "owner_scope": pending["owner_scope"],
                 "apply": True,
             },
             permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
@@ -839,6 +1287,7 @@ def _memory_edit_commit(
                     **(item.get("content") or {}),
                     "note": state.memory_edit_buffer,
                 },
+                "owner_scope": _memory_owner_scope(state, project),
                 "apply": True,
             },
             permissions=ExecutionPermissions(cache_write=True),
@@ -906,6 +1355,12 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             state.mode = "memory_edit"
             state.memory_edit_buffer = ""
         return
+    if key == "o":
+        state.mode = "memory_owner"
+        state.memory_owner_buffer = state.memory_owner_scope_id or (
+            _default_owner_scope_id(state.memory_owner_scope_kind, project)
+        )
+        return
     if key == "d":
         _memory_delete_preview(state, project, actions)
         return
@@ -929,6 +1384,50 @@ def _handle_memory_search_key(state: TuiState, key: str, actions: ScanActions) -
         state.memory_query_buffer += key
 
 
+def _handle_memory_owner_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """P69-07 CONNECT: the full user/project/session/agent scope selector.
+
+    `tab` cycles the kind (prefilling the derived id for the kinds that have one),
+    printable characters edit the id, `enter` commits, `escape` discards -- the same
+    buffer/commit/cancel shape the existing search and edit input modes already use.
+    """
+    del actions  # selection is pure state; nothing dispatches until a mutation runs
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_owner_buffer = None
+        return
+    if key == "tab":
+        index = _MEMORY_OWNER_SCOPE_KINDS.index(state.memory_owner_scope_kind)
+        next_kind = _MEMORY_OWNER_SCOPE_KINDS[
+            (index + 1) % len(_MEMORY_OWNER_SCOPE_KINDS)
+        ]
+        state.memory_owner_scope_kind = next_kind
+        state.memory_owner_buffer = _default_owner_scope_id(
+            next_kind, state.active_project
+        )
+        return
+    if key == "enter":
+        identifier = (state.memory_owner_buffer or "").strip()
+        if not identifier and state.memory_owner_scope_kind in ("user", "agent"):
+            state.memory_message = (
+                f"{state.memory_owner_scope_kind} scope needs an id -- type one"
+            )
+            return
+        state.memory_owner_scope_id = identifier
+        state.memory_owner_buffer = None
+        state.mode = "memory"
+        state.memory_message = (
+            f"owner scope = {state.memory_owner_scope_kind}:"
+            f"{_memory_owner_scope(state, state.active_project)['id']}"
+        )
+        return
+    if key == "backspace":
+        state.memory_owner_buffer = (state.memory_owner_buffer or "")[:-1]
+        return
+    if len(key) == 1 and key.isprintable():
+        state.memory_owner_buffer = (state.memory_owner_buffer or "") + key
+
+
 def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "escape":
         state.mode = "memory"
@@ -943,6 +1442,115 @@ def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> 
         return
     if len(key) == 1 and key.isprintable():
         state.memory_edit_buffer = (state.memory_edit_buffer or "") + key
+
+
+def _has_running_work(project: ProjectState) -> bool:
+    return project.status in ("scanning", "cancelling")
+
+
+def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
+    """Send the cooperative-cancel marker for `project`'s active run.
+    Shared by the plain 'cancel_scan' key and Cancel-run-and-stay (P69-06g) --
+    both send the identical request; they differ only in what happens to the
+    TUI process afterward."""
+    if project.status == "scanning" and project.run_id:
+        try:
+            actions.cancel_scan_run(project.root, project.run_id)
+            project.status = "cancelling"
+        except Exception as exc:  # noqa: BLE001 -- injectable Phase65
+            # seam (`cancel_scan_run`); a failed cancel request must
+            # surface to the user, never crash the key-dispatch path.
+            project.last_message = f"cancel failed: {exc}"
+
+
+def _wait_for_cancel_ack(
+    state: TuiState, project: ProjectState, actions: ScanActions, *, timeout: float
+) -> bool:
+    """P69-06g: blocks up to `timeout` seconds for the cooperative-cancel
+    marker to be acknowledged (a real terminal status transition), polling
+    the identical events protocol `_poll_running_scans` uses every render
+    tick -- a self-reporting local worker (rescan/check_suite) needs no
+    polling call at all, since it writes `project.status` itself and that
+    write is visible across threads without one. Returns True the instant
+    `project.status` leaves `"cancelling"`, False once `timeout` is
+    exhausted with no acknowledgment observed."""
+    deadline = time.monotonic() + timeout
+    while True:
+        _poll_running_scans(state, actions)
+        if project.status != "cancelling":
+            return True
+        if time.monotonic() >= deadline:
+            return project.status != "cancelling"
+        time.sleep(0.05)
+
+
+def _handle_detach(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    *,
+    timeout: float = OWNED_TERMINATION_TIMEOUT_SECONDS,
+) -> None:
+    """P69-06g/h/i: Detach's two genuinely different behaviors per Phase 66
+    S3.9's superseding clause (this plan's own S3) -- case (a) dashboard-owned
+    is a trivial background continuation (the work was never TUI-owned);
+    case (b) locally-owned is Cancel-with-saved-partial-result, since no
+    mechanism this phase can build keeps a bare CLI process's work alive
+    past its own exit."""
+    if project.owner == "dashboard" or not project.owner_instance_id:
+        state.mode = "list"
+        state.should_quit = True
+        return
+
+    state.message = "detaching -- cancelling local run..."
+    _request_cancel(project, actions)
+    acknowledged = _wait_for_cancel_ack(state, project, actions, timeout=timeout)
+    if not acknowledged:
+        # The worker never acknowledged within the deadline: force-stop every
+        # subprocess group this run owns (subsection h) -- reaping acts on
+        # `.procs` records keyed by `owner_instance_id` alone, real for every
+        # local run regardless of ledger admission -- never assume
+        # termination succeeded just because a signal was sent.
+        reap_owner_processes(project.owner_instance_id, timeout=timeout)
+        if project.ledger_admitted and _resolve_local_run(project):
+            with suppress(Exception):
+                # `_admit_local_run`/`_finalize_local_run`'s contract: this
+                # process exits regardless of whether the ledger write lands.
+                MutationLedger().record_status_transition(
+                    project.operation_id,
+                    "recovery_required",
+                    {
+                        "status": "recovery_required",
+                        "code": "detach_force_exit_timeout",
+                    },
+                )
+    state.mode = "list"
+    state.should_quit = True
+
+
+def _handle_cancel_and_stay(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """P69-06g: a distinct third choice from Detach -- the TUI process never
+    exits. There is no timeout: a late worker acknowledgment, however late,
+    still lands as a genuine terminal transition the still-open TUI displays
+    on a later render tick's `_poll_running_scans` call, never lost to a
+    force-exit that does not apply to this choice."""
+    _request_cancel(project, actions)
+    state.mode = "list"
+    state.message = "cancelling -- run continues to be observed"
+
+
+def _handle_quit_confirm_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    project = state.active_project
+    if key in ("d", "enter"):
+        _handle_detach(state, project, actions)
+    elif key == "c":
+        _handle_cancel_and_stay(state, project, actions)
+    elif key in ("r", "n", "escape"):
+        state.mode = "list"
+        state.message = "quit cancelled -- still observing"
+    # any other key: stay in the menu, awaiting a valid choice.
 
 
 def _handle_grant_review_key(state: TuiState, key: str, actions: ScanActions) -> None:
@@ -968,8 +1576,14 @@ def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if state.mode == "memory_edit":
         _handle_memory_edit_key(state, key, actions)
         return
+    if state.mode == "memory_owner":
+        _handle_memory_owner_key(state, key, actions)
+        return
     if state.mode == "memory":
         _handle_memory_key(state, key, actions)
+        return
+    if state.mode == "quit_confirm":
+        _handle_quit_confirm_key(state, key, actions)
         return
 
     action = _KEYMAP.get_action_for_key(key)
@@ -978,7 +1592,14 @@ def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
     project = state.active_project
 
     if action == "quit":
-        state.should_quit = True
+        # P69-06g: Phase 66 S3.9 -- quitting with running work offers a
+        # real three-way choice (Detach/Cancel run and stay/Return), never
+        # an immediate exit that silently loses or orphans that work.
+        if _has_running_work(project):
+            state.mode = "quit_confirm"
+            state.message = ""
+        else:
+            state.should_quit = True
     elif action == "cursor_down":
         _move_selection(project, 1)
     elif action == "cursor_up":
@@ -1004,13 +1625,17 @@ def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
     elif action == "focus_filter":
         state.mode = "search"
     elif action == "cancel":
-        if state.mode in ("detail", "git"):
+        if state.mode in ("detail", "git", "help"):
             state.mode = "list"
         state.message = ""
     elif action == "cycle_agent":
         _cycle_agent(state, actions)
     elif action == "toggle_memory":
         state.show_memory = not state.show_memory
+    elif action == "show_help":
+        # P69-06c: a real "?" binding -- `_render_help` renders `_KEYMAP`'s
+        # actual current bindings, never a hardcoded string that can drift.
+        state.mode = "help"
     elif action == "toggle_memory_admin":
         state.mode = "memory"
         state.memory_message = f"press / to search {state.memory_subject} memories"
@@ -1061,14 +1686,7 @@ def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
             }
             state.mode = "grant_review"
     elif action == "cancel_scan":
-        if project.status == "scanning" and project.run_id:
-            try:
-                actions.cancel_scan_run(project.root, project.run_id)
-                project.status = "cancelling"
-            except Exception as exc:  # noqa: BLE001 -- injectable Phase65
-                # seam (`cancel_scan_run`); a failed cancel request must
-                # surface to the user, never crash the key-dispatch path.
-                state.message = f"cancel failed: {exc}"
+        _request_cancel(project, actions)
     elif action == "confirm_grant":
         pass  # only meaningful inside grant_review, handled above
 
@@ -1149,12 +1767,26 @@ def _render_memory_admin(state: TuiState) -> Panel:
     state -- never a static/example row. Render failures already surface via
     `state.memory_message` (set by the dispatch helpers above), so this
     function only ever formats whatever is currently in `state`."""
+    owner = _memory_owner_scope(state, state.active_project)
     lines: list[Any] = [
         Text(
             f"subject={state.memory_subject}  query={state.memory_query_buffer!r}",
             style="cyan",
-        )
+        ),
+        Text(
+            f"owner={owner['kind']}:{owner['id']}  [o] change scope",
+            style="cyan",
+        ),
     ]
+    if state.mode == "memory_owner":
+        lines.append(
+            Text(
+                f"owner {state.memory_owner_scope_kind} id> "
+                f"{state.memory_owner_buffer or ''}"
+                "   [tab] kind  [enter] apply  [esc] cancel",
+                style="bold yellow",
+            )
+        )
     if state.mode == "memory_search":
         lines.append(Text(f"/{state.memory_query_buffer}", style="bold yellow"))
     if state.mode == "memory_edit":
@@ -1261,6 +1893,13 @@ def _render_git_panel(state: TuiState) -> Panel:
     return Panel(Group(*lines), title="Git & Artifacts", style="blue")
 
 
+def _render_help(state: TuiState) -> Panel:
+    """P69-06c: the real, current `_KEYMAP` bindings -- never a hardcoded
+    help string that can drift from what's actually bound."""
+    lines = [f"{b.key}: {b.description}" for b in _KEYMAP.bindings]
+    return Panel(Text("\n".join(lines)), title="Key Bindings", style="cyan")
+
+
 def render_app(state: TuiState) -> Layout:
     project = state.active_project
     layout = Layout()
@@ -1278,7 +1917,7 @@ def render_app(state: TuiState) -> Layout:
     )
     layout["header"].update(Panel(header, style="cyan"))
 
-    if state.mode in ("memory", "memory_search", "memory_edit"):
+    if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
         body: Any = _render_memory_admin(state)
     elif state.mode == "git":
         body = _render_git_panel(state)
@@ -1286,9 +1925,15 @@ def render_app(state: TuiState) -> Layout:
         body = _render_grant_review(state.pending_grant)
     elif state.mode == "detail":
         body = _render_detail(project)
+    elif state.mode == "help":
+        body = _render_help(state)
     else:
         body = _render_project_table(project)
 
+    # P69-06 CONNECT: width-dependent pane layout (Phase 66 §3.8). At >=100
+    # columns the list and detail panes show side by side instead of one
+    # replacing the other via mode; below that, single-pane mode-toggled
+    # behavior (today's contract) is unchanged.
     if state.show_memory:
         from rush.token_economy.tui_gain import build_gain_panel
 
@@ -1298,12 +1943,36 @@ def render_app(state: TuiState) -> Layout:
         )
         layout["main"]["primary"].update(body)
         layout["main"]["memory"].update(build_gain_panel(project.root))
+    elif state.mode == "list" and state.terminal_size[0] >= 100:
+        layout["main"].split_row(
+            Layout(name="list", ratio=1),
+            Layout(name="detail", ratio=1),
+        )
+        layout["main"]["list"].update(body)
+        layout["main"]["detail"].update(_render_detail(project))
     else:
         layout["main"].update(body)
 
     footer_lines = [_keymap_footer()]
     if state.mode == "search":
         footer_lines.insert(0, Text(f"/{project.filter_text}", style="bold yellow"))
+    if state.mode == "quit_confirm":
+        # P69-06g: the copy names exactly what Detach does for this run's
+        # *current* ownership state -- never implying invisible continuation
+        # a locally-owned run cannot actually provide.
+        detach_desc = (
+            "Detach: run continues on the dashboard"
+            if project.owner == "dashboard"
+            else "Detach: cancels with saved partial result (no dashboard running)"
+        )
+        footer_lines.insert(
+            0,
+            Text(
+                f"{detach_desc}  [d]  |  Cancel run, stay open  [c]  |  "
+                "Return, keep observing  [r]",
+                style="bold yellow",
+            ),
+        )
     if project.status in ("scanning", "cancelling") and project.progress:
         footer_lines.insert(0, _render_progress_bar(project.progress))
     if state.message:
@@ -1349,15 +2018,29 @@ def run_interactive_tui(
     )
     state.terminal_size = reader.get_size()
 
+    # P69-06a: start the interactive interface immediately -- the initial
+    # CHECK_SUITE runs as a background job the loop's own polling
+    # (`_poll_running_scans`/`project.status`) attaches to, instead of
+    # `ui_cmd` blocking interface startup on it.
+    for project in state.projects:
+        if not project.results and actions.run_check_suite is not None:
+            _start_initial_check_thread(project, actions)
+
+    # P69-06 CONNECT: explicit active/idle refresh-rate limiter -- 20Hz while
+    # a key was just dispatched or a scan is running, 4Hz otherwise -- rather
+    # than refreshing on every tick unconditionally.
+    _ACTIVE_REFRESH_INTERVAL = 1.0 / 20
+    _IDLE_REFRESH_INTERVAL = 1.0 / 4
+    last_refresh = 0.0
+
     ticks = 0
     with raw_terminal():
         live = (
             Live(
                 render_app(state),
                 console=console,
-                screen=False,
+                screen=True,
                 auto_refresh=False,
-                refresh_per_second=(2 if reduced_motion else 12),
             )
             if use_live
             else None
@@ -1381,7 +2064,20 @@ def run_interactive_tui(
                     _dispatch_key(state, key, actions)
 
                 if live is not None:
-                    live.update(render_app(state), refresh=True)
+                    active = not reduced_motion and (
+                        key is not None
+                        or any(
+                            p.status in ("scanning", "cancelling")
+                            for p in state.projects
+                        )
+                    )
+                    interval = (
+                        _ACTIVE_REFRESH_INTERVAL if active else _IDLE_REFRESH_INTERVAL
+                    )
+                    now = time.monotonic()
+                    if now - last_refresh >= interval:
+                        live.update(render_app(state), refresh=True)
+                        last_refresh = now
         finally:
             if live is not None:
                 live.stop()

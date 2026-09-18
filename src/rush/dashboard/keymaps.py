@@ -32,6 +32,23 @@ DEFAULT_KEYBINDINGS = [
     KeybindingAction(
         key="tab", action_name="next_project", description="Switch to next project"
     ),
+    # P69-06c: Phase 66 §3.8 names F2 as the dedicated project-selector key,
+    # freeing Tab for pane cycling -- but that remapping depends on real F2/
+    # Shift+Tab escape-sequence decoding in `terminal_input.py`, which is not
+    # in this packet's allowed files (and `tab` still backs the real,
+    # passing `test_keyboard_project_switch` PTY test). F2 is added here as
+    # an additional binding for the same action, so it already works once a
+    # future packet adds that decoding; `tab` keeps its current behavior for
+    # now rather than silently losing project switching in the meantime.
+    KeybindingAction(
+        key="f2", action_name="next_project", description="Open project selector"
+    ),
+    KeybindingAction(
+        key="f3", action_name="toggle_git_view", description="Switch section"
+    ),
+    KeybindingAction(
+        key="?", action_name="show_help", description="Show current key bindings"
+    ),
     KeybindingAction(
         key="/", action_name="focus_filter", description="Search/filter findings"
     ),
@@ -53,8 +70,12 @@ DEFAULT_KEYBINDINGS = [
         action_name="rescan",
         description="Rescan last run (reviewed before running)",
     ),
+    # P69-06c: rebound from "h" (Phase 66 §3.8 reserves lowercase h for
+    # collapse, part of the hierarchical Map navigation this packet does not
+    # build -- see module docstring note above); no test exercises the old
+    # lowercase binding.
     KeybindingAction(
-        key="h",
+        key="H",
         action_name="prepare_handoff",
         description="Review and send an agent handoff",
     ),

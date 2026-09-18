@@ -1006,11 +1006,29 @@ def watch_cmd(
 # --- Interactive TUI & Web Dashboard commands ------------------------------
 
 
+def _stdout_is_tty() -> bool:
+    """Test seam (P69-06a) -- production checks the real stream; tests
+    monkeypatch this instead of fighting Click's `CliRunner` output capture,
+    which never reports as a tty."""
+    return sys.stdout.isatty()
+
+
 @cli.command(name="ui")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    default=False,
+    help=(
+        "Print each project's check-suite result as JSON and exit, "
+        "instead of opening the interactive interface."
+    ),
+)
 @permission_options
 def ui_cmd(
     paths: tuple[Path, ...],
+    json_output: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -1023,10 +1041,13 @@ def ui_cmd(
 
     Accepts one or more project paths (`rush ui path1 path2 ...`) to open
     and switch between multiple projects; defaults to the current directory
-    when none are given.
+    when none are given. The interface starts immediately and runs each
+    project's initial check suite as a background job it attaches to,
+    rather than blocking startup on it. With `--json`, or when stdout is
+    not a terminal, prints each project's check-suite result and exits
+    instead of opening the interface.
     """
-    from .tui import ProjectSeed, run_interactive_tui
-    from .workflows.suites import CHECK_SUITE, run_workflow_suite
+    from .tui import ProjectSeed, default_scan_actions, run_interactive_tui
 
     perms = _extract_permissions(
         allow_network=allow_network,
@@ -1038,15 +1059,35 @@ def ui_cmd(
         allow_browser=allow_browser,
     )
     resolved_paths = [p.resolve() for p in paths] or [Path.cwd()]
-    seeds = []
-    for resolved in resolved_paths:
-        res = run_workflow_suite(suite=CHECK_SUITE, path=resolved, permissions=perms)
-        seeds.append(
-            ProjectSeed(
-                name=resolved.name or str(resolved), root=resolved, results=[res]
+
+    if json_output or not _stdout_is_tty():
+        from .workflows.suites import CHECK_SUITE, run_workflow_suite
+
+        snapshots = []
+        for resolved in resolved_paths:
+            res = run_workflow_suite(
+                suite=CHECK_SUITE, path=resolved, permissions=perms
             )
-        )
-    run_interactive_tui(seeds)
+            snapshots.append(
+                {
+                    "project": resolved.name or str(resolved),
+                    "path": str(resolved),
+                    "result": res,
+                }
+            )
+        if json_output:
+            click.echo(json.dumps(snapshots))
+        else:
+            for snap in snapshots:
+                result = snap["result"] if isinstance(snap["result"], dict) else {}
+                click.echo(f"{snap['project']}: {result.get('summary', 'done')}")
+        return
+
+    seeds = [
+        ProjectSeed(name=resolved.name or str(resolved), root=resolved)
+        for resolved in resolved_paths
+    ]
+    run_interactive_tui(seeds, actions=default_scan_actions(permissions=perms))
 
 
 def _dashboard_descriptor_path(server_id: str) -> Path:
@@ -1331,8 +1372,18 @@ def dashboard_cmd(
         # ScanRunTracker and can finish after a faster user-requested scan, so
         # a publish-time number would let it overwrite the newer result.
         scan_generation = ctx.mutations.allocate_scan_generation(record.project_id)
+        # P69-06f: this launch is dashboard-owned (it runs inside the
+        # dashboard server's own process) -- thread the server's real
+        # owner-instance id and this run's minted run_id through, or every
+        # subprocess this scan spawns records no owner and Detach's
+        # force-exit/recovery reap path (subsection h/i) finds nothing to act
+        # on for it, while silently working for every other launch path.
         aggregate = run_workflow_suite(
-            suite=CHECK_SUITE, path=resolved_path, permissions=perms
+            suite=CHECK_SUITE,
+            path=resolved_path,
+            permissions=perms,
+            owner_instance_id=ctx.owner_instance_id,
+            run_id=run_id,
         )
         publish_check_suite_scan(
             ctx,
@@ -4073,12 +4124,46 @@ def context_align_prompt_cmd(system: str) -> None:
     )
 
 
+def _run_gain_live_panel(
+    console: Any | None = None,
+    *,
+    max_updates: int | None = None,
+    refresh_seconds: float = 0.5,
+) -> None:
+    """P69-06b: live-updating Tokens HUD -- re-renders `build_gain_panel` on
+    a timer instead of printing one static snapshot. `max_updates` is a test
+    seam bounding the loop; production runs until Ctrl+C."""
+    import time
+
+    from rich.console import Console
+    from rich.live import Live
+
+    from rush.token_economy.tui_gain import build_gain_panel
+
+    console = console or Console()
+    with Live(build_gain_panel(), console=console, refresh_per_second=4) as live:
+        updates = 0
+        try:
+            while max_updates is None or updates < max_updates:
+                time.sleep(refresh_seconds)
+                live.update(build_gain_panel())
+                updates += 1
+        except KeyboardInterrupt:
+            pass
+
+
+@cli.command(name="gain")
+def gain_cmd() -> None:
+    """Live-updating Rich HUD of token compression and dollar savings for
+    the Tokens section (Ctrl+C to exit)."""
+    _run_gain_live_panel()
+
+
 @context_group.command(name="gain")
 def context_gain_cmd() -> None:
-    """Launch the Rich terminal HUD displaying token compression and dollar savings."""
-    from rush.token_economy.tui_gain import render_gain_dashboard
-
-    render_gain_dashboard()
+    """Alias for `rush gain`: live Rich HUD of token compression and dollar
+    savings (Ctrl+C to exit)."""
+    _run_gain_live_panel()
 
 
 @context_group.command(name="persona")

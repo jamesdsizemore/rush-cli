@@ -79,6 +79,8 @@ def pack_context(
     token_budget: int,
     granted: ExecutionPermissions,
     as_v1: bool = False,
+    *,
+    invocation_id: str | None = None,
 ) -> ContinuityOutput:
     """Pack bounded context evidence, spilling to CCR cache if over budget."""
     if not context_path or token_budget < 1:
@@ -183,6 +185,8 @@ def pack_context(
             estimated,
             request_id=f"{context_path}:{target_symbol}:{token_budget}",
             event_id="packing",
+            invocation_id=invocation_id,
+            project_id=str(project_root),
             cache_write=True,
         )
     envelope = {
@@ -210,6 +214,8 @@ def retrieve_context(
     handle: str | None,
     granted: ExecutionPermissions,
     as_v1: bool = False,
+    *,
+    invocation_id: str | None = None,
 ) -> ContinuityOutput:
     """Retrieve CCR chunk by handle."""
     database = root / ".rush" / "cache" / "ccr.db"
@@ -230,6 +236,8 @@ def retrieve_context(
             handoff_tokens,
             request_id=handle,
             event_id="handoff",
+            invocation_id=invocation_id,
+            project_id=str(root),
             cache_write=True,
         )
     recovery = {

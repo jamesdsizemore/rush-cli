@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -27,8 +28,10 @@ from typing import Any
 
 import pytest
 
+from rush.dashboard import server as server_module
 from rush.dashboard.server import create_dashboard_server
 from rush.memory.merkle_invalidator import MerkleInvalidator
+from rush.memory.retrieval import recall_page
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
@@ -595,6 +598,74 @@ def test_memory_archive_hides_then_include_archived_shows(
         server.server_close()
 
 
+def test_memory_section_browse_excludes_archived_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P69-07 subsection g: `scope_artifacts()`'s browse path (an empty query) never
+    leaked archived rows before this fix -- `include_expired` was the only toggle,
+    and it never touched `archived_at` at all."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    store = TypedArtifactStore(root)
+    kept = _seed_artifact(store, content={"note": "kept"})
+    archived = _seed_artifact(store, content={"note": "to-archive"})
+    server, base_url, cookie, csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="memory_archive",
+            arguments={
+                "scope": "domain_knowledge",
+                "id": archived.id,
+                "expected_version": 1,
+                "archived": True,
+                "apply": True,
+            },
+            grants=_grant_all(),
+        )
+        assert status == 200
+        assert body["data"]["status"] == "ok"
+
+        status, snap = _snapshot(base_url, project_id, cookie, "memory")
+        ids = {i["id"] for i in snap["data"]["items"]}
+        assert kept.id in ids
+        assert archived.id not in ids
+
+        status, snap = _snapshot(
+            base_url, project_id, cookie, "memory", include_archived="true"
+        )
+        ids = {i["id"] for i in snap["data"]["items"]}
+        assert archived.id in ids
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_memory_section_browse_paginates_past_512_same_subject_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P69-07 subsection g: browse batches past `scope_artifacts()`'s own `scan_limit`
+    default instead of being permanently capped at one call's worth of rows."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    monkeypatch.setattr(server_module, "_MEMORY_BROWSE_BATCH", 3)
+    store = TypedArtifactStore(root)
+    seeded = [_seed_artifact(store, content={"note": f"row-{i}"}) for i in range(7)]
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _snapshot(base_url, project_id, cookie, "memory", limit="50")
+        assert status == 200
+        assert body["data"]["total"] == 7
+        returned_ids = {i["id"] for i in body["data"]["items"]}
+        assert returned_ids == {a.id for a in seeded}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_memory_delete_preview_shows_exactly_selected_and_cancel_deletes_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -973,6 +1044,206 @@ def test_two_project_memory_and_token_isolation(
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- P69-07 subsections d/e: telemetry identity columns and invocation dedup -----
+
+
+def test_token_events_schema_gains_identity_columns_with_a_real_sentinel_default(
+    tmp_path: Path,
+) -> None:
+    """P69-07 subsection d: `token_events` gains project/run/agent/session identity
+    columns via a real migration; an omitted value is the real 'unscoped' sentinel,
+    never NULL."""
+    telemetry = TelemetryStore(tmp_path)
+    telemetry.record_savings("review", raw_tokens=10, compressed_tokens=5)
+    with sqlite3.connect(telemetry.db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(token_events)")}
+        assert {"project_id", "run_id", "agent_id", "session_id"} <= columns
+        row = conn.execute(
+            "SELECT project_id, run_id, agent_id, session_id FROM token_events"
+        ).fetchone()
+        assert row == ("unscoped", "unscoped", "unscoped", "unscoped")
+
+
+def test_token_events_legacy_database_migrates_and_backfills_identity_columns(
+    tmp_path: Path,
+) -> None:
+    """P69-07 subsection d: a pre-P69-07 `token_events` table (no identity columns)
+    migrates additively on open, backfilling the real 'unscoped' sentinel."""
+    db_path = tmp_path / ".rush" / "telemetry" / "tokens.db"
+    db_path.parent.mkdir(parents=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE token_events (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "timestamp INTEGER NOT NULL, tool_name TEXT NOT NULL, "
+            "raw_tokens INTEGER NOT NULL, compressed_tokens INTEGER NOT NULL, "
+            "duration_ms REAL NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO token_events (timestamp, tool_name, raw_tokens, "
+            "compressed_tokens, duration_ms) VALUES (0, 'legacy', 100, 50, 1.0)"
+        )
+        conn.commit()
+
+    telemetry = TelemetryStore(tmp_path)
+    with sqlite3.connect(telemetry.db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(token_events)")}
+        assert {"project_id", "run_id", "agent_id", "session_id"} <= columns
+        row = conn.execute(
+            "SELECT project_id FROM token_events WHERE tool_name = 'legacy'"
+        ).fetchone()
+        assert row[0] == "unscoped"
+
+
+def test_memory_events_dedupe_by_invocation_id_not_content_derived_request_id(
+    tmp_path: Path,
+) -> None:
+    """P69-07 subsection e: two distinct invocations sharing identical content and
+    the same content-derived `request_id` no longer collide -- the dedup key is
+    `invocation_id`; a genuine retry (same `invocation_id`) still dedupes."""
+    telemetry = TelemetryStore(tmp_path)
+    first = telemetry.record_memory_event(
+        "retrieval",
+        10,
+        request_id="same-content-derived-id",
+        event_id="e1",
+        invocation_id="invocation-a",
+        opt_in=True,
+    )
+    second = telemetry.record_memory_event(
+        "retrieval",
+        10,
+        request_id="same-content-derived-id",
+        event_id="e1",
+        invocation_id="invocation-b",
+        opt_in=True,
+    )
+    assert first is True
+    assert second is True
+    assert telemetry.get_memory_event_total(kind="retrieval") == 20
+
+    retry = telemetry.record_memory_event(
+        "retrieval",
+        999,
+        request_id="same-content-derived-id",
+        event_id="e1",
+        invocation_id="invocation-a",
+        opt_in=True,
+    )
+    assert retry is False
+    assert telemetry.get_memory_event_total(kind="retrieval") == 20
+
+
+def test_memory_event_total_respects_run_agent_session_filters(
+    tmp_path: Path,
+) -> None:
+    """P69-07 subsection e: `get_memory_event_total()` scopes to a real, distinct
+    `run_id`/`agent_id`/`session_id`, not just an unfiltered project-wide sum."""
+    telemetry = TelemetryStore(tmp_path)
+    telemetry.record_memory_event(
+        "retrieval",
+        10,
+        request_id="r1",
+        event_id="e1",
+        invocation_id="i1",
+        run_id="run-a",
+        agent_id="agent-a",
+        session_id="sess-a",
+        opt_in=True,
+    )
+    telemetry.record_memory_event(
+        "retrieval",
+        30,
+        request_id="r2",
+        event_id="e2",
+        invocation_id="i2",
+        run_id="run-b",
+        agent_id="agent-b",
+        session_id="sess-b",
+        opt_in=True,
+    )
+    assert telemetry.get_memory_event_total(kind="retrieval") == 40
+    assert telemetry.get_memory_event_total(kind="retrieval", run_id="run-a") == 10
+    assert telemetry.get_memory_event_total(kind="retrieval", agent_id="agent-b") == 30
+    assert telemetry.get_memory_event_total(kind="retrieval", session_id="sess-a") == 10
+
+
+def test_recall_page_mints_distinct_invocation_ids_for_identical_repeated_calls(
+    tmp_path: Path,
+) -> None:
+    """P69-07 subsection e: `recall_page()`'s real production caller (`tools/memory.py`)
+    passes a content-derived `request_id` -- two calls sharing identical content still
+    produce two distinct `memory_events` rows, since `recall_page()` mints its own
+    per-call `invocation_id` rather than trusting the caller-supplied `request_id`."""
+    store = TypedArtifactStore(tmp_path)
+    store.write(
+        MemoryArtifact(
+            id="a1",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"text": "needle content"},
+            source="src-a",
+            created_at=time.time(),
+        )
+    )
+    telemetry = TelemetryStore(tmp_path)
+    for _ in range(2):
+        recall_page(
+            store,
+            subject="domain_knowledge",
+            query="needle",
+            session_allowlist=["src-a"],
+            telemetry=telemetry,
+            request_id="same-content-derived-request-id",
+            event_id="retrieval",
+            opt_in=True,
+        )
+    with sqlite3.connect(telemetry.db_path) as conn:
+        rows = conn.execute(
+            "SELECT invocation_id FROM memory_events WHERE kind = 'retrieval'"
+        ).fetchall()
+    assert len({r[0] for r in rows}) == 2
+
+
+def test_session_continuity_tool_mints_a_distinct_invocation_id_per_run_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P69-07 subsection e: `SessionContinuityTool.run()` mints one real invocation
+    identity per call, shared by every operation dispatched from that call, never
+    re-minted per branch -- two separate calls get distinct identities; an explicit
+    `idempotency_key` (a genuine retry) reuses the same one."""
+    import rush.tools.continuity as continuity_module
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.continuity import SessionContinuityTool
+
+    captured: list[str | None] = []
+
+    def _fake_pack_context(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs.get("invocation_id"))
+        return {"status": "ok"}
+
+    monkeypatch.setattr(continuity_module, "pack_context", _fake_pack_context)
+    tool = SessionContinuityTool()
+    granted = ExecutionPermissions(cache_write=True)
+    common = {
+        "operation": "context_pack",
+        "context_path": "x.py",
+        "target_symbol": "f",
+        "token_budget": 100,
+        "permissions": granted,
+    }
+
+    tool.run(tmp_path, **common)
+    tool.run(tmp_path, **common)
+    assert len(captured) == 2
+    assert captured[0] and captured[1] and captured[0] != captured[1]
+
+    tool.run(tmp_path, idempotency_key="retry-x", **common)
+    tool.run(tmp_path, idempotency_key="retry-x", **common)
+    assert captured[2] == "retry-x"
+    assert captured[3] == "retry-x"
 
 
 # --- P66-05.4 VERIFY: TUI memory admin keyboard journeys --------------------

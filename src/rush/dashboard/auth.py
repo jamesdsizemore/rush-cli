@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import secrets
@@ -47,12 +48,29 @@ BOOTSTRAP_TTL_SECONDS = 300  # one-use launch token, 5 minutes (spec 3.7)
 SESSION_TTL_SECONDS = 8 * 60 * 60  # cookie session, 8 hours (spec 3.7)
 
 
+def new_session_owner_scope_id() -> str:
+    """A non-secret, per-session identity for `owner_scope` use (P69-07 subsection b).
+
+    `Session` carries no identifier that may be reused as a memory-ownership label:
+    `cookie_digest` is the digest of a live bearer secret and `csrf_token` is a live
+    anti-forgery secret -- storing either inside persisted memory content would leak an
+    authentication value into the memory store. This mints a separate opaque id that
+    authenticates nothing, is never accepted as a credential anywhere, and lives exactly
+    as long as the `Session` it belongs to.
+    """
+    return secrets.token_urlsafe(12)
+
+
 @dataclass
 class Session:
     cookie_digest: str
     csrf_token: str
     created_at: float
     expires_at: float
+    # P69-07 subsection b: the session's `owner_scope` identity. Defaulted so any
+    # future `Session(...)` construction still gets a real, distinct id rather than
+    # silently sharing or omitting one.
+    owner_scope_id: str = dataclasses.field(default_factory=new_session_owner_scope_id)
 
 
 @dataclass

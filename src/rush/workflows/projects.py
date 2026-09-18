@@ -1028,6 +1028,49 @@ def project_git_commit_diff(
     }
 
 
+def _git_show_path_digest(root: Path, commit: str, path: str) -> str | None:
+    """SHA-256 of `path`'s content as recorded in `commit`'s tree (`git show
+    <commit>:<path>`), or `None` if the path doesn't exist at that commit or
+    the read fails -- the same digest algorithm `project_run.py`'s staging
+    engines use for `git_link["path_digests"]`."""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit}:{path}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def git_link_matches_commit(
+    root: Path, git_link: dict[str, Any] | None, commit: str
+) -> bool:
+    """P69-07.2b: exact source-revision match (P69-03.2's Git-link
+    predicate, reused verbatim) -- a scan output links to a commit only when
+    its persisted `git_link` HEAD matches the commit, the tree was clean at
+    scan start, and every recorded per-path digest matches that commit's
+    tree for its path. Never merely an intersecting file path."""
+    if not _GIT_REF_RE.match(commit):
+        return False
+    if not git_link or not git_link.get("repository"):
+        return False
+    if git_link.get("head") != commit:
+        return False
+    if git_link.get("dirty"):
+        return False
+    digests = git_link.get("path_digests") or {}
+    if not digests:
+        return False
+    return all(
+        _git_show_path_digest(root, commit, path) == digest
+        for path, digest in digests.items()
+    )
+
+
 def list_project_artifacts(
     project: str | Path, *, data_root: Path | None = None
 ) -> dict[str, Any]:
@@ -1051,11 +1094,21 @@ def list_project_artifacts(
     for manifest in _iter_run_manifests(root):
         run_id = manifest.get("run_id")
         attempt_id = manifest.get("attempt_id")
+        # P69-07.2c: the persisted Git-link provenance for this attempt
+        # (P69-07.2b), passed through verbatim so a reference resolved back
+        # via `expand_artifact_reference` carries the same attempt-scoped
+        # Git/content identity its manifest recorded.
+        git_link = manifest.get("git_link") or {}
         for item in manifest.get("scheduled") or []:
             child = item.get("child") or {}
             scan_outputs.append(
                 {
-                    "artifact_ref": f"run:{run_id}:{item.get('candidate_id')}",
+                    # P69-07.2c: attempt-scoped, not just run-scoped -- two
+                    # attempts of the same `run_id` previously produced
+                    # identical `artifact_ref` values, so a stale reference
+                    # silently resolved whichever attempt was currently
+                    # highest-generation instead of the one it was minted for.
+                    "artifact_ref": f"run:{run_id}:{attempt_id}:{item.get('candidate_id')}",
                     "category": item.get("category", "unknown"),
                     "kind": "scan_output",
                     "run_id": run_id,
@@ -1065,6 +1118,7 @@ def list_project_artifacts(
                     "status": child.get("status"),
                     "finding_count": len(child.get("findings") or []),
                     "paths": list(child.get("artifacts") or []),
+                    "git_link": git_link,
                 }
             )
 

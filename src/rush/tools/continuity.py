@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
@@ -166,9 +167,15 @@ class SessionContinuityTool(ToolFn):
         permissions: ExecutionPermissions | None = None,
         config: Any = None,
         as_v1: bool = False,
+        idempotency_key: str | None = None,
     ) -> ContinuityOutput:
         del config
         self._as_v1 = as_v1
+        # P69-07 subsection e: one real per-call identity minted before dispatch, shared
+        # by every operation in `dispatch_table` below -- never re-minted per branch. A
+        # caller-supplied `idempotency_key` (a genuine retry of this exact call) reuses
+        # that same identity instead of minting a new one, so a real retry still dedupes.
+        self._invocation_id = idempotency_key or str(uuid.uuid4())
         started = monotonic()
         root = path.resolve()
         granted = permissions or ExecutionPermissions()
@@ -462,6 +469,7 @@ class SessionContinuityTool(ToolFn):
             token_budget,
             granted,
             as_v1=self._as_v1,
+            invocation_id=self._invocation_id,
         )
 
     def _context_retrieve(
@@ -471,7 +479,14 @@ class SessionContinuityTool(ToolFn):
         handle: str | None,
         granted: ExecutionPermissions,
     ) -> ContinuityOutput:
-        return retrieve_context(started, root, handle, granted, as_v1=self._as_v1)
+        return retrieve_context(
+            started,
+            root,
+            handle,
+            granted,
+            as_v1=self._as_v1,
+            invocation_id=self._invocation_id,
+        )
 
     def _coordination_check(
         self,

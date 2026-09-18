@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 188
+total_operations = 189
 
 [[operations]]
 id = "admin.agent_connect"
@@ -1344,6 +1344,17 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush context gain --help"
+
+[[operations]]
+id = "tool.gain"
+kind = "tool"
+canonical_impl = "rush.token_economy.tui_gain:render_gain_summary"
+cli_command = "gain"
+mcp_tool = "rush_context_gain_stats"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush gain --help"
 
 [[operations]]
 id = "tool.context_pack"

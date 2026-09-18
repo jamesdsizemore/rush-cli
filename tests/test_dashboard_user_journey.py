@@ -94,6 +94,20 @@ def test_memory_write_is_visible_and_editable_through_the_dashboard(
     _assert_stage(ui_journey, "memory")
 
 
+def test_benchmark_action_helper_sends_owner_scope_on_the_calls_it_makes(
+    ui_journey: dict[str, Any],
+) -> None:
+    """P69-07 (round-7 correction, moved from P69-02): every memory-mutation `_action()`
+    call this benchmark helper makes carries a real `owner_scope`, not a dropped or
+    omitted field."""
+    sent = ui_journey["memory_mutation_arguments_sent"]
+    assert sent, "no memory-mutation _action call was captured"
+    for arguments in sent:
+        assert arguments.get("owner_scope"), (
+            f"memory mutation call missing owner_scope: {arguments}"
+        )
+
+
 def test_tokens_snapshot_reflects_real_telemetry(ui_journey: dict[str, Any]) -> None:
     _assert_stage(ui_journey, "tokens")
 

@@ -32,6 +32,7 @@ from rush.dashboard.state import (
     MutationLedger,
     OwnerLock,
     PendingOutcomeQueue,
+    ScanConflictError,
     claim_dead_owner,
     probe_owner_alive,
     reconcile_admissions,
@@ -2525,3 +2526,319 @@ def test_a_concurrent_attachment_arriving_mid_sweep_is_serialized_against_prunin
         assert ledger.get_operation_status(executing_id) is not None, (
             f"{operation_id} dangles at pruned {executing_id}"
         )
+
+
+# --------------------------------------------------------------------------
+# P69-06e: the CHECK_SUITE control command. A real, header-authenticated
+# control-channel route (`POST /api/control/check-suite`) that dispatches the
+# suite inside the dashboard's *own* process, through the same admission /
+# supervision / status primitives every other async operation uses -- never a
+# same-process function call from `tui.py`, and never `scan_start` with a
+# fabricated plan_id/grants standing in for a different, lighter operation.
+# --------------------------------------------------------------------------
+
+
+def _check_suite_project(tmp_path):
+    """A registered project plus a running dashboard server for it."""
+    project_dir = tmp_path / "check-suite-proj"
+    project_dir.mkdir()
+    record = register_project(project_dir)
+    snapshot = {
+        "schema_version": 1,
+        "project_id": record.project_id,
+        "source_identity": record.project_id,
+        "root": str(project_dir),
+        "files": [],
+        "findings": [],
+        "memories": [],
+        "agents": [],
+    }
+    server, ctx, token = create_dashboard_server({record.project_id: snapshot})
+    _serve(server)
+    return server, ctx, token, record.project_id, project_dir
+
+
+def _control_check_suite(base_url, control_token, project_id, request_id, **extra):
+    headers = {
+        "X-Rush-Control": control_token,
+        "Content-Type": "application/json",
+    }
+    headers.update(extra.pop("headers", {}))
+    body = json.dumps(
+        {"schema_version": 1, "project_id": project_id, "request_id": request_id}
+    ).encode()
+    return _post(f"{base_url}/api/control/check-suite", headers=headers, body=body)
+
+
+class _SuiteProbe:
+    """Records exactly how `run_workflow_suite` was called, and optionally
+    blocks inside it so a test can observe real in-flight state."""
+
+    def __init__(self, gate: threading.Event | None = None) -> None:
+        self.calls: list[dict] = []
+        self.entered = threading.Event()
+        self._gate = gate
+
+    def __call__(self, **kwargs):
+        self.calls.append({**kwargs, "thread_ident": threading.get_ident()})
+        self.entered.set()
+        if self._gate is not None:
+            self._gate.wait(timeout=10)
+        return {
+            "tool": "check",
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": "check: ok",
+            "findings": [],
+            "metadata": {},
+        }
+
+
+def test_check_suite_control_command_calls_start_or_attach_before_dispatching(
+    tmp_path, monkeypatch
+) -> None:
+    """P69-06e: the handler goes through the shared admission decision
+    *before* it dispatches, so a concurrent full scan is arbitrated by the
+    same mechanism that arbitrates every other operation.
+
+    The plan names `ScanRunTracker.start_or_attach()`; P69-02.2f (T010) had
+    already moved that decision out of the in-memory tracker into the durable
+    `ctx.mutations.admit()` transaction reached via `_admit_and_launch` -- the
+    same call `scan_start`/`scan_resume`/`rescan` now make. This asserts
+    against that real, current primitive.
+    """
+    gate = threading.Event()
+    probe = _SuiteProbe(gate)
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, _token, project_id, _root = _check_suite_project(tmp_path)
+    try:
+        resp = _control_check_suite(
+            ctx.launch_origin, ctx.auth.control_capability, project_id, "req-cs-1"
+        )
+        assert resp.status == 202, resp.read()
+        assert probe.entered.wait(timeout=5)
+
+        admission = ctx.mutations.admission_for_project(project_id)
+        assert admission is not None, "dispatched without an admission row"
+        assert admission["execution_identity"] == "check_suite:check"
+        assert admission["plan_id"] == "check_suite:check"
+        assert admission["owner_instance_id"] == ctx.owner_instance_id
+    finally:
+        gate.set()
+        server.server_close()
+
+
+def test_concurrent_full_scan_and_check_suite_against_same_project_resolve_through_one_admission_check(
+    tmp_path, monkeypatch
+) -> None:
+    """P69-06e + P69-01.2p: a full scan arriving while CHECK_SUITE is running
+    must never silently attach to it (it has a genuinely different execution
+    identity) -- both requests are arbitrated by the one admission check."""
+    gate = threading.Event()
+    probe = _SuiteProbe(gate)
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, _token, project_id, _root = _check_suite_project(tmp_path)
+    try:
+        resp = _control_check_suite(
+            ctx.launch_origin, ctx.auth.control_capability, project_id, "req-cs-2"
+        )
+        assert resp.status == 202
+        assert probe.entered.wait(timeout=5)
+
+        with pytest.raises(ScanConflictError):
+            _admit_and_launch(
+                ctx,
+                project_id,
+                execution_identity="scan_start:plan-xyz",
+                slot_id="slot-full",
+                operation_id="op-full",
+                run_id="run-full",
+                plan_id="plan-xyz",
+                thread=threading.Thread(target=lambda: None),
+            )
+
+        # A second CHECK_SUITE request for the same project shares the
+        # identity, so it attaches to the running job instead of conflicting.
+        second = _control_check_suite(
+            ctx.launch_origin, ctx.auth.control_capability, project_id, "req-cs-3"
+        )
+        assert second.status == 202
+        payload = json.loads(second.read())["data"]
+        assert payload["attached_to_existing"] is True
+        assert len(probe.calls) == 1, "an attach must not dispatch a second suite run"
+    finally:
+        gate.set()
+        server.server_close()
+
+
+def test_check_suite_control_command_and_a_concurrent_full_scan_never_silently_attach_via_the_real_http_boundary(
+    tmp_path, monkeypatch
+) -> None:
+    """The same guarantee as above, driven end-to-end through both real HTTP
+    surfaces: the control channel for CHECK_SUITE, and the browser-facing
+    action route for the full scan."""
+    from rush.workflows.project_run import plan_scan
+
+    gate = threading.Event()
+    probe = _SuiteProbe(gate)
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, token, project_id, root = _check_suite_project(tmp_path)
+    try:
+        base_url = ctx.launch_origin
+        resp = _control_check_suite(
+            base_url, ctx.auth.control_capability, project_id, "req-cs-4"
+        )
+        assert resp.status == 202
+        assert probe.entered.wait(timeout=5)
+
+        plan = plan_scan(root)
+        cookie, csrf = _bootstrap_session(base_url, token)
+        scan = _post(
+            f"{base_url}/api/projects/{project_id}/actions",
+            headers={
+                "Cookie": cookie,
+                "X-Rush-CSRF": csrf,
+                "Origin": base_url,
+                "Content-Type": "application/json",
+            },
+            body=json.dumps(
+                {
+                    "operation": "scan_start",
+                    "request_id": "req-full-1",
+                    "arguments": {"plan_id": plan.plan_id},
+                    "grants": {"cache_write": True, "artifact_write": True},
+                }
+            ).encode(),
+        )
+        assert scan.status == 409, scan.read()
+        body = json.loads(scan.read())
+        assert body["error"]["code"] == "conflict"
+        assert "check_suite:check" in body["error"]["message"]
+    finally:
+        gate.set()
+        server.server_close()
+
+
+def test_check_suite_control_command_actually_dispatches_inside_the_dashboard_process_not_the_caller(
+    tmp_path, monkeypatch
+) -> None:
+    """P69-06e: an "internal dashboard-server function" is not reachable from
+    the TUI process. The suite runs on the server's own background worker
+    thread, under the server's own `DashboardContext` identity, and the 202
+    returns before the work finishes -- never synchronously in the caller."""
+    gate = threading.Event()
+    probe = _SuiteProbe(gate)
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, _token, project_id, _root = _check_suite_project(tmp_path)
+    try:
+        caller_ident = threading.get_ident()
+        resp = _control_check_suite(
+            ctx.launch_origin, ctx.auth.control_capability, project_id, "req-cs-5"
+        )
+        assert resp.status == 202
+        # The response landed while the suite is still blocked inside its
+        # own worker: the caller was never the executor.
+        assert probe.entered.wait(timeout=5)
+        assert probe.calls[0]["thread_ident"] != caller_ident
+        assert probe.calls[0]["owner_instance_id"] == ctx.owner_instance_id
+        assert probe.calls[0]["run_id"]
+    finally:
+        gate.set()
+        server.server_close()
+
+
+def test_check_suite_control_command_rejects_browser_session_credentials(
+    tmp_path, monkeypatch
+) -> None:
+    """P69-06e: the control boundary is distinct from the browser-facing
+    session/CSRF auth -- a presented cookie or Origin is rejected outright,
+    and a missing control capability is a 401."""
+    probe = _SuiteProbe()
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, token, project_id, _root = _check_suite_project(tmp_path)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+
+        with_cookie = _control_check_suite(
+            base_url,
+            ctx.auth.control_capability,
+            project_id,
+            "req-cs-6",
+            headers={"Cookie": cookie, "X-Rush-CSRF": csrf},
+        )
+        assert with_cookie.status == 401
+
+        with_origin = _control_check_suite(
+            base_url,
+            ctx.auth.control_capability,
+            project_id,
+            "req-cs-7",
+            headers={"Origin": base_url},
+        )
+        assert with_origin.status == 401
+
+        no_capability = _control_check_suite(base_url, "", project_id, "req-cs-8")
+        assert no_capability.status == 401
+
+        assert probe.calls == [], "a rejected request must never dispatch"
+    finally:
+        server.server_close()
+
+
+def test_check_suite_startup_job_does_not_fabricate_a_scan_start_plan_id_or_grants(
+    tmp_path, monkeypatch
+) -> None:
+    """P69-06e: CHECK_SUITE is a genuinely different, lighter operation --
+    it carries no staged plan_id and negotiates no cache_write/artifact_write
+    grants, so the route must neither require nor invent them."""
+    probe = _SuiteProbe()
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, _token, project_id, _root = _check_suite_project(tmp_path)
+    try:
+        resp = _control_check_suite(
+            ctx.launch_origin, ctx.auth.control_capability, project_id, "req-cs-9"
+        )
+        assert resp.status == 202, resp.read()
+        data = json.loads(resp.read())["data"]
+        assert "plan_id" not in data or data["plan_id"] == "check_suite:check"
+        assert probe.entered.wait(timeout=5)
+
+        permissions = probe.calls[0]["permissions"]
+        assert permissions.cache_write is False
+        assert permissions.artifact_write is False
+        assert permissions.network is False
+    finally:
+        server.server_close()
+
+
+def test_check_suite_startup_job_uses_its_own_real_tool_selection_not_a_full_scans(
+    tmp_path, monkeypatch
+) -> None:
+    """P69-06e: routing this through `scan_start` would silently substitute a
+    full scan; the control command runs CHECK_SUITE's own real tool
+    sequence."""
+    from rush.workflows.suites import CHECK_SUITE
+
+    probe = _SuiteProbe()
+    monkeypatch.setattr("rush.dashboard.server.run_workflow_suite", probe)
+    server, ctx, _token, project_id, root = _check_suite_project(tmp_path)
+    try:
+        resp = _control_check_suite(
+            ctx.launch_origin, ctx.auth.control_capability, project_id, "req-cs-10"
+        )
+        assert resp.status == 202
+        assert probe.entered.wait(timeout=5)
+
+        call = probe.calls[0]
+        assert call["suite"] is CHECK_SUITE
+        assert call["suite"].tool_sequence == (
+            "format",
+            "lint",
+            "typecheck",
+            "dead",
+            "slop",
+        )
+        assert Path(call["path"]) == root
+    finally:
+        server.server_close()
