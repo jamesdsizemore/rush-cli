@@ -36,8 +36,9 @@ from rich.tree import Tree
 
 from rush import __version__
 from rush.dashboard.keymaps import DEFAULT_KEYBINDINGS, KeybindingAction, KeymapManager
-from rush.dashboard.state import MutationLedger
+from rush.dashboard.state import AdmissionResult, MutationLedger
 from rush.dashboard.terminal_input import KeyReader, make_key_reader, raw_terminal
+from rush.dashboard.theme import THEME
 from rush.permissions import ExecutionPermissions
 from rush.runtime.subprocesses import (
     OWNED_TERMINATION_TIMEOUT_SECONDS,
@@ -82,6 +83,39 @@ _TERMINAL_RUN_STATES = {
     "cancelled": "cancelled",
     "failed": "error",
 }
+
+# U01 fix: Tab/Shift+Tab cycle visible panes; F3 cycles Sections. Both are
+# state-only concerns here -- `render_app`'s width branches (U04) decide
+# which of these panes actually gets drawn at the current terminal size.
+PANE_CYCLE: tuple[str, ...] = ("nav", "list", "detail")
+SECTION_CYCLE: tuple[str, ...] = ("list", "map", "git")
+
+# U04 fix: the smallest Rich style mapping from the shared THEME tokens
+# (`rush.dashboard.theme`) -- replacing the hardcoded named colors
+# ("cyan"/"red"/"yellow"/"grey50") the header, footer, and severity
+# rendering used before. Never introduce a second theme/animation system;
+# THEME is the sole source of these values (see that module's docstring).
+_HEADER_STYLE = f"bold {THEME['blue']}"
+_FOOTER_STYLE = THEME["surface_raised"]
+
+
+def _severity_style(severity: str) -> str:
+    if severity in ("error", "fail"):
+        return THEME["error"]
+    if severity == "warn":
+        return THEME["warning"]
+    return THEME["blue"]
+
+
+def _width_branch(columns: int) -> str:
+    """U04 fix: the exact Phase 66 §3.8 column breakpoints -- `render_app`
+    branches its pane layout on this, replacing the prior single `>= 100`
+    check that had no distinct 80-99/`< 80` behavior at all."""
+    if columns >= 100:
+        return "wide"
+    if columns >= 80:
+        return "compact"
+    return "narrow"
 
 
 # --------------------------------------------------------------------------
@@ -329,6 +363,13 @@ class ProjectSeed:
 class ProjectState:
     name: str
     root: Path
+    # M09: this project's registered canonical UUID, resolved once at load
+    # time (`_resolve_registered_project_id`) -- `None` only for an explicit
+    # project-not-found result, never for a registry read failure, so a
+    # transient registry error can't silently fall back to path-form
+    # ownership. Used by `_default_owner_scope_id`'s "project" branch instead
+    # of the raw root path.
+    project_id: str | None = None
     results: list[ToolResult] = field(default_factory=list)
     selected_index: int = 0
     filter_text: str = ""
@@ -430,6 +471,18 @@ class TuiState:
     # project's history/status can never leak into the newly active one.
     git_data: dict[str, Any] | None = None
     git_message: str = ""
+    # U01 fix: Tab/Shift+Tab's pane-cycle position (see `PANE_CYCLE`).
+    active_pane: str = "list"
+    # U01 fix: `mode == "project_selector"` overlay state -- the project
+    # F2 currently highlights, distinct from `active_index` (which only
+    # changes once the selector is confirmed with Enter).
+    project_selector_index: int = 0
+    # U01 fix: `mode == "map"` hierarchy state -- the set of expanded file
+    # node keys and the selected row within the currently visible
+    # (expand-aware) flattened node list. Never reset on resize (U04) or
+    # re-entering Map via F3, so both survive either.
+    map_expanded: set[str] = field(default_factory=set)
+    map_selected_index: int = 0
 
     @property
     def active_project(self) -> ProjectState:
@@ -481,26 +534,120 @@ def _move_selection(project: ProjectState, delta: int) -> None:
     project.detail_page = project.selected_index // PAGE_SIZE
 
 
+def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
+    """U01 fix: the real Map hierarchy -- Project root -> one node per
+    distinct finding path -> one leaf node per finding under that path.
+    `key` is stable and drives expand/collapse + selection; `parent` gates
+    a finding leaf's visibility on its file node's expanded state.
+
+    ponytail: only the Files/Findings branches this module can source
+    data for are built here -- the full §3.8 Map spec also names
+    Directories/Memories/Agents branches, which would need data this
+    packet's allowed files have no access to (the web dashboard's
+    `project_map` machinery). Add those branches if/when that data
+    becomes reachable from here; nothing about this shape blocks it."""
+    rows = project.flattened_findings()
+    by_path: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_path.setdefault(_finding_path(row), []).append(row)
+
+    nodes: list[dict[str, Any]] = [
+        {"key": "root", "label": project.name, "depth": 0, "kind": "project"}
+    ]
+    for path in sorted(by_path):
+        findings = by_path[path]
+        file_key = f"file:{path}"
+        nodes.append(
+            {
+                "key": file_key,
+                "label": f"{path} ({len(findings)})",
+                "depth": 1,
+                "kind": "file",
+                "children": findings,
+            }
+        )
+        for idx, finding in enumerate(findings):
+            nodes.append(
+                {
+                    "key": f"{file_key}:finding:{idx}",
+                    "label": str(finding.get("message", "")),
+                    "depth": 2,
+                    "kind": "finding",
+                    "parent": file_key,
+                }
+            )
+    return nodes
+
+
+def _map_visible_nodes(
+    project: ProjectState, expanded: set[str]
+) -> list[dict[str, Any]]:
+    """Only a finding leaf is ever hidden -- gated on its file node's key
+    being in `expanded`. The root and file nodes are always visible."""
+    return [
+        node
+        for node in _map_nodes(project)
+        if node.get("parent") is None or node["parent"] in expanded
+    ]
+
+
+def _move_map_selection(state: TuiState, project: ProjectState, delta: int) -> None:
+    nodes = _map_visible_nodes(project, state.map_expanded)
+    if not nodes:
+        state.map_selected_index = 0
+        return
+    state.map_selected_index = max(
+        0, min(len(nodes) - 1, state.map_selected_index + delta)
+    )
+
+
 _OWNER_INSTANCE: list[str] = []
+_OWNER_LOCK: list[Any] = []
+"""S15: retains the acquired `OwnerLock` object itself (not merely its id),
+so the underlying lock is never left as an unreferenced, easily-confused-
+for-released value. `_OWNER_INSTANCE` alone is this pair's single source of
+truth for "has a lock already been minted this process": pre-existing test
+helpers reset local ownership between scenarios by clearing only
+`_OWNER_INSTANCE` (matching this module's original single-list design), so
+`_tui_owner_instance_id` must re-derive from that one list's emptiness
+alone -- never gate on `_OWNER_LOCK` independently, or a reset that only
+clears `_OWNER_INSTANCE` leaves `_OWNER_LOCK` stale and wrongly blocks the
+very re-mint that reset was asking for.
+"""
 
 
-def _tui_owner_instance_id() -> str:
-    """P69-01.2j: this TUI process's own executor identity, minted once and
-    backed by a real owner-liveness lock held for the process's lifetime --
-    so recovery can tell "this owner is still working" from "this owner
-    died and its engine children need reaping" (subsection h's contract).
+def _tui_owner_instance_id() -> str | None:
+    """P69-01.2j/S15: this TUI process's own executor identity, minted once
+    and backed by a real owner-liveness lock retained (not merely acquired
+    and discarded) for the process's lifetime -- so recovery can tell "this
+    owner is still working" from "this owner died and its engine children
+    need reaping" (subsection h's contract).
 
-    A lock that cannot be acquired never blocks a scan: the scan still runs
-    and still records its subprocesses; only the liveness signal is missing.
+    Returns `None` if the lifetime lock could not be acquired. A missing
+    lock is never equivalent to permission to proceed: every caller must
+    treat `None` as a hard stop for that local path -- reserve no work,
+    launch no worker -- never silently continue unowned as this used to.
+
+    Idempotent: once acquired, the lock is retained process-wide across
+    every project this coordinator runs -- one project finishing must never
+    release or re-attempt a lock another still-running local project needs.
+    There is no per-project close; the lock is only ever released by the
+    kernel at process exit.
     """
     if not _OWNER_INSTANCE:
+        _OWNER_LOCK.clear()
         owner_instance_id = f"tui:{uuid.uuid4()}"
         from rush.dashboard.state import OwnerLock
 
-        with suppress(Exception):  # never break a scan over the liveness lock
-            OwnerLock(owner_instance_id)
+        try:
+            lock = OwnerLock(owner_instance_id)
+        except Exception:  # noqa: BLE001 -- any acquisition failure (lock
+            # already held, unreadable data root) is a hard stop for local
+            # ownership, never a silently-swallowed no-op.
+            return None
         _OWNER_INSTANCE.append(owner_instance_id)
-    return _OWNER_INSTANCE[0]
+        _OWNER_LOCK.append(lock)
+    return _OWNER_INSTANCE[0] if _OWNER_INSTANCE else None
 
 
 def _admit_local_run(
@@ -510,8 +657,8 @@ def _admit_local_run(
     run_id: str,
     execution_identity: str,
     plan_id: str,
-) -> None:
-    """P69-06i: durably register this locally-owned run in the same
+) -> AdmissionResult | None:
+    """P69-06i/S15: durably register this locally-owned run in the same
     `scan_admission`/`mutation_ledger` tables the dashboard's own
     `_admit_and_launch` uses, so recovery's existing generic dead-owner sweep
     (`reconcile_admissions`, `state.py` -- unmodified, out of this packet's
@@ -528,10 +675,14 @@ def _admit_local_run(
     the dashboard's own `slot_id = operation_id` convention (`server.py`),
     reused as-is.
 
-    Best-effort like `_tui_owner_instance_id`'s own lock acquisition: a
-    failure here (a locked-out ledger, an unreadable data root) must never
-    block a scan -- it only means this particular run stays unrecoverable if
-    this process dies mid-run, the same as before this subsection existed.
+    Returns the durable `AdmissionResult` so the caller decides what happens
+    next: `started=True` may launch a new local worker; `attached=True` must
+    adopt the stored executor's identity and only observe it, never launch a
+    second worker for the same admitted slot; `conflict=True` (or a `None`
+    return, meaning admission itself raised) must display failure and
+    reserve/launch nothing. A reservation/admission failure (a locked-out
+    ledger, an unreadable data root) is reported as `None`, never silently
+    treated as permission to proceed unowned.
     """
     project.owner_instance_id = owner_instance_id
     project.run_resolved = False
@@ -549,7 +700,7 @@ def _admit_local_run(
         )
         operation_id = reservation.operation_id
         project.operation_id = operation_id
-        ledger.admit(
+        result = ledger.admit(
             project_id,
             execution_identity=execution_identity,
             slot_id=operation_id,
@@ -558,9 +709,14 @@ def _admit_local_run(
             plan_id=plan_id,
             owner_instance_id=owner_instance_id,
         )
-        project.ledger_admitted = True
-    except Exception:  # noqa: BLE001 -- best-effort admission; see docstring.
+        project.ledger_admitted = result.started
+        return result
+    except Exception:  # noqa: BLE001 -- a reservation/admission failure (a
+        # locked-out ledger, an unreadable data root) leaves the run
+        # unresolved for the caller to fail closed on, never silently
+        # continue as admitted.
         project.run_resolved = True
+        return None
 
 
 def _resolve_local_run(project: ProjectState) -> bool:
@@ -610,6 +766,14 @@ class DashboardOwner:
     base_url: str
     control_capability: str
     project_id: str
+    # U02: a cached, already-exchanged (cookie, csrf) session, reused across
+    # repeated status polls instead of bootstrapping on every call. Mutating
+    # the dict's contents (never reassigning the field itself) is compatible
+    # with this dataclass's `frozen=True`; excluded from repr/comparison so
+    # two `DashboardOwner`s naming the same server still compare equal.
+    _session_cache: dict[str, tuple[str, str]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     def dispatch(self, operation: str, **arguments: Any) -> dict[str, Any]:
         from rush.dashboard.server import (
@@ -632,6 +796,35 @@ class DashboardOwner:
             # these are the exact two `scan_start`/`rescan` require.
             grants={"cache_write": True, "artifact_write": True},
         )
+
+    def operation_status(self, operation_id: str) -> dict[str, Any]:
+        """U02: durable `GET .../operations/{operation_id}` status, reusing
+        one cached authenticated session across repeated polls. On a 401
+        (the cached session expired) re-exchanges exactly once and retries;
+        a second failure is a visible disconnection, surfaced to the caller."""
+        from urllib.error import HTTPError
+
+        from rush.dashboard.server import (
+            _control_session,
+            dispatch_dashboard_operation_status,
+        )
+
+        session = self._session_cache.get("session")
+        if session is None:
+            session = _control_session(self.base_url, self.control_capability)
+            self._session_cache["session"] = session
+        try:
+            return dispatch_dashboard_operation_status(
+                self.base_url, self.project_id, operation_id, session=session
+            )
+        except HTTPError as exc:
+            if exc.code != 401:
+                raise
+            session = _control_session(self.base_url, self.control_capability)
+            self._session_cache["session"] = session
+            return dispatch_dashboard_operation_status(
+                self.base_url, self.project_id, operation_id, session=session
+            )
 
 
 def _find_live_dashboard_owner(root: Path) -> DashboardOwner | None:
@@ -698,6 +891,7 @@ def _start_dashboard_owned(
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
+    project.operation_id = ""
 
     def _worker() -> None:
         try:
@@ -712,16 +906,19 @@ def _start_dashboard_owned(
         run_id = response.get("run_id") if isinstance(response, dict) else None
         if isinstance(run_id, str) and run_id:
             project.run_id = run_id
-        if project.plan_total <= 0:
-            # No candidate-events protocol for this operation (CHECK_SUITE has
-            # no plan), so `_poll_running_scans` cannot observe it -- this
-            # thread reports its own terminal status, like the local
-            # rescan/check-suite workers do.
-            project.status = "complete"
-            project.last_message = (
-                f"{operation} running in dashboard "
-                f"(operation {response.get('operation_id', '?')})"
-            )
+        operation_id = (
+            response.get("operation_id") if isinstance(response, dict) else None
+        )
+        if isinstance(operation_id, str) and operation_id:
+            project.operation_id = operation_id
+        # U02: completion is never inferred from `plan_total` (CHECK_SUITE
+        # never has one) -- `_poll_running_scans`'s dashboard-owned branch
+        # below is the only thing that ever moves this project out of
+        # "scanning", by polling the retained `operation_id`'s real durable
+        # status.
+        project.last_message = (
+            f"{operation} running in dashboard (operation {operation_id or '?'})"
+        )
 
     thread = threading.Thread(target=_worker, daemon=True)
     project.scan_thread = thread
@@ -741,21 +938,52 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
         )
         return
 
+    owner_instance_id = _tui_owner_instance_id()
+    if owner_instance_id is None:
+        # S15: a lock that cannot be acquired is a hard stop, never
+        # permission to reserve/launch unowned local work.
+        project.owner = "local"
+        project.status = "error"
+        project.last_message = "scan_start refused: owner lifetime lock unavailable"
+        return
+
     project.owner = "local"
     run_id = str(uuid.uuid4())
-    owner_instance_id = _tui_owner_instance_id()
     project.run_id = run_id
     project.plan_total = len(list(getattr(plan, "candidates", None) or []))
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
-    _admit_local_run(
+    admission = _admit_local_run(
         project,
         owner_instance_id=owner_instance_id,
         run_id=run_id,
         execution_identity=f"scan_start:{getattr(plan, 'plan_id', '')}",
         plan_id=str(getattr(plan, "plan_id", "")),
     )
+    if admission is not None and admission.conflict:
+        # S15: a genuinely-read, structured admission conflict -- another
+        # executor already durably holds this project's slot. Display
+        # failure, launch nothing, never incorrectly take over.
+        project.status = "error"
+        project.last_message = "scan_start refused: admission conflict"
+        return
+    if admission is not None and admission.attached:
+        # S15: adopt the already-running executor's identity and observe
+        # it -- never launch a second local worker for the same slot.
+        project.run_id = admission.run_id or run_id
+        project.operation_id = admission.operation_id or project.operation_id
+        project.owner_instance_id = admission.owner_instance_id or owner_instance_id
+        project.last_message = "scan_start attached to the already-running executor"
+        return
+    # `admission is None` means `_admit_local_run` itself raised (an
+    # unreachable ledger, an unresolvable/unregistered project root) --
+    # never a durably-read ownership decision. This is deliberately still
+    # best-effort, matching the pre-S15 tolerance for reservation
+    # infrastructure being unavailable: the scan still runs locally (just
+    # unrecoverable if this process dies mid-run, same as before this
+    # subsection existed). Only a lock failure (above) and a genuinely-read
+    # conflict/attached result (above) are hard stops.
 
     def _worker() -> None:
         outcome_status = "success"
@@ -802,11 +1030,19 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
         )
         return
 
+    owner_instance_id = _tui_owner_instance_id()
+    if owner_instance_id is None:
+        # S15: same hard stop as `_start_scan_thread` -- an unacquired
+        # lifetime lock never means proceed unowned.
+        project.owner = "local"
+        project.status = "error"
+        project.last_message = "rescan refused: owner lifetime lock unavailable"
+        return
+
     project.owner = "local"
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
-    owner_instance_id = _tui_owner_instance_id()
     operation_id = str(uuid.uuid4())
     # P69-06h: tag this local run's owner identity even without a durable
     # admission row -- `reap_owner_processes` reads `.procs` by
@@ -820,7 +1056,9 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
 
     def _worker() -> None:
         try:
-            outcome = actions.rescan_project_run(project.root, baseline_run_id)
+            outcome = actions.rescan_project_run(
+                project.root, baseline_run_id, owner_instance_id=owner_instance_id
+            )
             run = outcome.get("run") if isinstance(outcome, dict) else None
             if isinstance(run, dict):
                 project.run_id = run.get("run_id", project.run_id)
@@ -862,9 +1100,17 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
         _start_dashboard_owned(project, owner, "check_suite", {})
         return
 
+    owner_instance_id = _tui_owner_instance_id()
+    if owner_instance_id is None:
+        # S15: same hard stop as `_start_scan_thread` -- an unacquired
+        # lifetime lock never means proceed unowned.
+        project.owner = "local"
+        project.status = "error"
+        project.last_message = "initial check refused: owner lifetime lock unavailable"
+        return
+
     project.owner = "local"
     project.status = "scanning"
-    owner_instance_id = _tui_owner_instance_id()
     run_id = str(uuid.uuid4())
     # P69-06h: tag this local run's owner identity so Detach's force-exit can
     # still reap its owned subprocess groups (see `_start_rescan_thread`'s
@@ -901,9 +1147,47 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
     thread.start()
 
 
+def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> None:
+    """U02: the dashboard-owned counterpart to `_poll_running_scans`'s
+    local-events polling below -- durable operation status through
+    `DashboardOwner.operation_status`, never inferred from `plan_total`."""
+    if not project.operation_id:
+        return
+    owner = _dashboard_owner_for(project, actions)
+    if owner is None or not hasattr(owner, "operation_status"):
+        return
+    try:
+        status_payload = owner.operation_status(project.operation_id)
+    except Exception as exc:  # noqa: BLE001 -- a poll failure crosses a real
+        # network boundary; surface it and retry next tick, never crash the
+        # render loop.
+        project.last_message = f"dashboard status poll failed: {exc}"
+        return
+    ledger_status = (
+        status_payload.get("status") if isinstance(status_payload, dict) else None
+    )
+    if ledger_status != "terminal":
+        return
+    if project.scan_thread is not None:
+        project.scan_thread.join(timeout=2.0)
+    outcome_payload = (
+        (status_payload.get("payload") or {})
+        if isinstance(status_payload, dict)
+        else {}
+    )
+    outcome = outcome_payload.get("status", "complete")
+    project.status = "complete" if outcome == "success" else outcome
+    run_id = outcome_payload.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        project.run_id = run_id
+
+
 def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
     for project in state.projects:
         if project.status not in ("scanning", "cancelling"):
+            continue
+        if project.owner == "dashboard":
+            _poll_dashboard_owned_scan(project, actions)
             continue
         if project.run_id is None or project.plan_total <= 0:
             continue  # rescan-style thread reports its own terminal status directly
@@ -1097,12 +1381,27 @@ def _tui_session_owner_scope_id() -> str:
     return _tui_owner_instance_id()
 
 
+def _resolve_registered_project_id(root: Path) -> str | None:
+    """M09: this root's registered canonical UUID, or `None` for an explicit
+    project-not-found result. A registry read failure (any other exception)
+    propagates rather than silently resolving to `None` -- that would look
+    identical to "genuinely unregistered" and change ownership without
+    telling the caller anything went wrong."""
+    from rush.workflows.projects import ProjectNotFoundError, resolve_project
+
+    try:
+        return resolve_project(root)["project_id"]
+    except ProjectNotFoundError:
+        return None
+
+
 def _default_owner_scope_id(kind: str, project: ProjectState) -> str:
     """The derived id for an owner kind that has one. `project` is this project's own
-    root (store.py's project identity, per `legacy_owner_scope`); `session` is this
+    registered canonical id (M09) when one was resolved at load time, falling back to
+    the legacy root-path identity only for an unregistered project; `session` is this
     invocation's session id. `user`/`agent` are opaque and have no derivable default."""
     if kind == "project":
-        return str(project.root)
+        return project.project_id or str(project.root)
     if kind == "session":
         return _tui_session_owner_scope_id()
     return ""
@@ -1453,14 +1752,19 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
     Shared by the plain 'cancel_scan' key and Cancel-run-and-stay (P69-06g) --
     both send the identical request; they differ only in what happens to the
     TUI process afterward."""
-    if project.status == "scanning" and project.run_id:
-        try:
-            actions.cancel_scan_run(project.root, project.run_id)
-            project.status = "cancelling"
-        except Exception as exc:  # noqa: BLE001 -- injectable Phase65
-            # seam (`cancel_scan_run`); a failed cancel request must
-            # surface to the user, never crash the key-dispatch path.
-            project.last_message = f"cancel failed: {exc}"
+    if project.status != "scanning" or not project.run_id:
+        return
+    try:
+        # Filesystem-based, so this is correct for a dashboard-owned run too
+        # (both processes share the same project root) -- never routed
+        # through the dashboard's own HTTP action for this local button.
+        actions.cancel_scan_run(project.root, project.run_id)
+        project.status = "cancelling"
+    except Exception as exc:  # noqa: BLE001 -- injectable Phase65
+        # seam (`cancel_scan_run`/dashboard dispatch); a failed cancel
+        # request must surface to the user, never crash the key-dispatch
+        # path.
+        project.last_message = f"cancel failed: {exc}"
 
 
 def _wait_for_cancel_ack(
@@ -1507,11 +1811,16 @@ def _handle_detach(
     acknowledged = _wait_for_cancel_ack(state, project, actions, timeout=timeout)
     if not acknowledged:
         # The worker never acknowledged within the deadline: force-stop every
-        # subprocess group this run owns (subsection h) -- reaping acts on
-        # `.procs` records keyed by `owner_instance_id` alone, real for every
-        # local run regardless of ledger admission -- never assume
-        # termination succeeded just because a signal was sent.
-        reap_owner_processes(project.owner_instance_id, timeout=timeout)
+        # subprocess group *this run* owns (subsection h). U03: this
+        # coordinator process can own more than one project's run at once,
+        # so the `run_id` filter is required here -- owner-only filtering
+        # would reap a sibling project's still-running subprocesses too.
+        # Reaping acts on `.procs` records, real for every local run
+        # regardless of ledger admission -- never assume termination
+        # succeeded just because a signal was sent.
+        reap_owner_processes(
+            project.owner_instance_id, timeout=timeout, run_id=project.run_id
+        )
         if project.ledger_admitted and _resolve_local_run(project):
             with suppress(Exception):
                 # `_admit_local_run`/`_finalize_local_run`'s contract: this
@@ -1553,6 +1862,35 @@ def _handle_quit_confirm_key(state: TuiState, key: str, actions: ScanActions) ->
     # any other key: stay in the menu, awaiting a valid choice.
 
 
+def _handle_project_selector_key(state: TuiState, key: str) -> None:
+    """U01 fix: F2's overlay -- Up/Down/j/k move the highlight, Enter
+    confirms the actual project switch (the only place `active_index`
+    changes here), Escape cancels back to `list` with no switch at all."""
+    if key in ("down", "j"):
+        state.project_selector_index = (state.project_selector_index + 1) % len(
+            state.projects
+        )
+    elif key in ("up", "k"):
+        state.project_selector_index = (state.project_selector_index - 1) % len(
+            state.projects
+        )
+    elif key == "enter":
+        state.active_index = state.project_selector_index
+        # P66-05/P66-06: same two-project isolation guarantee the old
+        # `next_project` action gave -- a prior project's memory-admin/git
+        # state never leaks into the newly active one.
+        state.memory_items = []
+        state.memory_selected_ids = set()
+        state.memory_pending_delete = None
+        state.memory_expanded = None
+        state.memory_message = ""
+        state.git_data = None
+        state.git_message = ""
+        state.mode = "list"
+    elif key == "escape":
+        state.mode = "list"
+
+
 def _handle_grant_review_key(state: TuiState, key: str, actions: ScanActions) -> None:
     grant = state.pending_grant
     state.pending_grant = None
@@ -1585,6 +1923,9 @@ def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if state.mode == "quit_confirm":
         _handle_quit_confirm_key(state, key, actions)
         return
+    if state.mode == "project_selector":
+        _handle_project_selector_key(state, key)
+        return
 
     action = _KEYMAP.get_action_for_key(key)
     if action is None:
@@ -1601,31 +1942,61 @@ def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
         else:
             state.should_quit = True
     elif action == "cursor_down":
-        _move_selection(project, 1)
+        if state.mode == "map":
+            _move_map_selection(state, project, 1)
+        else:
+            _move_selection(project, 1)
     elif action == "cursor_up":
-        _move_selection(project, -1)
+        if state.mode == "map":
+            _move_map_selection(state, project, -1)
+        else:
+            _move_selection(project, -1)
     elif action == "select_row":
         if project.visible_findings():
             state.mode = "detail"
-    elif action == "next_project":
-        state.active_index = (state.active_index + 1) % len(state.projects)
-        # P66-05: two-project isolation -- a memory admin session never
-        # carries a prior project's list/selection/pending-delete across a
-        # project switch.
-        state.memory_items = []
-        state.memory_selected_ids = set()
-        state.memory_pending_delete = None
-        state.memory_expanded = None
-        state.memory_message = ""
-        # P66-06: same two-project isolation guarantee for the Git/artifacts
-        # view -- a prior project's history/status never leaks into the
-        # newly active one before it is explicitly reloaded.
-        state.git_data = None
-        state.git_message = ""
+    elif action == "open_project_selector":
+        # U01 fix: opens the overlay -- the project only actually switches
+        # once Enter confirms a highlighted row (`_handle_project_selector_
+        # key`), distinct from Tab's `cycle_pane` (never switches projects).
+        state.project_selector_index = state.active_index
+        state.mode = "project_selector"
+    elif action == "cycle_pane":
+        idx = (
+            PANE_CYCLE.index(state.active_pane)
+            if state.active_pane in PANE_CYCLE
+            else 0
+        )
+        state.active_pane = PANE_CYCLE[(idx + 1) % len(PANE_CYCLE)]
+    elif action == "cycle_pane_reverse":
+        idx = (
+            PANE_CYCLE.index(state.active_pane)
+            if state.active_pane in PANE_CYCLE
+            else 0
+        )
+        state.active_pane = PANE_CYCLE[(idx - 1) % len(PANE_CYCLE)]
+    elif action == "next_section":
+        current = state.mode if state.mode in SECTION_CYCLE else "list"
+        idx = SECTION_CYCLE.index(current)
+        state.mode = SECTION_CYCLE[(idx + 1) % len(SECTION_CYCLE)]
+        if state.mode == "git":
+            _load_git_view(state, project, actions)
+    elif action == "map_expand":
+        if state.mode == "map":
+            nodes = _map_visible_nodes(project, state.map_expanded)
+            if 0 <= state.map_selected_index < len(nodes):
+                node = nodes[state.map_selected_index]
+                if node.get("children"):
+                    state.map_expanded.add(node["key"])
+    elif action == "map_collapse":
+        if state.mode == "map":
+            nodes = _map_visible_nodes(project, state.map_expanded)
+            if 0 <= state.map_selected_index < len(nodes):
+                node = nodes[state.map_selected_index]
+                state.map_expanded.discard(node["key"])
     elif action == "focus_filter":
         state.mode = "search"
     elif action == "cancel":
-        if state.mode in ("detail", "git", "help"):
+        if state.mode in ("detail", "git", "help", "map"):
             state.mode = "list"
         state.message = ""
     elif action == "cycle_agent":
@@ -1719,11 +2090,7 @@ def _render_project_table(project: ProjectState) -> Panel:
     for idx, row in enumerate(page_items):
         marker = ">" if base + idx == project.selected_index else ""
         sev = str(row.get("severity", "info"))
-        sev_style = (
-            "red"
-            if sev in ("error", "fail")
-            else ("yellow" if sev == "warn" else "blue")
-        )
+        sev_style = _severity_style(sev)
         table.add_row(
             marker,
             str(row.get("tool", "")),
@@ -1900,6 +2267,82 @@ def _render_help(state: TuiState) -> Panel:
     return Panel(Text("\n".join(lines)), title="Key Bindings", style="cyan")
 
 
+def _render_nav_pane(state: TuiState) -> Panel:
+    """U04 fix: the persistent project list shown alongside the main
+    content at compact/wide widths (Phase 66 §3.8's nav pane)."""
+    lines = [
+        Text(
+            f"{'>' if idx == state.active_index else ' '}{p.name}",
+            style=THEME["blue"] if idx == state.active_index else THEME["text_muted"],
+        )
+        for idx, p in enumerate(state.projects)
+    ]
+    return Panel(Group(*lines), title="Projects", style=THEME["border"])
+
+
+def _render_project_selector(state: TuiState) -> Panel:
+    """U01 fix: F2's overlay -- highlights `project_selector_index`,
+    never `active_index` directly (that only changes on Enter)."""
+    lines: list[Any] = [
+        Text(
+            f"{'>' if idx == state.project_selector_index else ' '}{p.name}",
+            style=THEME["blue"]
+            if idx == state.project_selector_index
+            else THEME["text"],
+        )
+        for idx, p in enumerate(state.projects)
+    ]
+    lines.append(Text(""))
+    lines.append(Text("[enter] switch    [escape] cancel", style="bold yellow"))
+    return Panel(Group(*lines), title="Project Selector", style=THEME["border"])
+
+
+def _render_map(state: TuiState, project: ProjectState) -> Panel:
+    """U01 fix: the real Project -> Files -> Findings hierarchy
+    (`_map_nodes`/`_map_visible_nodes`), with a `[+]`/`[-]` glyph on every
+    expandable file node -- previously no Map view existed at all."""
+    nodes = _map_visible_nodes(project, state.map_expanded)
+    lines: list[Text] = []
+    for idx, node in enumerate(nodes):
+        marker = ">" if idx == state.map_selected_index else " "
+        indent = "  " * int(node["depth"])
+        glyph = ""
+        if node.get("children"):
+            glyph = "[-] " if node["key"] in state.map_expanded else "[+] "
+        lines.append(Text(f"{marker}{indent}{glyph}{node['label']}"))
+    if not lines:
+        lines.append(Text("No findings."))
+    return Panel(Group(*lines), title="Map", style=THEME["blue"])
+
+
+def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
+    """U04 fix: the single optional status row -- always exactly one
+    renderable, so the footer is always exactly 2 rows total alongside
+    `_keymap_footer()` (previously grew to 3+ whenever any of these was
+    present, since each used to insert its own extra line)."""
+    if state.mode == "search":
+        return Text(f"/{project.filter_text}", style="bold yellow")
+    if state.mode == "quit_confirm":
+        # P69-06g: the copy names exactly what Detach does for this run's
+        # *current* ownership state -- never implying invisible continuation
+        # a locally-owned run cannot actually provide.
+        detach_desc = (
+            "Detach: run continues on the dashboard"
+            if project.owner == "dashboard"
+            else "Detach: cancels with saved partial result (no dashboard running)"
+        )
+        return Text(
+            f"{detach_desc}  [d]  |  Cancel run, stay open  [c]  |  "
+            "Return, keep observing  [r]",
+            style="bold yellow",
+        )
+    if project.status in ("scanning", "cancelling") and project.progress:
+        return _render_progress_bar(project.progress)
+    if state.message:
+        return Text(state.message, style="bold magenta")
+    return Text("")
+
+
 def render_app(state: TuiState) -> Layout:
     project = state.active_project
     layout = Layout()
@@ -1913,14 +2356,18 @@ def render_app(state: TuiState) -> Layout:
         f"⚡ Rush Interactive Quality Explorer v{__version__}  "
         f"[{state.active_index + 1}/{len(state.projects)}] {project.name}  "
         f"({state.terminal_size[0]}x{state.terminal_size[1]})",
-        style="bold cyan",
+        style=_HEADER_STYLE,
     )
-    layout["header"].update(Panel(header, style="cyan"))
+    layout["header"].update(Panel(header, style=_HEADER_STYLE))
 
     if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
         body: Any = _render_memory_admin(state)
     elif state.mode == "git":
         body = _render_git_panel(state)
+    elif state.mode == "map":
+        body = _render_map(state, project)
+    elif state.mode == "project_selector":
+        body = _render_project_selector(state)
     elif state.mode == "grant_review" and state.pending_grant:
         body = _render_grant_review(state.pending_grant)
     elif state.mode == "detail":
@@ -1930,10 +2377,13 @@ def render_app(state: TuiState) -> Layout:
     else:
         body = _render_project_table(project)
 
-    # P69-06 CONNECT: width-dependent pane layout (Phase 66 §3.8). At >=100
-    # columns the list and detail panes show side by side instead of one
-    # replacing the other via mode; below that, single-pane mode-toggled
-    # behavior (today's contract) is unchanged.
+    # U04 fix: real width-dependent pane layout (Phase 66 §3.8) --
+    # wide (>=100 cols) splits nav/list/detail three ways, compact
+    # (80-99) splits nav/content, narrow (<80) shows a single pane with no
+    # nav pane at all. Previously there was only one `>= 100` check with
+    # no distinct 80-99/narrow behavior. `show_memory`'s split stays the
+    # highest-priority branch, unrelated to width.
+    branch = _width_branch(state.terminal_size[0])
     if state.show_memory:
         from rush.token_economy.tui_gain import build_gain_panel
 
@@ -1943,44 +2393,30 @@ def render_app(state: TuiState) -> Layout:
         )
         layout["main"]["primary"].update(body)
         layout["main"]["memory"].update(build_gain_panel(project.root))
-    elif state.mode == "list" and state.terminal_size[0] >= 100:
+    elif branch == "wide" and state.mode in ("list", "map"):
         layout["main"].split_row(
-            Layout(name="list", ratio=1),
-            Layout(name="detail", ratio=1),
+            Layout(name="nav", size=24),
+            Layout(name="list", ratio=45),
+            Layout(name="detail", ratio=55),
         )
+        layout["main"]["nav"].update(_render_nav_pane(state))
         layout["main"]["list"].update(body)
         layout["main"]["detail"].update(_render_detail(project))
+    elif branch == "compact" and state.mode in ("list", "map"):
+        layout["main"].split_row(
+            Layout(name="nav", size=20),
+            Layout(name="content", ratio=1),
+        )
+        layout["main"]["nav"].update(_render_nav_pane(state))
+        layout["main"]["content"].update(body)
     else:
         layout["main"].update(body)
 
-    footer_lines = [_keymap_footer()]
-    if state.mode == "search":
-        footer_lines.insert(0, Text(f"/{project.filter_text}", style="bold yellow"))
-    if state.mode == "quit_confirm":
-        # P69-06g: the copy names exactly what Detach does for this run's
-        # *current* ownership state -- never implying invisible continuation
-        # a locally-owned run cannot actually provide.
-        detach_desc = (
-            "Detach: run continues on the dashboard"
-            if project.owner == "dashboard"
-            else "Detach: cancels with saved partial result (no dashboard running)"
-        )
-        footer_lines.insert(
-            0,
-            Text(
-                f"{detach_desc}  [d]  |  Cancel run, stay open  [c]  |  "
-                "Return, keep observing  [r]",
-                style="bold yellow",
-            ),
-        )
-    if project.status in ("scanning", "cancelling") and project.progress:
-        footer_lines.insert(0, _render_progress_bar(project.progress))
-    if state.message:
-        footer_lines.insert(0, Text(state.message, style="bold magenta"))
-    footer_body: Any = (
-        footer_lines[0] if len(footer_lines) == 1 else Group(*footer_lines)
-    )
-    layout["footer"].update(Panel(footer_body, style="grey50"))
+    # U04 fix: the footer is always exactly two rows -- a single optional
+    # status line plus the keymap line -- regardless of width or how many
+    # of search/quit-confirm/progress/message conditions are active.
+    footer_body: Any = Group(_footer_status_line(state, project), _keymap_footer())
+    layout["footer"].update(Panel(footer_body, style=_FOOTER_STYLE))
 
     return layout
 
@@ -2003,16 +2439,23 @@ def run_interactive_tui(
 
     from rich.live import Live
 
-    reduced_motion = bool(
-        os.environ.get("NO_COLOR") or os.environ.get("RUSH_REDUCED_MOTION")
-    )
+    # U04 fix: NO_COLOR and reduced motion are independent settings --
+    # NO_COLOR only ever controls the Console's own color output below;
+    # only RUSH_REDUCED_MOTION controls whether this loop's idle refresh
+    # heartbeat runs at all.
+    reduced_motion = bool(os.environ.get("RUSH_REDUCED_MOTION"))
     console = console or Console(no_color=bool(os.environ.get("NO_COLOR")))
     actions = actions or default_scan_actions()
     reader = key_reader or make_key_reader()
 
     state = TuiState(
         projects=[
-            ProjectState(name=seed.name, root=seed.root, results=list(seed.results))
+            ProjectState(
+                name=seed.name,
+                root=seed.root,
+                results=list(seed.results),
+                project_id=_resolve_registered_project_id(seed.root),
+            )
             for seed in project_seeds
         ]
     )
@@ -2064,20 +2507,27 @@ def run_interactive_tui(
                     _dispatch_key(state, key, actions)
 
                 if live is not None:
-                    active = not reduced_motion and (
-                        key is not None
-                        or any(
-                            p.status in ("scanning", "cancelling")
-                            for p in state.projects
+                    has_activity = key is not None or any(
+                        p.status in ("scanning", "cancelling") for p in state.projects
+                    )
+                    # U04 fix: reduced motion renders the final state
+                    # (already shown once by `Live(render_app(state), ...)`
+                    # above) and never refreshes again on an idle timer --
+                    # only a real key/scan event re-renders. Normal motion
+                    # keeps its active/idle heartbeat regardless.
+                    if reduced_motion:
+                        if has_activity:
+                            live.update(render_app(state), refresh=True)
+                    else:
+                        interval = (
+                            _ACTIVE_REFRESH_INTERVAL
+                            if has_activity
+                            else _IDLE_REFRESH_INTERVAL
                         )
-                    )
-                    interval = (
-                        _ACTIVE_REFRESH_INTERVAL if active else _IDLE_REFRESH_INTERVAL
-                    )
-                    now = time.monotonic()
-                    if now - last_refresh >= interval:
-                        live.update(render_app(state), refresh=True)
-                        last_refresh = now
+                        now = time.monotonic()
+                        if now - last_refresh >= interval:
+                            live.update(render_app(state), refresh=True)
+                            last_refresh = now
         finally:
             if live is not None:
                 live.stop()

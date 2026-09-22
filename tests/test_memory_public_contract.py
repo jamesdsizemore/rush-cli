@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -27,12 +28,24 @@ from click.testing import CliRunner
 
 from rush.cli import cli
 from rush.config import RushConfigError, load_config
+from rush.dashboard.server import (
+    DashboardContext,
+    _ActionDenied,
+    _dispatch_memory_archive,
+    _dispatch_memory_delete,
+    _dispatch_memory_edit,
+    _dispatch_memory_promote,
+    _s04_effect_ids,
+    _validate_memory_owner_scope,
+)
 from rush.governance.public_operations import build_operations_inventory
 from rush.invocation import InvocationExecutor
 from rush.mcp_support.tool_registry import make_tool_wrapper
 from rush.memory.experience import record_attempt
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
+from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
+from rush.workflows.projects import register_project
 
 _NEW_OPERATIONS: tuple[tuple[str, str], ...] = (
     ("expand", "expand"),
@@ -569,3 +582,472 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
     assert receive_out["status"] == "ok", receive_out
     changes = receive_out["raw"]["data"]["changes"]
     assert any(change["id"] == artifact_id for change in changes)
+
+
+# --- M07/M08 (69-dashboard-tui-codex-implementation-review.md): dashboard
+# memory-mutation publication refresh and owner-scope authorization -------
+
+
+@pytest.fixture
+def _isolated_projects_data_root(tmp_path, monkeypatch):
+    """Isolates the global project registry (`register_project`/
+    `resolve_project`) so these tests never touch this OS user's real Rush
+    data directory."""
+    isolated = tmp_path / "rush-data-default"
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: isolated)
+    monkeypatch.setattr("rush.workflows.projects.default_data_root", lambda: isolated)
+    return isolated
+
+
+def _registered_ctx(
+    tmp_path: Path, data_root: Path, name: str = "proj"
+) -> tuple[DashboardContext, str, Path]:
+    root = tmp_path / name
+    root.mkdir()
+    record = register_project(root, data_root=data_root)
+    ctx = DashboardContext(
+        {record.project_id: {"root": str(root), "name": record.name}},
+        bound_host="127.0.0.1",
+        bound_port=0,
+    )
+    return ctx, record.project_id, root
+
+
+def test_memory_edit_immediately_updates_map_content_and_generation(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    owner = OwnerScope("project", project_id)
+    TypedArtifactStore(root).write(
+        MemoryArtifact(
+            id="m1",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="DERIVED",
+            content={"note": "before"},
+            source="s",
+            created_at=time.time(),
+            owner_scope=owner,
+        )
+    )
+    before = ctx.projects.get(project_id)
+    assert before.memory_generation == 0
+    assert before.sequence == 1
+
+    status_code, body = _dispatch_memory_edit(
+        ctx,
+        project_id,
+        {
+            "scope": "domain_knowledge",
+            "id": "m1",
+            "expected_version": 1,
+            "content": {"note": "after"},
+            "apply": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert status_code == 200
+    assert body["status"] == "ok"
+
+    after = ctx.projects.get(project_id)
+    assert after.memory_generation > before.memory_generation
+    assert after.sequence > before.sequence
+    memories_by_id = {m["id"]: m for m in after.snapshot["memories"]}
+    assert memories_by_id["m1"]["artifact_version"] == 2
+
+
+def test_memory_archive_delete_promote_each_publish_a_new_generation(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    owner = OwnerScope("project", project_id)
+    store = TypedArtifactStore(root)
+    for artifact_id in ("m-archive", "m-delete"):
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"note": artifact_id},
+                source="s",
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+    generation_before = ctx.projects.get(project_id).memory_generation
+
+    _, body = _dispatch_memory_archive(
+        ctx,
+        project_id,
+        {
+            "scope": "domain_knowledge",
+            "id": "m-archive",
+            "expected_version": 1,
+            "apply": True,
+            "archived": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert body["status"] == "ok"
+    gen_after_archive = ctx.projects.get(project_id).memory_generation
+    assert gen_after_archive > generation_before
+
+    _, body = _dispatch_memory_delete(
+        ctx,
+        project_id,
+        {
+            "artifact_ids": ["m-delete"],
+            "expected_revisions": {"m-delete": 1},
+            "scope": "domain_knowledge",
+            "apply": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert body["status"] == "ok"
+    gen_after_delete = ctx.projects.get(project_id).memory_generation
+    assert gen_after_delete > gen_after_archive
+
+    _, body = _dispatch_memory_promote(
+        ctx,
+        project_id,
+        {
+            "subject": "domain_knowledge",
+            "content": {"note": "promoted"},
+            "source": "s",
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert body["status"] == "ok"
+    gen_after_promote = ctx.projects.get(project_id).memory_generation
+    assert gen_after_promote > gen_after_delete
+
+
+def test_memory_mutations_thread_reserved_effect_ids_into_receipts(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    """S04 (T034): `_dispatch_memory_edit/_archive/_delete/_promote` must
+    persist the ledger-reserved `_s04_effect_ids` sub-key as the receipt
+    operation id -- never a separate, generic top-level operation_id (the
+    exact bug T017's residual flagged: a reminted id risks a
+    mutation_receipts PRIMARY-KEY clobber with an unrelated receipt)."""
+    ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    owner = OwnerScope("project", project_id)
+    store = TypedArtifactStore(root)
+    for artifact_id in ("m-edit", "m-archive", "m-delete", "m-delete2"):
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"note": artifact_id},
+                source="s",
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+    generic_operation_id = "generic-op-should-never-be-used"
+    assert store.get_receipt(generic_operation_id) is None
+
+    edit_effect_ids = _s04_effect_ids("memory_edit", {"apply": True})
+    _, body = _dispatch_memory_edit(
+        ctx,
+        project_id,
+        {
+            "scope": "domain_knowledge",
+            "id": "m-edit",
+            "expected_version": 1,
+            "content": {"note": "after"},
+            "apply": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+        edit_effect_ids,
+    )
+    assert body["status"] == "ok"
+    assert store.get_receipt(edit_effect_ids["artifact_edit"]) is not None
+
+    archive_effect_ids = _s04_effect_ids("memory_archive", {"apply": True})
+    _, body = _dispatch_memory_archive(
+        ctx,
+        project_id,
+        {
+            "scope": "domain_knowledge",
+            "id": "m-archive",
+            "expected_version": 1,
+            "apply": True,
+            "archived": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+        archive_effect_ids,
+    )
+    assert body["status"] == "ok"
+    assert store.get_receipt(archive_effect_ids["artifact_archive"]) is not None
+
+    # T040/S04 residual: two targets in one batch prove per-target receipt
+    # ids, never one shared id for the whole batch (the gap T034 left).
+    delete_args = {
+        "artifact_ids": ["m-delete", "m-delete2"],
+        "expected_revisions": {"m-delete": 1, "m-delete2": 1},
+        "scope": "domain_knowledge",
+        "apply": True,
+        "owner_scope": owner.as_dict(),
+    }
+    delete_effect_ids = _s04_effect_ids("memory_delete", delete_args)
+    assert set(delete_effect_ids) == {"delete:m-delete", "delete:m-delete2"}
+    _, body = _dispatch_memory_delete(
+        ctx, project_id, delete_args, {"cache_write": True}, delete_effect_ids
+    )
+    assert body["status"] == "ok"
+    delete_receipt_1 = store.get_receipt(delete_effect_ids["delete:m-delete"])
+    delete_receipt_2 = store.get_receipt(delete_effect_ids["delete:m-delete2"])
+    assert delete_receipt_1 is not None
+    assert delete_receipt_2 is not None
+    # Two genuinely distinct receipts, each addressed to its own artifact --
+    # never one receipt for the whole batch reused under two lookup keys.
+    assert delete_receipt_1["operation_id"] != delete_receipt_2["operation_id"]
+    assert delete_receipt_1["artifact_id"] == "m-delete"
+    assert delete_receipt_2["artifact_id"] == "m-delete2"
+
+    promote_effect_ids = _s04_effect_ids("memory_promote", {})
+    _, body = _dispatch_memory_promote(
+        ctx,
+        project_id,
+        {
+            "subject": "domain_knowledge",
+            "content": {"note": "promoted"},
+            "source": "s",
+            "user_stated": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+        promote_effect_ids,
+    )
+    assert body["status"] == "ok"
+    assert body["raw"]["promoted"] is True, (
+        "user_stated=True must force promotion for this assertion to be meaningful"
+    )
+    # T040/S04 residual: promote consumes the two independently-reserved
+    # `candidate_create`/`promotion` ids directly -- never a shared base id
+    # suffixed into two derived strings (the gap T034 left).
+    create_receipt = store.get_receipt(promote_effect_ids["candidate_create"])
+    promote_receipt = store.get_receipt(promote_effect_ids["promotion"])
+    assert create_receipt is not None
+    assert promote_receipt is not None
+    assert create_receipt["operation_id"] != promote_receipt["operation_id"]
+    base = promote_effect_ids["candidate_create"]
+    assert store.get_receipt(f"{base}:create") is None
+    assert store.get_receipt(f"{base}:promote") is None
+
+    # None of the above ever wrote a receipt keyed by the generic id.
+    assert store.get_receipt(generic_operation_id) is None
+
+
+def test_promotion_denial_after_candidate_write_still_refreshes_the_real_candidate_commit(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    ctx, project_id, _root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    owner = OwnerScope("project", project_id)
+    generation_before = ctx.projects.get(project_id).memory_generation
+
+    _, body = _dispatch_memory_promote(
+        ctx,
+        project_id,
+        {
+            "subject": "domain_knowledge",
+            "content": {"note": "candidate"},
+            "source": "only-source",
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert body["status"] == "ok"
+    assert body["raw"]["promoted"] is False, (
+        "a single-source candidate with user_stated=False must be denied "
+        "promotion for this assertion to be meaningful"
+    )
+
+    after = ctx.projects.get(project_id)
+    assert after.memory_generation > generation_before
+    memory_ids = {m["id"] for m in after.snapshot["memories"]}
+    assert body["raw"]["artifact"]["id"] in memory_ids
+
+
+def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    owner = OwnerScope("project", project_id)
+
+    # A preview against a project with no memory store yet must never spring
+    # one into existence, and must publish nothing.
+    _dispatch_memory_edit(
+        ctx,
+        project_id,
+        {
+            "scope": "domain_knowledge",
+            "id": "does-not-exist",
+            "expected_version": 1,
+            "content": {"note": "x"},
+            "apply": False,
+            "owner_scope": owner.as_dict(),
+        },
+        {},
+    )
+    assert not (root / ".rush" / "memory.db").exists()
+    record = ctx.projects.get(project_id)
+    assert record.memory_generation == 0
+    assert record.sequence == 1
+
+    # Seed a real row through a real apply=True dispatch first, so the
+    # registry's cached generation is already caught up to the store's real
+    # generation -- then a zero-write failure (a stale expected_version)
+    # against the now-existing store must publish no *additional* bump.
+    _, body = _dispatch_memory_promote(
+        ctx,
+        project_id,
+        {
+            "subject": "domain_knowledge",
+            "content": {"note": "v1"},
+            "source": "s",
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert body["status"] == "ok"
+    artifact_id = body["raw"]["artifact"]["id"]
+    seeded = ctx.projects.get(project_id)
+    generation_before = seeded.memory_generation
+    sequence_before = seeded.sequence
+
+    _, body = _dispatch_memory_edit(
+        ctx,
+        project_id,
+        {
+            "scope": "domain_knowledge",
+            "id": artifact_id,
+            "expected_version": 999,
+            "content": {"note": "v2"},
+            "apply": True,
+            "owner_scope": owner.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    assert body["raw"]["code"] == "E_VERSION"
+    record_after = ctx.projects.get(project_id)
+    assert record_after.memory_generation == generation_before
+    assert record_after.sequence == sequence_before
+
+
+_MEMORY_MUTATION_OPS_FOR_OWNER_TEST = (
+    "memory_edit",
+    "memory_archive",
+    "memory_delete",
+    "memory_promote",
+    "memory_propose",
+    "memory_maintain",
+)
+
+
+@pytest.mark.parametrize("operation", _MEMORY_MUTATION_OPS_FOR_OWNER_TEST)
+@pytest.mark.parametrize(
+    "bad_owner",
+    [
+        None,
+        {},
+        {"kind": "project"},
+        {"kind": "bogus", "id": "x"},
+        {"kind": "user", "id": ""},
+    ],
+    ids=["omitted", "empty", "incomplete", "bad_kind", "blank_id"],
+)
+def test_write_edit_promote_archive_delete_reject_omitted_or_incomplete_owner_before_any_row_change(
+    tmp_path, _isolated_projects_data_root, operation, bad_owner
+) -> None:
+    _ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    arguments = {"owner_scope": bad_owner}
+
+    with pytest.raises(_ActionDenied):
+        _validate_memory_owner_scope(
+            operation,
+            arguments,
+            project_id=project_id,
+            session_owner_scope_id="sess-1",
+        )
+    assert not (root / ".rush" / "memory.db").exists()
+
+
+def test_foreign_project_uuid_owner_rejected_before_reservation(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    _ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    with pytest.raises(_ActionDenied) as exc_info:
+        _validate_memory_owner_scope(
+            "memory_edit",
+            {"owner_scope": {"kind": "project", "id": "some-other-project-uuid"}},
+            project_id=project_id,
+            session_owner_scope_id="sess-1",
+        )
+    assert exc_info.value.status == 400
+    assert not (root / ".rush" / "memory.db").exists()
+
+
+def test_wrong_session_id_owner_rejected(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    _ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    with pytest.raises(_ActionDenied):
+        _validate_memory_owner_scope(
+            "memory_edit",
+            {"owner_scope": {"kind": "session", "id": "someone-elses-session"}},
+            project_id=project_id,
+            session_owner_scope_id="this-requests-session",
+        )
+    assert not (root / ".rush" / "memory.db").exists()
+
+
+def test_arbitrary_nonempty_user_agent_labels_accepted_structurally_and_persist_unchanged(
+    tmp_path, _isolated_projects_data_root
+) -> None:
+    _ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
+    arguments = {
+        "subject": "domain_knowledge",
+        "content": {"note": "x"},
+        "source": "s",
+        "owner_scope": {"kind": "agent", "id": "some-arbitrary-agent-label-123"},
+    }
+    _validate_memory_owner_scope(
+        "memory_propose",
+        arguments,
+        project_id=project_id,
+        session_owner_scope_id="sess-1",
+    )
+    assert arguments["owner_scope"] == {
+        "kind": "agent",
+        "id": "some-arbitrary-agent-label-123",
+    }
+
+    result = MemoryTool().run(
+        root,
+        operation="write",
+        subject="domain_knowledge",
+        content={"note": "x"},
+        source="s",
+        owner_scope=arguments["owner_scope"],
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert result["status"] == "ok"
+    stored_id = result["raw"]["id"]
+
+    with sqlite3.connect(TypedArtifactStore(root).db_path) as conn:
+        row = conn.execute(
+            "SELECT owner_scope_kind, owner_scope_id FROM memory_artifacts WHERE id = ?",
+            (stored_id,),
+        ).fetchone()
+    assert row == ("agent", "some-arbitrary-agent-label-123")

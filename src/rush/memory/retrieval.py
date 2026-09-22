@@ -190,7 +190,10 @@ def _record_memory_event(
     request_id: str | None,
     event_id: str | None,
     invocation_id: str | None,
-    project_id: str,
+    project_id: str | None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
     opt_in: bool,
     cache_write: bool,
 ) -> None:
@@ -200,18 +203,33 @@ def _record_memory_event(
     content-derived `request_id` — a caller (`tools/memory.py`, out of this fix's reach)
     passing the same content-derived `request_id` twice for two genuinely distinct calls no
     longer collides, since `invocation_id` is minted per call by `recall_page()`/
-    `expand_artifact()`/`hybrid_page()`, not reused from `request_id`."""
+    `expand_artifact()`/`hybrid_page()`, not reused from `request_id`.
+
+    M11: `project_id`/`run_id`/`agent_id`/`session_id` are pure caller-supplied attribution
+    (never invented from `store.project_root` -- a path is not a registered project UUID).
+    Omitted dimensions are left unset here so `TelemetryStore.record_memory_event()`'s own
+    `_UNSCOPED` default applies, rather than duplicating that sentinel in two places."""
     if telemetry is None or not request_id or not event_id:
         return
+    attribution = {
+        key: value
+        for key, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
     telemetry.record_memory_event(
         kind,
         tokens,
         request_id=request_id,
         event_id=event_id,
         invocation_id=invocation_id,
-        project_id=project_id,
         opt_in=opt_in,
         cache_write=cache_write,
+        **attribution,
     )
 
 
@@ -329,6 +347,10 @@ def recall_page(
     request_id: str | None = None,
     event_id: str | None = None,
     invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
     opt_in: bool = False,
     cache_write: bool = False,
 ) -> dict[str, Any]:
@@ -458,7 +480,10 @@ def recall_page(
         request_id=request_id,
         event_id=event_id,
         invocation_id=real_invocation_id,
-        project_id=str(store.project_root),
+        project_id=project_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        session_id=session_id,
         opt_in=opt_in,
         cache_write=cache_write,
     )
@@ -527,6 +552,10 @@ def expand_artifact(
     request_id: str | None = None,
     event_id: str | None = None,
     invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
     opt_in: bool = False,
     cache_write: bool = False,
 ) -> dict[str, Any]:
@@ -598,7 +627,10 @@ def expand_artifact(
             request_id=request_id,
             event_id=event_id,
             invocation_id=real_invocation_id,
-            project_id=str(store.project_root),
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
             opt_in=opt_in,
             cache_write=cache_write,
         )
@@ -645,7 +677,10 @@ def expand_artifact(
         request_id=request_id,
         event_id=event_id,
         invocation_id=real_invocation_id,
-        project_id=str(store.project_root),
+        project_id=project_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        session_id=session_id,
         opt_in=opt_in,
         cache_write=cache_write,
     )
@@ -833,6 +868,10 @@ def hybrid_page(
     request_id: str | None = None,
     event_id: str | None = None,
     invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
     opt_in: bool = False,
 ) -> dict[str, Any]:
     """MC12 §6.7 hybrid retrieval page: `hybrid_candidates()`'s RRF-fused ranking, applying
@@ -882,6 +921,10 @@ def hybrid_page(
             request_id=request_id,
             event_id=event_id,
             invocation_id=real_invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
             opt_in=opt_in,
             cache_write=cache_write,
         )
@@ -911,7 +954,10 @@ def hybrid_page(
         request_id=request_id,
         event_id=event_id,
         invocation_id=real_invocation_id,
-        project_id=str(store.project_root),
+        project_id=project_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        session_id=session_id,
         opt_in=opt_in,
         cache_write=cache_write,
     )

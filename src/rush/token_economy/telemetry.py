@@ -249,17 +249,36 @@ class TelemetryStore:
             )
             conn.commit()
 
-    def get_summary(self) -> dict[str, Any]:
+    def get_summary(
+        self,
+        *,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """M10: optionally scoped to one `project_id`/`run_id`/`agent_id`/`session_id`,
+        the same clause shape `get_memory_event_total()` already uses -- omitted (the
+        default) sums every row, unchanged from before this filter existed."""
+        clauses: list[str] = []
+        params: list[str] = []
+        for column, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        sql = (
+            "SELECT COUNT(*), COALESCE(SUM(raw_tokens), 0), "
+            "COALESCE(SUM(compressed_tokens), 0) FROM token_events"
+        )
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute(
-                """
-                SELECT 
-                    COUNT(*),
-                    COALESCE(SUM(raw_tokens), 0),
-                    COALESCE(SUM(compressed_tokens), 0)
-                FROM token_events
-                """
-            )
+            cur = conn.execute(sql, params)
             count, total_raw, total_comp = cur.fetchone()
 
         net_saved = max(0, total_raw - total_comp)

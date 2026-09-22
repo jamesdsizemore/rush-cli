@@ -86,6 +86,7 @@ def _run_selected_engines(
                 tool_name="lint",
                 owner_instance_id=owner_instance_id,
                 run_id=run_id,
+                consumed_paths=[str(p) for p in files],
             )
             findings_all.extend(r.get("findings", []))
             engines_used.append(name)
@@ -100,6 +101,7 @@ def _run_selected_engines(
             tool_name="lint",
             owner_instance_id=owner_instance_id,
             run_id=run_id,
+            consumed_paths=[str(p) for p in targets],
         )
         findings_all.extend(r.get("findings", []))
         engines_used.append("globstar")

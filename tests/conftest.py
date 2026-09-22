@@ -10,6 +10,19 @@ from pathlib import Path
 
 import pytest
 
+from rush.dashboard.server import stop_all_dashboard_contexts
+
+
+@pytest.fixture(autouse=True)
+def _stop_dashboard_background_threads():
+    """T028: every DashboardContext spawns recovery/outcome background
+    threads that outlive the test if nothing stops them. Stopping only in
+    a handful of test files' own fixtures let the rest leak, and leaked
+    threads accumulating across a single pytest process caused full-suite
+    hangs (see T027). Autouse here covers every test in the suite."""
+    yield
+    stop_all_dashboard_contexts()
+
 
 @pytest.fixture
 def tmp_repo(tmp_path: Path) -> Path:

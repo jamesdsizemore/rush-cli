@@ -352,7 +352,11 @@ def test_host_and_origin_exact_authority() -> None:
                 "Origin": base_url,
             },
             body=json.dumps(
-                {"operation": "noop", "request_id": "req-authority-2"}
+                {
+                    "operation": "noop",
+                    "request_id": "req-authority-2",
+                    "schema_version": 1,
+                }
             ).encode(),
         )
         assert mutation_exact_origin.status == 202

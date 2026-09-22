@@ -27,6 +27,7 @@ from rush.memory.handoff import (
     acknowledge_readback,
     prepare_handoff,
     receive_handoff,
+    recover_session_delta_without_capability,
 )
 from rush.memory.intent import check_intent, record_intent
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
@@ -553,3 +554,168 @@ def test_guest_intent_and_last_success_survive_readback(tmp_path: Path) -> None:
     ) == (passed.id, passed.artifact_version)
     check = check_intent(project_root=tmp_path, intent_id=intent_id)
     assert check.get("code") != "E_INPUT"
+
+
+# --- S05 bullet 4: nullable revoked_at + orphan-artifact marking ------------
+
+
+def test_revoke_handoff_session_is_idempotent_and_rejects_on_load(
+    tmp_path: Path,
+) -> None:
+    store = TypedArtifactStore(tmp_path)
+    _write(store, "A1", "tool_a")
+    session, capability, _ = prepare_handoff(
+        store,
+        root=tmp_path,
+        audience="codex_cli",
+        granted_ids=["A1"],
+        session_allowlist=["tool_a"],
+    )
+    row = store.get_handoff_session(session.session_id)
+    assert row is not None
+    assert row["revoked_at"] is None
+
+    store.revoke_handoff_session(session.session_id, now=100.0)
+    first = store.get_handoff_session(session.session_id)
+    assert first is not None
+    assert first["revoked_at"] == 100.0
+
+    # A second revoke call never overwrites the first timestamp.
+    store.revoke_handoff_session(session.session_id, now=200.0)
+    second = store.get_handoff_session(session.session_id)
+    assert second is not None
+    assert second["revoked_at"] == 100.0
+
+    with pytest.raises(HandoffError) as caught:
+        receive_handoff(store, session_id=session.session_id, capability=capability)
+    assert caught.value.code == "E_PERMISSION"
+
+
+def test_revoke_handoff_session_unknown_id_is_a_silent_no_op(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    store.revoke_handoff_session("never-existed")
+    assert store.get_handoff_session("never-existed") is None
+
+
+def _orphaned_at(store: TypedArtifactStore, artifact_id: str) -> float | None:
+    import sqlite3
+
+    with sqlite3.connect(store.db_path) as conn:
+        row = conn.execute(
+            "SELECT orphaned_at FROM memory_artifacts WHERE id = ?", (artifact_id,)
+        ).fetchone()
+    return row[0] if row else None
+
+
+def test_mark_artifact_orphaned_is_idempotent(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    artifact = _write(store, "A1", "tool_a")
+    assert _orphaned_at(store, "A1") is None
+
+    store.mark_artifact_orphaned("A1", now=50.0)
+    store.mark_artifact_orphaned("A1", now=60.0)
+    assert _orphaned_at(store, "A1") == 50.0
+    # Marking orphaned never deletes or alters the artifact's content.
+    assert store.get_current("A1").content == artifact.content
+
+
+def test_mark_artifact_orphaned_unknown_id_is_a_silent_no_op(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    store.mark_artifact_orphaned("never-existed")
+
+
+# --- S05 bullet 2: internal capability-bypass recovery read -----------------
+
+
+def test_recover_session_delta_without_capability_matches_receive_handoff(
+    tmp_path: Path,
+) -> None:
+    """The internal recovery-only read returns the identical bounded delta
+    `receive_handoff` (capability-checked) would, given matching
+    root/audience/allowlist -- same data, different authorization path."""
+    store = TypedArtifactStore(tmp_path)
+    _write(store, "A1", "tool_a")
+    session, capability, _ = prepare_handoff(
+        store,
+        root=tmp_path,
+        audience="codex_cli",
+        granted_ids=["A1"],
+        session_allowlist=["tool_a"],
+    )
+    via_capability = receive_handoff(
+        store, session_id=session.session_id, capability=capability
+    )
+    via_recovery = recover_session_delta_without_capability(
+        store,
+        session.session_id,
+        expected_root=str(tmp_path),
+        expected_audience="codex_cli",
+        expected_session_allowlist=["tool_a"],
+    )
+    assert via_recovery is not None
+    assert via_recovery["changes"] == via_capability["changes"]
+
+
+def test_recover_session_delta_without_capability_rejects_mismatched_audience(
+    tmp_path: Path,
+) -> None:
+    store = TypedArtifactStore(tmp_path)
+    _write(store, "A1", "tool_a")
+    session, _capability, _ = prepare_handoff(
+        store,
+        root=tmp_path,
+        audience="codex_cli",
+        granted_ids=["A1"],
+        session_allowlist=["tool_a"],
+    )
+    assert (
+        recover_session_delta_without_capability(
+            store,
+            session.session_id,
+            expected_root=str(tmp_path),
+            expected_audience="a-different-agent",
+            expected_session_allowlist=["tool_a"],
+        )
+        is None
+    )
+
+
+def test_recover_session_delta_without_capability_rejects_revoked_session(
+    tmp_path: Path,
+) -> None:
+    store = TypedArtifactStore(tmp_path)
+    _write(store, "A1", "tool_a")
+    session, _capability, _ = prepare_handoff(
+        store,
+        root=tmp_path,
+        audience="codex_cli",
+        granted_ids=["A1"],
+        session_allowlist=["tool_a"],
+    )
+    store.revoke_handoff_session(session.session_id)
+    assert (
+        recover_session_delta_without_capability(
+            store,
+            session.session_id,
+            expected_root=str(tmp_path),
+            expected_audience="codex_cli",
+            expected_session_allowlist=["tool_a"],
+        )
+        is None
+    )
+
+
+def test_recover_session_delta_without_capability_unknown_session_returns_none(
+    tmp_path: Path,
+) -> None:
+    store = TypedArtifactStore(tmp_path)
+    assert (
+        recover_session_delta_without_capability(
+            store,
+            "never-existed",
+            expected_root=str(tmp_path),
+            expected_audience="codex_cli",
+            expected_session_allowlist=["tool_a"],
+        )
+        is None
+    )

@@ -34,7 +34,7 @@ from .cli_support.rendering import (
 )
 from .config import RushConfigError, load_config
 from .logging import setup_logging
-from .memory.store import MemorySubject
+from .memory.store import MemorySubject, OwnerScope, legacy_owner_scope
 from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
 
@@ -1311,6 +1311,7 @@ def dashboard_cmd(
         create_dashboard_server,
         publish_check_suite_scan,
     )
+    from .workflows.project_run import _capture_artifact_snapshots
     from .workflows.projects import register_project
     from .workflows.suites import CHECK_SUITE, run_workflow_suite
 
@@ -1378,12 +1379,27 @@ def dashboard_cmd(
         # subprocess this scan spawns records no owner and Detach's
         # force-exit/recovery reap path (subsection h/i) finds nothing to act
         # on for it, while silently working for every other launch path.
+        # M12 Fix item 2: CHECK_SUITE per-child capture parity -- snapshot
+        # each child's declared artifact bytes the moment it completes,
+        # before the next tool in the suite can run and physically
+        # overwrite the same path (mirrors dashboard/server.py's
+        # `_dispatch_check_suite`).
+        check_suite_snapshots: dict[str, dict[str, dict[str, object]]] = {}
+
+        def _on_tool_complete(child: dict[str, object]) -> None:
+            tool_name = str(child.get("tool") or "")
+            if tool_name:
+                check_suite_snapshots[tool_name] = _capture_artifact_snapshots(
+                    resolved_path, run_id, attempt_id, tool_name, child
+                )
+
         aggregate = run_workflow_suite(
             suite=CHECK_SUITE,
             path=resolved_path,
             permissions=perms,
             owner_instance_id=ctx.owner_instance_id,
             run_id=run_id,
+            on_tool_complete=_on_tool_complete,
         )
         publish_check_suite_scan(
             ctx,
@@ -1393,6 +1409,7 @@ def dashboard_cmd(
             run_id=run_id,
             attempt_id=attempt_id,
             scan_generation=scan_generation,
+            artifact_snapshots=check_suite_snapshots,
         )
 
     scan_thread = threading.Thread(target=_run_initial_scan, daemon=True)
@@ -2759,20 +2776,52 @@ def memory_promote_cmd(
 @click.option(
     "--allow-cache-write", is_flag=True, help="Allow memory maintenance writes."
 )
+@click.option(
+    "--owner-kind",
+    type=click.Choice(["project", "user", "agent", "session"]),
+    default=None,
+    help="Explicit owner_scope kind. Defaults to this root's registered project "
+    "id, or its legacy path owner if unregistered.",
+)
+@click.option(
+    "--owner-id",
+    default=None,
+    help="Explicit owner_scope id. Required together with --owner-kind.",
+)
 def memory_maintain_cmd(
     task: MaintenanceTask,
     batch_size: int,
     as_json: bool,
     allow_cache_write: bool,
+    owner_kind: str | None,
+    owner_id: str | None,
 ) -> None:
     """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""
     from .tools.memory import MemoryTool
+    from .workflows.projects import ProjectNotFoundError, resolve_project
+
+    root = Path.cwd()
+    if owner_kind is not None:
+        if not owner_id:
+            raise click.UsageError("--owner-kind requires --owner-id")
+        owner_scope = OwnerScope(owner_kind, owner_id)
+    elif owner_id is not None:
+        raise click.UsageError("--owner-id requires --owner-kind")
+    else:
+        # M09: this CLI entry point's own explicitly-supported legacy fallback
+        # (M08 bullet 3) -- an unregistered root still maintains under its
+        # path-form owner rather than failing outright.
+        try:
+            owner_scope = OwnerScope("project", resolve_project(root)["project_id"])
+        except ProjectNotFoundError:
+            owner_scope = legacy_owner_scope(root)
 
     result = MemoryTool().run(
-        Path.cwd(),
+        root,
         operation="maintain",
         task=task,
         batch_size=batch_size,
+        owner_scope=owner_scope,
         permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
     _render_session_result(dict(result), as_json)

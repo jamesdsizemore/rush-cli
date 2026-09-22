@@ -26,7 +26,14 @@ class DetectSecretsEngine(Engine):
         run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
-        default_args = ["scan", "--all-files"]
+        default_args = [
+            "scan",
+            "--all-files",
+            # CACHEDIR.TAG's fixed cache-directory-tagging signature string
+            # is a textbook entropy-scanner false positive, not a secret.
+            "--exclude-files",
+            r"(^|/)CACHEDIR\.TAG$",
+        ]
         baseline_file = (cwd or path) / ".secrets.baseline"
         if baseline_file.exists():
             default_args.extend(["--baseline", str(baseline_file)])

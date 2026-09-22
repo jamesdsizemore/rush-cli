@@ -145,7 +145,7 @@ The following explicit permission flags are available across tools:
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
 | `scan --project ID_OR_PATH` | Plan (and, with `--full`, execute) a full-project scan across every catalog candidate. | `--full`, `--install`, Permissions | `--full` persists an immutable run manifest under `<root>/.rush/runs/`; `--install` applies the project's provision plan first |
-| `ui [PATH ...]` | Launch the persistent interactive terminal UI (project map, scans/findings, memory, tokens, Git, artifacts); accepts one or more project paths to switch between, defaults to the current directory. | Permissions | none |
+| `ui [PATH ...]` | At a TTY, launches the persistent interactive terminal UI (project map, scans/findings, memory, tokens, Git, artifacts); accepts one or more project paths to switch between, defaults to the current directory. `--json` runs the check suite once, emits JSON, and exits; redirected stdout without `--json` runs the check suite once and prints a text summary, then exits. | `--json`, Permissions | none |
 | `dashboard PATH` | Launch the persistent, authenticated, CSRF-hardened local web dashboard on 127.0.0.1, sharing the same project actions as `rush ui`. | `--port`, `--no-open`, `--json`, `--reconnect`, `--server-id`, Permissions | none |
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
@@ -255,20 +255,23 @@ Query and write the unified `TypedArtifactStore` (`.rush/memory.db`) — the sam
 * `maintain`: requires `--task promotion_sweep|staleness_sweep|skill_admission_check|expiry_sweep` and `--allow-cache-write`. Runs a bounded sweep in the selected repository; defaults to 500 rows via `--batch-size`.
 
 ### `rush memory delete --input FILE` (Phase 65 P65-07.3)
-Batch-deletes memory artifacts through the plan §6.4 transaction/outbox algorithm. `--input FILE` is a JSON object `{"artifact_ids": [...], "expected_revisions": {"<id>": <int>, ...}, "scope": "<subject>", "apply": false}`:
+Batch-deletes memory artifacts through the plan §6.4 transaction/outbox algorithm. `--input FILE` is a JSON object `{"artifact_ids": [...], "expected_revisions": {"<id>": <int>, ...}, "scope": "<subject>", "owner_scope": {"kind": "project", "id": "<registered-project-id>"}, "apply": false}`:
 * `artifact_ids`: 1–100 unique existing IDs; no path separators, `..`, or external file paths.
 * `expected_revisions`: exact `{id: current_revision}` map for every listed ID — a stale revision for *any one* member refuses the entire batch atomically (`E_VERSION`), never a partial delete.
 * `scope`: the memory subject every listed artifact must currently have; a member whose actual subject differs refuses the entire batch (`E_SCOPE`) — deletion never crosses subjects it wasn't declared for.
+* `owner_scope` (optional, Phase 69 P69-07): `{"kind": "project" | "user" | "session" | "agent", "id": "<opaque-or-registered-id>"}`. `project`-kind `id` is the row's registered project UUID; `user`/`session`/`agent`-kind ids are opaque, unauthenticated caller-supplied strings. Ownership is immutable after write, so a declared `owner_scope` that disagrees with the stored row's owner refuses exactly like a stale version (`E_OWNER`). Omitting it falls back to the legacy default owner (`{"kind": "project", "id": <the row's own project root>}`) — a direct CLI/MCP call is not required to supply one, but the dashboard and TUI always do.
 * `apply` (default `false`, preview): preview never writes and returns each affected ID's revision, dependent `memory_relations` reference count, and (for a Rush-owned handoff-packet artifact) its on-disk blob path. Apply requires `--allow-cache-write` for the database mutation — it replaces each row's stored bytes with a content-free tombstone version (never retaining deleted content) and removes the live row so retrieval/`expand` see it as gone immediately. A Rush-owned handoff blob is additionally unlinked only when `--allow-artifact-write` is also granted; otherwise it is left on disk and reported `cleanup_pending` in the response's `blob_cleanup` (idempotent to retry later — never claimed as atomically erased across the DB/filesystem boundary). External source files are never deleted by this operation. Deleted artifacts remain listed (as `deleted: true`, with no retained content) by `rush project artifacts` for provenance.
 
 ### `rush memory edit --input FILE` (Phase 65 P65-07 §6.4)
-Edits one memory artifact's content under compare-and-swap. `--input FILE` is a JSON object `{"scope": "<subject>", "id": "<artifact_id>", "expected_version": <int>, "content": {...}, "apply": false}`:
+Edits one memory artifact's content under compare-and-swap. `--input FILE` is a JSON object `{"scope": "<subject>", "id": "<artifact_id>", "expected_version": <int>, "content": {...}, "owner_scope": {"kind": "project", "id": "<registered-project-id>"}, "apply": false}`:
 * `scope`/`id`/`expected_version`: a stale `expected_version` (`E_VERSION`) or an `id` whose actual subject differs from `scope` (`E_SCOPE`) refuses the edit atomically — never a partial write.
+* `owner_scope` (optional, Phase 69 P69-07): same shape/kinds as `rush memory delete` above; a mismatch against the stored row's owner refuses atomically (`E_OWNER`). Omitted, falls back to the legacy default owner; the dashboard and TUI always supply one.
 * `apply` (default `false`, preview): preview never writes, returning the current revision and trust tier. Apply requires `--allow-cache-write`; it writes the new content through the same versioned `update_content` compare-and-swap path every store mutation uses (preserving the prior version's content as history) and, if the artifact was previously promoted (`trust_tier="STATED"`), resets its trust back to an unpromoted candidate (clearing its signature and promotion timestamp) — an edit is never itself a re-promotion.
 
 ### `rush memory archive --input FILE` (Phase 65 P65-07 §6.4)
-Sets or clears an archived marker on one memory artifact — never deletes content or history. `--input FILE` is a JSON object `{"scope": "<subject>", "id": "<artifact_id>", "expected_version": <int>, "apply": false, "archived": true}`:
+Sets or clears an archived marker on one memory artifact — never deletes content or history. `--input FILE` is a JSON object `{"scope": "<subject>", "id": "<artifact_id>", "expected_version": <int>, "owner_scope": {"kind": "project", "id": "<registered-project-id>"}, "apply": false, "archived": true}`:
 * `scope`/`id`/`expected_version`: same atomic cross-scope/stale-version refusal as `edit` above (`E_SCOPE`/`E_VERSION`).
+* `owner_scope` (optional, Phase 69 P69-07): same shape/kinds/`E_OWNER` mismatch behavior as `rush memory delete` above.
 * `apply` (default `false`, preview): preview never writes. Apply requires `--allow-cache-write`; the marker change is itself a versioned store mutation (its own audit row), so full content/history stays retrievable — only excluded from `rush memory ask|list|recall`'s normal results. `rush memory list SUBJECT QUERY --include-archived` opts back into archived rows for authorized inspection.
 * `archived` (default `true`): set `false` with the row's current `expected_version` to reverse a prior archive — fully idempotent-reversible, unlike `delete`.
 
@@ -323,8 +326,11 @@ Pack graph-pruned context envelope under a strict token budget.
 Align prompt prefix above provider cache boundary (>=1024 tokens).
 * `--system, -s`: System prompt string to align.
 
+### `rush gain`
+Live-updating Rich HUD of local token compression and dollar savings (same `TelemetryStore` summary as the Tokens section of `rush ui` / `rush dashboard`); re-renders on a timer until Ctrl+C. Not measured provider bills or cache-hit rates.
+
 ### `rush context gain`
-Print one Rich summary of local compression estimates, then exit. The persistent, live equivalent is the Tokens section of `rush ui` / `rush dashboard` (same `TelemetryStore` summary, per-run/session/agent views); these are not measured provider bills or cache-hit rates.
+Alias for `rush gain` — dispatches to the same live HUD, not a one-shot summary.
 
 ### `rush context persona`
 View or configure agent terse response persona style.

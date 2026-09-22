@@ -447,8 +447,23 @@ class InvocationExecutor:
                 return cached_result
 
         args, kwargs = operation.signature_adapter(context)
+
+        # S01: the shared ownership boundary for every registered operation.
+        # Individual tool call sites need not forward owner_instance_id/run_id
+        # themselves -- `run_subprocess` already adopts this ambient pair
+        # when no explicit one reaches it (see `owned_execution_scope`).
+        owner_instance_id = context.owner_instance_id or None
+        run_id = context.run_id or None
+        if (owner_instance_id is None) != (run_id is None):
+            raise InvocationError(
+                "owner_instance_id and run_id must be supplied together, or not at all"
+            )
+
+        from rush.runtime.subprocesses import owned_execution_scope
+
         # Invokes handler(*args, **kwargs) exactly once. Zero retry on TypeError.
-        result = operation.handler(*args, **kwargs)
+        with owned_execution_scope(owner_instance_id, run_id):
+            result = operation.handler(*args, **kwargs)
 
         # MC05 §6.4: capture one real observation after execution, before the
         # result-cache write, only when opted in and host-granted cache_write.

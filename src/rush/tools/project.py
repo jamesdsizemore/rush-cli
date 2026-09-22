@@ -168,6 +168,7 @@ class ProjectTool(ToolFn):
         apply: bool = False,
         plan_id: str | None = None,
         permissions: ExecutionPermissions | None = None,
+        data_root: Path | None = None,
     ) -> ToolResult:
         started = monotonic()
         granted = permissions or ExecutionPermissions()
@@ -199,6 +200,7 @@ class ProjectTool(ToolFn):
                 expected_revision=expected_revision,
                 apply=apply,
                 plan_id=plan_id,
+                data_root=data_root,
             )
         except ProjectError as exc:
             return self._result(started, "error", f"project {action}: {exc}")
@@ -221,6 +223,7 @@ class ProjectTool(ToolFn):
         expected_revision: int | None = None,
         apply: bool = False,
         plan_id: str | None = None,
+        data_root: Path | None = None,
     ) -> Any:
         if action == "list":
             return {"projects": list_projects()}
@@ -243,13 +246,25 @@ class ProjectTool(ToolFn):
         if action == "configure":
             if not project_id:
                 raise ValueError("configure requires project_id")
-            return configure_project(
-                project_id,
-                settings,
-                expected_revision=expected_revision,
-                apply=apply,
-                plan_id=plan_id,
-            )
+            # S08 bullet 2: a lazy import -- `rush.dashboard` imports
+            # `ProjectTool` from this module at package-init time, so a
+            # module-level import here would be circular.
+            from rush.dashboard.state import cross_process_project_lock
+
+            # S08: project exclusion taken before the registry-file lock
+            # `configure_project` acquires internally (`lock_timeout`) --
+            # never the reverse order -- so a dashboard-driven configure and
+            # a CLI/MCP-driven one (both reach this same call site) serialize
+            # on one real cross-process mutex, not just an in-process one.
+            with cross_process_project_lock(project_id, data_root=data_root):
+                return configure_project(
+                    project_id,
+                    settings,
+                    expected_revision=expected_revision,
+                    apply=apply,
+                    plan_id=plan_id,
+                    data_root=data_root,
+                )
         if action == "relink":
             if not project_id:
                 raise ValueError("relink requires project_id")
@@ -259,7 +274,11 @@ class ProjectTool(ToolFn):
         raise ValueError(f"unknown project action: {action}")
 
     def handle_request(
-        self, request: dict[str, Any], *, lock_timeout: float = 5.0
+        self,
+        request: dict[str, Any],
+        *,
+        lock_timeout: float = 5.0,
+        data_root: Path | None = None,
     ) -> ToolResult:
         """Canonical envelope call boundary (plan §6.1).
 
@@ -272,7 +291,9 @@ class ProjectTool(ToolFn):
         operation = request.get("operation") if isinstance(request, dict) else None
 
         try:
-            data = self._handle_request_unsafe(request, lock_timeout=lock_timeout)
+            data = self._handle_request_unsafe(
+                request, lock_timeout=lock_timeout, data_root=data_root
+            )
         except ProjectError as exc:
             return self._envelope_result(
                 started, str(operation), status="error", error=exc
@@ -285,7 +306,11 @@ class ProjectTool(ToolFn):
         return self._envelope_result(started, str(operation), status="ok", data=data)
 
     def _handle_request_unsafe(
-        self, request: dict[str, Any], *, lock_timeout: float
+        self,
+        request: dict[str, Any],
+        *,
+        lock_timeout: float,
+        data_root: Path | None = None,
     ) -> Any:
         if not isinstance(request, dict):
             raise ProjectInvalidRequestError("request must be an object")
@@ -396,14 +421,20 @@ class ProjectTool(ToolFn):
             expected_revision = request.get("expected_revision")
             if expected_revision is not None:
                 _require_int_in_range(expected_revision, "expected_revision", minimum=0)
-            return configure_project(
-                project,
-                request.get("settings"),
-                expected_revision=expected_revision,
-                apply=bool(request.get("apply", False)),
-                plan_id=request.get("plan_id"),
-                lock_timeout=lock_timeout,
-            )
+            # S08 bullet 2: same project-exclusion-before-registry-lock
+            # ordering as `_dispatch`'s "configure" branch above.
+            from rush.dashboard.state import cross_process_project_lock
+
+            with cross_process_project_lock(project, data_root=data_root):
+                return configure_project(
+                    project,
+                    request.get("settings"),
+                    expected_revision=expected_revision,
+                    apply=bool(request.get("apply", False)),
+                    plan_id=request.get("plan_id"),
+                    lock_timeout=lock_timeout,
+                    data_root=data_root,
+                )
         raise ProjectInvalidRequestError(f"unknown operation: {operation!r}")
 
     def _envelope_result(

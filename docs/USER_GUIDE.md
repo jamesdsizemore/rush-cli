@@ -99,13 +99,13 @@ Prefer visual interfaces over terminal text? Rush has you covered:
   ```bash
   rush ui .
   ```
-  Runs checks synchronously, prints one Rich layout, then exits. Keyboard navigation and a persistent TUI remain planned in [P66-03](phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
+  At a TTY, starts a persistent Rich UI with background checks and keyboard navigation. `--json` runs checks once, emits JSON, and exits. Redirected stdout without `--json` runs checks once and prints a text summary, then exits.
 
 - **Local Web Dashboard**:
   ```bash
   rush dashboard .
   ```
-  Starts a stdlib HTTP server on loopback after synchronous checks. Its browser/server API currently disagrees on endpoint and authentication, so findings do not load reliably. Use CLI JSON for results. Authentication isolation, working findings and full controls remain planned in [Phase 66](phase-plans/phase-66-interactive-tui-and-local-web-plan.md); see [F37–F40](reports/phase-64-66-application-review.md).
+  Starts an authenticated, CSRF-hardened HTTP server on `127.0.0.1` and opens a single-use bootstrap URL that mints your browser session; each server instance keeps its own bootstrap token, session, and CSRF secret. `--reconnect` re-opens a running server's dashboard without re-scanning. Mutations require an explicit grant per action. See the [dashboard/TUI review](reports/69-dashboard-tui-codex-implementation-review.md) for unresolved security findings.
 
 ---
 

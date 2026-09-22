@@ -10,18 +10,22 @@ from click.testing import CliRunner
 
 from rush.cli import cli
 from rush.codegraph.context_packer import ContextPacker
-from rush.continuity.context import pack_context
+from rush.continuity.context import pack_context, retrieve_context
 from rush.memory.expiry import sweep_expired
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
     MemoryArtifact,
+    OwnerScope,
     TypedArtifactStore,
     compute_content_signature,
     legacy_owner_scope,
 )
 from rush.permissions import ExecutionPermissions
+from rush.token_economy.ccr_store import CCRStore
 from rush.token_economy.memory_cache_gate import check_memory_before_pack
+from rush.token_economy.telemetry import TelemetryStore
 from rush.tools.memory import MemoryTool
+from rush.workflows.projects import register_project
 
 GRANTED = ExecutionPermissions(cache_write=True)
 
@@ -48,6 +52,58 @@ def test_legacy_cache_without_hash_misses_and_refills(tmp_path):
     gate = check_memory_before_pack("module.py", "hello", project_root=tmp_path)
     assert gate.hit
     assert "return 2" in gate.content["packed_text"]
+
+
+def test_pack_context_and_retrieve_context_persist_caller_attribution_not_a_path(
+    tmp_path,
+):
+    """M11: `pack_context`/`retrieve_context`'s own telemetry writes must
+    persist caller-supplied project/run/agent/session attribution -- never
+    invent `project_id` from `str(project_root)` (a filesystem path is not
+    a registered project UUID), mirroring `memory/retrieval.py`'s
+    hybrid/recall/expand boundary T010 already fixed."""
+    target = tmp_path / "module.py"
+    target.write_text("def hello():\n    return 1\n")
+    pack_context(
+        time.monotonic(),
+        tmp_path,
+        "module.py",
+        "hello",
+        10000,
+        GRANTED,
+        project_id="proj-real-uuid",
+        run_id="run-1",
+        agent_id="agent-1",
+        session_id="session-1",
+    )
+    db_path = TelemetryStore(tmp_path).db_path
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT project_id, run_id, agent_id, session_id FROM memory_events "
+            "WHERE kind = 'packing'"
+        ).fetchone()
+    assert row == ("proj-real-uuid", "run-1", "agent-1", "session-1")
+    assert row[0] != str(tmp_path)
+
+    tag = CCRStore(tmp_path).store_chunk("cached content for a handoff")
+    handle = tag.removeprefix("<!-- ccr:chunk:").removesuffix(" -->")
+    retrieve_context(
+        time.monotonic(),
+        tmp_path,
+        handle,
+        GRANTED,
+        project_id="proj-real-uuid",
+        run_id="run-2",
+        agent_id="agent-2",
+        session_id="session-2",
+    )
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT project_id, run_id, agent_id, session_id FROM memory_events "
+            "WHERE kind = 'handoff'"
+        ).fetchone()
+    assert row == ("proj-real-uuid", "run-2", "agent-2", "session-2")
+    assert row[0] != str(tmp_path)
 
 
 def test_cache_hash_covers_same_read_as_packed_payload(tmp_path, monkeypatch):
@@ -128,7 +184,11 @@ def test_maintenance_uses_requested_root(tmp_path, monkeypatch, task):
         )
     monkeypatch.chdir(decoy)
     result = MemoryTool().run(
-        requested, operation="maintain", task=task, permissions=GRANTED
+        requested,
+        operation="maintain",
+        task=task,
+        permissions=GRANTED,
+        owner_scope=legacy_owner_scope(requested),
     )
     assert result["status"] == "ok"
     assert result["raw"]["changed"] >= 1
@@ -304,3 +364,73 @@ def test_cli_maintenance_permission_and_list_session(tmp_path, monkeypatch):
     )
     assert listed.exit_code == 0
     assert json.loads(listed.output)["raw"][0]["id"] == "allowed"
+
+
+def test_tui_and_cli_maintenance_reach_the_registered_projects_uuid_owned_row_not_path_owner(
+    tmp_path, monkeypatch
+):
+    """M09: TUI's `_default_owner_scope_id("project", ...)` and CLI `memory
+    maintain`'s auto-resolved default owner both reach a registered project's
+    UUID-owned row -- never the raw-path legacy owner a path-only default
+    would touch instead."""
+    from rush.tui import ProjectState, _default_owner_scope_id
+
+    data_root = tmp_path / "rush-data"
+    monkeypatch.setattr("rush.workflows.projects.default_data_root", lambda: data_root)
+    root = tmp_path / "project"
+    root.mkdir()
+    record = register_project(root, data_root=data_root)
+
+    # TUI half: a resolved project_id wins over the raw root path.
+    project = ProjectState(name="p", root=root, project_id=record.project_id)
+    assert _default_owner_scope_id("project", project) == record.project_id
+    assert _default_owner_scope_id("project", project) != str(root)
+
+    # CLI half: `memory maintain` with no --owner-* flags, run from inside a
+    # registered root, auto-resolves that same UUID -- a staleness_sweep
+    # touches the UUID-owned row and leaves an identically-drifted
+    # legacy-path-owned row alone.
+    store = TypedArtifactStore(root)
+    target = root / "module.py"
+    target.write_text("def hello():\n    return 1\n")
+    digest = MerkleInvalidator(root).hash_content(target.read_text())
+    store.write(
+        artifact(
+            "uuid-owned",
+            symbol_ref="module.py::hello",
+            content_hash=digest,
+            owner_scope=OwnerScope("project", record.project_id),
+        )
+    )
+    store.write(
+        artifact(
+            "path-owned",
+            symbol_ref="module.py::hello",
+            content_hash=digest,
+            owner_scope=legacy_owner_scope(root),
+        )
+    )
+    target.write_text("def hello():\n    return 2\n")  # drift both rows' symbol
+
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "memory",
+            "maintain",
+            "--task",
+            "staleness_sweep",
+            "--allow-cache-write",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.output)["status"] == "ok"
+
+    with sqlite3.connect(store.db_path) as conn:
+        stale_rows = dict(
+            conn.execute("SELECT id, stale FROM memory_artifacts").fetchall()
+        )
+    assert stale_rows["uuid-owned"] == 1
+    assert stale_rows["path-owned"] == 0

@@ -58,6 +58,20 @@ class TachEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        # tach exits 1 with no JSON when this project has no tach.toml -- a
+        # real not-configured state, not a crash.
+        if "Configuration file not found" in (raw.get("stderr") or ""):
+            return ToolResult(
+                tool=tool_name,
+                engine=self.name,
+                engine_version=self.version(),
+                status="skipped",
+                duration_ms=raw.get("duration_ms", 0),
+                summary="tach: no configuration file found (run 'tach init')",
+                findings=[],
+                raw=None,
+            )
+
         findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(

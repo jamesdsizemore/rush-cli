@@ -1,9 +1,9 @@
 # Workflow: Context Gain TUI & Real-Time Telemetry
 
 ## 1. Launching the Gain HUD
-The current command prints a token-statistics snapshot; it does not launch a persistent interactive dashboard. Live terminal telemetry is required by [P66-03](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md#p66-03--persistent-colorful-animated-tui-f36).
+`rush gain` (and its live alias `rush context gain`) opens a live-updating Rich HUD of token-statistics estimates, re-rendering on a timer until Ctrl+C. The same live summary also appears in the Tokens section of `rush ui` / `rush dashboard`.
 ```bash
-rush context gain
+rush gain
 ```
 
 ## 2. FastMCP Telemetry Query

@@ -58,6 +58,22 @@ class SentruxEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        # installed sentrux CLIs before the JSON-output release reject
+        # --json outright -- an incompatible installed version, not a crash.
+        if raw.get("exit_code") == 2 and "unexpected argument" in (
+            raw.get("stderr") or ""
+        ):
+            return ToolResult(
+                tool=tool_name,
+                engine=self.name,
+                engine_version=self.version(),
+                status="skipped",
+                duration_ms=raw.get("duration_ms", 0),
+                summary="sentrux: installed CLI has no --json flag (upgrade sentrux)",
+                findings=[],
+                raw=None,
+            )
+
         findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(

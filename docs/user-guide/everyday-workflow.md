@@ -82,7 +82,7 @@ uv run rush score compute
 uv run rush dashboard --help
 ```
 
-Current dashboard browser/server integration is broken at this baseline, and persistent workflow remains planned in [Phase 66](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md). Use command JSON and executed checks as evidence.
+`rush dashboard` starts an authenticated, CSRF-hardened server on `127.0.0.1` behind a single-use bootstrap URL, with an explicit grant required per mutation. See the [dashboard/TUI review](../reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings.
 
 ---
 

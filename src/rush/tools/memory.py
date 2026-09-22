@@ -229,6 +229,7 @@ _DELETE_REQUEST_KEYS = {
     "owner_scope",
     "apply",
     "receipt_operation_id",
+    "receipt_operation_ids",
 }
 _DELETE_MAX_BATCH = 100
 _EDIT_REQUEST_KEYS = {
@@ -305,6 +306,11 @@ class MemoryTool(ToolFn):
         allow_slow: bool = False,
         allow_browser: bool = False,
         request: dict[str, Any] | None = None,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         return self.run(
             path,
@@ -332,6 +338,11 @@ class MemoryTool(ToolFn):
                 browser=allow_browser,
             ),
             request=request,
+            invocation_id=invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
         )
 
     def run(
@@ -357,11 +368,23 @@ class MemoryTool(ToolFn):
         owner_scope: dict[str, str] | OwnerScope | None = None,
         permissions: ExecutionPermissions | None = None,
         request: dict[str, Any] | None = None,
-        receipt_operation_id: str | None = None,
+        receipt_operation_ids: dict[str, str] | None = None,
+        # M11: the public invocation boundary. A caller reusing the same `invocation_id`
+        # (a genuine retry of this exact call) dedupes against the earlier telemetry row
+        # instead of minting a fresh identity every call; two distinct calls (the caller
+        # omits `invocation_id`, or passes a different one) each count. `project_id`/
+        # `run_id`/`agent_id`/`session_id` are pure caller-supplied attribution, threaded
+        # unchanged into retrieval's telemetry writes -- never guessed from `path`.
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         started = time.monotonic()
         root = Path(path).resolve()
         granted = permissions or ExecutionPermissions()
+        real_invocation_id = invocation_id or str(uuid.uuid4())
 
         if operation not in VALID_OPERATIONS:
             return self._result(
@@ -382,6 +405,11 @@ class MemoryTool(ToolFn):
                     "ask",
                     request,
                     granted,
+                    invocation_id=real_invocation_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
                 )
                 if request is not None
                 else self._query(
@@ -398,6 +426,11 @@ class MemoryTool(ToolFn):
                     "recall",
                     request,
                     granted,
+                    invocation_id=real_invocation_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
                 )
                 if request is not None
                 else self._query(
@@ -414,6 +447,11 @@ class MemoryTool(ToolFn):
                     "list",
                     request,
                     granted,
+                    invocation_id=real_invocation_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
                 )
                 if request is not None
                 else self._query(
@@ -427,7 +465,16 @@ class MemoryTool(ToolFn):
                 )
             ),
             "expand": lambda: self._expand(
-                started, root, session_allowlist, request, granted
+                started,
+                root,
+                session_allowlist,
+                request,
+                granted,
+                invocation_id=real_invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
             ),
             "write": lambda: self._run_write(
                 started,
@@ -451,11 +498,11 @@ class MemoryTool(ToolFn):
                 user_stated,
                 candidate_sources,
                 granted,
-                receipt_operation_id,
+                receipt_operation_ids,
                 owner_scope,
             ),
             "maintain": lambda: self._run_maintain(
-                started, root, task, batch_size, granted
+                started, root, task, batch_size, granted, owner_scope
             ),
             "link": lambda: self._link(started, root, granted, request),
             "related": lambda: self._related(started, root, session_allowlist, request),
@@ -536,6 +583,12 @@ class MemoryTool(ToolFn):
         operation: str,
         request: dict[str, Any],
         granted: ExecutionPermissions,
+        *,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         """MC02 §9.0 bounded `view=compact` mode for `ask`/`recall`/`list`. Only reachable
         when a caller passes `request` — legacy calls (`request=None`) always take `_query()`
@@ -662,6 +715,11 @@ class MemoryTool(ToolFn):
                 telemetry=telemetry,
                 request_id=f"{operation}:{subject}:{query}:hybrid",
                 event_id="retrieval",
+                invocation_id=invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
                 opt_in=False,
             )
         else:
@@ -678,6 +736,11 @@ class MemoryTool(ToolFn):
                 telemetry=telemetry,
                 request_id=f"{operation}:{subject}:{query}:{cursor}",
                 event_id="retrieval",
+                invocation_id=invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
                 opt_in=False,
                 cache_write=granted.cache_write,
             )
@@ -691,6 +754,12 @@ class MemoryTool(ToolFn):
         session_allowlist: list[str] | None,
         request: dict[str, Any] | None,
         granted: ExecutionPermissions,
+        *,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         """MC02 §9.0 `expand` operation: exact-byte expansion of one artifact version.
 
@@ -761,6 +830,11 @@ class MemoryTool(ToolFn):
             telemetry=telemetry,
             request_id=f"{artifact_id}:{version}:{offset}",
             event_id="expansion",
+            invocation_id=invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
             opt_in=False,
             cache_write=granted.cache_write,
         )
@@ -1120,7 +1194,7 @@ class MemoryTool(ToolFn):
         user_stated: bool,
         candidate_sources: list[str] | None,
         granted: ExecutionPermissions,
-        receipt_operation_id: str | None = None,
+        receipt_operation_ids: dict[str, str] | None = None,
         owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
@@ -1148,23 +1222,22 @@ class MemoryTool(ToolFn):
             subject, content, source, symbol_ref, source_kind, owner
         )
         store = TypedArtifactStore(root)
-        # P69-01.2f: promotion is two separately-committed effects (candidate
-        # creation, then a distinct promotion decision) -- each gets its own
-        # preallocated receipt id so recovery can tell "created" apart from
-        # "created and promoted" via two independently-addressable receipts.
+        # P69-01.2f/S04: promotion is two separately-committed effects (candidate
+        # creation, then a distinct promotion decision) -- each consumes its own
+        # independently-reserved effect id (`_s04_effect_ids`'s `candidate_create`/
+        # `promotion` keys) so recovery can tell "created" apart from "created and
+        # promoted" via two independently-addressable receipts, never one shared
+        # base id suffixed into two derived strings.
+        reserved = receipt_operation_ids or {}
         stored = store.write(
             artifact,
-            receipt_operation_id=(
-                f"{receipt_operation_id}:create" if receipt_operation_id else None
-            ),
+            receipt_operation_id=reserved.get("candidate_create"),
         )
         stored, decision = store.promote(
             stored.id,
             user_stated=user_stated,
             candidate_sources=candidate_sources,
-            receipt_operation_id=(
-                f"{receipt_operation_id}:promote" if receipt_operation_id else None
-            ),
+            receipt_operation_id=reserved.get("promotion"),
         )
         summary = (
             f"Promoted subject '{subject}' to STATED."
@@ -1192,6 +1265,7 @@ class MemoryTool(ToolFn):
         task: MaintenanceTask | None,
         batch_size: int,
         granted: ExecutionPermissions,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         if task is None:
             return self._result(
@@ -1208,7 +1282,23 @@ class MemoryTool(ToolFn):
                 f"Memory maintain requires {', '.join(missing)}.",
                 operation="maintain",
             )
-        result = run_maintenance_cycle(task, batch_size=batch_size, project_root=root)
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation="maintain"
+            )
+        if owner is None:
+            return self._result(
+                started,
+                "error",
+                "memory maintain requires owner_scope (M09: no silent "
+                "legacy-owner default at this boundary).",
+                operation="maintain",
+            )
+        result = run_maintenance_cycle(
+            task, batch_size=batch_size, project_root=root, owner_scope=owner
+        )
         return self._result(
             started,
             "ok",
@@ -2076,6 +2166,9 @@ class MemoryTool(ToolFn):
                     {"message": f"memory delete apply requires {', '.join(missing)}."},
                 )
 
+        receipt_operation_ids = request.get("receipt_operation_ids")
+        if not isinstance(receipt_operation_ids, dict):
+            receipt_operation_ids = None
         store = TypedArtifactStore(root)
         try:
             result = store.delete_batch(
@@ -2085,6 +2178,7 @@ class MemoryTool(ToolFn):
                 owner_scope=owner,
                 apply=apply,
                 receipt_operation_id=request.get("receipt_operation_id"),
+                receipt_operation_ids=receipt_operation_ids,
             )
         except KeyError as exc:
             return self._envelope_result(

@@ -40,7 +40,25 @@ class TrivyEngine(Engine):
             try:
                 parsed = json.loads(proc.stdout)
                 if isinstance(parsed, dict) and "Results" in parsed:
+                    # M20: Trivy's own top-level `Target` field is not a
+                    # generic `_PATH_KEYS` name (`engines/staging.py`
+                    # deliberately never treats every key literally named
+                    # `Target`/`source` as a path -- an unrelated engine's
+                    # own `Target` field could mean anything else).
+                    # Adapter-specific remap, in place, before this decoded
+                    # `parsed` object becomes both `findings_raw[].target`
+                    # and this result's own `raw` field -- one remap fixes
+                    # both, and is a no-op (returns the value unchanged)
+                    # once this engine ever runs outside a staged attempt.
+                    from .staging import active_staging, map_staged_path
+
+                    staging = active_staging()
                     for target_res in parsed["Results"]:
+                        target = target_res.get("Target")
+                        if staging is not None and isinstance(target, str):
+                            target_res["Target"] = map_staged_path(
+                                target, staging.staged_root, staging.original_root
+                            )
                         target_file = target_res.get("Target", str(path))
                         for vuln in target_res.get("Vulnerabilities", []):
                             findings_raw.append(

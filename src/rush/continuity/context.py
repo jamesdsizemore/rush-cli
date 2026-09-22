@@ -71,6 +71,30 @@ def _build_recovery_envelope(
     }
 
 
+def _memory_event_attribution(
+    project_id: str | None,
+    run_id: str | None,
+    agent_id: str | None,
+    session_id: str | None,
+) -> dict[str, str]:
+    """M11: `project_id`/`run_id`/`agent_id`/`session_id` are pure caller-
+    supplied attribution -- never invented from a project root path (a
+    filesystem path is not a registered project UUID). Omitted dimensions
+    are left out so `TelemetryStore.record_memory_event()`'s own
+    `_UNSCOPED` default applies, mirroring `memory/retrieval.py`'s own
+    `_record_memory_event` helper."""
+    return {
+        key: value
+        for key, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
+
+
 def pack_context(
     started: float,
     project_root: Path,
@@ -81,6 +105,10 @@ def pack_context(
     as_v1: bool = False,
     *,
     invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> ContinuityOutput:
     """Pack bounded context evidence, spilling to CCR cache if over budget."""
     if not context_path or token_budget < 1:
@@ -186,8 +214,8 @@ def pack_context(
             request_id=f"{context_path}:{target_symbol}:{token_budget}",
             event_id="packing",
             invocation_id=invocation_id,
-            project_id=str(project_root),
             cache_write=True,
+            **_memory_event_attribution(project_id, run_id, agent_id, session_id),
         )
     envelope = {
         "selected_evidence": selected_evidence,
@@ -216,6 +244,10 @@ def retrieve_context(
     as_v1: bool = False,
     *,
     invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> ContinuityOutput:
     """Retrieve CCR chunk by handle."""
     database = root / ".rush" / "cache" / "ccr.db"
@@ -237,8 +269,8 @@ def retrieve_context(
             request_id=handle,
             event_id="handoff",
             invocation_id=invocation_id,
-            project_id=str(root),
             cache_write=True,
+            **_memory_event_attribution(project_id, run_id, agent_id, session_id),
         )
     recovery = {
         "state": "recovered" if content is not None else "not_found",

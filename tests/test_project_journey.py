@@ -102,21 +102,31 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
 ) -> None:
     findings_a = journey["run_a"].aggregate.get("findings")
     assert findings_a is not None
+    # M17: unowned-but-genuinely-installed engines (e.g. detect-secrets) now
+    # actually execute. CACHEDIR.TAG's fixed cache-directory-tagging
+    # signature string is excluded from the scan (a textbook entropy-scanner
+    # false positive, not a genuine finding), so only the 3 seeded review
+    # findings are present.
     assert len(findings_a) == 3
-    by_line = {finding["line"]: finding for finding in findings_a}
+    review_findings = [f for f in findings_a if f["provenance"] == "review/heuristic-v1"]
+    assert len(review_findings) == 3
+    by_line = {finding["line"]: finding for finding in review_findings}
     assert by_line[1]["rule"] == _MISSING_DOCSTRING
     assert by_line[1]["message"] == "function 'unreviewed' has no docstring"
     assert by_line[5]["rule"] == _MISSING_DOCSTRING
     assert by_line[5]["message"] == "function 'compute_value' has no docstring"
     assert by_line[9]["rule"] == _NAMING
-    assert all(f["provenance"] == "review/heuristic-v1" for f in findings_a)
     assert len({f["finding_id"] for f in findings_a}) == 3
 
     findings_b = journey["run_b"].aggregate.get("findings")
     assert findings_b is not None
+    # M17: same real detect-secrets execution runs here too, with the same
+    # CACHEDIR.TAG exclusion, so no extra finding is added.
     assert len(findings_b) == 1
-    assert findings_b[0]["rule"] == _MISSING_DOCSTRING
-    assert findings_b[0]["message"] == "function 'also_unreviewed' has no docstring"
+    review_findings_b = [f for f in findings_b if f["provenance"] == "review/heuristic-v1"]
+    assert len(review_findings_b) == 1
+    assert review_findings_b[0]["rule"] == _MISSING_DOCSTRING
+    assert review_findings_b[0]["message"] == "function 'also_unreviewed' has no docstring"
 
     # Cross-project isolation: no finding_id from A ever appears in B.
     assert {f["finding_id"] for f in findings_a}.isdisjoint(

@@ -76,8 +76,10 @@ executable route is unavailable/ENGINE_ROUTE_MISSING, not excluded").
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import secrets
 import subprocess
@@ -99,17 +101,28 @@ from rush.engines.staging import (
     PROVENANCE_FORMAT,
     active_staging,
     aggregate_content_identity,
+    remap_paths,
     stage_inventory,
     staging_scope,
 )
 from rush.invocation import InvocationExecutor, resolve_invocation
-from rush.memory.handoff import HandoffError, prepare_handoff, receive_handoff
+from rush.memory.handoff import (
+    HandoffError,
+    prepare_handoff,
+    receive_handoff,
+    recover_session_delta_without_capability,
+)
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.tools import ALL_TOOLS
 from rush.tools.base import Finding, ToolResult
-from rush.tools.common import error_result, finding_fingerprint, skipped_result
+from rush.tools.common import (
+    error_result,
+    finding_fingerprint,
+    run_engine,
+    skipped_result,
+)
 from rush.tools.quality import GuardedQualityTool
 from rush.tools.routing import aggregate_results
 from rush.workflows.projects import ProjectError, resolve_project
@@ -145,7 +158,9 @@ _EVENTS_RELATIVE = ".rush/runs/{run_id}/attempts/{attempt_id}/events.json"
 _CANDIDATE_EVIDENCE_RELATIVE = (
     ".rush/runs/{run_id}/attempts/{attempt_id}/candidates/{digest}.json"
 )
-_CANCEL_REQUEST_RELATIVE = ".rush/runs/{run_id}/cancel_requested.json"
+_CANCEL_REQUEST_RELATIVE = (
+    ".rush/runs/{run_id}/attempts/{attempt_id}/cancel_requested.json"
+)
 _PLAN_RELATIVE = ".rush/scan_plans/{plan_id}.json"
 
 _LOCK_POLL_SECONDS = 0.02
@@ -302,18 +317,42 @@ class CandidateResult:
     outcome: ExecutionOutcome
     result: ToolResult
     #: P69-03e: the per-file content digests of the staged bytes this
-    #: candidate actually ran against. Persisted with the candidate's evidence
-    #: so a resume that *retains* this candidate carries its original digests
+    #: candidate actually ran against -- every key here is a real
+    #: project-relative path. Persisted with the candidate's evidence so a
+    #: resume that *retains* this candidate carries its original digests
     #: forward verbatim instead of manufacturing a fresh consumption event for
     #: content nothing re-read.
-    source_digests: dict[str, str] = field(default_factory=dict)
+    consumed_path_digests: dict[str, str] = field(default_factory=dict)
+    #: M13: a repository-state engine's (GitGuard/DiffCover/Undercover) own
+    #: synthetic `candidate_id:kind` -> digest evidence. Never a real path --
+    #: kept in a separate field so it can never reach `git_link.path_digests`
+    #: (`projects.py`'s Git lookup treats every `path_digests` key as a
+    #: literal `git show commit:path` argument), while still folding into
+    #: `_source_identity`'s aggregate content identity under its own domain
+    #: tag.
+    repository_state_evidence: dict[str, str] = field(default_factory=dict)
+    #: M12: this candidate's own immutable copy of every declared artifact's
+    #: bytes, captured immediately after `_execute_candidate` returns (see
+    #: `_capture_artifact_snapshots`) -- before the next candidate, or a
+    #: later attempt's candidate, can run and physically overwrite the same
+    #: absolute staged/live path a declared artifact currently points at.
+    #: Keyed by the exact declared path string in `ToolResult.artifacts`
+    #: (never rewritten -- aggregate consumers still see the same
+    #: canonical `list[str]` they always did). `_load_completed_candidates`
+    #: reloads this verbatim on resume, so a retained candidate keeps
+    #: pointing at its own original bytes forever.
+    artifact_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.candidate.to_dict(),
             "outcome": self.outcome,
             "child": dict(self.result),
-            "source_digests": dict(self.source_digests),
+            "consumed_path_digests": dict(self.consumed_path_digests),
+            "repository_state_evidence": dict(self.repository_state_evidence),
+            "artifact_snapshots": {
+                path: dict(entry) for path, entry in self.artifact_snapshots.items()
+            },
         }
 
 
@@ -583,6 +622,54 @@ def _finding_id(tool: str, engine: str | None, finding: Finding) -> str:
     return sha256(_canonical_json(payload)).hexdigest()
 
 
+_ARTIFACT_SNAPSHOT_RELATIVE = (
+    ".rush/runs/{run_id}/attempts/{attempt_id}/artifacts/{digest}/{index}.bin"
+)
+
+
+def _capture_artifact_snapshots(
+    root: Path,
+    run_id: str,
+    attempt_id: str,
+    candidate_id: str,
+    result: ToolResult,
+) -> dict[str, dict[str, Any]]:
+    """M12 Fix item 1: copy each declared artifact's bytes into this
+    attempt's own contained artifact directory immediately -- before the
+    next candidate (or a later attempt's candidate) can run and physically
+    overwrite the same absolute staged/live path a declared artifact
+    currently points at. Reads whatever path `ToolResult.artifacts` already
+    declares, verbatim; never rewrites that canonical `list[str]` (aggregate
+    consumers still see exactly what they always did). Missing/unreadable
+    declared paths are skipped, never a live-file fallback at read time --
+    a candidate that declared an artifact this call could not snapshot
+    simply has no entry for it below."""
+    snapshots: dict[str, dict[str, Any]] = {}
+    for index, declared in enumerate(result.get("artifacts") or []):
+        if not isinstance(declared, str) or not declared:
+            continue
+        source = Path(declared)
+        if not source.is_file():
+            continue
+        try:
+            data = source.read_bytes()
+        except OSError:
+            continue
+        digest = sha256(candidate_id.encode("utf-8")).hexdigest()[:24]
+        relative = _ARTIFACT_SNAPSHOT_RELATIVE.format(
+            run_id=run_id, attempt_id=attempt_id, digest=digest, index=index
+        )
+        atomic_write_bytes(root, relative, data)
+        media_type = mimetypes.guess_type(declared)[0] or "application/octet-stream"
+        snapshots[declared] = {
+            "immutable_path": relative,
+            "size": len(data),
+            "sha256": sha256(data).hexdigest(),
+            "media_type": media_type,
+        }
+    return snapshots
+
+
 def _execute_candidate(
     candidate: ScanCandidate,
     *,
@@ -608,12 +695,46 @@ def _execute_candidate(
     tool implements this today -- every existing `ALL_TOOLS` candidate keeps
     its exact prior behavior, unaffected."""
     if candidate.kind == "engine":
-        # No `TOOL_SPECS` owner exists to invoke and normalize this engine's
-        # output yet -- an honest, deterministic coverage gap, not a silent
-        # exclusion (plan §6.4).
-        return "unavailable", skipped_result(
-            candidate.candidate_id, candidate.candidate_id, _ENGINE_ROUTE_MISSING
+        # M17: route through the canonical `rush.engines.ENGINES`/
+        # `rush.catalog.ENGINE_SPECS` pair -- a registered engine with no
+        # `TOOL_SPECS` owner is still executed through the exact same shared
+        # `run_engine` every owning tool uses, never a dummy owning tool or
+        # an invented permission grant. `EngineSpec` carries no permission
+        # field, so a route reaching here (already filtered to `applicable`
+        # by `_classify_engine` at plan time) is read-only:
+        # `required_permissions=ExecutionPermissions()` (all ungranted, all
+        # unneeded) -- a genuinely privileged unowned engine stays
+        # `requires_input`/`unsupported` at classification and never
+        # schedules as `applicable` in the first place.
+        from rush.engines import ENGINES
+
+        engine = ENGINES.get(candidate.candidate_id)
+        if engine is None:
+            # A registered `ENGINE_SPECS` row with no matching `ENGINES`
+            # entry: a genuine catalog/registry mismatch, not a route this
+            # fix can resolve -- stays the same honest, deterministic gap.
+            return "unavailable", skipped_result(
+                candidate.candidate_id, candidate.candidate_id, _ENGINE_ROUTE_MISSING
+            )
+        result = run_engine(
+            engine,
+            root,
+            [],
+            tool_name=candidate.candidate_id,
+            required_permissions=ExecutionPermissions(),
+            permissions=permissions,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
         )
+        status = result.get("status")
+        if status == "error":
+            return "failed", result
+        if status == "skipped":
+            summary = str(result.get("summary", ""))
+            if "requires permission" in summary or "requires_" in summary:
+                return "permission_blocked", result
+            return "unavailable", result
+        return "executed", result
 
     tool = tools_by_name[candidate.candidate_id]
     run_cancellable = getattr(tool, "run_cancellable", None)
@@ -645,17 +766,46 @@ def _execute_candidate(
     if owner_instance_id is not None and run_id is not None:
         request["owner_instance_id"] = owner_instance_id
         request["run_id"] = run_id
+    # M15: a direct in-process reader (slop, offline-review, dead-asset,
+    # license-matrix, and other applicable direct readers) previously called
+    # `resolve_invocation` against the live project root even while a scan
+    # attempt had staged its bounded inventory -- only nested `run_engine`
+    # invocations (runtime/subprocesses.py's `_staged_invocation`) redirected
+    # to staging. Mirror that exact pattern here: redirect the request's own
+    # path-bearing fields and `InvocationContext.workspace_root` to the
+    # staged tree, record the read as consumed staged content, and remap any
+    # staged paths the result carries back to logical paths before this
+    # candidate's finding IDs/evidence are computed by the caller. A call
+    # made outside a staged attempt (`active_staging()` is `None`) is
+    # unaffected -- today's exact behavior byte for byte.
+    staging = active_staging()
+    staged_root = root
+    if staging is not None:
+        staged_root = staging.stage_path(root) or root
+        for key in ("path", "file", "filename"):
+            value = request.get(key)
+            if isinstance(value, str):
+                mapped = staging.stage_path(Path(value))
+                if mapped is not None:
+                    request[key] = str(mapped)
+        for key in ("files", "paths"):
+            values = request.get(key)
+            if isinstance(values, (list, tuple)):
+                request[key] = [str(staging.stage_path(Path(v)) or v) for v in values]
+        staging.record_consumption(staged_root)
     try:
         executor = InvocationExecutor()
         executor.register(candidate.candidate_id, tool.__call__)
         context = resolve_invocation(
             request,
             transport="cli",
-            workspace_root=root,
+            workspace_root=staged_root,
             config=config,
             permissions=permissions,
         )
         result = executor.execute(context)
+        if staging is not None:
+            remap_paths(result, staging.staged_root, staging.original_root)
     except Exception as exc:  # noqa: BLE001 -- one real child result, zero retry
         return "failed", error_result(candidate.candidate_id, None, str(exc))
 
@@ -680,6 +830,8 @@ def _build_manifest(
     aggregate: ToolResult,
     source_identity: dict[str, Any] | None = None,
     digests: dict[str, str] | None = None,
+    file_inventory: list[dict[str, str]] | None = None,
+    staging_failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     # P69-07.2b: the persisted Git-link provenance a later Git-section reader
     # uses to decide whether this attempt's output can be linked to a
@@ -697,6 +849,13 @@ def _build_manifest(
         # attempt header carries, and never comparable to one.
         "source_identity": source_identity or {},
         "git_link": git_link,
+        # M03: the exact bounded inventory captured at attempt start --
+        # hydration (`dashboard/server.py::_hydrate_published_scan`) reads
+        # this instead of rewalking whatever files happen to be present now.
+        "file_inventory": file_inventory or [],
+        # M21 bullet 3: every staging input/configuration failure, structured
+        # -- never silently absent from the terminal manifest.
+        "staging_failures": staging_failures or [],
         "attempt_id": attempt_id,
         "plan_id": plan.plan_id,
         "project_id": plan.project_id,
@@ -825,8 +984,13 @@ def _execute_attempt_locked(
     # *before* any engine runs. `_run_lock` mutex-excludes concurrent scans but
     # never locks the project's source files -- only a private copy nothing
     # else can touch makes "these are the bytes that were scanned" true.
+    # M03 bullet 2: one captured, sorted project-relative inventory at
+    # attempt start -- the exact same bounded list staged below, reused for
+    # the persisted manifest instead of a second, separate walk at finalize
+    # time.
+    inventory = _scan_inventory(root)
     with tempfile.TemporaryDirectory(prefix="rush-stage-") as staging_dir:
-        staging = stage_inventory(root, Path(staging_dir), _scan_inventory(root))
+        staging = stage_inventory(root, Path(staging_dir), inventory)
         with staging_scope(staging):
             scheduled, cancelled = _run_candidates(
                 plan,
@@ -846,6 +1010,8 @@ def _execute_attempt_locked(
             scheduled=scheduled,
             cancelled=cancelled,
             staging_findings=staging.findings,
+            file_inventory=inventory,
+            staging_failures=staging.staging_failures,
         )
 
 
@@ -875,7 +1041,7 @@ def _run_candidates(
     )
 
     def cancel_check() -> bool:
-        return _cancel_requested(root, run_id)
+        return _cancel_requested(root, run_id, attempt_id)
 
     results: list[CandidateResult] = []
     cancelled = False
@@ -911,25 +1077,37 @@ def _run_candidates(
                 finding,
             )
         staging = active_staging()
-        source_digests = (
+        consumed_path_digests = (
             dict(staging.take_candidate_digests()) if staging is not None else {}
         )
-        # P69-03h: a repository-state-dependent engine (git-guard/diff-cover/
-        # undercover) never enters staging, so it contributes nothing above --
-        # fold its own real-evidence digest (subprocesses.py's `run_engine`)
-        # in here instead, so `_source_identity`'s aggregate still reflects
-        # what it actually read.
+        # P69-03h/M13: a repository-state-dependent engine (git-guard/
+        # diff-cover/undercover) never enters staging, so it contributes
+        # nothing above -- fold its own real-evidence digest
+        # (subprocesses.py's `run_engine`) into its own separate field, never
+        # `consumed_path_digests`: this synthetic `candidate_id:kind` key is
+        # not a real path, and `git_link.path_digests` must contain only real
+        # paths (M13).
         provenance = (result.get("metadata") or {}).get("repository_state_provenance")
+        repository_state_evidence: dict[str, str] = {}
         if isinstance(provenance, dict) and provenance.get("digest"):
             key = (
                 f"{candidate.candidate_id}:{provenance.get('kind', 'repository-state')}"
             )
-            source_digests[key] = provenance["digest"]
+            repository_state_evidence[key] = provenance["digest"]
+        # M12: snapshot every declared artifact's bytes right here -- before
+        # the next scheduled candidate gets a chance to run and physically
+        # overwrite the same absolute staged/live path a declared artifact
+        # currently points at.
+        artifact_snapshots = _capture_artifact_snapshots(
+            root, run_id, attempt_id, candidate.candidate_id, result
+        )
         candidate_result = CandidateResult(
             candidate=candidate,
             outcome=outcome,
             result=result,
-            source_digests=source_digests,
+            consumed_path_digests=consumed_path_digests,
+            repository_state_evidence=repository_state_evidence,
+            artifact_snapshots=artifact_snapshots,
         )
         results.append(candidate_result)
         _persist_candidate_evidence(root, run_id, attempt_id, candidate_result)
@@ -956,6 +1134,8 @@ def _finalize_attempt(
     scheduled: list[CandidateResult],
     cancelled: bool,
     staging_findings: list[dict[str, Any]] | None = None,
+    file_inventory: list[str] | None = None,
+    staging_failures: list[dict[str, Any]] | None = None,
 ) -> ScanRun:
     children = [item.result for item in scheduled]
     if staging_findings:
@@ -986,6 +1166,19 @@ def _finalize_attempt(
         metadata = dict(aggregate.get("metadata") or {})
         metadata["cancelled"] = True
         aggregate["metadata"] = metadata
+    elif staging_failures:
+        # M21 bullet 2: a required source that could not be safely staged
+        # (broken/escaping symlink, copy/hash error, a disappeared inventory
+        # path, a dependency/config symlink creation error) -- checked ahead
+        # of `not scheduled` too, since a disappeared inventory file with
+        # zero scheduled candidates must still report incomplete, never
+        # "completed" from an empty schedule. This fix has no per-candidate
+        # consumer-identification mechanism to isolate exactly which
+        # scheduled candidate(s) depended on the failed source, so per the
+        # fix's own explicit fallback ("if a support failure's affected
+        # consumers cannot be identified safely, fail the attempt
+        # conservatively") this attempt is never reported clean.
+        run_state = "incomplete"
     elif not scheduled:
         run_state = "completed"
         metadata = dict(aggregate.get("metadata") or {})
@@ -996,12 +1189,18 @@ def _finalize_attempt(
     else:
         run_state = "completed"
 
-    # P69-03d/e: the consumption aggregate over every scheduled candidate's own
-    # per-file digests -- freshly read ones for candidates this attempt
-    # executed, carried-forward ones for candidates a resume retained.
-    digests: dict[str, str] = {}
+    # P69-03d/e/M13: the consumption aggregate over every scheduled
+    # candidate's own per-file digests -- freshly read ones for candidates
+    # this attempt executed, carried-forward ones for candidates a resume
+    # retained. `path_digests` (real paths only) feeds `git_link.path_digests`
+    # through `_build_manifest`; `repository_state_evidence` (synthetic
+    # per-candidate identity) never does, but both still fold into
+    # `_source_identity`'s aggregate content identity.
+    path_digests: dict[str, str] = {}
+    repository_state_evidence: dict[str, str] = {}
     for item in scheduled:
-        digests.update(item.source_digests)
+        path_digests.update(item.consumed_path_digests)
+        repository_state_evidence.update(item.repository_state_evidence)
     manifest = _build_manifest(
         run_id=run_id,
         attempt_id=attempt_id,
@@ -1009,8 +1208,12 @@ def _finalize_attempt(
         run_state=run_state,
         scheduled=scheduled,
         aggregate=aggregate,
-        source_identity=_source_identity(digests, root),
-        digests=digests,
+        source_identity=_source_identity(
+            path_digests, root, repository_state_evidence=repository_state_evidence
+        ),
+        digests=path_digests,
+        file_inventory=[{"path": rel} for rel in (file_inventory or [])],
+        staging_failures=staging_failures or [],
     )
     manifest_bytes = (
         json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8") + b"\n"
@@ -1202,7 +1405,17 @@ def _load_completed_candidates(attempt_dir: Path) -> dict[str, CandidateResult]:
             # P69-03e: carried forward verbatim -- this candidate is not
             # re-executed, so nothing re-reads its content and no fresh
             # consumption event is manufactured for it.
-            source_digests=dict(payload.get("source_digests") or {}),
+            consumed_path_digests=dict(payload.get("consumed_path_digests") or {}),
+            repository_state_evidence=dict(
+                payload.get("repository_state_evidence") or {}
+            ),
+            # M12: carried forward verbatim -- a retained candidate is not
+            # re-executed, so its original captured bytes must stay exactly
+            # what this attempt (or an earlier one) already snapshotted.
+            artifact_snapshots={
+                path: dict(entry)
+                for path, entry in (payload.get("artifact_snapshots") or {}).items()
+            },
         )
     return retained
 
@@ -1306,37 +1519,71 @@ def load_scan_events(
     }
 
 
-def _cancel_request_path(root: Path, run_id: str) -> Path:
-    return root / ".rush" / "runs" / run_id / "cancel_requested.json"
+def _cancel_request_path(root: Path, run_id: str, attempt_id: str) -> Path:
+    return (
+        root
+        / ".rush"
+        / "runs"
+        / run_id
+        / "attempts"
+        / attempt_id
+        / "cancel_requested.json"
+    )
 
 
-def _cancel_requested(root: Path, run_id: str) -> bool:
-    return _cancel_request_path(root, run_id).is_file()
+def _cancel_requested(root: Path, run_id: str, attempt_id: str | None = None) -> bool:
+    """S10: attempt-scoped. `attempt_id` omitted resolves to `run_id`'s
+    current latest attempt (legacy 2-argument call compatibility) -- the
+    internal candidate-loop `cancel_check()` closure always passes its own
+    exact executing attempt explicitly."""
+    resolved = attempt_id
+    if resolved is None:
+        latest = _highest_generation_attempt_dir(root, run_id)
+        resolved = latest.name if latest is not None else None
+    if resolved is None:
+        return False
+    return _cancel_request_path(root, run_id, resolved).is_file()
 
 
-def _clear_cancel_request(root: Path, run_id: str) -> None:
+def _clear_cancel_request(root: Path, run_id: str, attempt_id: str) -> None:
     with suppress(OSError):
-        _cancel_request_path(root, run_id).unlink()
+        _cancel_request_path(root, run_id, attempt_id).unlink()
 
 
 def cancel_scan_run(
-    project: str | Path, run_id: str, *, data_root: Path | None = None
+    project: str | Path,
+    run_id: str,
+    *,
+    attempt_id: str | None = None,
+    data_root: Path | None = None,
 ) -> dict[str, Any]:
     """`rush_scan.cancel(project,run_id)` (plan §6.1/§6.4, P65-08). Writes a
     cross-process/cross-thread cooperative cancel-request marker under the
-    run's own directory; the run's `execute_scan`/`resume_scan_run` loop
-    checks it at every candidate boundary and, for a candidate whose tool
-    supports mid-subprocess cancellation, during that candidate's own
-    execution too. Idempotent: cancelling an already-cancel-requested (or
-    already-terminal) run just re-writes the same marker."""
+    run's own *currently executing attempt* directory (S10) -- an explicit
+    `attempt_id` (the caller's own resolved executor identity) is preferred;
+    omitted, this resolves the run's current latest attempt at call time,
+    preserving the legacy `run_id`-only call contract. Scoping the marker to
+    one attempt means an old cancellation intent for a prior attempt can
+    never reach a later resume's fresh attempt. Idempotent: cancelling an
+    already-cancel-requested (or already-terminal) run just re-writes the
+    same marker."""
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
     if not (root / ".rush" / "runs" / run_id).is_dir():
         raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
-    payload = {"run_id": run_id, "requested_at": datetime.now(UTC).isoformat()}
+    resolved_attempt_id = attempt_id or latest_attempt_id(
+        project, run_id, data_root=data_root
+    )
+    if not resolved_attempt_id:
+        raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
+    payload = {
+        "run_id": run_id,
+        "attempt_id": resolved_attempt_id,
+        "requested_at": datetime.now(UTC).isoformat(),
+    }
     atomic_write_bytes(
         root,
-        _CANCEL_REQUEST_RELATIVE.format(run_id=run_id),
+        _CANCEL_REQUEST_RELATIVE.format(run_id=run_id, attempt_id=resolved_attempt_id),
         _canonical_json(payload) + b"\n",
     )
     return payload
@@ -1351,6 +1598,7 @@ def resume_scan_run(
     data_root: Path | None = None,
     attempt_id: str | None = None,
     expected_attempt_id: str | None = None,
+    owner_instance_id: str | None = None,
 ) -> ScanRun:
     """`rush_scan.resume(project,run_id)` (plan §6.1/§6.4, P65-08). Starts a
     new attempt under the *same* `run_id`, retaining every previously
@@ -1420,7 +1668,7 @@ def resume_scan_run(
             )
 
         already_completed = _load_completed_candidates(latest_attempt)
-        _clear_cancel_request(root, run_id)
+        _clear_cancel_request(root, run_id, latest_attempt.name)
         new_attempt_id = attempt_id or str(uuid.uuid4())
         return _execute_attempt_locked(
             plan,
@@ -1430,6 +1678,7 @@ def resume_scan_run(
             permissions=resolved_permissions,
             config=config,
             already_completed=already_completed,
+            owner_instance_id=owner_instance_id,
         )
 
 
@@ -1560,16 +1809,38 @@ def _git_link(root: Path) -> dict[str, Any]:
     }
 
 
-def _source_identity(digests: dict[str, str], root: Path) -> dict[str, Any]:
-    """P69-03d/e/j: the consumption identity of one completed attempt -- a
-    format-tagged record carrying the Git link and a deterministic aggregate
-    over the per-file digests of the staged content engines actually ran
-    against. Never the pre-execution signature, and never comparable to one."""
+def _source_identity(
+    path_digests: dict[str, str],
+    root: Path,
+    *,
+    repository_state_evidence: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """P69-03d/e/j/M13: the consumption identity of one completed attempt --
+    a format-tagged record carrying the Git link and a deterministic
+    aggregate over the per-file digests of the staged content engines
+    actually ran against. Never the pre-execution signature, and never
+    comparable to one.
+
+    `path_digests` must contain only real project-relative paths --
+    `git_link.path_digests` (`_build_manifest`) is built from this exact
+    dict, and `projects.py`'s Git lookup treats every one of its keys as a
+    literal `git show commit:path` argument. `repository_state_evidence` (a
+    repository-state engine's own synthetic `candidate_id:kind` -> digest
+    evidence, never a real path) is folded into `content` under a separate
+    domain tag so changing either structure still changes the aggregate
+    identity, without ever contributing a key to `path_digests`/`git_link`."""
+    tagged = {f"path:{key}": value for key, value in path_digests.items()}
+    tagged.update(
+        {
+            f"repo-state:{key}": value
+            for key, value in (repository_state_evidence or {}).items()
+        }
+    )
     return {
         "provenance_format": PROVENANCE_FORMAT,
         "git": _git_link(root),
-        "content": aggregate_content_identity(digests),
-        "file_count": len(digests),
+        "content": aggregate_content_identity(tagged),
+        "file_count": len(path_digests),
     }
 
 
@@ -1672,6 +1943,27 @@ class ScanHandoff:
     agent_reported_complete_artifact_ids: tuple[str, ...] = ()
     created_at: str = ""
     updated_at: str = ""
+    # S05: the dashboard's preallocated ledger operation_id for this
+    # handoff's `handoff_send`, so a crash after 202 can recover/replay
+    # against the same operation rather than reminting one. Empty for a
+    # CLI/MCP-prepared handoff with no dashboard mutation ledger involved.
+    operation_id: str = ""
+    # S06: the exact attempt this handoff's packet/envelope was built from
+    # (dashboard preview/send always pin one; a legacy CLI/MCP call that
+    # omits it keeps loading the run's latest attempt, empty here).
+    attempt_id: str = ""
+    # S05: SHA-256 of the one-time raw capability, persisted in place of the
+    # plaintext -- `dispatch_handoff` compares digests, never raw values, so
+    # the descriptor on disk never carries a durable plaintext credential.
+    session_capability_digest: str = ""
+    # T038: the dashboard process's own owner identity at the moment this
+    # handoff was prepared -- the only linkage from a dead
+    # `owner_instance_id` (S02's `reconcile_admissions`) to a `prepared`
+    # handoff it left behind. Empty for a CLI/MCP-prepared handoff (no
+    # dashboard owner involved) and for any handoff persisted before this
+    # field existed -- both cases degrade to "never matches a real owner",
+    # never a crash (`from_dict`'s `payload.get(..., "")` below).
+    owner_instance_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1688,7 +1980,12 @@ class ScanHandoff:
             "source_signature": self.source_signature,
             "source_signature_format": self.source_signature_format,
             "memory_session_id": self.memory_session_id,
+            # S05: `to_dict()` still carries the in-memory raw capability
+            # (needed by CLI/MCP `prepare`'s one-time response, built from a
+            # fresh, never-persisted object) -- `_persist_handoff` below is
+            # what actually strips it before anything reaches disk.
             "session_capability": self.session_capability,
+            "session_capability_digest": self.session_capability_digest,
             "delivery_nonce": self.delivery_nonce,
             "granted_actions": list(self.granted_actions),
             "acceptance_checks": list(self.acceptance_checks),
@@ -1697,6 +1994,9 @@ class ScanHandoff:
             ),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "operation_id": self.operation_id,
+            "attempt_id": self.attempt_id,
+            "owner_instance_id": self.owner_instance_id,
         }
 
     @staticmethod
@@ -1718,7 +2018,9 @@ class ScanHandoff:
             # compare it rather than reinterpreting it.
             source_signature_format=int(payload.get("source_signature_format", 1)),
             memory_session_id=str(payload["memory_session_id"]),
-            session_capability=str(payload["session_capability"]),
+            # S05: the raw capability is never persisted -- a loaded handoff
+            # carries no usable in-memory capability, only the stored digest.
+            session_capability="",
             delivery_nonce=str(payload["delivery_nonce"]),
             granted_actions=tuple(payload.get("granted_actions") or ()),
             acceptance_checks=tuple(payload.get("acceptance_checks") or ()),
@@ -1727,6 +2029,12 @@ class ScanHandoff:
             ),
             created_at=str(payload.get("created_at", "")),
             updated_at=str(payload.get("updated_at", "")),
+            operation_id=str(payload.get("operation_id", "")),
+            attempt_id=str(payload.get("attempt_id", "")),
+            session_capability_digest=str(payload.get("session_capability_digest", "")),
+            # T038: absent on a handoff persisted before this field existed --
+            # defaults to "", which never matches a real owner_instance_id.
+            owner_instance_id=str(payload.get("owner_instance_id", "")),
         )
 
 
@@ -1745,10 +2053,59 @@ def _load_handoff(root: Path, handoff_id: str) -> ScanHandoff | None:
     return ScanHandoff.from_dict(payload)
 
 
+def list_prepared_handoffs(root: Path, owner_instance_id: str) -> list[ScanHandoff]:
+    """T038/S02: every handoff at `root/.rush/handoffs/*.json` still in state
+    `'prepared'` whose own `owner_instance_id` matches the given dead owner
+    -- the linkage `reconcile_admissions` needs to find a handoff a dead
+    owner left mid `handoff_send` (prepared, never dispatched). Reuses
+    `_load_handoff`'s exact loading/error handling for each file, so a
+    handoff persisted before `owner_instance_id` existed (`""` on load)
+    degrades to "never matches a real owner" here too, never a crash."""
+    if not owner_instance_id:
+        return []
+    handoffs_dir = root / ".rush" / "handoffs"
+    if not handoffs_dir.is_dir():
+        return []
+    matches = []
+    for path in sorted(handoffs_dir.glob("*.json")):
+        handoff = _load_handoff(root, path.stem)
+        if handoff is None:
+            continue
+        if (
+            handoff.state == "prepared"
+            and handoff.owner_instance_id == owner_instance_id
+        ):
+            matches.append(handoff)
+    return matches
+
+
+def handoff_descriptor_exists_for_operation(root: Path, operation_id: str) -> bool:
+    """T052/S05: whether any handoff descriptor -- in any state, `prepared`
+    or further along -- has ever been persisted for `operation_id`. `False`
+    means `build_handoff` reserved this operation's `artifact_create`/
+    `session_create` effect receipts (either or both) but crashed before
+    ever reaching `_persist_handoff` (its own final statement) -- the exact
+    gap `list_prepared_handoffs` above cannot see, since it only globs
+    already-persisted descriptor files."""
+    if not operation_id:
+        return False
+    handoffs_dir = root / ".rush" / "handoffs"
+    if not handoffs_dir.is_dir():
+        return False
+    for path in sorted(handoffs_dir.glob("*.json")):
+        handoff = _load_handoff(root, path.stem)
+        if handoff is not None and handoff.operation_id == operation_id:
+            return True
+    return False
+
+
 def _persist_handoff(root: Path, handoff: ScanHandoff) -> None:
-    body = (
-        json.dumps(handoff.to_dict(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
-    )
+    # S05: the durable descriptor never carries the raw capability -- only
+    # `to_dict()`'s in-memory, never-persisted return value does (for a
+    # fresh object's one-time CLI/MCP `prepare` response).
+    payload = handoff.to_dict()
+    payload.pop("session_capability", None)
+    body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     atomic_write_bytes(
         root, _HANDOFF_RELATIVE.format(handoff_id=handoff.handoff_id), body
     )
@@ -1766,6 +2123,10 @@ def build_handoff(
     granted_actions: tuple[str, ...] = (),
     data_root: Path | None = None,
     persist: bool = True,
+    attempt_id: str = "",
+    operation_id: str = "",
+    effect_ids: dict[str, str] | None = None,
+    owner_instance_id: str = "",
 ) -> ScanHandoff:
     """`rush_scan_handoff.prepare` (plan §6.1, F35). Empty `finding_ids`
     selects every finding on `run_id`'s aggregate. Preserves the exact
@@ -1788,7 +2149,7 @@ def build_handoff(
         raise ScanInvalidRequestError("build_handoff requires agent_id")
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
-    manifest = load_run_manifest(root, run_id)
+    manifest = load_run_manifest(root, run_id, attempt_id=attempt_id or None)
     if manifest is None:
         raise ScanInvalidRequestError(f"unknown run_id: {run_id}")
 
@@ -1833,7 +2194,21 @@ def build_handoff(
             acceptance_checks=tuple(acceptance_checks),
             created_at=now,
             updated_at=now,
+            operation_id=operation_id,
+            attempt_id=attempt_id,
+            owner_instance_id=owner_instance_id,
         )
+
+    # S04: a crashed handoff_send needs to distinguish "artifact written,
+    # session not yet created" from "both created" -- reusing one coarse
+    # `operation_id` for both receipts would let the second write's
+    # `INSERT OR REPLACE` (`mutation_receipts.operation_id` is its primary
+    # key) silently clobber the first one. Each reserved effect key gets its
+    # own receipt id; an out-of-scope/direct caller with no reservation
+    # falls back to the old shared-`operation_id` behavior.
+    effect_ids = effect_ids or {}
+    artifact_receipt_id = effect_ids.get("artifact_create") or operation_id or None
+    session_receipt_id = effect_ids.get("session_create") or operation_id or None
 
     store = TypedArtifactStore(root)
     artifact = store.write(
@@ -1846,7 +2221,8 @@ def build_handoff(
             source=str(root),
             created_at=time.time(),
             symbol_ref=f"scan_handoff:{handoff_id}",
-        )
+        ),
+        receipt_operation_id=artifact_receipt_id,
     )
 
     try:
@@ -1861,6 +2237,7 @@ def build_handoff(
                 "acceptance_checks": list(acceptance_checks),
                 "granted_actions": list(granted_actions),
             },
+            receipt_operation_id=session_receipt_id,
         )
     except HandoffError as exc:
         raise ScanHandoffAuthError(str(exc)) from exc
@@ -1880,15 +2257,80 @@ def build_handoff(
         source_signature=_source_signature(root),
         source_signature_format=PROVENANCE_FORMAT,
         memory_session_id=session.session_id,
+        # S05: kept in-memory only, for an immediate same-call `dispatch_handoff`
+        # (server.py/tui.py both build then dispatch in one call chain) --
+        # never round-tripped through `to_dict()`/`from_dict()`.
         session_capability=session_capability,
+        session_capability_digest=hashlib.sha256(
+            session_capability.encode("utf-8")
+        ).hexdigest(),
         delivery_nonce=secrets.token_urlsafe(32),
         granted_actions=tuple(granted_actions),
         acceptance_checks=tuple(acceptance_checks),
         created_at=now,
         updated_at=now,
+        operation_id=operation_id,
+        attempt_id=attempt_id,
+        owner_instance_id=owner_instance_id,
     )
     _persist_handoff(root, handoff)
     return handoff
+
+
+def _deliver_handoff(
+    root: Path,
+    handoff: ScanHandoff,
+    delta: dict[str, Any],
+    *,
+    delivery_receipt_id: str,
+    store: TypedArtifactStore,
+) -> ScanHandoff:
+    """S05 bullet 3: the one internal `prepared` -> `delivered` projection
+    shared by `dispatch_handoff` (real capability, initial send) and
+    `recover_prepared_handoff` (no capability, claimed dead-owner recovery)
+    -- `delta` is already fetched/verified by the caller (`receive_handoff`
+    for a real send, `recover_session_delta_without_capability` for a
+    recovery); this function only owns the idempotent receipt and the
+    state projection, identically either way.
+
+    Already-`delivered` (or a later stage) is returned unchanged -- delivery
+    recovery never re-runs delivery for a stage that already advanced past
+    it, and never touches acknowledged/complete state at all.
+
+    The receipt commit is `INSERT OR IGNORE` (never overwritten): an
+    identical prior receipt for `delivery_receipt_id` means this exact
+    delivery already happened, so its stored binding -- not a fresh one --
+    is authoritative. A *different* stored binding for the same id is a
+    genuine conflict (recovery-required), never silently accepted."""
+    if handoff.state != "prepared":
+        return handoff
+    digest = hashlib.sha256(
+        json.dumps(delta.get("changes", []), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    receipt_payload = {
+        "handoff_id": handoff.handoff_id,
+        "operation_id": handoff.operation_id,
+        "run_id": handoff.run_id,
+        "attempt_id": handoff.attempt_id,
+        "memory_session_id": handoff.memory_session_id,
+        "delivery_nonce": handoff.delivery_nonce,
+        "delta_digest": digest,
+    }
+    stored = store.write_handoff_delivery_receipt(
+        delivery_receipt_id,
+        artifact_id=handoff.memory_session_id,
+        payload=receipt_payload,
+    )
+    if stored is not None and stored != receipt_payload:
+        raise ScanHandoffInvalidStateError(
+            f"delivery receipt {delivery_receipt_id!r} already recorded with a "
+            "conflicting binding; this handoff is recovery-required"
+        )
+    updated = replace(
+        handoff, state="delivered", updated_at=datetime.now(UTC).isoformat()
+    )
+    _persist_handoff(root, updated)
+    return updated
 
 
 def dispatch_handoff(
@@ -1897,12 +2339,20 @@ def dispatch_handoff(
     session_capability: str,
     *,
     data_root: Path | None = None,
+    delivery_receipt_id: str = "",
 ) -> ScanHandoff:
     """`rush_scan_handoff.dispatch`. Refuses to apply a handoff whose project
     source changed since `prepare` (`SOURCE_CHANGED`), then reaches
     `delivered` only on an actual Phase63 transport acceptance
     (`rush.memory.handoff.receive_handoff`'s real read-back) -- never a
-    fictional external send API."""
+    fictional external send API.
+
+    S05 bullet 3: `delivery_receipt_id` (S04's reserved
+    `effect_ids['delivery_transition']` for a dashboard-driven send) makes
+    this call idempotent against `_deliver_handoff`'s shared receipt --
+    empty for a legacy CLI/MCP caller with no dashboard reservation, which
+    falls back to this handoff's own `operation_id`, then a
+    handoff-id-derived key, so replay is still possible without one."""
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
     handoff = _load_handoff(root, handoff_id)
@@ -1923,22 +2373,111 @@ def dispatch_handoff(
         raise ScanHandoffSourceChangedError(
             "project source changed since this handoff was prepared; refuses to apply"
         )
-    if not hmac.compare_digest(session_capability, handoff.session_capability):
+    presented_digest = hashlib.sha256(session_capability.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(presented_digest, handoff.session_capability_digest):
         raise ScanHandoffAuthError("invalid session_capability")
 
     store = TypedArtifactStore(root)
     try:
-        receive_handoff(
+        delta = receive_handoff(
             store, session_id=handoff.memory_session_id, capability=session_capability
         )
     except HandoffError as exc:
         raise ScanHandoffAuthError(str(exc)) from exc
 
-    updated = replace(
-        handoff, state="delivered", updated_at=datetime.now(UTC).isoformat()
+    receipt_id = (
+        delivery_receipt_id
+        or handoff.operation_id
+        or f"legacy-delivery:{handoff.handoff_id}"
     )
-    _persist_handoff(root, updated)
-    return updated
+    return _deliver_handoff(
+        root, handoff, delta, delivery_receipt_id=receipt_id, store=store
+    )
+
+
+def _mark_handoff_unrecoverable(
+    store: TypedArtifactStore, handoff: ScanHandoff
+) -> None:
+    """S05 bullet 4: once `recover_prepared_handoff` has confirmed -- past
+    the initial prepared-state/operation-claim gate -- that this handoff can
+    never complete through the normal `dispatch_handoff` path either (the
+    same signature/source checks would fail there too, or the session row
+    itself disagrees), give up cleanly: idempotently revoke its session and
+    mark its artifact orphaned for safe later cleanup. Never called for a
+    wrong-operation claim or an already-resolved (non-`prepared`) handoff,
+    either of which may still belong to a live owner."""
+    store.revoke_handoff_session(handoff.memory_session_id)
+    store.mark_artifact_orphaned(handoff.artifact_id)
+
+
+def recover_prepared_handoff(
+    project: str | Path,
+    handoff_id: str,
+    *,
+    claimed_operation_id: str,
+    artifact_create_receipt_id: str,
+    session_create_receipt_id: str,
+    delivery_receipt_id: str,
+    data_root: Path | None = None,
+) -> ScanHandoff | None:
+    """S05 bullet 2: internal dead-owner recovery for a handoff that
+    crashed between `prepare` and `dispatch`. NOT an HTTP/CLI/MCP entry
+    point -- callable only from inside a process that has already won
+    `claim_dead_owner(...)` for the owner_instance_id that prepared this
+    handoff (the caller's responsibility; this function does not itself
+    claim anything).
+
+    Verifies, in order, before recovering anything: this handoff's
+    persisted state is exactly `"prepared"`; its `operation_id` matches
+    `claimed_operation_id` (the dead owner's own reserved operation, never
+    an unrelated/fabricated one); S04's `artifact_create`/`session_create`
+    effect receipts both exist (proof `build_handoff` actually committed
+    both writes, not a partial crash mid-write); the project's source
+    hasn't changed since prepare (same check `dispatch_handoff` makes); and
+    -- inside `recover_session_delta_without_capability` -- the store's live
+    session row still matches this handoff's own project/audience/
+    allowlist and is neither expired nor revoked. Returns `None`
+    (recovery-required, never auto-resolved) the instant any check fails.
+
+    S05 bullet 4: once past the initial prepared-state/operation-claim gate
+    (where a wrong claim or an already-resolved handoff may still belong to
+    a live owner and is left untouched), every later failure means this
+    handoff could never complete through the normal `dispatch_handoff` path
+    either -- so `_mark_handoff_unrecoverable` idempotently revokes its
+    session and orphans its artifact before returning `None`."""
+    record = resolve_project(project, data_root=data_root)
+    root = Path(record["root"])
+    handoff = _load_handoff(root, handoff_id)
+    if handoff is None or handoff.state != "prepared":
+        return None
+    if not claimed_operation_id or handoff.operation_id != claimed_operation_id:
+        return None
+    store = TypedArtifactStore(root)
+    if store.get_receipt(artifact_create_receipt_id) is None:
+        _mark_handoff_unrecoverable(store, handoff)
+        return None
+    if store.get_receipt(session_create_receipt_id) is None:
+        _mark_handoff_unrecoverable(store, handoff)
+        return None
+    if not _signature_comparable(handoff.source_signature_format):
+        _mark_handoff_unrecoverable(store, handoff)
+        return None
+    if _source_signature(root) != handoff.source_signature:
+        _mark_handoff_unrecoverable(store, handoff)
+        return None
+    delta = recover_session_delta_without_capability(
+        store,
+        handoff.memory_session_id,
+        expected_root=str(root),
+        expected_audience=handoff.agent_id,
+        expected_session_allowlist=[str(root)],
+    )
+    if delta is None:
+        _mark_handoff_unrecoverable(store, handoff)
+        return None
+    return _deliver_handoff(
+        root, handoff, delta, delivery_receipt_id=delivery_receipt_id, store=store
+    )
 
 
 def status_handoff(
@@ -2120,6 +2659,7 @@ def rescan_project_run(
     new_run_id: str | None = None,
     attempt_id: str | None = None,
     expected_attempt_id: str | None = None,
+    owner_instance_id: str | None = None,
 ) -> dict[str, Any]:
     """`rush_scan.rescan(project,run_id)` (plan §6.1): re-executes `run_id`'s
     own staged plan against the project's *current* source and compares the
@@ -2185,6 +2725,7 @@ def rescan_project_run(
             permissions=resolved_permissions,
             config=config,
             already_completed={},
+            owner_instance_id=owner_instance_id,
         )
 
     comparison = compare_runs(
@@ -2221,10 +2762,12 @@ __all__ = [
     "dispatch_handoff",
     "execute_scan",
     "latest_attempt_id",
+    "list_prepared_handoffs",
     "load_run_manifest",
     "load_scan_events",
     "load_scan_plan",
     "plan_scan",
+    "recover_prepared_handoff",
     "rescan_project_run",
     "resume_scan_run",
     "status_handoff",

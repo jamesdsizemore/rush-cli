@@ -13,7 +13,7 @@ import secrets
 import sqlite3
 import time
 import urllib.parse
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -352,7 +352,8 @@ CREATE TABLE IF NOT EXISTS memory_handoff_sessions (
     session_allowlist TEXT NOT NULL,
     constraints TEXT NOT NULL,
     created_at REAL NOT NULL,
-    expires_at REAL NOT NULL
+    expires_at REAL NOT NULL,
+    revoked_at REAL
 );
 CREATE TABLE IF NOT EXISTS memory_handoff_receipts (
     session_id TEXT NOT NULL,
@@ -425,7 +426,8 @@ CREATE TABLE IF NOT EXISTS memory_artifacts (
     artifact_version INTEGER NOT NULL DEFAULT 1,
     archived_at REAL,
     owner_scope_kind TEXT,
-    owner_scope_id TEXT
+    owner_scope_id TEXT,
+    orphaned_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_memory_trust ON memory_artifacts(trust_tier);
@@ -635,6 +637,7 @@ class TypedArtifactStore:
             self._migrate_changes_subject_column(conn)
             self._migrate_archived_column(conn)
             self._migrate_owner_scope_columns(conn)
+            self._migrate_handoff_recovery_columns(conn)
             self._ensure_cursor_key(conn)
             if not candidate_fts_existed:
                 self._backfill_candidate_fts(conn)
@@ -929,6 +932,7 @@ class TypedArtifactStore:
         owner_scope: OwnerScope | None = None,
         apply: bool = False,
         receipt_operation_id: str | None = None,
+        receipt_operation_ids: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Batch memory deletion (P65-07.3, plan §6.4 transaction/outbox algorithm).
 
@@ -947,6 +951,16 @@ class TypedArtifactStore:
         `memory_relations` reference count, and -- for `family="handoff"` ids only -- the
         Rush-owned on-disk packet path an `artifact_write`-granted caller may additionally
         remove; every other family has no on-disk blob, so `blob_path` is `None`.
+
+        `receipt_operation_ids` (S04 residual fix): an optional `artifact_id -> reserved
+        receipt id` mapping. When given, apply writes one receipt per target (its own
+        `artifact_id` column set, matching `edit()`/`archive()`'s per-artifact receipts)
+        instead of the single whole-batch receipt `receipt_operation_id` writes -- the
+        batch's atomicity (validate-then-write-all-or-nothing, above) is unaffected,
+        since every per-target receipt still commits inside this same transaction. A
+        target absent from the mapping simply gets no receipt, same as any other
+        harmless-missing-reservation case elsewhere in this module. Takes precedence
+        over `receipt_operation_id` when both are given.
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -1013,7 +1027,20 @@ class TypedArtifactStore:
                     "DELETE FROM memory_embeddings WHERE artifact_id = ?",
                     (artifact_id,),
                 )
-            if receipt_operation_id:
+            if receipt_operation_ids:
+                affected_by_id = {item["id"]: item for item in affected}
+                for artifact_id, target_receipt_id in receipt_operation_ids.items():
+                    if not target_receipt_id or artifact_id not in rows:
+                        continue
+                    self._write_receipt(
+                        conn,
+                        target_receipt_id,
+                        artifact_id,
+                        "delete",
+                        rows[artifact_id]["artifact_version"],
+                        {"affected": [affected_by_id[artifact_id]]},
+                    )
+            elif receipt_operation_id:
                 self._write_receipt(
                     conn,
                     receipt_operation_id,
@@ -1317,6 +1344,29 @@ class TypedArtifactStore:
         }
         if "subject" not in existing:
             conn.execute("ALTER TABLE memory_changes ADD COLUMN subject TEXT")
+
+    def _migrate_handoff_recovery_columns(self, conn: sqlite3.Connection) -> None:
+        """S05 bullet 4: additive migration (mirrors `_migrate_expiry_columns`'s
+        pattern) -- a pre-S05 DB predates both columns. `memory_handoff_sessions
+        .revoked_at` lets dead-owner recovery reject a session it has
+        determined is unrecoverable (S05 bullet 4's "committed session
+        receipt with no matching prepared descriptor" case) instead of
+        leaving it silently reusable. `memory_artifacts.orphaned_at` marks a
+        recovery-created artifact safe for later cleanup without deleting it
+        outright (recovery never destroys data, only flags it)."""
+        session_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(memory_handoff_sessions)")
+        }
+        if "revoked_at" not in session_columns:
+            conn.execute(
+                "ALTER TABLE memory_handoff_sessions ADD COLUMN revoked_at REAL"
+            )
+        artifact_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+        }
+        if "orphaned_at" not in artifact_columns:
+            conn.execute("ALTER TABLE memory_artifacts ADD COLUMN orphaned_at REAL")
 
     def _migrate_owner_scope_columns(self, conn: sqlite3.Connection) -> None:
         """Additive migration (P69-07 ownership contract): a pre-P69-07 DB predates
@@ -1878,7 +1928,73 @@ class TypedArtifactStore:
             "constraints": json.loads(row["constraints"]),
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],
+            "revoked_at": row["revoked_at"],
         }
+
+    def revoke_handoff_session(
+        self, session_id: str, *, now: float | None = None
+    ) -> None:
+        """S05 bullet 4: idempotently mark `session_id` revoked -- an
+        `UPDATE ... WHERE revoked_at IS NULL` so a second call (two
+        recovery attempts racing the same dead owner, or a retry) never
+        overwrites the first revocation's timestamp. Silently a no-op for
+        an unknown session_id."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE memory_handoff_sessions SET revoked_at = ? "
+                "WHERE session_id = ? AND revoked_at IS NULL",
+                (now if now is not None else time.time(), session_id),
+            )
+            conn.commit()
+
+    def mark_artifact_orphaned(
+        self, artifact_id: str, *, now: float | None = None
+    ) -> None:
+        """S05 bullet 4: idempotently flag a recovery-created artifact as
+        orphaned (safe for later cleanup) without deleting it -- recovery
+        never destroys data, only marks it. Silently a no-op for an
+        unknown/already-orphaned artifact_id."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET orphaned_at = ? "
+                "WHERE id = ? AND orphaned_at IS NULL",
+                (now if now is not None else time.time(), artifact_id),
+            )
+            conn.commit()
+
+    def write_handoff_delivery_receipt(
+        self, receipt_id: str, *, artifact_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """S05 bullet 3: idempotent delivery-transition receipt shared by a
+        handoff's initial send and its claimed-recovery delivery path.
+        `INSERT OR IGNORE` -- unlike `_write_receipt`'s `INSERT OR REPLACE`
+        used elsewhere, a delivery outcome already committed under this
+        exact `receipt_id` is never overwritten by a second call (initial
+        send racing its own crash-recovery retry). Returns the row that is
+        now authoritative for `receipt_id`: the payload just given on a
+        fresh insert, or the pre-existing stored payload on a replay --
+        callers compare the two to detect a conflicting rebind rather than
+        trusting their own call succeeded."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO mutation_receipts "
+                "(operation_id, artifact_id, kind, revision, payload, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    receipt_id,
+                    artifact_id,
+                    "delivery_transition",
+                    None,
+                    json.dumps(payload),
+                    time.time(),
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT payload FROM mutation_receipts WHERE operation_id = ?",
+                (receipt_id,),
+            ).fetchone()
+        return json.loads(row["payload"]) if row is not None else None
 
     def get_handoff_receipts(self, session_id: str) -> dict[str, int]:
         """MC11 §9.0: every artifact's currently-acknowledged version for `session_id`. An
@@ -1994,6 +2110,7 @@ class TypedArtifactStore:
         user_stated: bool,
         candidate_sources: list[str] | None = None,
         expected_version: int | None = None,
+        owner_scope: OwnerScope | None = None,
         receipt_operation_id: str | None = None,
     ) -> tuple[MemoryArtifact, PromotionResult]:
         """Evaluate persisted bytes and atomically persist their signed promotion.
@@ -2002,9 +2119,22 @@ class TypedArtifactStore:
         artifact's own creation (P69-01.2f) -- a receipt is only written here when
         `decision.promoted` is actually True, so recovery can tell "candidate created"
         apart from "candidate created *and* promoted" via two independently-addressable
-        receipts rather than one conflated id."""
+        receipts rather than one conflated id.
+
+        S08 bullet 3: `owner_scope` is checked here under the same
+        compare-and-swap contract `edit()`/`archive()`/`delete_batch()`
+        already enforce (P69-07) -- a wrong owner rejects before any write,
+        same as a stale `expected_version`. Previously absent: promotion
+        could rewrite/upgrade any artifact's trust tier regardless of a
+        declared owner_scope mismatch."""
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(artifact_id)
+            self._require_owner(row, artifact_id, owner_scope)
             artifact, decision = promote_stored_artifact(
                 conn,
                 artifact_id,

@@ -39,6 +39,7 @@ const {
 
 let state = {
   csrfToken: null,
+  ownerScopeId: null,
   selectedProjectId: null,
   generation: 0,
   theme: null,
@@ -111,6 +112,9 @@ export async function restoreSession() {
   const { ok, envelope } = await fetchJson("/api/session", { method: "GET" });
   if (ok && envelope) {
     state.csrfToken = envelope.csrf_token;
+    // U10: the session's non-secret owner_scope_id, so a `session`-kind
+    // memory owner selection never has to ask for a cookie/CSRF secret.
+    state.ownerScopeId = envelope.owner_scope_id || null;
   }
   return ok;
 }
@@ -238,11 +242,34 @@ function startEventPolling(projectId, generation, { immediate = false } = {}) {
     );
     if (!isCurrentGeneration(generation)) return;
     if (resp.ok && resp.envelope) {
-      state.lastEventSequence = resp.envelope.sequence || after;
       const events = (resp.envelope.data && resp.envelope.data.events) || [];
       if (events.length > 0) {
         await loadMap(projectId, generation, state.mapFilters);
-        if (isCurrentGeneration(generation) && events.some((e) => e.status === "terminal")) {
+        // T036: `loadMap` (above) also writes `state.lastEventSequence`,
+        // but from `envelope.sequence` -- the project record's own mutation
+        // counter (verified this session -- identical, low, and unchanging
+        // across an entire real scan's worth of ticks), never the events
+        // log's own per-event `sequence`. Left unfixed there (other callers
+        // of `loadMap` rely on that field for their own purposes), so this
+        // assignment must run after `loadMap`'s, not before, or `loadMap`
+        // silently clobbers it back to the stale watermark every tick --
+        // confirmed live: 400+ identical `after=1` requests across one real
+        // scan before this fix, and still stuck after only reordering the
+        // terminal-status check without this reorder too.
+        state.lastEventSequence = events[events.length - 1].sequence || after;
+        // T036: a real scan's terminal ledger event is `run_<RunState>`
+        // (`project_run.py`'s own `f"run_{run_state}"`, verified this
+        // session against a live scan) -- `completed`/`incomplete`/`failed`/
+        // `cancelled` are its only terminal states. `"terminal"` alone (the
+        // prior check) never matches any event a real server emits; kept
+        // alongside the real statuses rather than replaced.
+        const isTerminalEvent = (e) =>
+          e.status === "terminal" ||
+          e.status === "run_completed" ||
+          e.status === "run_incomplete" ||
+          e.status === "run_failed" ||
+          e.status === "run_cancelled";
+        if (isCurrentGeneration(generation) && events.some(isTerminalEvent)) {
           pulseEvidence(`project:${projectId}`);
         }
       }
@@ -325,7 +352,13 @@ export function selectProject(projectId, filters = {}) {
  * for polling `GET .../operations/{operation_id}` until it reaches a
  * terminal status; this is surfaced on the returned result as
  * `operationId`. */
-export async function dispatchAction(operation, args = {}, grants = {}, expected = {}) {
+export async function dispatchAction(
+  operation,
+  args = {},
+  grants = {},
+  expected = {},
+  options = {}
+) {
   if (!state.selectedProjectId) {
     throw new Error("no project selected");
   }
@@ -345,7 +378,10 @@ export async function dispatchAction(operation, args = {}, grants = {}, expected
     `/api/projects/${encodeURIComponent(state.selectedProjectId)}/actions`,
     { method: "POST", body }
   );
-  if (result.status === 409) {
+  // U06: handoff_send opts out -- the generic reload discards the
+  // preserved Preview/Send review state a 409 there is supposed to keep
+  // visible (finding's own "bypass generic automatic reload" requirement).
+  if (result.status === 409 && options.reloadOn409 !== false) {
     renderError("This changed since you last loaded it. Reloading current data.");
     selectProject(state.selectedProjectId, state.mapFilters);
   }
@@ -469,43 +505,21 @@ const ACTION_FORMS = [
     grants: ["cache_write", "artifact_write"],
     fields: [{ name: "run_id" }],
   },
-  {
-    section: "scans",
-    operation: "handoff_preview",
-    label: "Handoff: Preview",
-    grants: [],
-    fields: [
-      { name: "run_id" },
-      { name: "agent_id" },
-      { name: "finding_ids", csv: true },
-      { name: "max_tokens", number: true },
-      { name: "max_bytes", number: true },
-    ],
-  },
-  {
-    section: "scans",
-    operation: "handoff_send",
-    label: "Handoff: Send",
-    grants: ["cache_write", "artifact_write"],
-    fields: [
-      { name: "run_id" },
-      { name: "agent_id" },
-      { name: "finding_ids", csv: true },
-      { name: "max_tokens", number: true },
-      { name: "max_bytes", number: true },
-      { name: "handoff_id" },
-    ],
-  },
+  // handoff_preview/handoff_send (U06) and artifact_export (U05) are built
+  // by their own dedicated controls below -- not generic `buildActionForm`
+  // forms -- since both need a stateful Preview/Send (resp. paged-download)
+  // flow a single stateless submit can't express.
   {
     section: "memory",
     operation: "memory_propose",
     label: "Memory: Write",
     grants: ["cache_write"],
+    ownerScope: true,
     fields: [
       { name: "subject" },
-      { name: "content", multiline: true, json: true },
+      { name: "content", multiline: true, jsonObject: true },
       { name: "source" },
-      { name: "source_kind" },
+      { name: "source_kind", select: ["local_tool", "cross_tool_handoff", "human_derived"] },
       { name: "symbol_ref" },
     ],
   },
@@ -514,11 +528,12 @@ const ACTION_FORMS = [
     operation: "memory_promote",
     label: "Memory: Promote",
     grants: ["cache_write"],
+    ownerScope: true,
     fields: [
       { name: "subject" },
-      { name: "content", multiline: true, json: true },
+      { name: "content", multiline: true, jsonObject: true },
       { name: "source" },
-      { name: "source_kind" },
+      { name: "source_kind", select: ["local_tool", "cross_tool_handoff", "human_derived"] },
       { name: "symbol_ref" },
       { name: "candidate_sources", csv: true },
     ],
@@ -529,11 +544,12 @@ const ACTION_FORMS = [
     label: "Memory: Edit",
     applyGated: true,
     grants: ["cache_write"],
+    ownerScope: true,
     fields: [
       { name: "scope" },
       { name: "id" },
       { name: "expected_version", number: true },
-      { name: "content", multiline: true, json: true },
+      { name: "content", multiline: true, jsonObject: true },
     ],
   },
   {
@@ -542,6 +558,7 @@ const ACTION_FORMS = [
     label: "Memory: Archive",
     applyGated: true,
     grants: ["cache_write"],
+    ownerScope: true,
     fields: [
       { name: "scope" },
       { name: "id" },
@@ -555,18 +572,12 @@ const ACTION_FORMS = [
     label: "Memory: Delete",
     applyGated: true,
     grants: ["cache_write"],
+    ownerScope: true,
     fields: [
       { name: "scope" },
       { name: "artifact_ids", csv: true },
       { name: "expected_revisions", multiline: true, json: true },
     ],
-  },
-  {
-    section: "artifacts",
-    operation: "artifact_export",
-    label: "Export Artifact",
-    grants: ["download"],
-    fields: [{ name: "artifact_id" }],
   },
 ];
 
@@ -575,6 +586,57 @@ function labelWrap(text, inputEl) {
   label.appendChild(document.createTextNode(text + " "));
   label.appendChild(inputEl);
   return label;
+}
+
+const _OWNER_SCOPE_KINDS = ["project", "user", "agent", "session"];
+
+/** U10: the one owner-kind/id control shared by Write/Promote/Edit/
+ * Archive/Delete (`buildActionForm`'s `spec.ownerScope`). `project` and
+ * `session` are auto-derived (the selected project's own id, and the
+ * session's non-secret `owner_scope_id`) and read-only -- never a
+ * free-typed value a caller could get wrong; `user`/`agent` are opaque
+ * caller-supplied labels this phase authenticates nothing about, so they
+ * stay editable. Exact enforcement (foreign project, wrong session,
+ * missing id) remains the server/store's job (M08); this control only
+ * improves what a caller can express. */
+function buildOwnerScopeControl(form) {
+  const kindSelect = document.createElement("select");
+  kindSelect.setAttribute("data-role", "owner-kind");
+  for (const kind of _OWNER_SCOPE_KINDS) {
+    const option = document.createElement("option");
+    option.value = kind;
+    option.textContent = kind;
+    kindSelect.appendChild(option);
+  }
+  kindSelect.value = _OWNER_SCOPE_KINDS[0];
+  const idInput = document.createElement("input");
+  idInput.type = "text";
+  idInput.setAttribute("data-role", "owner-id");
+  idInput.setAttribute("name", "owner_id");
+
+  function applyKind() {
+    const kind = kindSelect.value;
+    if (kind === "project") {
+      idInput.value = state.selectedProjectId || "";
+      idInput.readOnly = true;
+    } else if (kind === "session") {
+      idInput.value = state.ownerScopeId || "";
+      idInput.readOnly = true;
+    } else {
+      idInput.readOnly = false;
+    }
+  }
+  kindSelect.addEventListener("change", applyKind);
+  applyKind();
+
+  form.appendChild(labelWrap("owner kind", kindSelect));
+  form.appendChild(labelWrap("owner id", idInput));
+
+  return {
+    collect() {
+      return { kind: kindSelect.value, id: idInput.value };
+    },
+  };
 }
 
 /** Poll a 202 action's `operation_id` to a terminal outcome (`terminal_at`
@@ -612,14 +674,32 @@ function buildActionForm(container, spec) {
 
   const fieldEls = {};
   for (const field of spec.fields) {
-    const input = document.createElement(field.multiline ? "textarea" : "input");
-    if (field.checkbox) {
-      input.type = "checkbox";
-    } else if (!field.multiline) {
-      input.type = "text";
+    let input;
+    if (field.select) {
+      input = document.createElement("select");
+      for (const optionValue of field.select) {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        option.textContent = optionValue;
+        input.appendChild(option);
+      }
+      // Explicit, rather than relying on a `<select>`'s own first-option
+      // default -- so `source_kind` is always one of these three exact
+      // values from the moment the form exists, before any change event.
+      input.value = field.select[0];
+    } else {
+      input = document.createElement(field.multiline ? "textarea" : "input");
+      if (field.checkbox) {
+        input.type = "checkbox";
+      } else if (!field.multiline) {
+        input.type = "text";
+      }
     }
     input.setAttribute("name", field.name);
     input.setAttribute("data-field", field.name);
+    // U11: a visible, illustrative example -- never a universal subject
+    // schema -- for the fields that now require a non-array JSON object.
+    if (field.jsonObject) input.setAttribute("placeholder", '{"text":"..."}');
     fieldEls[field.name] = { el: input, field };
     form.appendChild(labelWrap(field.name, input));
   }
@@ -633,9 +713,18 @@ function buildActionForm(container, spec) {
     form.appendChild(labelWrap("grant: " + grant, checkbox));
   }
 
+  // U10: one shared owner-kind/id control per mutation form, sending
+  // `arguments.owner_scope` separately from the subject/version fields
+  // above -- never invented by any one operation's own field list.
+  const ownerScopeControl = spec.ownerScope ? buildOwnerScopeControl(form) : null;
+
   const result = document.createElement("pre");
   result.setAttribute("data-role", "action-result");
 
+  /** Returns `{ args, error }` -- `error` set (and `args` null) means a
+   * declared-JSON-object field (U11: `content`) failed to parse or parsed
+   * to something other than a plain object; the caller must send no
+   * request at all rather than fall back to a raw string. */
   function collectArgs() {
     const args = {};
     for (const { el, field } of Object.values(fieldEls)) {
@@ -644,12 +733,30 @@ function buildActionForm(container, spec) {
         continue;
       }
       const raw = el.value;
+      if (field.select) {
+        args[field.name] = raw;
+        continue;
+      }
       if (raw === "") continue;
       if (field.csv) {
         args[field.name] = raw
           .split(",")
           .map((v) => v.trim())
           .filter(Boolean);
+      } else if (field.jsonObject) {
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (_err) {
+          return { args: null, error: `${field.name} must be valid JSON, e.g. {"text":"..."}` };
+        }
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          return {
+            args: null,
+            error: `${field.name} must be a JSON object, e.g. {"text":"..."}`,
+          };
+        }
+        args[field.name] = parsed;
       } else if (field.json) {
         try {
           args[field.name] = JSON.parse(raw);
@@ -662,7 +769,7 @@ function buildActionForm(container, spec) {
         args[field.name] = raw;
       }
     }
-    return args;
+    return { args, error: null };
   }
 
   function collectGrants() {
@@ -674,8 +781,13 @@ function buildActionForm(container, spec) {
   }
 
   async function submit(applyValue) {
-    const args = collectArgs();
+    const { args, error } = collectArgs();
+    if (error) {
+      result.textContent = error;
+      return;
+    }
     if (spec.applyGated) args.apply = applyValue;
+    if (ownerScopeControl) args.owner_scope = ownerScopeControl.collect();
     const expected = state.sourceIdentity
       ? { source_identity: state.sourceIdentity }
       : {};
@@ -765,6 +877,311 @@ function buildAgentConnectControl(container) {
   container.appendChild(form);
 }
 
+/** U06: `handoff_preview` + `handoff_send` as one reviewed Preview-then-Send
+ * flow, replacing the two independent stateless forms the generic
+ * `buildActionForm` builder previously gave them. Send is disabled until a
+ * fresh Preview succeeds; it always resubmits exactly the inputs and
+ * `handoff_id` that Preview stored -- never the form's current (possibly
+ * since-edited) field values and never an arbitrary client-built envelope.
+ * A 409 (S06 hash mismatch: source/attempt changed since Preview) marks the
+ * stored preview stale, disables Send, but preserves the typed field values
+ * so a caller can inspect and deliberately re-Preview -- `dispatchAction`'s
+ * generic reload-current-project-on-409 behavior is skipped here
+ * (`reloadOn409: false`) since it would discard that preserved state. */
+function buildHandoffControl(container) {
+  const form = document.createElement("form");
+  form.setAttribute("data-role", "action-form");
+  form.setAttribute("data-operation", "handoff_preview");
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Handoff: Preview & Send";
+  form.appendChild(heading);
+
+  const fieldNames = ["run_id", "attempt_id", "agent_id", "finding_ids", "max_tokens", "max_bytes"];
+  const fieldEls = {};
+  for (const name of fieldNames) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("name", name);
+    input.setAttribute("data-field", name);
+    fieldEls[name] = input;
+    form.appendChild(labelWrap(name, input));
+  }
+
+  const grantEls = {};
+  for (const grant of ["cache_write", "artifact_write"]) {
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.setAttribute("data-grant", grant);
+    grantEls[grant] = checkbox;
+    form.appendChild(labelWrap("grant: " + grant, checkbox));
+  }
+
+  const previewBtn = document.createElement("button");
+  previewBtn.type = "button";
+  previewBtn.setAttribute("data-role", "handoff-preview");
+  previewBtn.textContent = "Preview";
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.setAttribute("data-role", "handoff-send");
+  sendBtn.textContent = "Send";
+  sendBtn.disabled = true;
+  const result = document.createElement("pre");
+  result.setAttribute("data-role", "action-result");
+
+  form.appendChild(previewBtn);
+  form.appendChild(sendBtn);
+  form.appendChild(result);
+
+  let storedPreview = null; // { inputs, handoffId, expected }
+
+  function currentInputs() {
+    return {
+      run_id: fieldEls.run_id.value,
+      attempt_id: fieldEls.attempt_id.value,
+      agent_id: fieldEls.agent_id.value,
+      finding_ids: fieldEls.finding_ids.value
+        ? fieldEls.finding_ids.value.split(",").map((v) => v.trim()).filter(Boolean)
+        : [],
+      max_tokens: fieldEls.max_tokens.value ? Number(fieldEls.max_tokens.value) : undefined,
+      max_bytes: fieldEls.max_bytes.value ? Number(fieldEls.max_bytes.value) : undefined,
+    };
+  }
+
+  function markStale(message) {
+    storedPreview = null;
+    sendBtn.disabled = true;
+    result.textContent = message;
+  }
+
+  previewBtn.addEventListener("click", async () => {
+    const inputs = currentInputs();
+    if (!inputs.run_id || !inputs.attempt_id) {
+      result.textContent = "run_id and attempt_id are required (S06)";
+      return;
+    }
+    const expected = state.sourceIdentity ? { source_identity: state.sourceIdentity } : {};
+    const outcome = await dispatchAction("handoff_preview", inputs, {}, expected);
+    if (!outcome.ok || !outcome.envelope) {
+      markStale(JSON.stringify(outcome.envelope, null, 2));
+      return;
+    }
+    const data = outcome.envelope.data || {};
+    storedPreview = { inputs, handoffId: data.handoff_id, expected };
+    sendBtn.disabled = false;
+    result.textContent = JSON.stringify(data, null, 2);
+  });
+
+  sendBtn.addEventListener("click", async () => {
+    if (!storedPreview) return;
+    const sendArgs = { ...storedPreview.inputs, handoff_id: storedPreview.handoffId };
+    const grants = {
+      cache_write: grantEls.cache_write.checked,
+      artifact_write: grantEls.artifact_write.checked,
+    };
+    const outcome = await dispatchAction(
+      "handoff_send",
+      sendArgs,
+      grants,
+      storedPreview.expected,
+      { reloadOn409: false }
+    );
+    if (outcome.status === 409) {
+      markStale("Handoff preview is stale -- Preview again before sending.");
+      return;
+    }
+    if (outcome.status === 202 && outcome.operationId) {
+      result.textContent = "pending: " + outcome.operationId;
+      await pollOperation(outcome.operationId, result);
+    } else {
+      result.textContent = JSON.stringify(outcome.envelope, null, 2);
+    }
+    storedPreview = null;
+    sendBtn.disabled = true;
+  });
+
+  container.appendChild(form);
+}
+
+function base64ToBytes(base64) {
+  if (typeof atob === "function") {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  return Uint8Array.from(Buffer.from(base64, "base64")); // ponytail: Node-only fallback for this module's non-browser test harnesses.
+}
+
+/** U05: follow `GET .../artifacts/{ref}?path=...&offset=...` (M12's
+ * byte-page contract) via its own `data.content.next_offset` until null,
+ * rejecting any page whose reference/path/offset/size/digest doesn't match
+ * what every prior page in this same download already established --
+ * never assembling a partial artifact as if it were complete. */
+async function downloadArtifactContentPages(projectId, artifactRef, path, { signal, onProgress } = {}) {
+  let offset = 0;
+  let totalSize = null;
+  let sha256 = null;
+  let mediaType = null;
+  const chunks = [];
+  for (;;) {
+    const params = new URLSearchParams({ path, offset: String(offset) });
+    // T036: the server's route matcher reads `urlparse(self.path).path`
+    // directly, with no percent-decoding of the URL path -- so a
+    // `%3A`-encoded colon in `artifactRef` (every real scan_output/handoff/
+    // memory ref is `kind:id:...`) never matches `expand_artifact_reference`
+    // and 404s. Encode normally, then restore literal colons, which are
+    // legal, unencoded, in a URL path segment (RFC 3986) and match what the
+    // server actually parses.
+    const encodedArtifactRef = encodeURIComponent(artifactRef).replace(/%3A/g, ":");
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/artifacts/${encodedArtifactRef}?${params.toString()}`,
+      { method: "GET", credentials: "same-origin", signal }
+    );
+    const envelope = await response.json().catch(() => null);
+    if (!response.ok || !envelope) throw new Error("artifact page fetch failed");
+    const data = envelope.data || {};
+    if (data.entry && data.entry.artifact_ref && data.entry.artifact_ref !== artifactRef) {
+      throw new Error("artifact reference mismatch mid-download");
+    }
+    const content = data.content;
+    if (!content || content.content_base64 == null) {
+      throw new Error((content && content.error) || "malformed artifact page");
+    }
+    if (content.path !== path || content.offset !== offset) {
+      throw new Error("truncated or inconsistent artifact page sequence");
+    }
+    if (totalSize === null) totalSize = content.size;
+    else if (content.size !== totalSize) throw new Error("artifact size changed mid-download");
+    if (sha256 === null) sha256 = content.sha256;
+    else if (content.sha256 !== sha256) throw new Error("artifact digest changed mid-download");
+    if (mediaType === null) mediaType = content.media_type;
+    const bytes = base64ToBytes(content.content_base64);
+    chunks.push(bytes);
+    offset += bytes.length;
+    if (onProgress) onProgress(offset, totalSize);
+    if (content.next_offset === null || content.next_offset === undefined) break;
+    if (content.next_offset !== offset) {
+      throw new Error("truncated or inconsistent artifact page sequence");
+    }
+  }
+  return { chunks, totalSize, sha256, mediaType };
+}
+
+/** U05: the visible artifact-download control. `artifact_export`
+ * (grant-gated) resolves the caller's chosen reference/path; the actual
+ * bytes then come from the paged content GET above, reassembled into a
+ * `Blob` and offered as a real download link -- `artifact_export` itself
+ * only ever returns metadata (M12). Cancellable via `AbortController`;
+ * cancelling or a rejected page never produces a downloaded file. */
+function buildArtifactExportControl(container) {
+  const form = document.createElement("form");
+  form.setAttribute("data-role", "action-form");
+  form.setAttribute("data-operation", "artifact_export");
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Export Artifact";
+  form.appendChild(heading);
+
+  const idInput = document.createElement("input");
+  idInput.type = "text";
+  idInput.setAttribute("name", "artifact_id");
+  idInput.setAttribute("data-field", "artifact_id");
+  form.appendChild(labelWrap("artifact_id", idInput));
+
+  const grantBox = document.createElement("input");
+  grantBox.type = "checkbox";
+  grantBox.setAttribute("data-grant", "download");
+  form.appendChild(labelWrap("grant: download", grantBox));
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "submit";
+  submitBtn.textContent = "Export Artifact";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.setAttribute("data-role", "artifact-export-cancel");
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.hidden = true;
+  const result = document.createElement("pre");
+  result.setAttribute("data-role", "action-result");
+
+  form.appendChild(submitBtn);
+  form.appendChild(cancelBtn);
+  form.appendChild(result);
+
+  let activeController = null;
+
+  cancelBtn.addEventListener("click", () => {
+    if (activeController) activeController.abort();
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const artifactId = idInput.value;
+    if (!artifactId) {
+      result.textContent = "artifact_id is required";
+      return;
+    }
+    const expected = state.sourceIdentity ? { source_identity: state.sourceIdentity } : {};
+    const exportOutcome = await dispatchAction(
+      "artifact_export",
+      { artifact_id: artifactId },
+      { download: grantBox.checked },
+      expected
+    );
+    if (!exportOutcome.ok || !exportOutcome.envelope) {
+      result.textContent = JSON.stringify(exportOutcome.envelope, null, 2);
+      return;
+    }
+    const entry = (exportOutcome.envelope.data || {}).entry || {};
+    const artifactRef = entry.artifact_ref;
+    const paths = entry.paths || [];
+    if (!artifactRef || paths.length === 0) {
+      result.textContent = "artifact has no downloadable content";
+      return;
+    }
+    const path = paths[0];
+    activeController = new AbortController();
+    cancelBtn.hidden = false;
+    result.textContent = "downloading...";
+    try {
+      const { chunks, totalSize, mediaType } = await downloadArtifactContentPages(
+        state.selectedProjectId,
+        artifactRef,
+        path,
+        {
+          signal: activeController.signal,
+          onProgress: (received, total) => {
+            result.textContent = `downloading ${received}/${total ?? "?"} bytes`;
+          },
+        }
+      );
+      const blob = new Blob(chunks, { type: mediaType || "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const filename = path.split("/").pop() || artifactRef;
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.setAttribute("data-role", "artifact-download-link");
+      form.appendChild(anchor);
+      anchor.click();
+      URL.revokeObjectURL(url);
+      result.textContent = `downloaded ${blob.size} of ${totalSize ?? blob.size} bytes`;
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        result.textContent = "download cancelled";
+      } else {
+        result.textContent = "download failed: " + (err && err.message ? err.message : String(err));
+      }
+    } finally {
+      activeController = null;
+      cancelBtn.hidden = true;
+    }
+  });
+
+  container.appendChild(form);
+}
+
 /** Real content-renderer shared by all seven non-map sections (Overview/
  * Scans/Memory/Tokens/Git/Artifacts/Setup, plan row 4): displays the
  * section's actual fetched data (never a stub), then builds every
@@ -787,6 +1204,7 @@ function renderOverviewSection(container, data) {
 }
 function renderScansSection(container, data) {
   renderSectionWithActions(container, data, "scans");
+  buildHandoffControl(container);
 }
 function renderMemorySection(container, data) {
   renderSectionWithActions(container, data, "memory");
@@ -799,6 +1217,7 @@ function renderGitSection(container, data) {
 }
 function renderArtifactsSection(container, data) {
   renderSectionWithActions(container, data, "artifacts");
+  buildArtifactExportControl(container);
 }
 function renderSetupSection(container, data) {
   renderSectionWithActions(container, data, "setup");
@@ -1073,6 +1492,7 @@ function wireTopbar() {
 export async function startApplication(rootEl, options = {}) {
   state = {
     csrfToken: null,
+    ownerScopeId: null,
     selectedProjectId: null,
     generation: 0,
     theme: null,

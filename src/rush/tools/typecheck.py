@@ -59,6 +59,7 @@ class TypecheckTool(ToolFn):
                         path,
                         [str(target) for target in targets],
                         tool_name=self.name,
+                        consumed_paths=[str(target) for target in targets],
                     )
                 )
         result = aggregate_results(self.name, results)

@@ -78,14 +78,26 @@ class FormatTool(ToolFn):
 
         if ruff_files:
             argv = ["format", "--check", *[str(p) for p in ruff_files]]
-            r = run_engine(ENGINES["ruff"], path, argv, tool_name="format")
+            r = run_engine(
+                ENGINES["ruff"],
+                path,
+                argv,
+                tool_name="format",
+                consumed_paths=[str(p) for p in ruff_files],
+            )
             findings_all.extend(r.get("findings", []))
             engines_used.append("ruff")
             last_status = combine_status(last_status, r.get("status", "ok"))
 
         if prettier_files:
             argv = ["--check", *[str(p) for p in prettier_files]]
-            r = run_engine(ENGINES["prettier"], path, argv, tool_name="format")
+            r = run_engine(
+                ENGINES["prettier"],
+                path,
+                argv,
+                tool_name="format",
+                consumed_paths=[str(p) for p in prettier_files],
+            )
             findings_all.extend(r.get("findings", []))
             engines_used.append("prettier")
             last_status = combine_status(last_status, r.get("status", "ok"))

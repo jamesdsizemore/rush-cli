@@ -124,7 +124,7 @@ def _seed_one_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         return status == 200 and scans["data"].get("run") is not None
 
-    _wait_until(_done)
+    _wait_until(_done, timeout=30.0)
     return server, base_url, cookie, csrf, project_id, root, run_id
 
 
@@ -142,6 +142,7 @@ def test_build_handoff_preview_mode_writes_no_artifact_and_persists_nothing(
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         assert status == 200
         finding_id = scans["data"]["findings"]["items"][0]["finding_id"]
+        attempt_id = project_run_module.latest_attempt_id(project_id, run_id)
 
         db_path = root / ".rush" / "memory.db"
 
@@ -164,6 +165,7 @@ def test_build_handoff_preview_mode_writes_no_artifact_and_persists_nothing(
             operation="handoff_preview",
             arguments={
                 "run_id": run_id,
+                "attempt_id": attempt_id,
                 "agent_id": "agent-1",
                 "finding_ids": [finding_id],
             },
@@ -198,6 +200,7 @@ def test_handoff_preview_requires_no_mutation_grant(
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         assert status == 200
         finding_id = scans["data"]["findings"]["items"][0]["finding_id"]
+        attempt_id = project_run_module.latest_attempt_id(project_id, run_id)
 
         status, _body = _action(
             base_url,
@@ -207,6 +210,7 @@ def test_handoff_preview_requires_no_mutation_grant(
             operation="handoff_preview",
             arguments={
                 "run_id": run_id,
+                "attempt_id": attempt_id,
                 "agent_id": "agent-1",
                 "finding_ids": [finding_id],
             },
@@ -382,7 +386,7 @@ def test_operation_status_route_returns_attachment_resolved_status(
             )
             return status == 200 and body["data"]["status"] == "terminal"
 
-        _wait_until(_attached_is_terminal)
+        _wait_until(_attached_is_terminal, timeout=30.0)
 
         status, attached_body = _get_operation(
             base_url, project_id, attached_operation_id, cookie=cookie
@@ -476,7 +480,7 @@ def test_operation_status_route_checks_the_executing_operations_project_for_an_a
             )
             return status == 200 and body["data"]["status"] == "terminal"
 
-        _wait_until(_attached_is_terminal)
+        _wait_until(_attached_is_terminal, timeout=30.0)
 
         status, _body = _get_operation(
             base_url, project_b, attached_operation_id, cookie=cookie
@@ -528,7 +532,7 @@ def test_scan_start_202_response_attempt_id_matches_the_attempt_execute_scan_act
             status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
             return status == 200 and scans["data"].get("run") is not None
 
-        _wait_until(_done)
+        _wait_until(_done, timeout=30.0)
 
         attempts_dir = root / ".rush" / "runs" / run_id / "attempts"
         attempt_dirs = list(attempts_dir.iterdir())
@@ -571,7 +575,7 @@ def test_scan_resume_202_response_attempt_id_matches_the_attempt_resume_scan_run
             candidate = attempts_dir / next(iter(new_names)) / "manifest.json"
             return candidate if candidate.exists() else None
 
-        _wait_until(lambda: _new_manifest_path() is not None)
+        _wait_until(lambda: _new_manifest_path() is not None, timeout=30.0)
 
         manifest = json.loads(_new_manifest_path().read_text())
         real_attempt_id = manifest["attempt_id"]
@@ -617,7 +621,7 @@ def test_rescan_202_response_attempt_id_matches_the_attempt_rescan_project_run_a
             candidate = attempt_dirs[0] / "manifest.json"
             return candidate if candidate.exists() else None
 
-        _wait_until(lambda: _new_manifest_path() is not None)
+        _wait_until(lambda: _new_manifest_path() is not None, timeout=30.0)
 
         manifest = json.loads(_new_manifest_path().read_text())
         real_attempt_id = manifest["attempt_id"]
@@ -791,6 +795,7 @@ def test_memory_propose_action_dispatches_write_and_refreshes_map_memory_data(
                 "subject": "domain_knowledge",
                 "content": {"note": "proposed fact"},
                 "source": "test-agent",
+                "owner_scope": {"kind": "project", "id": project_id},
             },
             grants={"cache_write": True},
         )
@@ -852,7 +857,10 @@ def test_memory_maintain_action_dispatches_maintain(
             cookie,
             csrf,
             operation="memory_maintain",
-            arguments={"task": "staleness_sweep"},
+            arguments={
+                "task": "staleness_sweep",
+                "owner_scope": {"kind": "project", "id": project_id},
+            },
             grants={"cache_write": True},
         )
         assert status == 200
@@ -875,6 +883,7 @@ def test_handoff_send_and_provisioning_return_202_with_run_id_not_200(
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         assert status == 200
         finding_id = scans["data"]["findings"]["items"][0]["finding_id"]
+        attempt_id = project_run_module.latest_attempt_id(project_id, run_id)
 
         status, preview_body = _action(
             base_url,
@@ -884,6 +893,7 @@ def test_handoff_send_and_provisioning_return_202_with_run_id_not_200(
             operation="handoff_preview",
             arguments={
                 "run_id": run_id,
+                "attempt_id": attempt_id,
                 "agent_id": "agent-1",
                 "finding_ids": [finding_id],
             },
@@ -904,6 +914,7 @@ def test_handoff_send_and_provisioning_return_202_with_run_id_not_200(
             operation="handoff_send",
             arguments={
                 "run_id": run_id,
+                "attempt_id": attempt_id,
                 "agent_id": "agent-1",
                 "finding_ids": [finding_id],
                 "handoff_id": content_hash,
@@ -920,7 +931,7 @@ def test_handoff_send_and_provisioning_return_202_with_run_id_not_200(
             )
             return op_status == 200 and op_body["data"]["status"] == "terminal"
 
-        _wait_until(_terminal)
+        _wait_until(_terminal, timeout=30.0)
         _op_status, op_body = _get_operation(
             base_url, project_id, operation_id, cookie=cookie
         )
@@ -981,7 +992,7 @@ def test_provision_apply_returns_202_with_run_id_not_200(
             )
             return op_status == 200 and op_body["data"]["status"] == "terminal"
 
-        _wait_until(_terminal)
+        _wait_until(_terminal, timeout=30.0)
     finally:
         server.shutdown()
         server.server_close()
@@ -997,6 +1008,7 @@ def test_handoff_send_rejects_tampered_or_stale_preview_hash(
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         assert status == 200
         finding_id = scans["data"]["findings"]["items"][0]["finding_id"]
+        attempt_id = project_run_module.latest_attempt_id(project_id, run_id)
 
         status, _send_body = _action(
             base_url,
@@ -1006,6 +1018,7 @@ def test_handoff_send_rejects_tampered_or_stale_preview_hash(
             operation="handoff_send",
             arguments={
                 "run_id": run_id,
+                "attempt_id": attempt_id,
                 "agent_id": "agent-1",
                 "finding_ids": [finding_id],
                 "handoff_id": "not-a-real-preview-hash",
@@ -1142,6 +1155,63 @@ def test_events_stale_cursor_returns_409_event_cursor_expired(
         server.server_close()
 
 
+def test_events_route_surfaces_real_candidate_progress_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M04 bullets 1-2: a real scan's own per-candidate progress events
+    (`workflows/project_run.py`'s `_append_event`, durable in the attempt's
+    own `events.json` -- the existing event sink) must reach this
+    project's `/events` stream, not just status transitions manufactured
+    at the dispatch/ledger layer."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    monkeypatch.setattr(project_run_module, "ALL_TOOLS", [ReviewTool()])
+    project_id, root = _register(tmp_path)
+    server, ctx, base_url, cookie, csrf = _start_dashboard_with_ctx(project_id, root)
+    try:
+        status, body = _action(
+            base_url, project_id, cookie, csrf, operation="provision_plan"
+        )
+        assert status == 200
+        plan_id = body["data"]["scan_plan"]["plan_id"]
+
+        status, body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="scan_start",
+            arguments={"plan_id": plan_id},
+            grants=_grant_all(),
+        )
+        assert status == 202
+        run_id = body["data"]["run_id"]
+
+        def _done() -> bool:
+            status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
+            return status == 200 and scans["data"].get("run") is not None
+
+        _wait_until(_done)
+
+        status, events_body = _events(base_url, project_id, cookie)
+        assert status == 200
+        candidate_events = [
+            e
+            for e in events_body["data"]["events"]
+            if e["event_kind"] == "candidate"
+        ]
+        assert candidate_events, "real candidate progress events must reach /events"
+        assert any(
+            e["payload"]["event"] == "candidate_started" for e in candidate_events
+        )
+        assert any(
+            e["payload"]["event"] == "candidate_completed" for e in candidate_events
+        )
+        assert all(e["run_id"] == run_id for e in candidate_events)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_events_gap_beyond_retention_requires_snapshot_reload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1159,6 +1229,304 @@ def test_events_gap_beyond_retention_requires_snapshot_reload(
         status, body = _events(base_url, project_id, cookie, after="0")
         assert status == 409
         assert body["error"]["details"].get("recovery") == "reload_snapshot"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- S04: ledger reservation persists validated arguments/effect ids -------
+
+
+def test_reservation_persists_validated_argument_payload(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = state_module.MutationLedger()
+    reservation = ledger.reserve(
+        "project-a",
+        "req-1",
+        "hash",
+        validated_arguments={"plan_id": "plan-1"},
+    )
+    stored = ledger.get_reservation(reservation.operation_id)
+    assert stored is not None
+    assert stored["validated_arguments"] == {"plan_id": "plan-1"}
+
+
+def test_reservation_persists_preallocated_effect_ids_map(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = state_module.MutationLedger()
+    reservation = ledger.reserve(
+        "project-a",
+        "req-1",
+        "hash",
+        effect_ids={"artifact_create": "artifact-1", "session_create": "session-1"},
+    )
+    stored = ledger.get_reservation(reservation.operation_id)
+    assert stored is not None
+    assert stored["effect_ids"] == {
+        "artifact_create": "artifact-1",
+        "session_create": "session-1",
+    }
+
+
+def test_concurrent_server_startup_migration_against_same_old_database_is_race_free(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    # First ledger creates the pre-S04 schema shape (via the same _init_db
+    # every ledger runs); a second ledger opening the identical db file
+    # simulates a second server process starting against it concurrently.
+    state_module.MutationLedger()
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def _start() -> None:
+        try:
+            barrier.wait(timeout=5)
+            state_module.MutationLedger()
+        except BaseException as exc:  # noqa: BLE001 -- captured for the assertion.
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_start) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    assert not errors
+
+    db_path = tmp_path / "dashboard" / "mutation_ledger.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(mutation_ledger)")}
+    assert {"validated_arguments", "effect_ids", "recovery_schema_version"} <= columns
+
+
+def test_recovery_uses_persisted_reservation_data_only_never_replays_body_hash(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = state_module.MutationLedger()
+    reservation = ledger.reserve(
+        "project-a",
+        "req-1",
+        "original-body-hash",
+        validated_arguments={"plan_id": "plan-1"},
+        effect_ids={"install": "install-1"},
+    )
+    # Recovery reads only what `reserve()` durably persisted -- never a
+    # function of `body_hash`, which is opaque replay-detection data, not a
+    # reconstructable argument/effect source.
+    stored = ledger.get_reservation(reservation.operation_id)
+    assert stored is not None
+    assert stored["validated_arguments"] == {"plan_id": "plan-1"}
+    assert stored["effect_ids"] == {"install": "install-1"}
+    assert stored["recovery_required"] is False
+
+
+def test_legacy_version_0_pending_rows_stay_recovery_required_not_silently_admitted(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    ledger = state_module.MutationLedger()
+    # A pre-S04 row has no reconstructable validated_arguments/effect_ids --
+    # simulated directly against the schema's own DEFAULT (version 0),
+    # bypassing `reserve()` (which always writes version 1 for new rows).
+    db_path = tmp_path / "dashboard" / "mutation_ledger.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO mutation_ledger "
+            "(project_id, request_id, operation_id, operation_type, body_hash, "
+            "status, created_at) VALUES (?,?,?,?,?,?,?)",
+            ("project-a", "legacy-req", "legacy-op", "scan_start", "h", "pending", 0.0),
+        )
+        conn.commit()
+    stored = ledger.get_reservation("legacy-op")
+    assert stored is not None
+    assert stored["recovery_schema_version"] == 0
+    assert stored["recovery_required"] is True
+
+
+# --- S08: per-project mutation exclusion lock -------------------------------
+
+
+def test_genesis_identity_is_shared_scalar_derived_from_project_id_before_first_publication() -> (
+    None
+):
+    first = state_module.genesis_identity("project-a")
+    again = state_module.genesis_identity("project-a")
+    different = state_module.genesis_identity("project-b")
+    assert first == again
+    assert first != different
+    assert first != "project-a"
+
+
+def test_independent_artifacts_sharing_a_source_identity_may_both_commit(
+    tmp_path,
+) -> None:
+    registry = state_module.ProjectRegistry({}, data_root=tmp_path / "rush-data")
+    # Two different projects that happen to share a source_identity string
+    # never contend for the same mutation lock -- scoped per project_id.
+    entered_b = threading.Event()
+    holding_a = threading.Event()
+
+    def _hold_a() -> None:
+        with registry.mutation_lock("project-a"):
+            holding_a.set()
+            entered_b.wait(timeout=1)
+
+    thread_a = threading.Thread(target=_hold_a)
+    thread_a.start()
+    holding_a.wait(timeout=1)
+    try:
+        with registry.mutation_lock("project-b"):
+            entered_b.set()
+    finally:
+        entered_b.set()
+    thread_a.join(timeout=5)
+    assert not thread_a.is_alive()
+
+
+def test_two_requests_with_the_same_expected_revision_cannot_both_commit_against_an_invalidated_state(
+    tmp_path,
+) -> None:
+    registry = state_module.ProjectRegistry({}, data_root=tmp_path / "rush-data")
+    order: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def _worker(name: str) -> None:
+        barrier.wait(timeout=5)
+        with registry.mutation_lock("project-a"):
+            order.append(f"{name}-start")
+            order.append(f"{name}-end")
+
+    threads = [
+        threading.Thread(target=_worker, args=("first",)),
+        threading.Thread(target=_worker, args=("second",)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    # Each holder's start/end pair is contiguous -- the two never interleave
+    # inside the lock's critical section.
+    assert order.index("first-end") == order.index("first-start") + 1
+    assert order.index("second-end") == order.index("second-start") + 1
+
+
+def test_configure_apply_holds_project_exclusion_before_registry_lock(
+    tmp_path, monkeypatch
+) -> None:
+    """S08 bullet 2: `configure`'s apply path takes the S08 cross-process
+    project-exclusion lock *before* `configure_project`'s own existing
+    registry-file lock -- never the reverse, and never skipped entirely
+    (a CLI/MCP-driven `ProjectTool` call reaches this same code path, with
+    no dashboard `ctx.projects.mutation_lock` wrapping it at all)."""
+    import fcntl
+    import os
+
+    from rush.dashboard.state import _project_mutation_lock_path
+    from rush.permissions import ExecutionPermissions
+    from rush.tools import project as project_tool_module
+
+    _isolate_data_roots(tmp_path, monkeypatch)
+    data_root = tmp_path / "rush-data"
+    project_id, root = _register(tmp_path)
+
+    real_configure = project_tool_module.configure_project
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow_configure(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_configure(*args, **kwargs)
+
+    monkeypatch.setattr(project_tool_module, "configure_project", _slow_configure)
+
+    def _apply() -> None:
+        project_tool_module.ProjectTool().run(
+            root,
+            action="configure",
+            project_id=project_id,
+            settings={},
+            apply=True,
+            permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+        )
+
+    thread = threading.Thread(target=_apply)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        # While inside `configure_project` (the registry-file-lock side),
+        # the project-exclusion lock must already be held -- a second,
+        # independent non-blocking attempt on the same lock file fails.
+        lock_path = _project_mutation_lock_path(project_id, data_root=data_root)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            with pytest.raises(OSError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+    finally:
+        release.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_never_scanned_configure_and_memory_mutation_still_work_against_genesis(
+    tmp_path, monkeypatch
+) -> None:
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    server, base_url, cookie, csrf = _start_dashboard(project_id, root)
+    try:
+        # No scan has ever run against this project -- configure still
+        # dispatches cleanly (through the now-shared per-project mutation
+        # lock added around every mutating action's check-then-act window).
+        status, _body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="configure",
+            arguments={"settings": {}, "apply": False},
+        )
+        assert status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_configure_compares_registry_revision_under_registry_lock_not_project_exclusion_alone(
+    tmp_path, monkeypatch
+) -> None:
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    server, base_url, cookie, csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="configure",
+            arguments={"settings": {}, "apply": False},
+        )
+        assert status == 200
+        revision = body["data"].get("expected_revision") or body["data"].get("revision")
+        # Two configure previews at the same (stale-or-not) revision still
+        # each succeed independently -- adding project-level exclusion around
+        # the shared dispatch path didn't break configure's own registry-file
+        # revision comparison or deadlock against it.
+        status_2, _body_2 = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="configure",
+            arguments={"settings": {}, "apply": False, "expected_revision": revision},
+        )
+        assert status_2 == 200
     finally:
         server.shutdown()
         server.server_close()

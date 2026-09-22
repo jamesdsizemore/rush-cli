@@ -88,3 +88,60 @@ def test_trivy_missing_and_timeout(monkeypatch, tmp_path: Path) -> None:
     assert missing["status"] == "skipped"
     assert timeout["status"] == "error"
     assert timeout["metadata"]["terminal_reason"] == "timeout"
+
+
+# --- T049: M20 §12-named regression test ------------------------------------
+
+
+def test_trivy_decoded_raw_results_target_field_uses_logical_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """M20: Trivy's own decoded `Results[].Target` field (never a generic
+    `_PATH_KEYS` name) must be remapped to the logical project path when a
+    staged attempt is active -- both in the per-finding `target` field and
+    in the raw decoded output."""
+    import json as json_module
+
+    from rush.engines.staging import stage_inventory, staging_scope
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "requirements.txt").write_text("urllib3==1.26.4\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["requirements.txt"])
+    staged_target = staged_root / "requirements.txt"
+
+    payload = json_module.dumps(
+        {
+            "Results": [
+                {
+                    "Target": str(staged_target),
+                    "Vulnerabilities": [
+                        {
+                            "VulnerabilityID": "CVE-2024-1234",
+                            "PkgName": "urllib3",
+                            "InstalledVersion": "1.26.4",
+                            "FixedVersion": "1.26.5",
+                            "Severity": "HIGH",
+                            "Title": "Proxy bypass vulnerability",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    monkeypatch.setattr(trivy, "resolve_binary", lambda _b: "trivy")
+    monkeypatch.setattr(
+        trivy,
+        "run_subprocess",
+        lambda argv, **_k: subprocess.CompletedProcess(
+            argv, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    with staging_scope(staging):
+        raw = TrivyEngine().run(staged_target, [], cwd=staged_root)
+
+    assert raw["findings"][0]["target"] == str(root / "requirements.txt")
+    assert raw["parsed"]["Results"][0]["Target"] == str(root / "requirements.txt")

@@ -14,7 +14,7 @@ import os
 import shutil
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import ClassVar, Protocol
 
 # Logical key names the TUI event loop understands. Anything else read from
@@ -22,6 +22,7 @@ from typing import ClassVar, Protocol
 ESCAPE = "escape"
 ENTER = "enter"
 TAB = "tab"
+SHIFT_TAB = "shift_tab"
 UP = "up"
 DOWN = "down"
 LEFT = "left"
@@ -29,6 +30,13 @@ RIGHT = "right"
 BACKSPACE = "backspace"
 
 _POSIX = os.name == "posix"
+
+# U01 fix: the read side of `raw_terminal`'s SIGWINCH wakeup pipe, set only
+# while a real POSIX tty's `with raw_terminal():` block is active (`None`
+# otherwise). `PosixKeyReader.read_key` selects on it alongside the real
+# input fd so a resize interrupts an in-progress poll immediately instead of
+# waiting out the remaining timeout.
+_ACTIVE_WAKEUP_FD: list[int | None] = [None]
 
 
 class KeyReader(Protocol):
@@ -78,23 +86,54 @@ def raw_terminal(stream: int | _HasFileno | None = None) -> Iterator[None]:
     attributes in `finally` -- on a clean exit AND on any exception -- so a
     scan crash or an unhandled bug never leaves the caller's shell in raw
     mode. No-op on non-POSIX platforms or when the resolved fd isn't a
-    real tty (unit tests, pipes, CI)."""
+    real tty (unit tests, pipes, CI).
+
+    U01 fix: also wires a self-pipe as the process's SIGWINCH wakeup fd
+    (`signal.set_wakeup_fd`) for the duration of the block, so
+    `PosixKeyReader.read_key`'s `selectors` wait wakes immediately on a
+    real resize instead of waiting out its poll timeout. The prior signal
+    handler and wakeup fd are restored, and both pipe descriptors closed,
+    in `finally` -- on a clean exit AND on any exception, same as the
+    termios restore this context manager already guaranteed."""
     fd = _resolve_fd(stream)
     if not _POSIX or not os.isatty(fd):
         yield
         return
-    if sys.platform == "win32":  # pragma: no cover - unreachable, _POSIX excludes win32 above; satisfies mypy's per-platform stub check
+    if (
+        sys.platform == "win32"
+    ):  # pragma: no cover - unreachable, _POSIX excludes win32 above; satisfies mypy's per-platform stub check
         yield
         return
 
+    import signal
     import termios
     import tty
 
     original = termios.tcgetattr(fd)
+    wakeup_read, wakeup_write = os.pipe()
+    os.set_blocking(wakeup_write, False)
+    prior_wakeup_fd = signal.set_wakeup_fd(wakeup_write)
+    prior_handler = signal.getsignal(signal.SIGWINCH)
     try:
+        # The wakeup fd alone delivers the notification `read_key` selects
+        # on; the handler itself only needs to exist so the signal doesn't
+        # terminate the process (Python requires one registered to arm
+        # `set_wakeup_fd`'s delivery for a signal that isn't already
+        # ignored/default-handled).
+        signal.signal(signal.SIGWINCH, lambda *_: None)
         tty.setcbreak(fd)
+        _ACTIVE_WAKEUP_FD[0] = wakeup_read
         yield
     finally:
+        _ACTIVE_WAKEUP_FD[0] = None
+        with suppress(OSError, ValueError):
+            signal.set_wakeup_fd(prior_wakeup_fd)
+        with suppress(OSError, ValueError):
+            signal.signal(signal.SIGWINCH, prior_handler)
+        with suppress(OSError):
+            os.close(wakeup_read)
+        with suppress(OSError):
+            os.close(wakeup_write)
         termios.tcsetattr(fd, termios.TCSADRAIN, original)
 
 
@@ -104,11 +143,28 @@ class PosixKeyReader:
     from an arrow/function-key escape sequence by a short (50ms) follow-up
     read -- never a blocking read that could hang the event loop."""
 
+    # CSI body (everything after ESC "[") for each logical key this reader
+    # decodes -- arrows, Shift+Tab (`CSI Z`, the real xterm sequence), and
+    # the numeric-tilde function-key family (`CSI 1 1 ~` .. `CSI 2 4 ~`,
+    # the common convention across xterm-compatible terminals for F1-F12).
     _SEQUENCES: ClassVar[dict[str, str]] = {
         "[A": UP,
         "[B": DOWN,
         "[C": RIGHT,
         "[D": LEFT,
+        "[Z": SHIFT_TAB,
+        "[11~": "f1",
+        "[12~": "f2",
+        "[13~": "f3",
+        "[14~": "f4",
+        "[15~": "f5",
+        "[17~": "f6",
+        "[18~": "f7",
+        "[19~": "f8",
+        "[20~": "f9",
+        "[21~": "f10",
+        "[23~": "f11",
+        "[24~": "f12",
     }
 
     def __init__(self, stream: int | _HasFileno | None = None) -> None:
@@ -118,33 +174,105 @@ class PosixKeyReader:
         return get_terminal_size()
 
     def read_key(self, timeout: float) -> str | None:
-        import select
+        import selectors
 
         fd = self._fd
-        ready, _, _ = select.select([fd], [], [], timeout)
-        if not ready:
+        wakeup_fd = _ACTIVE_WAKEUP_FD[0]
+        sel = selectors.DefaultSelector()
+        # ponytail: a fresh selector per call is the simplest correct
+        # option for a bounded, short-timeout poll; upgrade to a
+        # persistent selector reused across calls if per-tick allocation
+        # measurably matters.
+        try:
+            sel.register(fd, selectors.EVENT_READ)
+            if wakeup_fd is not None:
+                sel.register(wakeup_fd, selectors.EVENT_READ)
+            events = sel.select(timeout)
+        finally:
+            sel.close()
+        if not events:
+            return None
+        ready_fds = {key.fd for key, _ in events}
+        if fd not in ready_fds:
+            # Only the SIGWINCH wakeup fd fired -- drain it and return
+            # immediately so the caller's tick loop re-checks terminal
+            # size right away instead of waiting out the rest of `timeout`.
+            if wakeup_fd is not None:
+                with suppress(OSError):
+                    os.read(wakeup_fd, 8)
             return None
         raw = os.read(fd, 1)
         if not raw:
             return None
-        ch = raw.decode(errors="replace")
-        if ch == "\x1b":
-            ready, _, _ = select.select([fd], [], [], 0.05)
-            if not ready:
-                return ESCAPE
-            rest = os.read(fd, 2).decode(errors="replace")
-            return self._SEQUENCES.get(rest, ESCAPE)
-        if ch in ("\r", "\n"):
+        first = raw[0]
+        if first == 0x1B:  # ESC
+            return self._read_escape_sequence(fd)
+        if first in (0x0D, 0x0A):
             return ENTER
-        if ch == "\t":
+        if first == 0x09:
             return TAB
-        if ch in ("\x7f", "\x08"):
+        if first in (0x7F, 0x08):
             return BACKSPACE
         if (
-            ch == "\x03"
+            first == 0x03
         ):  # Ctrl+C: treat like Escape, never raise KeyboardInterrupt mid-render
             return ESCAPE
-        return ch
+        if first < 0x80:
+            return raw.decode()
+        # UTF-8 multibyte lead byte: read exactly the continuation-byte
+        # count this lead byte declares, so a split multibyte character
+        # (e.g. an accented letter) decodes as one real character instead
+        # of one-byte-at-a-time mangled replacement characters.
+        if 0xC0 <= first < 0xE0:
+            continuation = 1
+        elif 0xE0 <= first < 0xF0:
+            continuation = 2
+        elif 0xF0 <= first < 0xF8:
+            continuation = 3
+        else:
+            return raw.decode(errors="replace")
+        rest = self._read_bounded(fd, continuation)
+        return (raw + rest).decode(errors="replace")
+
+    def _read_bounded(self, fd: int, count: int, *, timeout: float = 0.05) -> bytes:
+        """Reads up to `count` more bytes, each gated by a short
+        follow-up `select` -- never a blocking read that could hang the
+        event loop on a fragmented/incomplete sequence (slow SSH, a
+        partial paste)."""
+        import select
+
+        got = b""
+        while len(got) < count:
+            ready, _, _ = select.select([fd], [], [], timeout)
+            if not ready:
+                break
+            chunk = os.read(fd, count - len(got))
+            if not chunk:
+                break
+            got += chunk
+        return got
+
+    def _read_escape_sequence(self, fd: int) -> str:
+        """A bare Escape press is distinguished from an arrow/function-key
+        escape sequence by a short (50ms) follow-up read. CSI sequences
+        (`ESC [ ...`) are read incrementally, one byte at a time, until a
+        final byte (a letter or `~`) or a bound is hit -- real CSI bodies
+        here are at most 4 bytes, so fragmented input never hangs waiting
+        for a byte count that assumed the wrong sequence length."""
+        nxt = self._read_bounded(fd, 1)
+        if not nxt:
+            return ESCAPE
+        body = nxt.decode(errors="replace")
+        if body == "[":
+            for _ in range(6):
+                more = self._read_bounded(fd, 1)
+                if not more:
+                    break
+                c = more.decode(errors="replace")
+                body += c
+                if c.isalpha() or c == "~":
+                    break
+        return self._SEQUENCES.get(body, ESCAPE)
 
 
 class WindowsKeyReader:
@@ -152,7 +280,20 @@ class WindowsKeyReader:
     `msvcrt.getwch` already returns one character at a time without echo
     or line buffering on the Windows console."""
 
-    _ARROW: ClassVar[dict[str, str]] = {"H": UP, "P": DOWN, "K": LEFT, "M": RIGHT}
+    # BIOS/console extended scan codes (the byte following a `\x00`/`\xe0`
+    # prefix from `getwch()`): arrows, plus F2 (0x3C), F3 (0x3D), and
+    # Shift+Tab (0x0F) -- U01 fix, per the documented DOS/Windows console
+    # scan-code table (real Windows console behavior unverified in this
+    # environment; see this packet's own receipt for that named gap).
+    _ARROW: ClassVar[dict[str, str]] = {
+        "H": UP,
+        "P": DOWN,
+        "K": LEFT,
+        "M": RIGHT,
+        "\x3c": "f2",
+        "\x3d": "f3",
+        "\x0f": SHIFT_TAB,
+    }
 
     def get_size(self) -> tuple[int, int]:
         return get_terminal_size()

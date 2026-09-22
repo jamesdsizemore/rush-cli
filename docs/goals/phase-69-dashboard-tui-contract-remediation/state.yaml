@@ -1955,3 +1955,39 @@ checks:
     result: unknown
     task: null
     commands: []
+
+# Superseding current-review statement (appended 2026-09-19 by Phase 69 findings-remediation
+# T015, docs/goals/phase-69-codex-review-remediation/state.yaml -- a DIFFERENT task on a
+# DIFFERENT board than this file's own T015 above, per D03's reconciliation fix). This section
+# is append-only: it does not edit T002/T008/T009/T015/T038/T999's own recorded receipts above,
+# does not change any task's status field, and does not touch this file's own active_task field.
+superseding_current_review:
+  added_at: "2026-09-19"
+  added_by_task: "docs/goals/phase-69-codex-review-remediation/state.yaml T015 (D03 documentation reconciliation)"
+  source: "docs/reports/69-dashboard-tui-codex-implementation-review.md"
+  frozen_head: "ea88324eae379c96b4fb2553d7247ea340b3cc16"
+  verdict: "NOT COMPLETE (51 findings: S01-S16, M01-M21, U01-U11, D01-D03) -- supersedes this board's own T038/T999 'complete'/'full_outcome_complete: true' receipts, which remain preserved above unedited as this board's dated historical claims."
+  historical_task_mapping:
+    - task: T002
+      historical_status: blocked
+      historically_claimed_resolved_by: T006
+      current_review_finding: "Reopened by S12/S13 (secret redaction, missing security headers) -- see review doc §7 'Every board task' row T002."
+    - task: T008
+      historical_status: blocked
+      historically_claimed_resolved_by: T012
+      current_review_finding: "Reopened by S07/S08/S14 (expected-state revalidation, mutation-exclusion scope, unvalidated schema version) -- see review doc §7 row T008."
+    - task: T009
+      historical_status: blocked
+      historically_claimed_resolved_by: T011
+      current_review_finding: "Reopened by S09/S10/S16 (attempt identity, cancellation durability, handoff attempt_id propagation) -- see review doc §7 row T009."
+    - task: T015
+      historical_status: blocked
+      historically_claimed_resolved_by: "T016, T031 (follow-up staging work)"
+      current_review_finding: "Reopened by M02/M03/M15-M21 (real input/staging/provenance failures) -- see review doc §7 row T015. This is this board's own T015 (staging/provenance), not the T015 that added this section."
+    - task: T038
+      historical_status: "done/complete"
+      current_review_finding: "Completion verdict rejected by current tests and findings -- see review doc §7 row T038. T038's own receipt text is preserved above unedited as a dated historical claim."
+    - task: T999
+      historical_status: "done/not_complete"
+      current_review_finding: "Superseded by T038 historically on this board; the current independent review separately, and still, finds the whole-implementation verdict not complete -- see review doc §7 row T999. T999's own receipt text is preserved above unedited as a dated historical claim."
+  remediation_tracking: "All 51 reopened findings are tracked and being closed on the separate board docs/goals/phase-69-codex-review-remediation/state.yaml, not on this board. This board's own tasks/status/active_task are not reopened or reactivated by this statement."

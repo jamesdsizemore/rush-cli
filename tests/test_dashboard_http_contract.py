@@ -8,25 +8,31 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import signal
 import socket
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
-from contextlib import suppress
+import uuid
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from rush.dashboard import state as dashboard_state
 from rush.dashboard.server import (
     DashboardContext,
     _ActionDenied,
     _admit_and_launch,
     _run_supervised,
     create_dashboard_server,
+    stop_all_dashboard_contexts,
 )
 from rush.dashboard.state import (
     MutationLedger,
@@ -34,10 +40,12 @@ from rush.dashboard.state import (
     PendingOutcomeQueue,
     ScanConflictError,
     claim_dead_owner,
+    cross_process_project_lock,
     probe_owner_alive,
     reconcile_admissions,
 )
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
+from rush.tools.project import ProjectTool
 from rush.workflows.project_run import ScanBusyError, _run_lock
 from rush.workflows.projects import register_project
 
@@ -57,6 +65,13 @@ def _isolated_dashboard_data_root(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "rush.workflows.projects.default_data_root", lambda: isolated_root
     )
+    yield
+    # T027: stop every DashboardContext's recovery/outcome-retry threads
+    # created by this test before the isolated data root above is reverted
+    # -- otherwise a leaked thread keeps firing for the rest of this pytest
+    # process's life against a now-stale (or, once reverted, real shared)
+    # data root, which is exactly how the T027 full-suite hang accumulated.
+    stop_all_dashboard_contexts()
 
 
 class _RecordingConnection:
@@ -970,6 +985,504 @@ def test_bootstrap_and_session_secrets_stored_as_digests_not_plaintext() -> None
         server.server_close()
 
 
+def test_concurrent_direct_method_calls_to_exchange_bootstrap_mint_exactly_one_session() -> (
+    None
+):
+    """S11: two threads synchronize immediately before calling the public
+    `exchange_bootstrap` method directly (not through HTTP) with the same
+    token. Unlike section 10's vulnerable-method probe (which deliberately
+    places its barrier *inside* verification to expose the old race), this
+    barrier sits before the call -- the correct method-wide lock must still
+    let exactly one caller mint a session."""
+    from rush.dashboard.auth import DashboardAuth
+
+    auth = DashboardAuth()
+    token = auth.issue_bootstrap()
+    original_verify = auth.verify_bootstrap
+
+    def _widened_verify(provided: str | None) -> bool:
+        # Controlled bounded delay after successful verification (S11 point
+        # 3): widens the old unlocked race deterministically. The fixed
+        # `exchange_bootstrap` never calls this public method internally
+        # (it uses a lock-held private verifier instead), so this delay has
+        # no effect on the fixed code path -- it only matters for proving
+        # the old, unlocked implementation actually raced.
+        valid = original_verify(provided)
+        time.sleep(0.05)
+        return valid
+
+    auth.verify_bootstrap = _widened_verify
+
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+    results_lock = threading.Lock()
+
+    def _call() -> None:
+        barrier.wait(timeout=5)
+        result = auth.exchange_bootstrap(token)
+        with results_lock:
+            results.append(result)
+
+    threads = [threading.Thread(target=_call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=6)
+    assert sum(result is not None for result in results) == 1
+    assert len(auth._sessions) == 1
+
+
+def test_http_concurrency_and_expired_token_tests_still_pass_after_the_lock_is_added() -> (
+    None
+):
+    """S11 point 2: adding `DashboardAuth`'s owning lock must not regress the
+    existing HTTP-level concurrent-exchange behavior or expired-token
+    rejection."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        results: list[int] = []
+        results_lock = threading.Lock()
+
+        def _exchange() -> None:
+            resp = _post(
+                f"{base_url}/api/session",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with results_lock:
+                results.append(resp.status)
+
+        threads = [threading.Thread(target=_exchange) for _ in range(5)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=6)
+        assert results.count(200) == 1
+        assert results.count(401) == 4
+
+        expired = _post(
+            f"{base_url}/api/session",
+            headers={"Authorization": "Bearer not-the-real-token"},
+        )
+        assert expired.status == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_bootstrap_token_value_is_redacted_from_finding_content_via_digest_match() -> (
+    None
+):
+    """S12: a still-live (unused) bootstrap token has no stored plaintext to
+    exact-match against globally -- it can only be redacted by hashing this
+    request's own presented candidate and checking it against the live
+    verifier snapshot."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        # Auth needs a real session cookie; the bootstrap token under test
+        # must stay unused so only its digest is stored, so mint a second,
+        # still-live one rather than reusing the one `_bootstrap_session`
+        # consumes for the cookie.
+        cookie, _csrf = _bootstrap_session(base_url, token)
+        live_token = ctx.auth.issue_bootstrap()
+        with patch(
+            "rush.dashboard.server._build_memory_section",
+            side_effect=RuntimeError(f"boom {live_token} leaked"),
+        ):
+            resp = _get(
+                f"{base_url}/api/projects/project-a/snapshot?section=memory",
+                headers={"Cookie": cookie, "Authorization": f"Bearer {live_token}"},
+            )
+        assert resp.status == 500
+        body_text = resp.read().decode()
+        assert live_token not in body_text
+        assert "[REDACTED]" in body_text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_session_cookie_value_is_redacted_from_finding_content_via_digest_match() -> (
+    None
+):
+    """S12: same as the bootstrap-token case, for the session cookie secret
+    -- only its digest is stored, so redaction depends on hash-matching this
+    request's own presented cookie value."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, _csrf = _bootstrap_session(base_url, token)
+        cookie_value = cookie.split("=", 1)[1]
+
+        with patch(
+            "rush.dashboard.server._build_memory_section",
+            side_effect=RuntimeError(f"boom {cookie_value} leaked"),
+        ):
+            resp = _get(
+                f"{base_url}/api/projects/project-a/snapshot?section=memory",
+                headers={"Cookie": cookie},
+            )
+        assert resp.status == 500
+        body_text = resp.read().decode()
+        assert cookie_value not in body_text
+        assert "[REDACTED]" in body_text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_csrf_value_redaction_still_works_after_digest_matching_is_added() -> None:
+    """S12 regression guard: the pre-existing plaintext CSRF redaction path
+    (control capability + live CSRF tokens, exact-match) must keep working
+    unchanged once bootstrap/cookie hash-matching is added alongside it."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+
+        with patch(
+            "rush.dashboard.server._build_memory_section",
+            side_effect=RuntimeError(f"boom {csrf} leaked"),
+        ):
+            resp = _get(
+                f"{base_url}/api/projects/project-a/snapshot?section=memory",
+                headers={"Cookie": cookie},
+            )
+        assert resp.status == 500
+        body_text = resp.read().decode()
+        assert csrf not in body_text
+        assert "[REDACTED]" in body_text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_active_session_churn_during_serialization_does_not_leak_or_crash() -> None:
+    """S12 point 4: minting/expiring sessions concurrently with a response's
+    own redaction pass must not crash (lock-protected snapshot) and must
+    never leak an unrelated session's CSRF token into this request's own
+    error body."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+        stop = threading.Event()
+
+        def _churn() -> None:
+            while not stop.is_set():
+                churn_token = ctx.auth.issue_bootstrap()
+                ctx.auth.exchange_bootstrap(churn_token)
+
+        churner = threading.Thread(target=_churn, daemon=True)
+        churner.start()
+        try:
+            with patch(
+                "rush.dashboard.server._build_memory_section",
+                side_effect=RuntimeError(f"boom {csrf} leaked"),
+            ):
+                for _ in range(20):
+                    resp = _get(
+                        f"{base_url}/api/projects/project-a/snapshot?section=memory",
+                        headers={"Cookie": cookie},
+                    )
+                    assert resp.status == 500
+                    body_text = resp.read().decode()
+                    assert csrf not in body_text
+                    assert "[REDACTED]" in body_text
+        finally:
+            stop.set()
+            churner.join(timeout=5)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_ordinary_text_resembling_a_token_format_is_not_falsely_redacted() -> None:
+    """S12 point 2: a caller-supplied value that merely looks token-shaped
+    but does not hash-match any currently-live secret must never be
+    blanket-replaced -- only a cryptographically confirmed live secret is
+    redacted."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, _csrf = _bootstrap_session(base_url, token)
+        fake_looking_token = secrets.token_urlsafe(32)
+
+        with patch(
+            "rush.dashboard.server._build_memory_section",
+            side_effect=RuntimeError(f"boom {fake_looking_token} not-a-real-secret"),
+        ):
+            resp = _get(
+                f"{base_url}/api/projects/project-a/snapshot?section=memory",
+                headers={
+                    "Cookie": cookie,
+                    "Authorization": f"Bearer {fake_looking_token}",
+                },
+            )
+        assert resp.status == 500
+        body_text = resp.read().decode()
+        assert fake_looking_token in body_text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_referrer_policy_header_present_on_js_response() -> None:
+    """S13: JS responses previously omitted Referrer-Policy."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, _token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        resp = _get(f"{base_url}/assets/bootstrap.js")
+        assert resp.status == 200
+        assert resp.headers.get("Referrer-Policy") == "no-referrer"
+        assert resp.headers.get("Content-Security-Policy") is not None
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_referrer_policy_header_present_on_css_response() -> None:
+    """S13: CSS responses previously omitted Referrer-Policy."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, _token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        resp = _get(f"{base_url}/assets/dashboard.css")
+        assert resp.status == 200
+        assert resp.headers.get("Referrer-Policy") == "no-referrer"
+        assert resp.headers.get("Content-Security-Policy") is not None
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_pre_thread_503_response_carries_the_same_security_headers_as_normal_responses() -> (
+    None
+):
+    """S13: the semaphore-rejection 503, built before any handler exists,
+    previously carried no security headers at all."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, _token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    slow_sockets: list[socket.socket] = []
+    try:
+        host, port = ctx.bound_host, ctx.bound_port
+        base_url = ctx.launch_origin
+        for _ in range(8):
+            sock = socket.create_connection((host, port), timeout=5)
+            with suppress(OSError):
+                sock.sendall(
+                    f"GET /api/health HTTP/1.1\r\nHost: {host}:{port}\r\nX-Hold: ".encode()
+                )
+            slow_sockets.append(sock)
+        time.sleep(0.3)
+        resp = _get(f"{base_url}/api/health")
+        assert resp.status == 503
+        assert resp.headers.get("Retry-After") == "1"
+        assert resp.headers.get("Content-Security-Policy") is not None
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+        assert resp.headers.get("Referrer-Policy") == "no-referrer"
+        assert resp.headers.get("Cache-Control") == "no-store"
+    finally:
+        for sock in slow_sockets:
+            with suppress(OSError):
+                sock.close()
+        server.shutdown()
+        server.server_close()
+
+
+def test_pre_thread_503_service_resumes_after_a_slot_is_released() -> None:
+    """S13: releasing one held slot must let the next request through even
+    while the semaphore-rejection path was otherwise engaged."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, _token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    slow_sockets: list[socket.socket] = []
+    try:
+        host, port = ctx.bound_host, ctx.bound_port
+        base_url = ctx.launch_origin
+        for _ in range(8):
+            sock = socket.create_connection((host, port), timeout=5)
+            with suppress(OSError):
+                sock.sendall(
+                    f"GET /api/health HTTP/1.1\r\nHost: {host}:{port}\r\nX-Hold: ".encode()
+                )
+            slow_sockets.append(sock)
+        time.sleep(0.3)
+        rejected = _get(f"{base_url}/api/health")
+        assert rejected.status == 503
+
+        slow_sockets.pop().close()
+        time.sleep(0.3)
+        resumed = _get(f"{base_url}/api/health")
+        assert resumed.status == 200
+    finally:
+        for sock in slow_sockets:
+            with suppress(OSError):
+                sock.close()
+        server.shutdown()
+        server.server_close()
+
+
+def test_handle_action_rejects_missing_schema_version() -> None:
+    """S14: an omitted schema_version was previously silently accepted."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+        headers = {
+            "Cookie": cookie,
+            "X-Rush-CSRF": csrf,
+            "Origin": base_url,
+            "Content-Type": "application/json",
+        }
+        resp = _post(
+            f"{base_url}/api/projects/project-a/actions",
+            headers=headers,
+            body=json.dumps({"operation": "noop", "request_id": "no-schema"}).encode(),
+        )
+        assert resp.status == 400
+        body = json.loads(resp.read())
+        assert body["error"]["code"] == "malformed_request"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handle_action_rejects_null_string_bool_schema_version() -> None:
+    """S14: null, string, and bool schema_version values must all be
+    rejected as malformed -- booleans must not pass Python's `int` subtype
+    check as if they were 1/0."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+        headers = {
+            "Cookie": cookie,
+            "X-Rush-CSRF": csrf,
+            "Origin": base_url,
+            "Content-Type": "application/json",
+        }
+        for bad_value in (None, "1", True):
+            resp = _post(
+                f"{base_url}/api/projects/project-a/actions",
+                headers=headers,
+                body=json.dumps(
+                    {
+                        "schema_version": bad_value,
+                        "operation": "noop",
+                        "request_id": f"bad-{bad_value}",
+                    }
+                ).encode(),
+            )
+            assert resp.status == 400, bad_value
+            body = json.loads(resp.read())
+            assert body["error"]["code"] == "malformed_request", bad_value
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handle_action_accepts_explicit_integer_1_schema_version() -> None:
+    """S14: the one supported schema_version value must still retain valid
+    behavior after the stricter check is added."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        cookie, csrf = _bootstrap_session(base_url, token)
+        headers = {
+            "Cookie": cookie,
+            "X-Rush-CSRF": csrf,
+            "Origin": base_url,
+            "Content-Type": "application/json",
+        }
+        resp = _post(
+            f"{base_url}/api/projects/project-a/actions",
+            headers=headers,
+            body=json.dumps(
+                {"schema_version": 1, "operation": "noop", "request_id": "ok-schema"}
+            ).encode(),
+        )
+        assert resp.status == 202
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handle_control_check_suite_rejects_missing_schema_version() -> None:
+    """S14: the control-channel CHECK_SUITE path had the same missing-field
+    acceptance bug as the browser action route."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, _token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        resp = _post(
+            f"{base_url}/api/control/check-suite",
+            headers={
+                "X-Rush-Control": ctx.auth.control_capability,
+                "Content-Type": "application/json",
+            },
+            body=json.dumps({}).encode(),
+        )
+        assert resp.status == 400
+        body = json.loads(resp.read())
+        assert body["error"]["code"] == "malformed_request"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handle_control_check_suite_accepts_explicit_integer_1_schema_version() -> None:
+    """S14: an explicit, supported schema_version must pass the schema gate
+    and reach the next (project_id) validation step, not be rejected as a
+    schema problem."""
+    project_a = _load_fixture("project_a.json")
+    server, ctx, _token = create_dashboard_server({"project-a": project_a})
+    _serve(server)
+    try:
+        base_url = ctx.launch_origin
+        resp = _post(
+            f"{base_url}/api/control/check-suite",
+            headers={
+                "X-Rush-Control": ctx.auth.control_capability,
+                "Content-Type": "application/json",
+            },
+            body=json.dumps({"schema_version": 1}).encode(),
+        )
+        assert resp.status == 400
+        body = json.loads(resp.read())
+        assert body["error"]["code"] == "malformed_request"
+        assert "project_id" in body["error"]["message"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_concurrent_bootstrap_exchange_mints_exactly_one_session() -> None:
     project_a = _load_fixture("project_a.json")
     server, ctx, token = create_dashboard_server({"project-a": project_a})
@@ -1081,6 +1594,7 @@ def test_memory_edit_archive_delete_apply_true_persists_ledger_entry_apply_false
     record = register_project(project_dir, data_root=data_root)
     project_id = record.project_id
 
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(project_dir)
     for artifact_id in ("edit-target", "archive-target", "delete-target"):
         store.write(
@@ -1092,6 +1606,7 @@ def test_memory_edit_archive_delete_apply_true_persists_ledger_entry_apply_false
                 content={"note": artifact_id},
                 source="test",
                 created_at=time.time(),
+                owner_scope=owner,
             )
         )
 
@@ -1133,6 +1648,7 @@ def test_memory_edit_archive_delete_apply_true_persists_ledger_entry_apply_false
                     "id": "edit-target",
                     "expected_version": 1,
                     "content": {"note": "edited"},
+                    "owner_scope": owner.as_dict(),
                 },
             ),
             (
@@ -1142,6 +1658,7 @@ def test_memory_edit_archive_delete_apply_true_persists_ledger_entry_apply_false
                     "scope": "domain_knowledge",
                     "id": "archive-target",
                     "expected_version": 1,
+                    "owner_scope": owner.as_dict(),
                 },
             ),
             (
@@ -1151,6 +1668,7 @@ def test_memory_edit_archive_delete_apply_true_persists_ledger_entry_apply_false
                     "artifact_ids": ["delete-target"],
                     "expected_revisions": {"delete-target": 1},
                     "scope": "domain_knowledge",
+                    "owner_scope": owner.as_dict(),
                 },
             ),
         ]
@@ -1519,8 +2037,14 @@ def test_action_rejects_stale_expected_identity() -> None:
         record = ctx.projects.get("project-a")
         original_identity = record.source_identity
         # Simulate the project's source having changed since this client's
-        # `expected` value was last read.
-        record.source_identity = "changed-since-client-read"
+        # `expected` value was last read. ProjectRecord is frozen (M01) --
+        # go through the real publish path instead of direct mutation.
+        assert ctx.projects.publish_scan_result(
+            "project-a",
+            snapshot=record.snapshot,
+            source_identity="changed-since-client-read",
+            generation=record.scan_generation + 1,
+        )
 
         resp = _post(
             f"{base_url}/api/projects/project-a/actions",
@@ -1592,8 +2116,14 @@ def test_expected_identity_changing_while_accepted_work_is_queued_produces_termi
     )
 
     # The project's real source_identity changes underneath the now-queued
-    # work before it actually executes.
-    ctx.projects.get("p").source_identity = "changed"
+    # work before it actually executes. ProjectRecord is frozen (M01) -- go
+    # through the real publish path instead of direct mutation.
+    assert ctx.projects.publish_scan_result(
+        "p",
+        snapshot=accepted_record.snapshot,
+        source_identity="changed",
+        generation=accepted_record.scan_generation + 1,
+    )
 
     reservation = ledger.reserve("p", "req-1", "hash-1", operation_type="scan_start")
     conflict = _revalidate_expected_at_execution(
@@ -1721,6 +2251,7 @@ def test_toolresult_raw_unwrapped_not_skipped_treated_as_success(tmp_path) -> No
             "expected_version": 1,
             "content": {},
             "apply": False,
+            "owner_scope": {"kind": "project", "id": project_id},
         }
 
         ok_result = {
@@ -2321,13 +2852,479 @@ def test_recovery_retrying_a_pending_outcome_never_re_executes_the_operations_ac
     )
 
     # Owner is alive, so the dead-owner branch never fires -- but the durably
-    # registered pending outcome is still retried, bookkeeping only.
-    assert reconcile_admissions(ledger, data_root=tmp_path) == 1
+    # registered pending outcome is still retried, bookkeeping only. S02:
+    # this is *this* recovering call's own live owner retrying its own
+    # previously-attempted-but-unconfirmed outcome, so it must identify
+    # itself as that same owner.
+    assert (
+        reconcile_admissions(
+            ledger, data_root=tmp_path, recovering_owner_instance_id="owner-alive"
+        )
+        == 1
+    )
     status = ledger.get_operation_status("op-1")
     assert status["status"] == "terminal"
     assert status["payload"] == {"status": "success", "run_id": "run-1"}
     assert ledger.admission_for_project("project-a") is None
     assert ledger.pending_outcome("op-1") is None
+
+
+def _spawn_orphaned_sleeper() -> int:
+    """A real, killable process-group leader standing in for an owned engine
+    child (`start_new_session=True` makes its own pid its pgid, matching
+    `_launch_gated_process`'s real contract) -- spawned and orphaned by a
+    fresh, single-threaded helper interpreter that exits immediately after
+    printing its child's pid, so the sleeper reparents to init/launchd
+    exactly like a real dead owner's genuinely-orphaned child. Spawning it
+    directly from this (very much alive, multi-threaded) test process
+    instead would leave a permanent zombie a same-process `killpg(pgid, 0)`
+    liveness check can misreport on macOS -- or, if forked straight from
+    this interpreter, could deadlock the child outright: any process-wide
+    lock held by another thread at the instant of `os.fork()` would remain
+    held forever in it. Delegating the fork+exec to a throwaway,
+    single-threaded `python -c` subprocess sidesteps both hazards (no
+    `setsid(1)` binary exists on macOS, so a shell-based equivalent isn't
+    portable here)."""
+    helper_script = (
+        "import subprocess\n"
+        "child = subprocess.Popen(['sleep', '30'], start_new_session=True, "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL)\n"
+        "print(child.pid)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", helper_script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(result.stdout.strip())
+
+
+def _pgid_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_dead_owner_reap_terminates_recorded_children_before_release(
+    tmp_path, monkeypatch
+) -> None:
+    """S02: reproduces the exact defect Evidence cites -- a dead owner's
+    admission row must never release while its recorded children are still
+    alive. Before the fix, `reconcile_admissions` released the row with no
+    `reap_owner_processes` call at all; the child kept running."""
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    from rush.runtime.subprocesses import _record_owned_process
+
+    ledger = MutationLedger(db_path=tmp_path / "admission.db")
+    _seed_operation(ledger, "op-dead")
+    ledger.admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-dead",
+        operation_id="op-dead",
+        run_id="run-dead",
+        plan_id="plan-1",
+        owner_instance_id="owner-that-died",
+    )
+    pgid = _spawn_orphaned_sleeper()
+    _record_owned_process("owner-that-died", "run-dead", pgid)
+    assert probe_owner_alive("owner-that-died", data_root=tmp_path) is False
+    try:
+        assert _pgid_alive(pgid) is True
+
+        assert (
+            reconcile_admissions(
+                ledger, data_root=tmp_path, recovering_owner_instance_id="owner-live"
+            )
+            == 1
+        )
+
+        assert _pgid_alive(pgid) is False
+        assert ledger.admission_for_project("project-a") is None
+        status = ledger.get_operation_status("op-dead")
+        assert status["status"] == "terminal"
+        assert status["payload"]["code"] == "owner_died"
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
+def test_live_owners_pending_outcome_retried_without_reaping_its_own_children(
+    tmp_path, monkeypatch
+) -> None:
+    """S02 Fix item 1: a live owner's own durably-registered pending outcome
+    is retried as bookkeeping -- but this recovering call must never reap
+    that live owner's still-running children just because it also holds a
+    pending outcome."""
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    from rush.runtime.subprocesses import _record_owned_process
+
+    ledger = MutationLedger(db_path=tmp_path / "admission.db")
+    _seed_operation(ledger, "op-live")
+    ledger.admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-live",
+        operation_id="op-live",
+        run_id="run-live",
+        plan_id="plan-1",
+        owner_instance_id="owner-alive",
+    )
+    OwnerLock("owner-alive", data_root=tmp_path)
+    ledger.register_pending_outcome(
+        "op-live",
+        operation_id="op-live",
+        payload={"status": "success", "run_id": "run-live"},
+        owner_instance_id="owner-alive",
+    )
+    pgid = _spawn_orphaned_sleeper()
+    _record_owned_process("owner-alive", "run-live", pgid)
+    try:
+        assert _pgid_alive(pgid) is True
+
+        assert (
+            reconcile_admissions(
+                ledger, data_root=tmp_path, recovering_owner_instance_id="owner-alive"
+            )
+            == 1
+        )
+
+        # Bookkeeping only -- the still-live owner's real child is untouched.
+        assert _pgid_alive(pgid) is True
+        status = ledger.get_operation_status("op-live")
+        assert status["status"] == "terminal"
+        assert status["payload"] == {"status": "success", "run_id": "run-live"}
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
+def test_foreign_live_owner_admission_is_never_reaped(tmp_path, monkeypatch) -> None:
+    """S02 Fix item 1: a durable pending outcome belonging to some *other*
+    live owner is never permission to release that owner's admission or
+    touch its children -- only that owner's own recovering call may retry
+    its own pending outcome."""
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    from rush.runtime.subprocesses import _record_owned_process
+
+    ledger = MutationLedger(db_path=tmp_path / "admission.db")
+    _seed_operation(ledger, "op-foreign")
+    ledger.admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-foreign",
+        operation_id="op-foreign",
+        run_id="run-foreign",
+        plan_id="plan-1",
+        owner_instance_id="owner-foreign-live",
+    )
+    OwnerLock("owner-foreign-live", data_root=tmp_path)
+    ledger.register_pending_outcome(
+        "op-foreign",
+        operation_id="op-foreign",
+        payload={"status": "success", "run_id": "run-foreign"},
+        owner_instance_id="owner-foreign-live",
+    )
+    pgid = _spawn_orphaned_sleeper()
+    _record_owned_process("owner-foreign-live", "run-foreign", pgid)
+    try:
+        assert _pgid_alive(pgid) is True
+
+        # A *different* recovering owner never treats a foreign owner's
+        # pending outcome as its own to retry, and the owner is genuinely
+        # alive so the dead-owner claim also never succeeds.
+        assert (
+            reconcile_admissions(
+                ledger,
+                data_root=tmp_path,
+                recovering_owner_instance_id="owner-someone-else",
+            )
+            == 0
+        )
+
+        assert _pgid_alive(pgid) is True
+        assert ledger.admission_for_project("project-a") is not None
+        status = ledger.get_operation_status("op-foreign")
+        assert status["status"] != "terminal"
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
+def test_failed_reap_retains_admission_and_does_not_release(
+    tmp_path, monkeypatch
+) -> None:
+    """S02 Fix item 3: an unconfirmed termination must never release the
+    admission row -- it stays intact, flagged `recovery_required`/
+    `termination_unconfirmed`, for the next sweep to retry."""
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    from rush.runtime import subprocesses as sp
+
+    monkeypatch.setattr(sp, "terminate_owned_group", lambda *a, **k: False)
+
+    ledger = MutationLedger(db_path=tmp_path / "admission.db")
+    _seed_operation(ledger, "op-stuck")
+    ledger.admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-stuck",
+        operation_id="op-stuck",
+        run_id="run-stuck",
+        plan_id="plan-1",
+        owner_instance_id="owner-that-died",
+    )
+    sp._record_owned_process("owner-that-died", "run-stuck", 999_999)
+    assert probe_owner_alive("owner-that-died", data_root=tmp_path) is False
+
+    assert (
+        reconcile_admissions(
+            ledger, data_root=tmp_path, recovering_owner_instance_id="owner-live"
+        )
+        == 0
+    )
+
+    assert ledger.admission_for_project("project-a") is not None
+    status = ledger.get_operation_status("op-stuck")
+    assert status["status"] == "recovery_required"
+    assert status["payload"]["code"] == "termination_unconfirmed"
+    records = sp.read_owned_process_records("owner-that-died", data_root=tmp_path)
+    assert len(records) == 1
+    assert records[0]["termination_unconfirmed"] is True
+
+
+def test_kill_recovery_after_confirmed_reap_but_before_finalization_restart_consumes_receipts_without_repeating_effects(
+    tmp_path, monkeypatch
+) -> None:
+    """S02 Fix item 4: a recovery sweep that reaps a dead owner's children
+    for real and then dies before `terminalize_and_release` ever runs (a
+    crash strictly between confirmed reap and finalization) must never
+    repeat its reap/effects on restart -- the next sweep finds the children
+    already gone (nothing left to terminate) and finalizes using the exact
+    pre-crash receipt (`register_pending_outcome`'s payload) already
+    registered, rather than reaping again or inventing a fresh payload."""
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: tmp_path)
+    from rush.runtime.subprocesses import _record_owned_process
+
+    ledger = MutationLedger(db_path=tmp_path / "admission.db")
+    _seed_operation(ledger, "op-dead")
+    ledger.admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-dead",
+        operation_id="op-dead",
+        run_id="run-dead",
+        plan_id="plan-1",
+        owner_instance_id="owner-that-died",
+    )
+    # Pre-crash committed effect receipt: the real work already reached a
+    # terminal outcome before the owner died; only the ledger write (this
+    # recovery sweep's finalization) never landed.
+    ledger.register_pending_outcome(
+        "op-dead",
+        operation_id="op-dead",
+        payload={
+            "status": "success",
+            "run_id": "run-dead",
+            "receipt_id": "effect-committed-once",
+        },
+        owner_instance_id="owner-that-died",
+    )
+    pgid = _spawn_orphaned_sleeper()
+    _record_owned_process("owner-that-died", "run-dead", pgid)
+    assert probe_owner_alive("owner-that-died", data_root=tmp_path) is False
+
+    real_terminalize = MutationLedger.terminalize_and_release
+    call_count = {"n": 0}
+
+    def _crash_before_finalization(self, *args, **kwargs):
+        call_count["n"] += 1
+        raise RuntimeError("simulated crash before finalization commits")
+
+    try:
+        assert _pgid_alive(pgid) is True
+
+        monkeypatch.setattr(
+            MutationLedger, "terminalize_and_release", _crash_before_finalization
+        )
+        assert (
+            reconcile_admissions(
+                ledger, data_root=tmp_path, recovering_owner_instance_id="owner-live-1"
+            )
+            == 0
+        )
+        # The reap already happened for real before the simulated crash --
+        # the child is gone even though this sweep never finalized.
+        assert _pgid_alive(pgid) is False
+        assert call_count["n"] == 1
+        assert ledger.admission_for_project("project-a") is not None
+        assert ledger.pending_outcome("op-dead") is not None
+
+        monkeypatch.setattr(
+            MutationLedger, "terminalize_and_release", real_terminalize
+        )
+        assert (
+            reconcile_admissions(
+                ledger, data_root=tmp_path, recovering_owner_instance_id="owner-live-2"
+            )
+            == 1
+        )
+
+        assert ledger.admission_for_project("project-a") is None
+        assert ledger.pending_outcome("op-dead") is None
+        status = ledger.get_operation_status("op-dead")
+        assert status["status"] == "terminal"
+        # Restart consumed the pre-crash receipt itself, never a freshly
+        # synthesized "owner_died" payload -- no effect was repeated, and
+        # the reap was never attempted a second time (already asserted via
+        # call_count above being the only reap-triggering call).
+        assert status["payload"] == {
+            "status": "success",
+            "run_id": "run-dead",
+            "receipt_id": "effect-committed-once",
+        }
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
+# --- S09: durable admission-table attempt_id column -------------------------
+
+
+def test_admission_schema_carries_attempt_id_column(tmp_path) -> None:
+    """S09 Fix item 1: `scan_admission` must carry a durable `attempt_id`
+    column (not just be inferred later from a disk lookup), and `admit()`
+    must persist and return whatever executing attempt is passed in."""
+    ledger = MutationLedger(db_path=tmp_path / "admission.db")
+    with sqlite3.connect(str(tmp_path / "admission.db")) as conn:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")
+        }
+    assert "attempt_id" in columns
+
+    result = ledger.admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-1",
+        operation_id="op-1",
+        run_id="run-1",
+        plan_id="plan-1",
+        owner_instance_id="owner-1",
+        attempt_id="attempt-1",
+    )
+    assert result.started is True
+    assert result.attempt_id == "attempt-1"
+
+    row = ledger.list_admissions()[0]
+    assert row["attempt_id"] == "attempt-1"
+
+
+def test_concurrent_old_schema_startup_migration_is_race_free(tmp_path) -> None:
+    """S09/S04 Fix item 1: two server processes starting against the same
+    pre-existing OLD-schema database file at once must serialize on the
+    additive migration's own `BEGIN IMMEDIATE` transaction rather than both
+    racing the same `ALTER TABLE` -- confirmed against a real on-disk
+    pre-migration schema (missing `attempt_id` and the S04 ledger columns
+    entirely), not just a fresh empty database."""
+    db_path = tmp_path / "admission.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE mutation_ledger (
+                project_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                operation_type TEXT NOT NULL DEFAULT '',
+                body_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                status_code INTEGER,
+                response_body BLOB,
+                transition_status TEXT,
+                transition_payload TEXT,
+                created_at REAL NOT NULL,
+                terminal_at REAL,
+                PRIMARY KEY (project_id, request_id)
+            );
+            CREATE TABLE scan_admission (
+                project_id TEXT NOT NULL,
+                execution_identity TEXT NOT NULL,
+                slot_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL DEFAULT '',
+                owner_instance_id TEXT NOT NULL DEFAULT '',
+                run_id TEXT NOT NULL DEFAULT '',
+                plan_id TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                UNIQUE(project_id)
+            );
+            """
+        )
+        conn.commit()
+
+    errors: list[BaseException] = []
+    ledgers: list[MutationLedger | None] = [None] * 8
+
+    def _start(index: int) -> None:
+        try:
+            ledgers[index] = MutationLedger(db_path=db_path)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_start, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert all(ledger is not None for ledger in ledgers)
+
+    with sqlite3.connect(str(db_path)) as conn:
+        admission_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")
+        }
+        ledger_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(mutation_ledger)")
+        }
+    assert "attempt_id" in admission_columns
+    assert {"validated_arguments", "effect_ids", "recovery_schema_version"} <= (
+        ledger_columns
+    )
+
+    result = ledgers[0].admit(
+        "project-a",
+        execution_identity="scan_start:plan-1",
+        slot_id="op-1",
+        operation_id="op-1",
+        run_id="run-1",
+        plan_id="plan-1",
+        owner_instance_id="owner-1",
+        attempt_id="attempt-1",
+    )
+    assert result.started is True
+    assert result.attempt_id == "attempt-1"
+
+
+def test_windows_mutex_name_is_deterministic_and_namespaced() -> None:
+    """S03 item 1: pure string derivation, testable without a Windows
+    runner -- deterministic per owner, namespaced, never colliding across
+    two distinct owner identities. The other 8 named S03 regression tests
+    (mutex acquire/release, abandoned-mutex dead-owner detection, gate/job
+    fencing) all require real WinAPI calls that cannot execute on this
+    macOS environment; per this repo's zero-skipped-tests policy they are
+    not added here as `pytest.mark.skip` stubs -- they are named in full in
+    this task's own receipt as an explicit, unverified platform gap."""
+    from rush.dashboard.state import _windows_mutex_name
+
+    name = _windows_mutex_name("tui:abc-123")
+    same_again = _windows_mutex_name("tui:abc-123")
+    different_owner = _windows_mutex_name("tui:xyz-789")
+
+    assert name.startswith("Local\\RushOwner-")
+    assert name == same_again
+    assert name != different_owner
 
 
 def test_recovery_runs_on_a_recurring_interval_not_only_at_startup_so_a_server_that_outlives_a_dead_peer_eventually_reclaims_its_row(
@@ -2351,6 +3348,111 @@ def test_recovery_runs_on_a_recurring_interval_not_only_at_startup_so_a_server_t
             break
         time.sleep(0.01)
     assert ctx.mutations.admission_for_project("project-a") is None
+
+
+def test_cross_process_project_lock_shared_default_genuinely_contends_but_an_explicit_caller_data_root_is_fully_isolated_from_it(
+    tmp_path, monkeypatch
+) -> None:
+    """T027 regression: `cross_process_project_lock` always fell back to
+    the real shared `default_data_root()` whenever a caller didn't pass
+    `data_root` -- confirmed via grep, neither of `rush.tools.project`'s
+    two call sites did. Combined with test fixtures that reuse the same
+    literal project_id (e.g. "project-a") across many tests, this is a
+    real, genuinely blocking `flock()` contention point, not just a stale
+    on-disk file. This test proves the shared-default path really
+    contends (never hangs -- every wait below is bounded), and that a
+    caller passing its own explicit, distinct `data_root` is completely
+    unaffected by a peer still holding the shared-default lock."""
+    shared_root = tmp_path / "shared-default"
+    monkeypatch.setattr("rush.setup.provision.default_data_root", lambda: shared_root)
+    project_id = "project-a"
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def _hold_shared_default_lock() -> None:
+        with cross_process_project_lock(project_id):  # no data_root -> shared default
+            held.set()
+            release.wait(timeout=5.0)
+
+    holder = threading.Thread(target=_hold_shared_default_lock, daemon=True)
+    holder.start()
+    assert held.wait(timeout=2.0), "holder never acquired the shared-default lock"
+
+    # A second caller using the same implicit shared default genuinely
+    # contends -- it must not acquire while the first caller still holds it
+    # (simulating a crashed/hung peer that never releases).
+    acquired_shared = threading.Event()
+
+    def _try_shared_default() -> None:
+        with cross_process_project_lock(project_id):
+            acquired_shared.set()
+
+    contender = threading.Thread(target=_try_shared_default, daemon=True)
+    contender.start()
+    assert not acquired_shared.wait(timeout=0.5), (
+        "a second shared-default caller acquired the lock while the first "
+        "still held it -- contention no longer real"
+    )
+
+    # A caller that instead passes its own explicit, isolated data_root is
+    # never blocked by the shared-default holder above -- same project_id,
+    # genuinely different on-disk lock file.
+    isolated_root = tmp_path / "isolated-caller"
+    with cross_process_project_lock(project_id, data_root=isolated_root):
+        pass  # acquiring at all (never blocking) is the assertion here.
+
+    release.set()
+    holder.join(timeout=2.0)
+    contender.join(timeout=2.0)
+    assert acquired_shared.wait(timeout=2.0), (
+        "contender never acquired after the shared-default holder released"
+    )
+
+
+def test_project_tool_configure_threads_caller_data_root_into_cross_process_project_lock_never_the_shared_default(
+    tmp_path,
+) -> None:
+    """T027 regression: both of `ProjectTool`'s "configure" call sites
+    (`.run`/`._dispatch` and `.handle_request`/`._handle_request_unsafe`,
+    `rush/tools/project.py` lines 256 and 414) now thread an explicit
+    `data_root` all the way into `cross_process_project_lock` instead of
+    always defaulting to the real shared root -- this fails if either
+    call site regresses back to omitting it."""
+    seen: list[Path | None] = []
+    real_lock = dashboard_state.cross_process_project_lock
+
+    @contextmanager
+    def _spy(project_id: str, *, data_root: Path | None = None):
+        seen.append(data_root)
+        with real_lock(project_id, data_root=data_root):
+            yield
+
+    explicit_root = tmp_path / "caller-root"
+
+    with patch.object(dashboard_state, "cross_process_project_lock", _spy):
+        run_result = ProjectTool().run(
+            tmp_path,
+            action="configure",
+            project_id="unknown-project",
+            data_root=explicit_root,
+        )
+        assert seen == [explicit_root]
+        # `configure_project` can't find an unregistered project -- the
+        # lock was still correctly entered/exited with the right
+        # data_root regardless of that unrelated downstream failure.
+        assert run_result["status"] == "error"
+
+        envelope_result = ProjectTool().handle_request(
+            {
+                "schema_version": 1,
+                "operation": "configure",
+                "project": str(uuid.uuid4()),
+            },
+            data_root=explicit_root,
+        )
+        assert seen == [explicit_root, explicit_root]
+        assert envelope_result["raw"]["error"] is not None
 
 
 def test_pruning_a_chain_of_three_attached_operation_ids_removes_every_link_and_every_reservation_row_together_not_just_direct_pointers(
@@ -2703,6 +3805,7 @@ def test_check_suite_control_command_and_a_concurrent_full_scan_never_silently_a
             },
             body=json.dumps(
                 {
+                    "schema_version": 1,
                     "operation": "scan_start",
                     "request_id": "req-full-1",
                     "arguments": {"plan_id": plan.plan_id},

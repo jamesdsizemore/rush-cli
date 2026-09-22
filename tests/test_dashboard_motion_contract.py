@@ -311,6 +311,26 @@ def test_evidence_pulse_plays_once_480ms_on_real_event_only_never_idle() -> None
     assert 'status === "terminal"' in tick_body
 
 
+def test_terminal_pulse_has_exactly_one_iteration_and_no_animation_under_reduced_motion() -> (
+    None
+):
+    """U08 (structural half -- the runtime half, that the polling `tick`
+    actually reaches this call on a real scan's terminal ledger event, is
+    `test_terminal_event_pulse_plays_once_480ms_on_real_scan_completion_via_normal_ledger_polling`
+    in `tests/test_dashboard_projects.py`; live 480ms/reduced-motion
+    observation needs a real browser, per this file's own module docstring).
+    """
+    js = load_dashboard_asset("project_map.js")
+    pulse_body = _extract_function_body(js, "function pulseEvidenceInternal(")
+    assert "iterations: 1" in pulse_body
+    # The reduced-motion early-return must precede the animation call, so a
+    # reduced-motion caller never reaches it at all -- never merely present
+    # somewhere in the same function.
+    reduced_motion_index = pulse_body.index("if (reducedMotion) return;")
+    animate_index = pulse_body.index("animate(")
+    assert reduced_motion_index < animate_index
+
+
 def test_polling_cycle_with_unchanged_data_does_not_recreate_the_renderer() -> None:
     js = load_dashboard_asset("project_map.js")
     render_body = _extract_function_body(js, "function render(mapData) {")

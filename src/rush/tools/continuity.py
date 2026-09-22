@@ -109,6 +109,9 @@ class SessionContinuityTool(ToolFn):
         flight_session_id: str | None = None,
         provider_id: str | None = None,
         as_v1: bool = False,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult | ToolResultV1:
         result = self.run(
             path,
@@ -138,6 +141,9 @@ class SessionContinuityTool(ToolFn):
             flight_session_id=flight_session_id,
             provider_id=provider_id,
             as_v1=as_v1,
+            project_id=project_id,
+            run_id=run_id,
+            session_id=session_id,
         )
         # FastMCP needs schema-bearing public types; ContinuityResult is the
         # exact legacy ToolResult dictionary with retained conversion methods.
@@ -168,6 +174,14 @@ class SessionContinuityTool(ToolFn):
         config: Any = None,
         as_v1: bool = False,
         idempotency_key: str | None = None,
+        # M11: public invocation boundary, mirroring `MemoryTool.run`'s own
+        # `project_id`/`run_id`/`agent_id`/`session_id` -- pure caller-supplied
+        # attribution, threaded unchanged into `pack_context`/`retrieve_context`'s
+        # telemetry writes, never invented from `path` (a filesystem path is not
+        # a registered project UUID).
+        project_id: str | None = None,
+        run_id: str | None = None,
+        session_id: str | None = None,
     ) -> ContinuityOutput:
         del config
         self._as_v1 = as_v1
@@ -193,10 +207,26 @@ class SessionContinuityTool(ToolFn):
 
         dispatch_table = {
             "context_pack": lambda: self._context_pack(
-                started, root, context_path, target_symbol, token_budget, granted
+                started,
+                root,
+                context_path,
+                target_symbol,
+                token_budget,
+                granted,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
             ),
             "context_retrieve": lambda: self._context_retrieve(
-                started, root, context_handle, granted
+                started,
+                root,
+                context_handle,
+                granted,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
             ),
             "coordination_check": lambda: self._coordination_check(
                 started,
@@ -460,6 +490,11 @@ class SessionContinuityTool(ToolFn):
         target_symbol: str,
         token_budget: int,
         granted: ExecutionPermissions,
+        *,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ContinuityOutput:
         return pack_context(
             started,
@@ -470,6 +505,10 @@ class SessionContinuityTool(ToolFn):
             granted,
             as_v1=self._as_v1,
             invocation_id=self._invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
         )
 
     def _context_retrieve(
@@ -478,6 +517,11 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         handle: str | None,
         granted: ExecutionPermissions,
+        *,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ContinuityOutput:
         return retrieve_context(
             started,
@@ -486,6 +530,10 @@ class SessionContinuityTool(ToolFn):
             granted,
             as_v1=self._as_v1,
             invocation_id=self._invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
         )
 
     def _coordination_check(

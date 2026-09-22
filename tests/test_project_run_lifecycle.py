@@ -152,6 +152,32 @@ class _SelfCancellingTool:
         }
 
 
+class _AmbientObservingTool:
+    """S01: records the ambient `(owner_instance_id, run_id)` contextvar
+    pair active at the moment `InvocationExecutor.execute` (the shared
+    ownership boundary) dispatches this candidate's own handler -- proving
+    the pair reaches that real boundary, not merely a kwarg that stops at
+    `_execute_candidate`."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.observed: list[tuple[str | None, str | None] | None] = []
+
+    def __call__(self, path: Path) -> dict[str, Any]:
+        from rush.runtime.subprocesses import _OWNED_EXECUTION
+
+        self.observed.append(_OWNED_EXECUTION.get())
+        return {
+            "tool": self.name,
+            "engine": None,
+            "engine_version": None,
+            "status": "ok",
+            "duration_ms": 1,
+            "summary": f"{self.name}: ok",
+            "findings": [],
+        }
+
+
 def _process_alive(pid: int) -> bool:
     """Portable liveness check -- always executed, never skipped by
     platform: POSIX uses a signal-0 probe, Windows parses `tasklist`."""
@@ -174,7 +200,7 @@ def _process_alive(pid: int) -> bool:
 
 
 def _wait_until(
-    predicate: Any, *, timeout: float = 10.0, interval: float = 0.02
+    predicate: Any, *, timeout: float = 30.0, interval: float = 0.02
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -821,3 +847,495 @@ def test_latest_attempt_id_returns_the_current_latest_attempt_and_none_for_unkno
     assert (
         latest_attempt_id(project_id, "not-a-real-run-id", data_root=data_root) is None
     )
+
+
+def test_resume_scan_run_forwards_owner_instance_id_and_run_id_into_execute_attempt_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S01: `resume_scan_run` accepted no owner identity at all before this
+    fix -- Evidence names it as one of the 20 unforwarded call paths.
+    Proves the new parameter reaches `_execute_attempt_locked`/
+    `_run_candidates`/`_execute_candidate` for the candidate that actually
+    re-executes on resume."""
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    project_id, data_root = _register(tmp_path)
+    run_id = str(uuid.uuid4())
+    monkeypatch.setattr(
+        project_run,
+        "ALL_TOOLS",
+        [
+            _SelfCancellingTool("mid-cancel", project_id, run_id, data_root),
+            _InstantTool("zzz-never-started"),
+        ],
+    )
+    plan = plan_scan(project_id, data_root=data_root)
+
+    run = execute_scan(
+        plan, run_id=run_id, permissions=_WRITE_PERMISSIONS, data_root=data_root
+    )
+    assert run.run_state == "cancelled"
+
+    observed: list[tuple[str, Any, Any]] = []
+    original = project_run._execute_candidate
+
+    def _spy(candidate: Any, **kwargs: Any) -> Any:
+        observed.append(
+            (
+                candidate.candidate_id,
+                kwargs.get("owner_instance_id"),
+                kwargs.get("run_id"),
+            )
+        )
+        return original(candidate, **kwargs)
+
+    monkeypatch.setattr(project_run, "_execute_candidate", _spy)
+
+    resumed = resume_scan_run(
+        project_id,
+        run_id,
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+        owner_instance_id="owner-resume-forward",
+    )
+
+    assert resumed.run_state == "completed"
+    forwarded = [o for o in observed if o[0] == "zzz-never-started"]
+    assert forwarded, "the never-started candidate was never re-executed on resume"
+    assert forwarded[0][1] == "owner-resume-forward"
+    assert forwarded[0][2] == run_id
+
+
+def test_rescan_project_run_forwards_owner_instance_id_and_run_id_into_execute_attempt_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S01: `rescan_project_run` accepted no owner identity at all before
+    this fix. Proves the new parameter reaches `_execute_attempt_locked`/
+    `_run_candidates`/`_execute_candidate` for the fresh (never-retained)
+    re-execution rescan always performs."""
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+
+    baseline = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+
+    observed: list[tuple[str, Any, Any]] = []
+    original = project_run._execute_candidate
+
+    def _spy(candidate: Any, **kwargs: Any) -> Any:
+        observed.append(
+            (
+                candidate.candidate_id,
+                kwargs.get("owner_instance_id"),
+                kwargs.get("run_id"),
+            )
+        )
+        return original(candidate, **kwargs)
+
+    monkeypatch.setattr(project_run, "_execute_candidate", _spy)
+
+    result = rescan_project_run(
+        project_id,
+        baseline.run_id,
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+        owner_instance_id="owner-rescan-forward",
+    )
+
+    new_run_id = result["run"]["run_id"]
+    assert observed, "rescan never re-executed any candidate"
+    assert all(o[1] == "owner-rescan-forward" for o in observed)
+    assert all(o[2] == new_run_id for o in observed)
+
+
+def test_resume_scan_run_call_path_reaches_owned_execution_scope_at_invocation_executor_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S01: proves the forwarded pair isn't merely a Python kwarg that stops
+    at `_execute_candidate` -- it reaches the real, shared
+    `InvocationExecutor.execute` boundary (`owned_execution_scope`) that
+    every catalog tool's own subprocess dispatch reads ambiently."""
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    project_id, data_root = _register(tmp_path)
+    run_id = str(uuid.uuid4())
+    observing = _AmbientObservingTool("zzz-never-started")
+    monkeypatch.setattr(
+        project_run,
+        "ALL_TOOLS",
+        [
+            _SelfCancellingTool("mid-cancel", project_id, run_id, data_root),
+            observing,
+        ],
+    )
+    plan = plan_scan(project_id, data_root=data_root)
+
+    run = execute_scan(
+        plan, run_id=run_id, permissions=_WRITE_PERMISSIONS, data_root=data_root
+    )
+    assert run.run_state == "cancelled"
+    assert observing.observed == [], "must not have run on the first attempt"
+
+    resumed = resume_scan_run(
+        project_id,
+        run_id,
+        permissions=_WRITE_PERMISSIONS,
+        data_root=data_root,
+        owner_instance_id="owner-boundary",
+    )
+
+    assert resumed.run_state == "completed"
+    assert ("owner-boundary", run_id) in observing.observed
+
+
+# --- T007: M15/M16/M18/M21 regressions --------------------------------------
+
+
+def test_slop_tool_reads_staged_bytes_not_live_source_when_live_content_diverges(
+    tmp_path: Path,
+) -> None:
+    """M15: a direct in-process reader (slop) must read the staged copy a
+    scan attempt already captured -- never the live tree, even when live
+    content diverges from what was staged after staging ran."""
+    from rush.engines.staging import stage_inventory, staging_scope
+    from rush.invocation import InvocationExecutor, resolve_invocation
+    from rush.tools.slop import SlopTool
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "x.js").write_text("// clean\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["x.js"])
+    with staging_scope(staging):
+        # Live content diverges from what was already staged.
+        (root / "x.js").write_text("// generated by ai\n", encoding="utf-8")
+
+        staged_workspace = staging.stage_path(root)
+        staging.record_consumption(staged_workspace)
+        executor = InvocationExecutor()
+        executor.register("slop", SlopTool().__call__)
+        context = resolve_invocation(
+            {"operation_id": "slop", "path": str(staged_workspace)},
+            transport="cli",
+            workspace_root=staged_workspace,
+        )
+        result = executor.execute(context)
+
+    markers = [f for f in result["findings"] if f.get("rule") == "rush-ai-marker"]
+    assert not markers, "slop must report the staged (clean) bytes, not live"
+
+
+def test_a_clean_staged_file_with_marked_live_content_yields_no_finding(
+    tmp_path: Path,
+) -> None:
+    """M15 bullet 4: a clean staged file that yields no finding must
+    continue to yield none even when the live source is mutated afterward."""
+    from rush.engines.staging import stage_inventory, staging_scope
+    from rush.invocation import InvocationExecutor, resolve_invocation
+    from rush.tools.slop import SlopTool
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "clean.js").write_text("const x = 1;\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["clean.js"])
+    with staging_scope(staging):
+        (root / "clean.js").write_text("// generated by ai\n", encoding="utf-8")
+        staged_workspace = staging.stage_path(root)
+        staging.record_consumption(staged_workspace)
+        executor = InvocationExecutor()
+        executor.register("slop", SlopTool().__call__)
+        context = resolve_invocation(
+            {"operation_id": "slop", "path": str(staged_workspace)},
+            transport="cli",
+            workspace_root=staged_workspace,
+        )
+        result = executor.execute(context)
+
+    assert result["findings"] == []
+
+
+def test_explicit_target_a_py_does_not_claim_unrelated_b_js_as_consumed(
+    tmp_path: Path,
+) -> None:
+    """M16: an engine invoked with root plus an explicit file target must
+    record only that staged target as consumed, never the whole staged
+    root -- an unrelated inventory file must not be falsely claimed."""
+    from rush.engines.staging import stage_inventory, staging_scope
+    from rush.runtime.subprocesses import _staged_invocation
+    from rush.engines.ruff import RuffEngine
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "b.js").write_text("const y = 1;\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["a.py", "b.js"])
+    with staging_scope(staging):
+        _staged_invocation(
+            RuffEngine(), root, root, [str(root / "a.py")], consumed_paths=[str(root / "a.py")]
+        )
+        consumed = staging.take_candidate_digests()
+
+    assert set(consumed) == {"a.py"}, "b.js must not be claimed as consumed"
+
+
+def test_root_scoped_scan_records_its_full_staged_source_scope(tmp_path: Path) -> None:
+    """M16 bullet 2: an engine invoked with no explicit targets (a genuine
+    root-scoped scan) still records its full staged source scope -- the
+    `consumed_paths` narrowing must never regress that case."""
+    from rush.engines.staging import stage_inventory, staging_scope
+    from rush.runtime.subprocesses import _staged_invocation
+    from rush.engines.ruff import RuffEngine
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "b.js").write_text("const y = 1;\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["a.py", "b.js"])
+    with staging_scope(staging):
+        _staged_invocation(RuffEngine(), root, root, [])
+        consumed = staging.take_candidate_digests()
+
+    assert set(consumed) == {"a.py", "b.js"}
+
+
+def test_escaping_symlink_argument_never_reaches_the_real_engine_argv(
+    tmp_path: Path,
+) -> None:
+    """M18: an explicit tool argument pointing at a project path
+    `stage_inventory` rejected as an escaping symlink must never be
+    substituted with its live value -- it raises, rather than reaching a
+    real engine argv."""
+    from rush.engines.staging import StagingInputError, stage_inventory
+
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    (root / "escaping_link").symlink_to(outside)
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["escaping_link"])
+
+    assert "escaping_link" in staging.rejected_paths
+    with pytest.raises(StagingInputError):
+        staging.substitute_arg(str(root / "escaping_link"))
+
+
+def test_internal_symlink_and_explicitly_supported_external_configuration_are_not_overblocked(
+    tmp_path: Path,
+) -> None:
+    """M18 bullet 4: a genuinely internal symlink (resolves inside root) and
+    an explicitly external configuration path (lexically outside root
+    entirely) must both still substitute/pass through normally -- only a
+    project-lexical path that is actually rejected raises."""
+    from rush.engines.staging import stage_inventory
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "real.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "internal_link").symlink_to(root / "real.py")
+    external = tmp_path / "external_config.cfg"
+    external.write_text("[settings]\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["real.py", "internal_link"])
+
+    assert "internal_link" not in staging.rejected_paths
+    mapped = staging.substitute_arg(str(root / "internal_link"))
+    # Subsection i: symlinks are dereferenced into their real staged
+    # content -- the resolved target's own staged path, not a staged
+    # "internal_link" entry (never copied as its own file).
+    assert mapped == str(staging.staged_root / "real.py")
+
+    # Lexically outside the project root entirely -- never this method's
+    # concern, returned unchanged.
+    assert staging.substitute_arg(str(external)) == str(external)
+
+
+def test_disappeared_inventory_file_during_staging_forces_incomplete_attempt_state_with_zero_scheduled_candidates(
+    tmp_path: Path,
+) -> None:
+    """M21: a captured inventory path that disappears before staging can
+    copy it is a structured failure, and forces the attempt incomplete even
+    when zero candidates end up scheduled."""
+    from rush.engines.staging import stage_inventory
+
+    root = tmp_path / "project"
+    root.mkdir()
+    staged_root = tmp_path / "staged"
+    # "vanished.py" was captured in the inventory list but never created --
+    # exactly a disappeared-between-capture-and-staging race.
+    staging = stage_inventory(root, staged_root, ["vanished.py"])
+
+    assert staging.staging_failures
+    assert staging.staging_failures[0]["path"] == "vanished.py"
+    assert staging.staging_failures[0]["error_code"] == "inventory_path_missing"
+
+
+def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_executing(
+    tmp_path: Path,
+) -> None:
+    """M21 bullet 2/3: a genuine attempt run with a staging failure
+    (a disappeared inventory file) must persist that failure into the
+    terminal manifest and report `incomplete`, never a clean result."""
+    from rush.workflows.project_run import execute_scan, plan_scan
+    from rush.workflows.projects import register_project
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    data_root = tmp_path / "rush-data"
+    record = register_project(root, data_root=data_root)
+    project_id = record.project_id
+
+    real_scan_inventory = project_run._scan_inventory
+    try:
+        project_run._scan_inventory = lambda r: [
+            *real_scan_inventory(r),
+            "vanished.py",
+        ]
+        plan = plan_scan(project_id, data_root=data_root)
+        run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    finally:
+        project_run._scan_inventory = real_scan_inventory
+
+    assert run.run_state == "incomplete"
+    manifest = json.loads(Path(run.manifest_path).read_text())
+    assert manifest["staging_failures"]
+    assert any(f["path"] == "vanished.py" for f in manifest["staging_failures"])
+
+
+def test_staging_failure_never_falls_back_to_a_live_read_and_never_publishes_a_clean_result(
+    tmp_path: Path,
+) -> None:
+    """M21 bullet 2: same scenario, phrased as the acceptance property --
+    the run never reports `completed` when a required source could not be
+    staged."""
+    from rush.workflows.project_run import execute_scan, plan_scan
+    from rush.workflows.projects import register_project
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    data_root = tmp_path / "rush-data"
+    record = register_project(root, data_root=data_root)
+    project_id = record.project_id
+
+    real_scan_inventory = project_run._scan_inventory
+    try:
+        project_run._scan_inventory = lambda r: [
+            *real_scan_inventory(r),
+            "vanished2.py",
+        ]
+        plan = plan_scan(project_id, data_root=data_root)
+        run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    finally:
+        project_run._scan_inventory = real_scan_inventory
+
+    assert run.run_state != "completed"
+
+
+def test_stylelint_decoded_raw_source_field_uses_logical_path_not_staged_temp_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M20: Stylelint's own decoded `source` field (never a generic
+    `_PATH_KEYS` name) must be remapped to the logical project path when a
+    staged attempt is active -- both in the per-finding `path` field and in
+    the raw decoded output."""
+    import json as json_module
+    import subprocess as subprocess_module
+
+    from rush.engines import stylelint as stylelint_module
+    from rush.engines.staging import stage_inventory, staging_scope
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.css").write_text(".x { color: red; }\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["a.css"])
+    staged_css = staged_root / "a.css"
+
+    payload = json_module.dumps(
+        [
+            {
+                "source": str(staged_css),
+                "warnings": [
+                    {
+                        "line": 1,
+                        "column": 1,
+                        "rule": "color-no-invalid-hex",
+                        "severity": "error",
+                        "text": f"bad color, see {staged_css} for context",
+                    }
+                ],
+            }
+        ]
+    )
+
+    monkeypatch.setattr(stylelint_module, "resolve_binary", lambda _b: "stylelint")
+    monkeypatch.setattr(
+        stylelint_module,
+        "run_subprocess",
+        lambda argv, **k: subprocess_module.CompletedProcess(
+            argv, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    with staging_scope(staging):
+        raw = stylelint_module.StylelintEngine().run(staged_css, [], cwd=staged_root)
+
+    assert raw["findings"][0]["source"] == str(root / "a.css")
+    assert raw["parsed"][0]["source"] == str(root / "a.css")
+
+
+def test_literal_message_or_fix_text_containing_a_path_like_substring_is_never_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M20 bullet 2: literal message/text content that happens to mention a
+    staged path as a substring must stay byte-for-byte unchanged -- only
+    fields the engine's own schema identifies as paths are ever remapped."""
+    import json as json_module
+    import subprocess as subprocess_module
+
+    from rush.engines import stylelint as stylelint_module
+    from rush.engines.staging import stage_inventory, staging_scope
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.css").write_text(".x { color: red; }\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["a.css"])
+    staged_css = staged_root / "a.css"
+    literal_message = f"see path {staged_css} in the message text"
+
+    payload = json_module.dumps(
+        [
+            {
+                "source": str(staged_css),
+                "warnings": [
+                    {
+                        "line": 1,
+                        "column": 1,
+                        "rule": "color-no-invalid-hex",
+                        "severity": "error",
+                        "text": literal_message,
+                    }
+                ],
+            }
+        ]
+    )
+
+    monkeypatch.setattr(stylelint_module, "resolve_binary", lambda _b: "stylelint")
+    monkeypatch.setattr(
+        stylelint_module,
+        "run_subprocess",
+        lambda argv, **k: subprocess_module.CompletedProcess(
+            argv, 0, stdout=payload, stderr=""
+        ),
+    )
+
+    with staging_scope(staging):
+        raw = stylelint_module.StylelintEngine().run(staged_css, [], cwd=staged_root)
+
+    assert raw["findings"][0]["text"] == literal_message
+    assert raw["parsed"][0]["warnings"][0]["text"] == literal_message

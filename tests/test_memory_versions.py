@@ -342,6 +342,42 @@ def test_archive_rejects_wrong_owner_scope(tmp_path: Path) -> None:
     assert archived_at is None
 
 
+def test_promote_rejects_mismatched_owner_scope(tmp_path: Path) -> None:
+    """S08 bullet 3: `promote()` previously took no `owner_scope` at all --
+    the only mutating method missing the compare-and-swap ownership check
+    `edit()`/`archive()`/`delete_batch()` already enforce (P69-07). A wrong
+    owner now rejects before any write, exactly like a stale
+    `expected_version`."""
+    store = TypedArtifactStore(tmp_path)
+    store.write(_artifact(owner_scope=OwnerScope("user", "alice")))
+
+    with pytest.raises(OwnerScopeError) as caught:
+        store.promote(
+            "a1",
+            user_stated=True,
+            expected_version=1,
+            owner_scope=OwnerScope("user", "bob"),
+        )
+
+    assert caught.value.code == "E_OWNER"
+    assert store.get_current("a1").trust_tier == "IMPORTED"
+
+
+def test_promote_succeeds_with_matching_owner_scope(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    store.write(_artifact(owner_scope=OwnerScope("user", "alice")))
+
+    promoted, decision = store.promote(
+        "a1",
+        user_stated=True,
+        expected_version=1,
+        owner_scope=OwnerScope("user", "alice"),
+    )
+
+    assert decision.promoted is True
+    assert promoted.trust_tier == "STATED"
+
+
 def test_store_subject_equality_check_unaffected_by_owner_scope(
     tmp_path: Path,
 ) -> None:
@@ -384,6 +420,75 @@ def test_delete_batch_with_one_wrong_owner_member_writes_zero_rows(
         ).fetchone()[0]
     assert remaining == ["a1", "a2"]
     assert tombstones == 0
+
+
+def test_delete_batch_writes_one_distinct_receipt_per_target_from_mapping(
+    tmp_path: Path,
+) -> None:
+    """T040/S04 residual: `receipt_operation_ids` (a target_id -> reserved
+    receipt id mapping) makes `delete_batch()` persist one real receipt per
+    target -- each addressed to its own `artifact_id` -- instead of the
+    legacy single whole-batch receipt. A preview (`apply=False`) still
+    writes nothing, and the batch's atomicity is unaffected: both targets
+    commit (and receipt) inside the one transaction."""
+    store = TypedArtifactStore(tmp_path)
+    store.write(_artifact(id="a1"))
+    store.write(_artifact(id="a2"))
+    mapping = {"a1": "recv-op-a1", "a2": "recv-op-a2"}
+
+    preview = store.delete_batch(
+        ["a1", "a2"],
+        expected_revisions={"a1": 1, "a2": 1},
+        scope="preference",
+        apply=False,
+        receipt_operation_ids=mapping,
+    )
+    assert preview["applied"] is False
+    assert store.get_receipt("recv-op-a1") is None
+    assert store.get_receipt("recv-op-a2") is None
+
+    store.delete_batch(
+        ["a1", "a2"],
+        expected_revisions={"a1": 1, "a2": 1},
+        scope="preference",
+        apply=True,
+        receipt_operation_ids=mapping,
+    )
+
+    receipt_1 = store.get_receipt("recv-op-a1")
+    receipt_2 = store.get_receipt("recv-op-a2")
+    assert receipt_1 is not None
+    assert receipt_2 is not None
+    assert receipt_1["artifact_id"] == "a1"
+    assert receipt_2["artifact_id"] == "a2"
+    assert receipt_1["kind"] == "delete"
+    assert receipt_2["kind"] == "delete"
+    # Never one receipt written under a separate whole-batch id.
+    assert store.get_receipt("op-delete-1") is None
+
+
+def test_delete_batch_legacy_scalar_receipt_id_still_writes_one_whole_batch_receipt(
+    tmp_path: Path,
+) -> None:
+    """Backward compatibility: a caller still passing the older scalar
+    `receipt_operation_id` (no mapping) keeps writing exactly one
+    whole-batch receipt, `artifact_id=None` -- unchanged legacy shape for
+    any caller that hasn't moved to the per-target mapping."""
+    store = TypedArtifactStore(tmp_path)
+    store.write(_artifact(id="a1"))
+
+    store.delete_batch(
+        ["a1"],
+        expected_revisions={"a1": 1},
+        scope="preference",
+        apply=True,
+        receipt_operation_id="whole-batch-op",
+    )
+
+    receipt = store.get_receipt("whole-batch-op")
+    assert receipt is not None
+    assert receipt["artifact_id"] is None
+    assert receipt["kind"] == "delete"
 
 
 def _promoted_stated_row(store: TypedArtifactStore, root: Path, **kwargs) -> None:
@@ -759,10 +864,16 @@ def test_tui_owner_scope_selector_cycles_all_four_kinds(tmp_path: Path) -> None:
 def test_tui_project_and_session_owner_kinds_have_real_default_ids(
     tmp_path: Path,
 ) -> None:
+    """`project`-kind's default id is `ProjectState.project_id` (M09: a
+    registered project's real UUID) when one was resolved -- the raw root
+    path is only a fallback for an explicit unregistered-project result
+    (`ProjectState.project_id is None`, this helper's default), never the
+    unconditional value. `session`-kind is unaffected by M09."""
     from rush.tui import _memory_owner_scope, _tui_session_owner_scope_id
 
     state = _memory_state(tmp_path)
     project = state.active_project
+    assert project.project_id is None  # unregistered-project fallback case
 
     state.memory_owner_scope_kind = "project"
     state.memory_owner_scope_id = ""
@@ -775,6 +886,27 @@ def test_tui_project_and_session_owner_kinds_have_real_default_ids(
     assert _memory_owner_scope(state, project) == {
         "kind": "session",
         "id": _tui_session_owner_scope_id(),
+    }
+
+
+def test_tui_project_owner_kind_uses_registered_uuid_not_root_path_when_resolved(
+    tmp_path: Path,
+) -> None:
+    """M09: a registered project's `ProjectState.project_id` wins over the raw
+    root path for `project`-kind's default owner id -- this is the case
+    `test_tui_project_and_session_owner_kinds_have_real_default_ids` above
+    never exercises (it always leaves `project_id` unset)."""
+    from rush.tui import _memory_owner_scope
+
+    state = _memory_state(tmp_path)
+    state.active_project.project_id = "11111111-1111-1111-1111-111111111111"
+    project = state.active_project
+
+    state.memory_owner_scope_kind = "project"
+    state.memory_owner_scope_id = ""
+    assert _memory_owner_scope(state, project) == {
+        "kind": "project",
+        "id": "11111111-1111-1111-1111-111111111111",
     }
 
 

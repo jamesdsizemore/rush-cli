@@ -58,11 +58,14 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from ..runtime.result_helpers import finding_fingerprint
+
 __all__ = [
     "DEPENDENCY_SYMLINK_EXCLUDED",
     "PROVENANCE_FORMAT",
     "REPOSITORY_STATE_ENGINES",
     "StagingContext",
+    "StagingInputError",
     "active_staging",
     "aggregate_content_identity",
     "map_staged_path",
@@ -71,6 +74,16 @@ __all__ = [
     "staging_scope",
     "supports_reflink",
 ]
+
+
+class StagingInputError(Exception):
+    """M18/M21: a project-relative staging input a caller tried to use
+    (an explicit tool argument, or -- via `stage_inventory`'s own structured
+    failure records -- a required source) could not be safely staged: an
+    escaping/broken symlink, or a copy/hash error. Never silently followed
+    into a live read; the caller converts this into a structured candidate
+    failure before any subprocess spawns."""
+
 
 #: Subsection j. Bumped whenever the provenance algorithm changes; a record
 #: carrying a different (or absent) tag is unsupported, never reinterpreted.
@@ -185,6 +198,29 @@ class StagingContext:
     findings: list[dict[str, Any]] = field(default_factory=list)
     reflink: bool = False
     _candidate: dict[str, str] = field(default_factory=dict)
+    #: M18: every project-relative path `stage_inventory` could not safely
+    #: stage (escaping/broken symlink, copy/hash error), mapped to a short
+    #: reason -- `substitute_arg` consults this so a rejected path is never
+    #: passed through with its live value.
+    rejected_paths: dict[str, str] = field(default_factory=dict)
+    #: M21: every staging input/configuration failure as a structured record
+    #: (`path`, `operation`, `error_code`, `message`) -- never a silent
+    #: `continue`. Persisted into the terminal manifest by
+    #: `project_run.py`'s `_finalize_attempt` so hydration/restart cannot
+    #: present a clean result over an incomplete staging pass.
+    staging_failures: list[dict[str, Any]] = field(default_factory=list)
+
+    def record_staging_failure(
+        self, path: str, operation: str, error_code: str, message: str
+    ) -> None:
+        self.staging_failures.append(
+            {
+                "path": path,
+                "operation": operation,
+                "error_code": error_code,
+                "message": message,
+            }
+        )
 
     # -- input side (subsection g) -------------------------------------
     def stage_path(self, path: Path | None) -> Path | None:
@@ -200,17 +236,39 @@ class StagingContext:
 
     def substitute_arg(self, value: str) -> str:
         """Explicit file-path arguments a caller built itself (`ruff_files`,
-        `prettier_files`, ...) get the identical root-prefix substitution."""
+        `prettier_files`, ...) get the identical root-prefix substitution.
+
+        M18: lexical project membership (the argument's own literal path,
+        before any symlink is resolved) is classified first, so an escaping
+        project symlink is distinguishable from an explicitly allowed
+        external configuration/dependency path that never lexically shares
+        the project root at all -- the latter is returned unchanged, exactly
+        as before. A lexically-internal path that `stage_inventory` already
+        recorded as rejected (`rejected_paths`), or whose real target
+        resolves outside the project root, is never returned with its live
+        value -- it raises `StagingInputError` instead."""
         if not value or value.startswith("-"):
             return value
-        try:
-            candidate = Path(value)
-            if not candidate.is_absolute():
-                return value
-            rel = candidate.resolve().relative_to(self.original_root)
-        except (OSError, ValueError):
+        candidate = Path(value)
+        if not candidate.is_absolute():
             return value
-        return str(self.staged_root / rel)
+        try:
+            lexical_rel = candidate.relative_to(self.original_root)
+        except ValueError:
+            # Lexically outside the project root entirely -- an explicitly
+            # allowed external configuration/dependency, never this
+            # method's concern.
+            return value
+        rel_posix = lexical_rel.as_posix()
+        if rel_posix in self.rejected_paths:
+            raise StagingInputError(f"{rel_posix}: {self.rejected_paths[rel_posix]}")
+        try:
+            resolved_rel = candidate.resolve().relative_to(self.original_root)
+        except (OSError, ValueError):
+            raise StagingInputError(
+                f"{rel_posix}: resolves outside the project root"
+            ) from None
+        return str(self.staged_root / resolved_rel)
 
     # -- consumption record (subsections d/e) --------------------------
     def record_consumption(self, path: Path | None) -> None:
@@ -285,12 +343,26 @@ def stage_inventory(
         if source.is_symlink():
             try:
                 target = source.resolve(strict=True)
-            except OSError:
+            except OSError as exc:
+                # M21: a captured inventory path whose symlink can no longer
+                # be resolved (disappeared/broken between inventory capture
+                # and staging) -- structured failure, never a silent skip.
+                context.rejected_paths[rel] = "broken symlink"
+                context.record_staging_failure(
+                    rel, "resolve_symlink", "broken_symlink", str(exc)
+                )
                 continue
             try:
                 target.relative_to(original_root)
             except ValueError:
                 # Subsection i: never follow an escaping symlink into staging.
+                context.rejected_paths[rel] = "symlink escapes project root"
+                context.record_staging_failure(
+                    rel,
+                    "resolve_symlink",
+                    "symlink_escapes_root",
+                    f"resolves outside the project root ({target})",
+                )
                 context.findings.append(
                     {
                         "path": rel,
@@ -306,12 +378,23 @@ def stage_inventory(
                 )
                 continue
         if not source.is_file():
+            # M21: a captured inventory path that disappeared or stopped
+            # being a plain file between inventory capture and staging.
+            context.rejected_paths[rel] = "inventory path no longer a file"
+            context.record_staging_failure(
+                rel,
+                "stage_copy",
+                "inventory_path_missing",
+                "captured inventory path is no longer a regular file",
+            )
             continue
         destination = context.staged_root / rel
         try:
             _independent_copy(source, destination)
             context.digests[Path(rel).as_posix()] = _digest(destination)
-        except OSError:
+        except OSError as exc:
+            context.rejected_paths[rel] = "copy or hash error"
+            context.record_staging_failure(rel, "stage_copy", "copy_error", str(exc))
             continue
 
     for child in sorted(original_root.iterdir()):
@@ -324,7 +407,12 @@ def stage_inventory(
             continue
         try:
             link.symlink_to(child, target_is_directory=True)
-        except OSError:
+        except OSError as exc:
+            # M21: a dependency/config symlink Rush itself needs to create
+            # for resolution parity (node_modules, .venv, ...) failed.
+            context.record_staging_failure(
+                child.name, "dependency_symlink", "symlink_create_error", str(exc)
+            )
             continue
     return context
 
@@ -371,6 +459,14 @@ def remap_paths(payload: Any, staged_root: Path, original_root: Path) -> Any:
     Never a pass over raw text: JSON escapes a path differently than plain
     text, so a raw-text substitution both misses real matches and can corrupt
     already-encoded output.
+
+    A Finding-shaped dict (identified by its own `fingerprint` key -- only
+    `Finding` carries one) has that fingerprint recomputed from its
+    now-remapped `path`/`line`/`column`/`rule`/`severity`/`message` once this
+    dict's own fields are done remapping. The fingerprint was originally baked
+    from the *staged* path (before this remap ever ran); left alone, the same
+    logical finding would carry a different fingerprint -- and therefore a
+    different `finding_id` -- on every staged scan attempt.
     """
     if isinstance(payload, dict):
         for key, value in payload.items():
@@ -378,6 +474,15 @@ def remap_paths(payload: Any, staged_root: Path, original_root: Path) -> Any:
                 payload[key] = map_staged_path(value, staged_root, original_root)
             else:
                 remap_paths(value, staged_root, original_root)
+        if "fingerprint" in payload:
+            payload["fingerprint"] = finding_fingerprint(
+                str(payload.get("path", "")),
+                payload.get("line", 0) or 0,
+                payload.get("column", 0) or 0,
+                str(payload.get("rule_id") or payload.get("rule") or ""),
+                str(payload.get("severity", "")),
+                str(payload.get("message", "")),
+            )
     elif isinstance(payload, list):
         for item in payload:
             remap_paths(item, staged_root, original_root)

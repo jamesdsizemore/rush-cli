@@ -32,7 +32,7 @@ from rush.dashboard import server as server_module
 from rush.dashboard.server import create_dashboard_server
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.retrieval import recall_page
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
 from rush.workflows import projects as projects_module
@@ -196,6 +196,7 @@ def _seed_artifact(
     content_hash: str | None = None,
     origin_kind: str | None = None,
     origin_id: str | None = None,
+    owner_scope: OwnerScope | None = None,
 ) -> MemoryArtifact:
     return store.write(
         MemoryArtifact(
@@ -210,6 +211,7 @@ def _seed_artifact(
             content_hash=content_hash,
             origin_kind=origin_kind,
             origin_id=origin_id,
+            owner_scope=owner_scope,
         )
     )
 
@@ -291,6 +293,7 @@ def test_memory_immutable_origin_display_across_edit(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
     artifact = _seed_artifact(
         store,
@@ -298,6 +301,7 @@ def test_memory_immutable_origin_display_across_edit(
         source="origin-tool",
         origin_kind="scan-finding",
         origin_id="finding-123",
+        owner_scope=owner,
     )
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
@@ -313,6 +317,7 @@ def test_memory_immutable_origin_display_across_edit(
                 "expected_version": 1,
                 "content": {"note": "updated"},
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants=_grant_all(),
         )
@@ -341,8 +346,9 @@ def test_memory_edit_version_conflict_denied_and_unchanged(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    artifact = _seed_artifact(store, content={"note": "v1"})
+    artifact = _seed_artifact(store, content={"note": "v1"}, owner_scope=owner)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         status, body = _action(
@@ -357,6 +363,7 @@ def test_memory_edit_version_conflict_denied_and_unchanged(
                 "expected_version": 99,
                 "content": {"note": "should not apply"},
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants=_grant_all(),
         )
@@ -378,8 +385,9 @@ def test_memory_edit_apply_without_grant_denied(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    artifact = _seed_artifact(store, content={"note": "unchanged"})
+    artifact = _seed_artifact(store, content={"note": "unchanged"}, owner_scope=owner)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         status, body = _action(
@@ -394,6 +402,7 @@ def test_memory_edit_apply_without_grant_denied(
                 "expected_version": 1,
                 "content": {"note": "changed"},
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants={},
         )
@@ -471,6 +480,7 @@ def test_memory_denied_trust_promotion_insufficient_corroboration(
                 "source": "only-one-source",
                 "user_stated": False,
                 "candidate_sources": ["only-one-source"],
+                "owner_scope": {"kind": "project", "id": project_id},
             },
             grants=_grant_all(),
         )
@@ -506,6 +516,7 @@ def test_memory_promotion_succeeds_with_two_corroborating_sources(
                 "source": "source-a",
                 "user_stated": False,
                 "candidate_sources": ["source-a", "source-b"],
+                "owner_scope": {"kind": "project", "id": project_id},
             },
             grants=_grant_all(),
         )
@@ -541,6 +552,7 @@ def test_memory_promote_requires_grant(
                 "subject": "domain_knowledge",
                 "content": {"note": "x"},
                 "source": "a",
+                "owner_scope": {"kind": "project", "id": project_id},
             },
             grants={},
         )
@@ -556,8 +568,9 @@ def test_memory_archive_hides_then_include_archived_shows(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    artifact = _seed_artifact(store, content={"note": "archivable"})
+    artifact = _seed_artifact(store, content={"note": "archivable"}, owner_scope=owner)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         status, body = _action(
@@ -572,6 +585,7 @@ def test_memory_archive_hides_then_include_archived_shows(
                 "expected_version": 1,
                 "archived": True,
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants=_grant_all(),
         )
@@ -606,9 +620,10 @@ def test_memory_section_browse_excludes_archived_by_default(
     and it never touched `archived_at` at all."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    kept = _seed_artifact(store, content={"note": "kept"})
-    archived = _seed_artifact(store, content={"note": "to-archive"})
+    kept = _seed_artifact(store, content={"note": "kept"}, owner_scope=owner)
+    archived = _seed_artifact(store, content={"note": "to-archive"}, owner_scope=owner)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         status, body = _action(
@@ -623,6 +638,7 @@ def test_memory_section_browse_excludes_archived_by_default(
                 "expected_version": 1,
                 "archived": True,
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants=_grant_all(),
         )
@@ -666,6 +682,144 @@ def test_memory_section_browse_paginates_past_512_same_subject_artifacts(
         server.server_close()
 
 
+@pytest.mark.slow
+def test_browse_and_query_traverse_more_than_10240_rows_with_exact_totals_and_unique_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M14: `_build_memory_section`'s browse (empty query) path used to loop at most
+    `_MEMORY_BROWSE_MAX_BATCHES` (20) batches of 512 -- a hard 10,240-row-per-subject
+    ceiling -- and derive `total`/pagination from that silently truncated collection.
+    Seeding more than that many rows for one subject, both the empty-query browse and
+    the text-query path must report the true total and let a full page-by-page
+    traversal recover every seeded id, none permanently unreachable."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    store = TypedArtifactStore(root)
+    total_rows = 10_245
+    ids = [f"m{i:06d}" for i in range(total_rows)]
+    with sqlite3.connect(store.db_path) as conn:
+        conn.executemany(
+            "INSERT INTO memory_artifacts (id, family, subject, trust_tier, content, "
+            "source, created_at, artifact_version) VALUES (?, 'memory', "
+            "'domain_knowledge', 'IMPORTED', ?, 'allowed', 1.0, 1)",
+            [
+                (artifact_id, json.dumps({"text": f"needle row {artifact_id}"}))
+                for artifact_id in ids
+            ],
+        )
+        conn.commit()
+
+    def _traverse(query_text: str) -> set[str]:
+        seen: set[str] = set()
+        cursor: str | None = None
+        reported_total: int | None = None
+        pages = 0
+        while True:
+            page_query: dict[str, list[str]] = {
+                "query": [query_text],
+                "limit": ["100"],
+            }
+            if cursor:
+                page_query["cursor"] = [cursor]
+            data = server_module._build_memory_section(project_id, page_query)
+            if reported_total is None:
+                reported_total = data["total"]
+            else:
+                assert data["total"] == reported_total
+            seen.update(item["id"] for item in data["items"])
+            cursor = data["next_cursor"]
+            pages += 1
+            if cursor is None:
+                break
+        assert reported_total == total_rows
+        assert pages > 1
+        return seen
+
+    assert _traverse("") == set(ids)
+    assert _traverse("needle") == set(ids)
+
+
+def test_record_becoming_stale_is_excluded_by_query_mode_freshness_revalidation_at_any_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M14: query-mode's per-row dynamic freshness re-check must still catch a record
+    whose cited file changed since it was written, no matter which page of a
+    multi-page query result that record lands on -- paging can never skip the
+    dynamic re-check `MemoryTool`'s `list` dispatch already performs."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    original_text = (root / "app.py").read_text(encoding="utf-8")
+    content_hash = MerkleInvalidator(project_root=root).hash_content(original_text)
+    store = TypedArtifactStore(root)
+    for i in range(120):
+        _seed_artifact(store, content={"note": f"needle fresh row {i}"})
+    stale_artifact = _seed_artifact(
+        store,
+        content={"note": "needle documents my_func"},
+        symbol_ref="app.py::my_func",
+        content_hash=content_hash,
+    )
+    (root / "app.py").write_text(
+        "def my_func():\n    return 2  # changed\n", encoding="utf-8"
+    )
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        cursor: str | None = None
+        found_stale: dict[str, Any] | None = None
+        pages_seen = 0
+        while True:
+            kwargs: dict[str, str] = {"query": "needle", "limit": "50"}
+            if cursor:
+                kwargs["cursor"] = cursor
+            status, body = _snapshot(base_url, project_id, cookie, "memory", **kwargs)
+            assert status == 200
+            pages_seen += 1
+            for item in body["data"]["items"]:
+                assert item["dynamic_freshness_checked"] is True
+                if item["id"] == stale_artifact.id:
+                    found_stale = item
+            cursor = body["data"]["next_cursor"]
+            if cursor is None:
+                break
+        assert pages_seen > 1
+        assert found_stale is not None
+        assert found_stale["stale"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_memory_generation_mutation_mid_traversal_rejects_the_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M14: a memory mutation between two browse page requests bumps
+    `TypedArtifactStore.current_generation()` -- reusing a cursor issued before that
+    mutation must be rejected (409 `cursor_rejected`), never silently splicing
+    pre-/post-mutation pages together mid-traversal."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    store = TypedArtifactStore(root)
+    for i in range(5):
+        _seed_artifact(store, content={"note": f"row-{i}"})
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _snapshot(base_url, project_id, cookie, "memory", limit="2")
+        assert status == 200
+        cursor = body["data"]["next_cursor"]
+        assert cursor is not None
+
+        _seed_artifact(store, content={"note": "row-new"})
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "memory", limit="2", cursor=cursor
+        )
+        assert status == 409
+        assert body["error"]["code"] == "cursor_rejected"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_memory_delete_preview_shows_exactly_selected_and_cancel_deletes_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -675,10 +829,17 @@ def test_memory_delete_preview_shows_exactly_selected_and_cancel_deletes_zero(
     intact, including the 2 that were "selected" for the preview."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    keep_out_of_selection = _seed_artifact(store, content={"note": "untouched"})
-    selected_one = _seed_artifact(store, content={"note": "selected-1"})
-    selected_two = _seed_artifact(store, content={"note": "selected-2"})
+    keep_out_of_selection = _seed_artifact(
+        store, content={"note": "untouched"}, owner_scope=owner
+    )
+    selected_one = _seed_artifact(
+        store, content={"note": "selected-1"}, owner_scope=owner
+    )
+    selected_two = _seed_artifact(
+        store, content={"note": "selected-2"}, owner_scope=owner
+    )
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         ids = [selected_one.id, selected_two.id]
@@ -693,6 +854,7 @@ def test_memory_delete_preview_shows_exactly_selected_and_cancel_deletes_zero(
                 "expected_revisions": {selected_one.id: 1, selected_two.id: 1},
                 "scope": "domain_knowledge",
                 "apply": False,
+                "owner_scope": owner.as_dict(),
             },
         )
         assert status == 200
@@ -720,10 +882,11 @@ def test_memory_delete_apply_deletes_only_selected_others_survive(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    survivor = _seed_artifact(store, content={"note": "survivor"})
-    doomed_one = _seed_artifact(store, content={"note": "doomed-1"})
-    doomed_two = _seed_artifact(store, content={"note": "doomed-2"})
+    survivor = _seed_artifact(store, content={"note": "survivor"}, owner_scope=owner)
+    doomed_one = _seed_artifact(store, content={"note": "doomed-1"}, owner_scope=owner)
+    doomed_two = _seed_artifact(store, content={"note": "doomed-2"}, owner_scope=owner)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         ids = [doomed_one.id, doomed_two.id]
@@ -740,6 +903,7 @@ def test_memory_delete_apply_deletes_only_selected_others_survive(
                 "expected_revisions": revisions,
                 "scope": "domain_knowledge",
                 "apply": False,
+                "owner_scope": owner.as_dict(),
             },
         )
         assert status == 200
@@ -756,6 +920,7 @@ def test_memory_delete_apply_deletes_only_selected_others_survive(
                 "expected_revisions": revisions,
                 "scope": "domain_knowledge",
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants=_grant_all(),
         )
@@ -777,8 +942,9 @@ def test_memory_delete_apply_requires_cache_write_grant(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    owner = OwnerScope("project", project_id)
     store = TypedArtifactStore(root)
-    artifact = _seed_artifact(store, content={"note": "protected"})
+    artifact = _seed_artifact(store, content={"note": "protected"}, owner_scope=owner)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         status, body = _action(
@@ -792,6 +958,7 @@ def test_memory_delete_apply_requires_cache_write_grant(
                 "expected_revisions": {artifact.id: 1},
                 "scope": "domain_knowledge",
                 "apply": True,
+                "owner_scope": owner.as_dict(),
             },
             grants={},
         )
@@ -941,6 +1108,94 @@ def test_tokens_per_run_agent_session_from_handoff_evidence(
 
         export_rows = body["data"]["export_rows"]
         assert export_rows == body["data"]["runs"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handoff_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M10: `_build_tokens_section`'s displayed `actual` totals (raw/sent tokens,
+    events_count, by_memory_event_kind) scope to the same run/agent/session
+    selection the handoff `runs` rows already respected -- not just the handoff
+    rows while the totals themselves stay project-wide."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    telemetry = TelemetryStore(root)
+    telemetry.record_savings(
+        "review",
+        raw_tokens=1000,
+        compressed_tokens=400,
+        run_id="run-a",
+        agent_id="agent-a",
+        session_id="sess-a",
+    )
+    telemetry.record_savings(
+        "review",
+        raw_tokens=200,
+        compressed_tokens=50,
+        run_id="run-b",
+        agent_id="agent-b",
+        session_id="sess-b",
+    )
+    telemetry.record_memory_event(
+        "retrieval",
+        30,
+        request_id="r1",
+        event_id="e1",
+        invocation_id="i1",
+        run_id="run-a",
+        agent_id="agent-a",
+        session_id="sess-a",
+        opt_in=True,
+    )
+    telemetry.record_memory_event(
+        "retrieval",
+        7,
+        request_id="r2",
+        event_id="e2",
+        invocation_id="i2",
+        run_id="run-b",
+        agent_id="agent-b",
+        session_id="sess-b",
+        opt_in=True,
+    )
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _snapshot(base_url, project_id, cookie, "tokens")
+        assert status == 200
+        assert body["data"]["actual"]["raw_tokens"] == 1200
+        assert body["data"]["actual"]["sent_tokens"] == 450
+        assert body["data"]["actual"]["events_count"] == 2
+        assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 37
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "tokens", run_id="run-a"
+        )
+        assert body["data"]["actual"]["raw_tokens"] == 1000
+        assert body["data"]["actual"]["sent_tokens"] == 400
+        assert body["data"]["actual"]["events_count"] == 1
+        assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 30
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "tokens", agent_id="agent-b"
+        )
+        assert body["data"]["actual"]["raw_tokens"] == 200
+        assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 7
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "tokens", session_id="sess-a"
+        )
+        assert body["data"]["actual"]["raw_tokens"] == 1000
+        assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 30
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "tokens", run_id="run-nonexistent"
+        )
+        assert body["data"]["actual"]["raw_tokens"] == 0
+        assert body["data"]["actual"]["events_count"] == 0
+        assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 0
     finally:
         server.shutdown()
         server.server_close()

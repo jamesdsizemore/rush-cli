@@ -64,6 +64,21 @@ class GitGuardEngine(Engine):
         return result
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        # `git status` exits 128 with no findings when `path` isn't inside a
+        # git repository at all -- a real "not applicable here" outcome,
+        # not a crash.
+        if "not a git repository" in (raw.get("stderr") or ""):
+            return ToolResult(
+                tool=tool_name,
+                engine=self.name,
+                engine_version=self.version(),
+                status="skipped",
+                duration_ms=raw.get("duration_ms", 0),
+                summary="git-guard: not a git repository",
+                findings=[],
+                raw=None,
+            )
+
         findings: list[Finding] = []
         for item in raw.get("findings", []):
             item_type = item.get("type", "change")

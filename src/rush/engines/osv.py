@@ -26,9 +26,29 @@ class OsvScannerEngine(Engine):
         owner_instance_id: str | None = None,
         run_id: str | None = None,
     ) -> EngineResult:
-        proc = run_subprocess(
-            [
-                resolve_binary(self.binary) or self.binary,
+        binary_path = resolve_binary(self.binary) or self.binary
+        # `path` is either an explicit lockfile (reference-test contract:
+        # -L against that exact file) or a project directory -- the real
+        # `run_engine` call site (project_run.py) always passes the project
+        # root, never a discovered lockfile. `-L <directory>` is an invalid
+        # osv-scanner invocation (wrong extractor for a directory); a
+        # directory gets osv-scanner's own directory-scan mode instead,
+        # with --allow-no-lockfiles so "no lockfile in this project" is its
+        # own clean exit 0/empty-results outcome rather than a scan error.
+        if path.is_dir():
+            argv = [
+                binary_path,
+                "scan",
+                "--offline",
+                "--allow-no-lockfiles",
+                "--format",
+                "json",
+                str(path),
+                *args,
+            ]
+        else:
+            argv = [
+                binary_path,
                 "scan",
                 "--offline",
                 "--format",
@@ -36,7 +56,9 @@ class OsvScannerEngine(Engine):
                 "-L",
                 str(path),
                 *args,
-            ],
+            ]
+        proc = run_subprocess(
+            argv,
             cwd=cwd,
             timeout=120,
             **ownership_kwargs(owner_instance_id, run_id),
@@ -62,7 +84,9 @@ class OsvScannerEngine(Engine):
         findings: list[Finding] = []
         parsed = raw.get("parsed")
         if isinstance(parsed, dict):
-            for result in parsed.get("results", []):
+            # `--allow-no-lockfiles` reports "results": null (not []) when a
+            # scanned directory has no lockfiles at all.
+            for result in parsed.get("results") or []:
                 if not isinstance(result, dict):
                     continue
                 source = result.get("source", {})
@@ -98,9 +122,19 @@ class OsvScannerEngine(Engine):
                             }
                         )
         exit_code = raw.get("exit_code", 0)
+        stderr_text = raw.get("stderr") or ""
+        # osv-scanner exits nonzero (127) when its offline database cache is
+        # missing/stale -- a real, expected "can't check vulnerabilities
+        # right now" outcome for an offline-only scanner, not a scan crash.
+        db_unavailable = (
+            "no offline version of the OSV database is available" in stderr_text
+        )
         if findings:
             status: ToolStatus = "fail"
             summary = f"osv-scanner: {len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}"
+        elif db_unavailable:
+            status = "skipped"
+            summary = "osv-scanner: no offline vulnerability database available"
         elif exit_code == 0 and parsed is not None:
             status = "ok"
             summary = "osv-scanner: no known vulnerabilities"

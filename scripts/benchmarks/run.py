@@ -808,11 +808,14 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         # helper makes carries a real `owner_scope` -- P69-07's own ownership contract
         # (subsection a) accepts `owner_scope=None` gracefully (legacy default), so this
         # is additive, never a behavior change to what the dashboard already accepts.
+        # M08 (T024): a `project`-kind owner's id must equal this request's own
+        # URL-selected project id, not the filesystem root path -- the dashboard
+        # boundary now rejects a mismatched id outright.
         final_arguments = dict(arguments or {})
         if operation.startswith("memory_") and "owner_scope" not in final_arguments:
             final_arguments["owner_scope"] = {
                 "kind": "project",
-                "id": str(project_root),
+                "id": project_id,
             }
         if operation.startswith("memory_"):
             memory_mutation_arguments_sent.append(dict(final_arguments))

@@ -102,7 +102,7 @@ Rush provides local context transformations and release-check components. Percen
 * **Graph-Pruned Context Packing (`rush context pack`)**: Packs verbatim focus symbols and depth-1 caller/callee signatures under strict token limits (e.g. `--budget 4000`).
 * **Prompt Cache Prefix Aligner (`rush context align-prompt`)**: Structures prompt prefixes ($\ge 1024$ tokens) and adds ephemeral cache-control headers for $\ge 85\%$ KV cache hit rates.
 * **Multi-Turn Stale Read Sweeper**: Automatically collapses older turns' verbose file reads into 1-line signatures (`<!-- stale_read: collapsed N lines -->`).
-* **Context Gain Terminal HUD (`rush context gain`)**: One-shot Rich summary of local compression estimates; persistent interaction remains planned in Phase 66.
+* **Context Gain Terminal HUD (`rush gain` / `rush context gain`)**: Live-updating Rich HUD of local compression and dollar-savings estimates, re-rendering until Ctrl+C; `rush context gain` is a live alias for `rush gain`, not a one-shot summary.
 * **Terse Persona Output Shaper (`rush context persona --set terse`)**: Strips conversational preamble and fluff words, cutting agent output tokens by 40–60%.
 * **Transitive Blast Radius Analyzer (`rush blast-radius --path <FILE>`)**: Calculates downstream reachability depth, affected API routes, and recommended test suites before making edits.
 * **Declarative Architecture Layer Guard (`rush arch-guard`)**: Enforces clean architecture directional layer matrices (e.g. Domain -> Application -> Infrastructure).

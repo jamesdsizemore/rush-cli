@@ -24,6 +24,7 @@ after every code path in this file is exercised.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -40,10 +41,11 @@ import pytest
 
 from rush.dashboard.server import create_dashboard_server
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.permissions import ExecutionPermissions
 from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
 from rush.workflows import project_run as project_run_module
 from rush.workflows import projects as projects_module
-from rush.workflows.project_run import ScanPlan
+from rush.workflows.project_run import ScanCandidate, ScanPlan
 from rush.workflows.projects import (
     expand_artifact_reference,
     export_project_data,
@@ -269,7 +271,11 @@ def _write_manifest(
 
 
 def _scheduled_item(
-    candidate_id: str, category: str, *, artifacts: list[str] | None = None
+    candidate_id: str,
+    category: str,
+    *,
+    artifacts: list[str] | None = None,
+    artifact_snapshots: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "candidate_id": candidate_id,
@@ -288,6 +294,35 @@ def _scheduled_item(
             "artifacts": artifacts or [],
             "raw": None,
         },
+        # M12: sibling of "child", matching `CandidateResult.to_dict()`'s
+        # real shape -- keyed by the exact declared path string.
+        "artifact_snapshots": artifact_snapshots or {},
+    }
+
+
+def _write_artifact_snapshot(
+    root: Path,
+    run_id: str,
+    attempt_id: str,
+    candidate_id: str,
+    index: int,
+    data: bytes,
+    *,
+    media_type: str = "application/octet-stream",
+) -> dict[str, Any]:
+    """M12: writes a fixture immutable snapshot file at the same relative
+    layout `project_run.py::_capture_artifact_snapshots` uses, and returns
+    the matching `artifact_snapshots` entry -- so a test can assert the
+    download route reads captured bytes back, without driving a real scan."""
+    relative = f".rush/runs/{run_id}/attempts/{attempt_id}/artifacts/{candidate_id}/{index}.bin"
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return {
+        "immutable_path": relative,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "media_type": media_type,
     }
 
 
@@ -546,6 +581,121 @@ def test_git_scan_link_requires_matching_source_revision_not_just_path(
         server.server_close()
 
 
+# --- M13: repository-state evidence never becomes an impossible Git path ---
+
+
+def _run_real_scan(tmp_path: Path, project_id: str) -> dict[str, Any]:
+    """A real `execute_scan` attempt against the registered project's own
+    root -- the "real scan route" M13's Fix bullet 4 requires. `git-guard`
+    (a real repository-state engine needing only the `git` binary, always
+    present here) runs as one of the catalog's own real candidates; no
+    fixture/fake tool stands in for it."""
+    from rush.workflows.project_run import execute_scan, plan_scan
+
+    plan = plan_scan(project_id, data_root=tmp_path / "rush-data")
+    run = execute_scan(
+        plan,
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+        data_root=tmp_path / "rush-data",
+    )
+    return json.loads(Path(run.manifest_path).read_text())
+
+
+def test_no_synthetic_evidence_key_reaches_git_show_commit_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13 bullets 1-3: `git-guard`'s own synthetic `candidate_id:kind`
+    provenance digest is recorded under this candidate's
+    `repository_state_evidence`, never under the attempt's
+    `git_link.path_digests` -- `projects.git_link_matches_commit` treats
+    every `path_digests` key as a literal `git show commit:path` argument,
+    so a synthetic key there would be an impossible Git path."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "m13-synthetic-repo")
+    _commit_file(root, ".gitignore", ".rush/\n", "add .gitignore")
+    _commit_file(root, "src/app.py", "print('hi')\n", "add src/app.py")
+
+    manifest = _run_real_scan(tmp_path, project_id)
+
+    git_guard_entry = next(
+        item for item in manifest["scheduled"] if item["candidate_id"] == "git-guard"
+    )
+    assert git_guard_entry["outcome"] == "executed"
+    assert git_guard_entry["consumed_path_digests"] == {}
+    repository_state_evidence = git_guard_entry["repository_state_evidence"]
+    assert repository_state_evidence
+    synthetic_key = next(iter(repository_state_evidence))
+    assert synthetic_key == "git-guard:git-status-stdout"
+
+    path_digests = manifest["git_link"]["path_digests"]
+    assert synthetic_key not in path_digests
+    assert set(path_digests) == {".gitignore", "src/app.py"}
+
+
+def test_clean_matching_commit_links_correctly_through_gitguard_diffcover_undercover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13 bullet 4: `git-guard`'s own repository-state evidence (present
+    alongside DiffCover/Undercover, which share the identical
+    `repository_state_evidence` path per Fix bullet 1, when those binaries
+    are installed) never blocks a clean, unmodified commit from linking
+    correctly through `projects.git_link_matches_commit`."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "m13-clean-match-repo")
+    _commit_file(root, ".gitignore", ".rush/\n", "add .gitignore")
+    head = _commit_file(root, "src/app.py", "print('hi')\n", "add src/app.py")
+
+    manifest = _run_real_scan(tmp_path, project_id)
+
+    git_guard_entry = next(
+        item for item in manifest["scheduled"] if item["candidate_id"] == "git-guard"
+    )
+    assert git_guard_entry["outcome"] == "executed"
+    assert manifest["git_link"]["dirty"] is False
+    assert projects_module.git_link_matches_commit(root, manifest["git_link"], head)
+
+
+def test_changed_repository_state_evidence_prevents_a_false_git_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M13 bullet 4: the repository state changes (an untracked file
+    appears) between two attempts against the same commit -- `git-guard`'s
+    own real `repository_state_evidence` digest changes, the persisted
+    `git_link.dirty` flag flips to `True`, and
+    `projects.git_link_matches_commit` correctly refuses to link this
+    attempt's output to the commit despite an identical HEAD, rather than
+    falsely matching on HEAD alone."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "m13-changed-evidence-repo")
+    _commit_file(root, ".gitignore", ".rush/\n", "add .gitignore")
+    head = _commit_file(root, "src/app.py", "print('hi')\n", "add src/app.py")
+
+    clean_manifest = _run_real_scan(tmp_path, project_id)
+    assert projects_module.git_link_matches_commit(
+        root, clean_manifest["git_link"], head
+    )
+
+    (root / "untracked.py").write_text("z = 1\n", encoding="utf-8")
+    dirty_manifest = _run_real_scan(tmp_path, project_id)
+
+    clean_evidence = next(
+        item["repository_state_evidence"]
+        for item in clean_manifest["scheduled"]
+        if item["candidate_id"] == "git-guard"
+    )
+    dirty_evidence = next(
+        item["repository_state_evidence"]
+        for item in dirty_manifest["scheduled"]
+        if item["candidate_id"] == "git-guard"
+    )
+    assert clean_evidence != dirty_evidence
+    assert dirty_manifest["git_link"]["head"] == head
+    assert dirty_manifest["git_link"]["dirty"] is True
+    assert not projects_module.git_link_matches_commit(
+        root, dirty_manifest["git_link"], head
+    )
+
+
 def test_git_history_uses_50_commit_cursor_not_offset_pagination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -725,25 +875,43 @@ def test_artifacts_section_unknown_output_type_gets_generic_safe_redacted_view(
 def test_artifact_content_route_supports_paged_download(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P69-07.2b: `GET /api/projects/{id}/artifacts/{ref}` supports real
-    paged content download for a scan-output artifact's recorded file, not
-    metadata-only (Phase 66 §3.6: artifact reads paginate, 1MiB/page)."""
+    """P69-07.2b/M12: `GET /api/projects/{id}/artifacts/{ref}` supports real
+    paged content download for a scan-output artifact's captured immutable
+    snapshot (never the live/staged current-project tree), base64-encoded
+    for lossless reassembly (Phase 66 §3.6: artifact reads paginate,
+    1MiB/page)."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path, "download-repo")
-    content = "line\n" * 500
-    (root / "report.txt").write_text(content, encoding="utf-8")
+    content = ("line\n" * 500).encode("utf-8")
+    snapshot = _write_artifact_snapshot(
+        root,
+        "run-dl",
+        "run-dl-attempt-1",
+        "dl-tool",
+        0,
+        content,
+        media_type="text/plain",
+    )
     _write_manifest(
         root,
         run_id="run-dl",
-        scheduled=[_scheduled_item("dl-tool", "quality", artifacts=["report.txt"])],
+        scheduled=[
+            _scheduled_item(
+                "dl-tool",
+                "quality",
+                artifacts=["report.txt"],
+                artifact_snapshots={"report.txt": snapshot},
+            )
+        ],
     )
     artifact_ref = "run:run-dl:run-dl-attempt-1:dl-tool"
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
-        collected = ""
+        collected = b""
         offset = 0
         pages = 0
+        last_page: dict[str, Any] = {}
         while True:
             resp = _get(
                 f"{base_url}/api/projects/{project_id}/artifacts/{artifact_ref}"
@@ -752,10 +920,12 @@ def test_artifact_content_route_supports_paged_download(
             )
             assert resp.status == 200
             page = json.loads(resp.read())["data"]["content"]
+            last_page = page
             assert page["path"] == "report.txt"
             assert page["offset"] == offset
-            assert len(page["content"].encode("utf-8")) <= 1000
-            collected += page["content"]
+            chunk = base64.b64decode(page["content_base64"])
+            assert len(chunk) <= 1000
+            collected += chunk
             pages += 1
             assert pages <= 10  # bounded loop guard, never an infinite paginate
             if page["next_offset"] is None:
@@ -763,6 +933,319 @@ def test_artifact_content_route_supports_paged_download(
             offset = page["next_offset"]
         assert pages > 1  # actually paginated, not one giant blob
         assert collected == content
+        assert last_page["sha256"] == snapshot["sha256"]
+        assert last_page["media_type"] == "text/plain"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- M12: historical byte storage overwritten at finalization -------------
+
+
+def test_two_candidates_in_one_attempt_writing_the_same_logical_filename_retain_different_original_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M12 regression: every scheduled candidate in one attempt shares the
+    same private staging tree, so a second candidate declaring the exact
+    same absolute artifact path as an earlier one physically overwrites it
+    on disk before the attempt finishes. `_capture_artifact_snapshots`
+    (`project_run.py`) must copy each candidate's own bytes out immediately
+    after it runs -- before that overwrite can happen -- so both retain
+    their own original content."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "collision-repo", init_git=False)
+    shared_path = tmp_path / "shared-out.bin"
+
+    def _fake_execute_candidate(candidate, **_kwargs):
+        payload = f"{candidate.candidate_id}-bytes".encode()
+        shared_path.write_bytes(payload)
+        return "executed", {
+            "tool": candidate.candidate_id,
+            "engine": None,
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": "ok",
+            "findings": [],
+            "artifacts": [str(shared_path)],
+        }
+
+    monkeypatch.setattr(
+        project_run_module, "_execute_candidate", _fake_execute_candidate
+    )
+
+    plan = ScanPlan(
+        plan_id="fixture-plan",
+        project_id=project_id,
+        root=str(root),
+        candidates=(
+            ScanCandidate("cand-a", "tool", "quality", "applicable", "static"),
+            ScanCandidate("cand-b", "tool", "quality", "applicable", "static"),
+        ),
+        exclude=(),
+        targets={},
+        severity="warn",
+        concurrency=2,
+        timeout_seconds=300,
+    )
+    run = project_run_module.execute_scan(
+        plan, run_id="run-collision", attempt_id="attempt-1"
+    )
+
+    manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+    scheduled_by_id = {item["candidate_id"]: item for item in manifest["scheduled"]}
+    snap_a = scheduled_by_id["cand-a"]["artifact_snapshots"][str(shared_path)]
+    snap_b = scheduled_by_id["cand-b"]["artifact_snapshots"][str(shared_path)]
+
+    assert snap_a["sha256"] != snap_b["sha256"]
+    assert snap_a["immutable_path"] != snap_b["immutable_path"]
+    assert (root / snap_a["immutable_path"]).read_bytes() == b"cand-a-bytes"
+    assert (root / snap_b["immutable_path"]).read_bytes() == b"cand-b-bytes"
+    # The shared physical path really was overwritten -- proving the
+    # captured snapshot, not the live path, is what preserved cand-a's bytes.
+    assert shared_path.read_bytes() == b"cand-b-bytes"
+
+
+def test_two_attempts_and_a_resumed_completed_candidate_retain_their_own_artifact_copies_after_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M12 regression: a candidate retained across a resumed attempt is
+    reloaded straight from its persisted evidence file (`_load_completed_
+    candidates`, a real "after restart" reload, never carried in memory).
+    It must keep pointing at its own attempt-1 bytes even after a fresh
+    candidate in attempt 2 declares the exact same physical artifact path."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "resume-collision-repo", init_git=False)
+    shared_path = tmp_path / "shared-out.bin"
+
+    def _fake_execute_candidate_1(candidate, **_kwargs):
+        payload = f"{candidate.candidate_id}-attempt1-bytes".encode()
+        shared_path.write_bytes(payload)
+        return "executed", {
+            "tool": candidate.candidate_id,
+            "engine": None,
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": "ok",
+            "findings": [],
+            "artifacts": [str(shared_path)],
+        }
+
+    monkeypatch.setattr(
+        project_run_module, "_execute_candidate", _fake_execute_candidate_1
+    )
+
+    candidate_a = ScanCandidate("cand-a", "tool", "quality", "applicable", "static")
+    plan_1 = ScanPlan(
+        plan_id="fixture-plan",
+        project_id=project_id,
+        root=str(root),
+        candidates=(candidate_a,),
+        exclude=(),
+        targets={},
+        severity="warn",
+        concurrency=2,
+        timeout_seconds=300,
+    )
+    run_1 = project_run_module.execute_scan(
+        plan_1, run_id="run-resume", attempt_id="attempt-1"
+    )
+    attempt_1_manifest = json.loads(
+        Path(run_1.manifest_path).read_text(encoding="utf-8")
+    )
+    attempt_1_snap = attempt_1_manifest["scheduled"][0]["artifact_snapshots"][
+        str(shared_path)
+    ]
+
+    # A real restart: reload the completed candidate straight off disk, the
+    # same way `resume_scan_run` does after a process death.
+    attempt_1_dir = root / ".rush" / "runs" / "run-resume" / "attempts" / "attempt-1"
+    already_completed = project_run_module._load_completed_candidates(attempt_1_dir)
+    assert (
+        already_completed["cand-a"].artifact_snapshots[str(shared_path)]
+        == attempt_1_snap
+    )
+
+    def _fake_execute_candidate_2(candidate, **_kwargs):
+        payload = f"{candidate.candidate_id}-attempt2-bytes".encode()
+        shared_path.write_bytes(payload)
+        return "executed", {
+            "tool": candidate.candidate_id,
+            "engine": None,
+            "status": "ok",
+            "duration_ms": 0,
+            "summary": "ok",
+            "findings": [],
+            "artifacts": [str(shared_path)],
+        }
+
+    monkeypatch.setattr(
+        project_run_module, "_execute_candidate", _fake_execute_candidate_2
+    )
+    candidate_b = ScanCandidate("cand-b", "tool", "quality", "applicable", "static")
+    plan_2 = ScanPlan(
+        plan_id="fixture-plan",
+        project_id=project_id,
+        root=str(root),
+        candidates=(candidate_a, candidate_b),
+        exclude=(),
+        targets={},
+        severity="warn",
+        concurrency=2,
+        timeout_seconds=300,
+    )
+    run_2 = project_run_module._execute_attempt_locked(
+        plan_2,
+        root=root,
+        run_id="run-resume",
+        attempt_id="attempt-2",
+        permissions=ExecutionPermissions(),
+        config=None,
+        already_completed=already_completed,
+    )
+    attempt_2_manifest = json.loads(
+        Path(run_2.manifest_path).read_text(encoding="utf-8")
+    )
+    scheduled_by_id = {
+        item["candidate_id"]: item for item in attempt_2_manifest["scheduled"]
+    }
+
+    carried = scheduled_by_id["cand-a"]["artifact_snapshots"][str(shared_path)]
+    assert carried == attempt_1_snap
+    assert (root / carried["immutable_path"]).read_bytes() == b"cand-a-attempt1-bytes"
+
+    fresh = scheduled_by_id["cand-b"]["artifact_snapshots"][str(shared_path)]
+    assert (root / fresh["immutable_path"]).read_bytes() == b"cand-b-attempt2-bytes"
+    assert fresh["sha256"] != carried["sha256"]
+
+
+def test_download_more_than_two_pages_containing_split_utf8_nul_and_0xff_bytes_reassembles_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M12 regression: the prior text-decode page reader
+    (`chunk.decode("utf-8", errors="replace")`) corrupted a multi-byte UTF-8
+    character split across a page boundary, a NUL byte, and 0xFF -- the
+    base64 wire contract must reassemble all three losslessly across more
+    than two pages."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "binary-download-repo")
+    # 'A', the 3-byte UTF-8 encoding of '€' ("euro sign"), 'B', a NUL
+    # byte, and 0xFF.
+    content = bytes.fromhex("41e282ac4200ff")
+    snapshot = _write_artifact_snapshot(
+        root, "run-bin", "run-bin-attempt-1", "bin-tool", 0, content
+    )
+    _write_manifest(
+        root,
+        run_id="run-bin",
+        scheduled=[
+            _scheduled_item(
+                "bin-tool",
+                "quality",
+                artifacts=["out.bin"],
+                artifact_snapshots={"out.bin": snapshot},
+            )
+        ],
+    )
+    artifact_ref = "run:run-bin:run-bin-attempt-1:bin-tool"
+
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        collected = b""
+        offset = 0
+        pages = 0
+        while True:
+            resp = _get(
+                f"{base_url}/api/projects/{project_id}/artifacts/{artifact_ref}"
+                f"?limit=2&offset={offset}",
+                headers={"Cookie": cookie},
+            )
+            assert resp.status == 200
+            page = json.loads(resp.read())["data"]["content"]
+            chunk = base64.b64decode(page["content_base64"])
+            assert len(chunk) <= 2
+            collected += chunk
+            pages += 1
+            assert pages <= 10  # bounded loop guard, never an infinite paginate
+            if page["next_offset"] is None:
+                break
+            offset = page["next_offset"]
+        assert pages > 2  # more than two pages, per this test's own name
+        assert collected == content
+        assert hashlib.sha256(collected).hexdigest() == snapshot["sha256"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_reference_and_offset_for_attempt_a_never_selects_attempt_bs_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M12 regression: two attempts (each the sole/latest attempt of its own
+    run -- `_iter_run_manifests` only ever surfaces one attempt per run_id,
+    a separate, pre-existing constraint this test does not exercise), each
+    with a candidate declaring the identical logical artifact filename,
+    must never let attempt A's reference resolve attempt B's captured
+    bytes (or vice versa) -- even at the same byte offset."""
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, "two-attempt-download-repo")
+
+    content_a = b"attempt-A-bytes"
+    content_b = b"attempt-B-different-bytes"
+    snapshot_a = _write_artifact_snapshot(
+        root, "run-a", "attempt-a", "same-tool", 0, content_a
+    )
+    snapshot_b = _write_artifact_snapshot(
+        root, "run-b", "attempt-b", "same-tool", 0, content_b
+    )
+    _write_manifest(
+        root,
+        run_id="run-a",
+        attempt_id="attempt-a",
+        scheduled=[
+            _scheduled_item(
+                "same-tool",
+                "quality",
+                artifacts=["out.txt"],
+                artifact_snapshots={"out.txt": snapshot_a},
+            )
+        ],
+    )
+    _write_manifest(
+        root,
+        run_id="run-b",
+        attempt_id="attempt-b",
+        scheduled=[
+            _scheduled_item(
+                "same-tool",
+                "quality",
+                artifacts=["out.txt"],
+                artifact_snapshots={"out.txt": snapshot_b},
+            )
+        ],
+    )
+    ref_a = "run:run-a:attempt-a:same-tool"
+    ref_b = "run:run-b:attempt-b:same-tool"
+
+    server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    try:
+        resp_a = _get(
+            f"{base_url}/api/projects/{project_id}/artifacts/{ref_a}?offset=0&limit=100",
+            headers={"Cookie": cookie},
+        )
+        assert resp_a.status == 200
+        page_a = json.loads(resp_a.read())["data"]["content"]
+        assert base64.b64decode(page_a["content_base64"]) == content_a
+
+        resp_b = _get(
+            f"{base_url}/api/projects/{project_id}/artifacts/{ref_b}?offset=0&limit=100",
+            headers={"Cookie": cookie},
+        )
+        assert resp_b.status == 200
+        page_b = json.loads(resp_b.read())["data"]["content"]
+        assert base64.b64decode(page_b["content_base64"]) == content_b
+
+        assert page_a["content_base64"] != page_b["content_base64"]
     finally:
         server.shutdown()
         server.server_close()
@@ -1079,7 +1562,12 @@ def test_tui_git_view_two_project_isolation_no_leak(
     subjects_a = {c["subject"] for c in state.git_data["git"]["history"]}
     assert subjects_a == {"commit in A"}
 
-    _dispatch_key(state, "tab", actions)
+    # U01 fix: Tab now cycles panes, not projects. Switching the active
+    # project goes through the F2 project-selector overlay (Down highlights
+    # the next project, Enter confirms the switch).
+    _dispatch_key(state, "f2", actions)
+    _dispatch_key(state, "down", actions)
+    _dispatch_key(state, "enter", actions)
     assert state.git_data is None  # reset -- never leaks project A's data
 
     _dispatch_key(state, "G", actions)

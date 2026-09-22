@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import hmac
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 
@@ -89,15 +90,27 @@ class DashboardAuth:
         self.control_capability = secrets.token_urlsafe(32)
         self._bootstrap: _Bootstrap | None = None
         self._sessions: dict[str, Session] = {}
+        # S11: one owning lock across bootstrap lookup, expiry/used checks,
+        # consumption, and the resulting session insertion. Reentrant so
+        # `exchange_bootstrap` can call the same lock-held verifier without
+        # deadlocking itself -- direct method callers get the same
+        # single-use guarantee HTTP concurrency previously masked with a
+        # route-only lock.
+        self._lock = threading.RLock()
         self.issue_bootstrap()
 
     def issue_bootstrap(self) -> str:
         """Issue a fresh one-use launch token, invalidating any prior one."""
         token = secrets.token_urlsafe(32)
-        self._bootstrap = _Bootstrap(digest=_digest(token), issued_at=time.time())
+        with self._lock:
+            self._bootstrap = _Bootstrap(digest=_digest(token), issued_at=time.time())
         return token
 
     def verify_bootstrap(self, provided: str | None) -> bool:
+        with self._lock:
+            return self._verify_bootstrap_locked(provided)
+
+    def _verify_bootstrap_locked(self, provided: str | None) -> bool:
         bootstrap = self._bootstrap
         if bootstrap is None or bootstrap.used or not provided:
             return False
@@ -109,14 +122,20 @@ class DashboardAuth:
         """Consume the bootstrap token once and mint a new cookie session.
         Returns `(session, cookie_value)` -- `cookie_value` is the plaintext
         secret the caller must hand to the browser via Set-Cookie; only its
-        digest is retained on `session` itself."""
-        if not self.verify_bootstrap(provided):
-            return None
-        assert self._bootstrap is not None
-        self._bootstrap.used = True
-        return self._create_session()
+        digest is retained on `session` itself.
 
-    def _create_session(self) -> tuple[Session, str]:
+        S11: verification and consumption happen under one held lock, so
+        two concurrent callers can never both observe an unused token as
+        valid -- exactly one exchange mints a session per issued token,
+        whether callers go through HTTP or call this method directly."""
+        with self._lock:
+            if not self._verify_bootstrap_locked(provided):
+                return None
+            assert self._bootstrap is not None
+            self._bootstrap.used = True
+            return self._create_session_locked()
+
+    def _create_session_locked(self) -> tuple[Session, str]:
         now = time.time()
         cookie_value = secrets.token_urlsafe(32)
         session = Session(
@@ -132,13 +151,14 @@ class DashboardAuth:
         if not cookie_value:
             return None
         digest = _digest(cookie_value)
-        session = self._sessions.get(digest)
-        if session is None:
-            return None
-        if time.time() > session.expires_at:
-            del self._sessions[digest]
-            return None
-        return session
+        with self._lock:
+            session = self._sessions.get(digest)
+            if session is None:
+                return None
+            if time.time() > session.expires_at:
+                del self._sessions[digest]
+                return None
+            return session
 
     def verify_csrf(self, cookie_value: str | None, csrf_header: str | None) -> bool:
         session = self.get_session(cookie_value)
@@ -150,3 +170,41 @@ class DashboardAuth:
         if not provided:
             return False
         return hmac.compare_digest(self.control_capability, provided)
+
+    def live_secret_values(self) -> tuple[str, ...]:
+        """S12 point 1: lock-protected snapshot of every currently-live
+        plaintext secret this server can always redact by exact match --
+        the control capability plus each active session's CSRF token
+        (legitimately re-served in plaintext on `GET /api/session` reload).
+        The bootstrap token and session cookie value are never retained in
+        plaintext once minted, so they are never in this set; see
+        `match_presented_secret` for those two."""
+        with self._lock:
+            return (
+                self.control_capability,
+                *(session.csrf_token for session in self._sessions.values()),
+            )
+
+    def match_presented_secret(self, candidate: str | None) -> bool:
+        """S12 point 3: hash-only check for whether `candidate` -- a value a
+        caller already extracted from the *current* request, e.g. a
+        presented bootstrap token or session cookie -- digests to a
+        currently-live bootstrap or session secret, using constant-time
+        comparison against the stored digest snapshot. Never retains or
+        logs `candidate`; a caller uses a True result to decide its own
+        already-known value is safe to redact, never to redact a blind
+        substring."""
+        if not candidate:
+            return False
+        digest = _digest(candidate)
+        with self._lock:
+            if (
+                self._bootstrap is not None
+                and not self._bootstrap.used
+                and hmac.compare_digest(self._bootstrap.digest, digest)
+            ):
+                return True
+            for session_digest in self._sessions:
+                if hmac.compare_digest(session_digest, digest):
+                    return True
+        return False

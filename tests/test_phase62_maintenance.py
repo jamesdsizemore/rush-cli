@@ -148,7 +148,11 @@ def test_maintenance_sweep_never_touches_a_different_owners_rows(
     assert result.processed == 1
     assert result.errors == ()
 
-    default_result = run_maintenance_cycle("promotion_sweep")
+    # M09: owner_scope is required (no silent default) -- the project-owned row
+    # is reached only by explicitly passing this project's own legacy owner.
+    default_result = run_maintenance_cycle(
+        "promotion_sweep", owner_scope=legacy_owner_scope(tmp_path)
+    )
     assert default_result.processed == 1
 
 
@@ -207,6 +211,7 @@ def test_memory_tool_maintain_operation_dispatches_to_run_maintenance_cycle(
     stub_result = MaintenanceRunResult(
         task="promotion_sweep", processed=0, changed=0, errors=()
     )
+    owner = legacy_owner_scope(tmp_path)
     with patch.object(memory_module, "run_maintenance_cycle") as spy:
         spy.return_value = stub_result
         result = MemoryTool()(
@@ -214,10 +219,14 @@ def test_memory_tool_maintain_operation_dispatches_to_run_maintenance_cycle(
             operation="maintain",
             task="promotion_sweep",
             allow_cache_write=True,
+            owner_scope=owner,
         )
 
     spy.assert_called_once_with(
-        "promotion_sweep", batch_size=500, project_root=tmp_path.resolve()
+        "promotion_sweep",
+        batch_size=500,
+        project_root=tmp_path.resolve(),
+        owner_scope=owner,
     )
     assert result["status"] == "ok"
     assert result["metadata"]["operation"] == "maintain"

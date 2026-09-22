@@ -157,54 +157,76 @@ def _wait_ready(ready_path: Path, *, timeout: float = 5.0) -> None:
     raise AssertionError("pty harness never signalled readiness")
 
 
+# U09 fix: `_collect` used to `os.close(master_fd)` right after `os.waitpid`
+# with no guarantee the reader thread had drained the pty master's
+# remaining buffered bytes first -- a real race (thread mid-`select`/`read`
+# racing the main thread's `close`), not just a slow-CI flake. These
+# registries let `_collect` join the exact reader thread for its
+# `master_fd` -- and surface any reader error -- before ever closing the
+# descriptor, removing the race by construction instead of hoping the
+# thread finishes in time.
+_READER_THREADS: dict[int, threading.Thread] = {}
+_READER_ERRORS: dict[int, OSError] = {}
+
+
 def _start_drain_thread(master_fd: int) -> None:
     """A real terminal emulator continuously reads the pty master; nothing
     else does here. Without a drain, Rich's Live re-renders eventually fill
     the kernel pty buffer and the child's next `write()` blocks forever --
-    a test-harness deadlock, not a production bug. Runs until `master_fd`
-    is closed by the caller."""
+    a test-harness deadlock, not a production bug. Runs until it observes
+    real EOF (the child has exited and closed the pty slave) -- `_collect`
+    joins this thread before closing `master_fd`, so it never races a
+    close from the other side."""
 
     def _drain() -> None:
         while True:
             try:
                 ready, _, _ = select.select([master_fd], [], [], 0.05)
-            except OSError:
+            except OSError as exc:
+                _READER_ERRORS[master_fd] = exc
                 return
             if not ready:
                 continue
             try:
                 chunk = os.read(master_fd, 65536)
-            except OSError:
+            except OSError as exc:
+                _READER_ERRORS[master_fd] = exc
                 return
             if not chunk:
                 return
 
-    threading.Thread(target=_drain, daemon=True).start()
+    thread = threading.Thread(target=_drain, daemon=True)
+    thread.start()
+    _READER_THREADS[master_fd] = thread
 
 
 def _start_capture_thread(master_fd: int, buffer: list[bytes]) -> None:
     """Same read loop as `_start_drain_thread`, but appends the real
     rendered bytes to `buffer` instead of discarding them -- used only by
-    the NO_COLOR test, which needs to inspect actual PTY output for ANSI
-    colour escapes rather than just observing final `TuiState`."""
+    tests that need to inspect actual PTY output rather than just the
+    final `TuiState`."""
 
     def _drain() -> None:
         while True:
             try:
                 ready, _, _ = select.select([master_fd], [], [], 0.05)
-            except OSError:
+            except OSError as exc:
+                _READER_ERRORS[master_fd] = exc
                 return
             if not ready:
                 continue
             try:
                 chunk = os.read(master_fd, 65536)
-            except OSError:
+            except OSError as exc:
+                _READER_ERRORS[master_fd] = exc
                 return
             if not chunk:
                 return
             buffer.append(chunk)
 
-    threading.Thread(target=_drain, daemon=True).start()
+    thread = threading.Thread(target=_drain, daemon=True)
+    thread.start()
+    _READER_THREADS[master_fd] = thread
 
 
 def _send(master_fd: int, data: str, *, settle: float = 0.08) -> None:
@@ -219,7 +241,24 @@ def _collect(
     while time.monotonic() < deadline and not result_path.exists():
         time.sleep(0.05)
     os.waitpid(pid, 0)
+    # U09 fix: the child has exited (so the pty slave is already closed by
+    # the kernel), but the reader thread may not yet have drained the last
+    # buffered bytes -- join it (bounded, so a genuinely stuck reader fails
+    # loudly instead of hanging the test) *before* closing `master_fd`,
+    # never race the close against the drain.
+    reader_thread = _READER_THREADS.pop(master_fd, None)
+    if reader_thread is not None:
+        reader_thread.join(timeout=2.0)
+        if reader_thread.is_alive():
+            os.close(master_fd)
+            raise AssertionError(
+                "pty reader thread did not finish draining before harness "
+                "collection -- captured output would be incomplete"
+            )
+    reader_error = _READER_ERRORS.pop(master_fd, None)
     os.close(master_fd)
+    if reader_error is not None:
+        raise AssertionError(f"pty reader thread failed: {reader_error!r}")
     error_path = Path(str(result_path) + ".error")
     if error_path.exists():
         raise AssertionError(f"pty harness raised: {error_path.read_text()}")
@@ -247,9 +286,15 @@ def test_pty_resize_updates_terminal_size(
 
 
 def test_keyboard_project_switch(tmp_path: Path, capfd: pytest.CaptureFixture) -> None:
+    """U01 fix: real project switching now goes through F2's project
+    selector (a real xterm CSI numeric-tilde F2 sequence, decoded by
+    `PosixKeyReader`) plus Down/Enter -- Tab no longer performs this
+    action (see `test_tab_never_switches_project_over_a_real_pty` below)."""
     with capfd.disabled():
         pid, master_fd, result_path = _run_pty_harness(tmp_path)
-        _send(master_fd, "\t")  # tab -> next_project
+        _send(master_fd, "\x1b[12~")  # real F2 escape sequence -> open selector
+        _send(master_fd, "\x1b[B")  # down arrow -> move to beta
+        _send(master_fd, "\r")  # enter -> confirm switch
         _send(master_fd, "q")
         state = _collect(pid, master_fd, result_path)
 
@@ -257,18 +302,43 @@ def test_keyboard_project_switch(tmp_path: Path, capfd: pytest.CaptureFixture) -
     assert state["active_index"] == 1
 
 
+def test_tab_never_switches_project_over_a_real_pty(
+    tmp_path: Path, capfd: pytest.CaptureFixture
+) -> None:
+    """U01 fix: a real Tab byte over the PTY must never change the active
+    project -- it now cycles panes instead (dispatch-level coverage is in
+    `tests/test_tui.py::test_tab_cycles_panes_not_projects`)."""
+    with capfd.disabled():
+        pid, master_fd, result_path = _run_pty_harness(tmp_path)
+        _send(master_fd, "\t")
+        _send(master_fd, "q")
+        state = _collect(pid, master_fd, result_path)
+
+    assert state["active_project"] == "alpha"
+    assert state["active_index"] == 0
+
+
 def test_question_mark_shows_real_current_bindings(
     tmp_path: Path, capfd: pytest.CaptureFixture
 ) -> None:
-    """P69-06c: a real `?` binding opens a help view rendering the actual
-    current `_KEYMAP` bindings, not a hardcoded string."""
+    """P69-06c/U01 fix: a real `?` binding opens a help view rendering the
+    actual current `_KEYMAP` bindings, not a hardcoded string -- and this
+    now checks the *displayed content*, not just the mode flag, so a
+    static/stale help string could not satisfy it."""
     with capfd.disabled():
-        pid, master_fd, result_path = _run_pty_harness(tmp_path)
+        captured: list[bytes] = []
+        pid, master_fd, result_path = _run_pty_harness(tmp_path, capture=captured)
         _send(master_fd, "?")  # show_help
         _send(master_fd, "q")
         state = _collect(pid, master_fd, result_path)
 
     assert state["mode"] == "help"
+    rendered = b"".join(captured).decode(errors="replace")
+    # Real, current binding descriptions -- one pre-existing ("q"), one
+    # from this packet's own U01 fix ("f2") -- proving the help view reads
+    # `_KEYMAP.bindings` live rather than displaying stale/hardcoded copy.
+    assert "Exit Rush TUI" in rendered
+    assert "Open project selector" in rendered
 
 
 def test_search_filter_narrows_findings(
@@ -331,6 +401,26 @@ def test_no_color_env_suppresses_ansi_color_codes(
     assert not _ANSI_COLOR_CODE.search(no_color_output), (
         "NO_COLOR=1 should suppress ANSI colour codes"
     )
+
+
+def test_pty_harness_capture_never_returns_empty_bytes_on_a_successful_run(
+    tmp_path: Path, capfd: pytest.CaptureFixture
+) -> None:
+    """U09 regression guard: `_collect` used to `os.close(master_fd)`
+    immediately after `os.waitpid`, racing the reader thread's own
+    `select`/`read` loop -- a successful run could still capture `b""`
+    if the close won that race before the last buffered render was
+    drained. `_collect` now joins the reader thread (and surfaces any
+    reader error) before closing the descriptor, so a normal run's
+    captured bytes are never empty by construction, not by luck."""
+    with capfd.disabled():
+        captured: list[bytes] = []
+        pid, master_fd, result_path = _run_pty_harness(tmp_path, capture=captured)
+        _send(master_fd, "q")
+        _collect(pid, master_fd, result_path)
+
+    output = b"".join(captured)
+    assert output, "pty harness capture must never be empty on a successful run"
 
 
 _CANCEL_ACTIONS_SRC = """
@@ -465,3 +555,142 @@ def test_terminal_restored_after_error_inside_raw_mode() -> None:
     finally:
         os.close(slave_fd)
         os.close(master_fd)
+
+
+def test_function_key_escape_sequences_decoded_not_just_arrows() -> None:
+    """U01 fix: `PosixKeyReader` decodes real multi-byte CSI escape
+    sequences beyond the 4 arrows -- xterm's numeric-tilde F-key family
+    and Shift+Tab (`CSI Z`) -- via a real POSIX pipe (no tty needed for
+    this decode logic; `raw_terminal`'s SIGWINCH wiring is covered
+    separately below, and only that part needs a real tty)."""
+    sys.path.insert(0, _REPO_SRC)
+    from rush.dashboard.terminal_input import PosixKeyReader
+
+    read_fd, write_fd = os.pipe()
+    try:
+        reader = PosixKeyReader(read_fd)
+        cases = {
+            b"\x1b[12~": "f2",
+            b"\x1b[13~": "f3",
+            b"\x1b[Z": "shift_tab",
+            b"\x1b[A": "up",  # a plain arrow still decodes correctly too
+        }
+        for raw_bytes, expected in cases.items():
+            os.write(write_fd, raw_bytes)
+            assert reader.read_key(1.0) == expected
+
+        # A bare Escape (nothing follows within the 50ms follow-up window)
+        # must still decode as Escape, not a function key.
+        os.write(write_fd, b"\x1b")
+        assert reader.read_key(1.0) == "escape"
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_utf8_multibyte_input_decoded_correctly() -> None:
+    """U01 fix: a split multibyte UTF-8 character decodes as one real
+    character, not one-byte-at-a-time mangled replacement characters."""
+    sys.path.insert(0, _REPO_SRC)
+    from rush.dashboard.terminal_input import PosixKeyReader
+
+    read_fd, write_fd = os.pipe()
+    try:
+        reader = PosixKeyReader(read_fd)
+        for text in ("é", "中", "\U0001f680"):  # 2, 3, 4-byte UTF-8
+            os.write(write_fd, text.encode("utf-8"))
+            assert reader.read_key(1.0) == text
+        # Plain ASCII still decodes as a single one-byte character.
+        os.write(write_fd, b"x")
+        assert reader.read_key(1.0) == "x"
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_posix_selectors_and_sigwinch_handling() -> None:
+    """U01 fix: `raw_terminal` wires a self-pipe as the process's SIGWINCH
+    wakeup fd, and `PosixKeyReader.read_key` (via `selectors`) wakes on it
+    immediately -- verified with a real `os.kill(..., SIGWINCH)`, not a
+    mock. Also verifies cleanup: the prior handler/wakeup fd are restored
+    and both pipe descriptors are closed once the `with` block exits."""
+    import pty
+    import signal
+
+    sys.path.insert(0, _REPO_SRC)
+    from rush.dashboard.terminal_input import (
+        _ACTIVE_WAKEUP_FD,
+        PosixKeyReader,
+        raw_terminal,
+    )
+
+    prior_handler = signal.getsignal(signal.SIGWINCH)
+    prior_wakeup_fd = signal.set_wakeup_fd(-1)
+    signal.set_wakeup_fd(prior_wakeup_fd)  # restore immediately, just peeking
+
+    master_fd, slave_fd = pty.openpty()
+    try:
+        stream = os.fdopen(slave_fd, "rb", buffering=0, closefd=False)
+        with raw_terminal(stream):
+            wakeup_fd = _ACTIVE_WAKEUP_FD[0]
+            assert wakeup_fd is not None
+            reader = PosixKeyReader(slave_fd)
+
+            start = time.monotonic()
+            os.kill(os.getpid(), signal.SIGWINCH)
+            # A long timeout that a real wakeup interrupts almost
+            # immediately; a slow/absent wakeup would instead consume
+            # nearly the entire timeout -- the elapsed-time bound below
+            # is what actually proves the interrupt fired.
+            result = reader.read_key(5.0)
+            elapsed = time.monotonic() - start
+
+            assert result is None  # SIGWINCH alone is not a keystroke
+            assert elapsed < 1.0, (
+                f"expected SIGWINCH to wake the selector almost immediately, "
+                f"took {elapsed:.2f}s (>= the 5s timeout would mean no wakeup)"
+            )
+        stream.close()
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    # Cleanup: nothing from this `with` block leaks past it.
+    assert _ACTIVE_WAKEUP_FD[0] is None
+    assert signal.getsignal(signal.SIGWINCH) == prior_handler
+    restored_prior = signal.set_wakeup_fd(-1)
+    signal.set_wakeup_fd(restored_prior)
+    assert restored_prior == prior_wakeup_fd
+
+
+def test_windows_f2_f3_shift_tab_decode_to_named_actions_not_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U01 fix, Windows decode logic: no Windows console is reachable in
+    this POSIX environment, so this verifies `WindowsKeyReader`'s own
+    scan-code mapping (F2 0x3C, F3 0x3D, Shift+Tab 0x0F) via an injected
+    `msvcrt` stub and a monkeypatched `sys.platform` -- a real, executable
+    check of the decode logic itself. It does NOT verify that a real
+    Windows console actually emits these exact scan codes for these exact
+    keys; that empirical claim remains genuinely unverified here (named
+    explicitly in this task's receipt), same as S03's Windows-only lanes
+    elsewhere on this board."""
+    import sys as sys_module
+    import types
+
+    sys.path.insert(0, _REPO_SRC)
+    from rush.dashboard.terminal_input import WindowsKeyReader
+
+    keys = iter(["\x00", "\x3c", "\x00", "\x3d", "\x00", "\x0f", "\x00", "H"])
+
+    fake_msvcrt = types.ModuleType("msvcrt")
+    fake_msvcrt.kbhit = lambda: True  # type: ignore[attr-defined]
+    fake_msvcrt.getwch = lambda: next(keys)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys_module.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(sys_module, "platform", "win32")
+
+    reader = WindowsKeyReader()
+    assert reader.read_key(1.0) == "f2"
+    assert reader.read_key(1.0) == "f3"
+    assert reader.read_key(1.0) == "shift_tab"
+    assert reader.read_key(1.0) == "up"  # a plain arrow still decodes too

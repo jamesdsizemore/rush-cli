@@ -84,7 +84,7 @@ include = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m \"not slow\""
 filterwarnings = [
     "ignore::pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning",
 ]
@@ -104,4 +104,5 @@ markers = [
     "needs_radon: test requires `radon` on PATH",
     "needs_jscpd: test requires `jscpd` on PATH",
     "needs_sloppylint: test requires `sloppylint` on PATH",
+    "slow: test's own runtime is large enough to dominate a full-suite run; excluded from the default local run (see `-m \"not slow\"` in addopts above), always included in CI/pre-merge (`pytest -m slow` or `pytest -m \"\"`)",
 ]

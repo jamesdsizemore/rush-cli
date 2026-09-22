@@ -10,6 +10,8 @@ import secrets
 import threading
 import time
 import uuid
+import weakref
+from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -43,11 +45,14 @@ from rush.dashboard.static_assets import (
     load_dashboard_asset,
 )
 from rush.dashboard.theme import MOTION, THEME
+from rush.discovery.stack import detect_project_stacks
 from rush.memory.maintenance import MaintenanceTask
-from rush.memory.store import MemorySubject, TypedArtifactStore
+from rush.memory.store import MemorySubject, OwnerScope, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
+from rush.setup.engine_packages import ENGINE_PACKAGES
+from rush.setup.provision import build_provision_plan
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tools.agent_connection import AgentConnectionTool
 from rush.tools.base import ToolResult
@@ -57,8 +62,11 @@ from rush.tools.setup_wizard import run_setup_wizard
 from rush.workflows.project_run import (
     _MANIFEST_RELATIVE,
     ScanHandoff,
+    ScanInvalidRequestError,
+    _cancel_requested,
+    _capture_artifact_snapshots,
     _finding_id,
-    _source_signature,
+    _source_identity,
     _write_attempt_header,
     build_handoff,
     cancel_scan_run,
@@ -67,6 +75,7 @@ from rush.workflows.project_run import (
     execute_scan,
     latest_attempt_id,
     load_run_manifest,
+    load_scan_events,
     load_scan_plan,
     plan_scan,
     rescan_project_run,
@@ -206,6 +215,17 @@ CONTENT_SECURITY_POLICY = (
     "form-action 'self'"
 )
 
+# S13: the one shared source of these four security headers -- every normal
+# response (JSON, HTML, JS, CSS, errors) and the pre-thread admission 503
+# built before any handler exists all emit exactly these values, so no
+# response route can silently omit or diverge from another's.
+SECURITY_RESPONSE_HEADERS: tuple[tuple[str, str], ...] = (
+    ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("Cache-Control", "no-store"),
+)
+
 # P66-04: real dispatch to Phase 65's rush_scan/setup_wizard/rush_scan_handoff
 # shared operations (see `_dispatch_scan_action` below). P66-05 adds the
 # memory_* actions, dispatched through the exact same canonical `MemoryTool`
@@ -248,14 +268,22 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     "provision_apply": frozenset({"plan_id"}),
     "scan_start": frozenset({"plan_id"}),
-    "scan_cancel": frozenset({"run_id"}),
+    "scan_cancel": frozenset({"run_id", "operation_id"}),
     "scan_resume": frozenset({"run_id"}),
     "rescan": frozenset({"run_id"}),
     "handoff_preview": frozenset(
-        {"run_id", "agent_id", "finding_ids", "max_tokens", "max_bytes"}
+        {"run_id", "attempt_id", "agent_id", "finding_ids", "max_tokens", "max_bytes"}
     ),
     "handoff_send": frozenset(
-        {"run_id", "agent_id", "finding_ids", "max_tokens", "max_bytes", "handoff_id"}
+        {
+            "run_id",
+            "attempt_id",
+            "agent_id",
+            "finding_ids",
+            "max_tokens",
+            "max_bytes",
+            "handoff_id",
+        }
     ),
     "handoff_status": frozenset({"handoff_id"}),
     "configure": frozenset({"settings", "expected_revision", "apply", "plan_id"}),
@@ -308,7 +336,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     "memory_propose": frozenset(
         {"subject", "content", "source", "source_kind", "symbol_ref", "owner_scope"}
     ),
-    "memory_maintain": frozenset({"task", "batch_size"}),
+    "memory_maintain": frozenset({"task", "batch_size", "owner_scope"}),
     "data_export": frozenset(),
     "artifact_export": frozenset({"artifact_id"}),
 }
@@ -341,6 +369,44 @@ _APPLY_GATED_ACTIONS = frozenset(
     {"memory_edit", "memory_archive", "memory_delete", "configure"}
 )
 
+# M08: the five memory-artifact mutation forms plus owner-scoped maintenance --
+# every operation `_validate_memory_owner_scope` requires a real owner_scope for
+# before dispatch. memory_query/memory_expand are plain reads and stay outside
+# this set.
+_MEMORY_OWNER_SCOPED_OPERATIONS = frozenset(
+    {
+        "memory_edit",
+        "memory_archive",
+        "memory_delete",
+        "memory_promote",
+        "memory_propose",
+        "memory_maintain",
+    }
+)
+
+
+def _schema_version_error(payload: dict[str, Any]) -> tuple[str, str] | None:
+    """S14: shared validation for both action boundaries (`_handle_action`
+    and `_handle_control_check_suite`) -- require schema_version presence
+    and `type(value) is int` (an identity check, since `bool` is an `int`
+    subclass in Python and must not silently pass as 1/0) before accepting
+    the one supported value 1. Returns `(code, message)` for the caller to
+    send as a 400, or None if the payload's schema_version is exactly the
+    supported integer 1. Missing/null/string/bool all return
+    malformed_request; a well-typed but unsupported integer (e.g. 2) uses
+    the established unsupported_schema_version code instead."""
+    if "schema_version" not in payload:
+        return "malformed_request", "schema_version required"
+    value = payload["schema_version"]
+    if type(value) is not int:
+        return (
+            "malformed_request",
+            f"schema_version must be an integer, got {value!r}",
+        )
+    if value != 1:
+        return "unsupported_schema_version", f"schema_version must be 1, got {value!r}"
+    return None
+
 
 def _classify_mutating(operation: str, arguments: dict[str, Any]) -> bool:
     """P69-01.2l: classify the validated operation plus its arguments -- never the
@@ -350,6 +416,104 @@ def _classify_mutating(operation: str, arguments: dict[str, Any]) -> bool:
     if operation in _APPLY_GATED_ACTIONS:
         return bool(arguments.get("apply"))
     return operation not in _READ_ONLY_FIXED_ACTIONS
+
+
+# S04: operations sharing the scan-manifest/snapshot-publish effect pair
+# (`_dispatch_scan_action` routes all four through the same publish path).
+_SCAN_PUBLISH_OPERATIONS = frozenset(
+    {"scan_start", "scan_resume", "rescan", "check_suite"}
+)
+
+
+def _s04_effect_ids(
+    operation: str, arguments: dict[str, Any], project_id: str | None = None
+) -> dict[str, str]:
+    """S04 fix bullet 3: the proposed per-effect identity map (review doc
+    §S04 table), preallocated before reservation so `MutationLedger.reserve()`
+    persists it in the same transaction as the operation_id (never reminted
+    later by a builder). A non-mutating call (`_classify_mutating` already
+    decided) never reaches `MutationLedger.reserve()` at all, so returning a
+    non-empty map here for e.g. `apply=False` is harmless dead data, but
+    every branch below still matches the table's explicit "no domain effect
+    keys" cases for clarity and cheap testability."""
+    if operation in _SCAN_PUBLISH_OPERATIONS:
+        return {
+            "scan_manifest_write": uuid.uuid4().hex,
+            "snapshot_publish": uuid.uuid4().hex,
+        }
+    if operation == "scan_cancel":
+        return {"cancellation_intent": uuid.uuid4().hex}
+    if operation == "handoff_send":
+        return {
+            key: uuid.uuid4().hex
+            for key in (
+                "artifact_create",
+                "session_create",
+                "descriptor_prepare",
+                "delivery_transition",
+            )
+        }
+    if operation == "provision_apply":
+        keys = {
+            "cursor_key_ensure": uuid.uuid4().hex,
+            "toolchain_manifest": uuid.uuid4().hex,
+        }
+        # S04 table: one `install:<engine_id>` key per validated plan entry.
+        # `run_setup_wizard`'s own return dict never exposes `ProvisionPlan`
+        # entries (only `plan_id`), so the plan is rebuilt directly here via
+        # `build_provision_plan`, mirroring `run_setup_wizard`'s internal
+        # stack-detection + `ENGINE_PACKAGES` filter exactly. This reservation
+        # runs before `_dispatch_provision_apply`'s own accept-time re-check
+        # of `arguments.plan_id`, so a stale/changed plan here just leaves an
+        # unused reserved key -- harmless dead data, same as the non-mutating
+        # case above -- never a wrong install.
+        if project_id is not None:
+            try:
+                root = Path(resolve_project(project_id)["root"])
+                stacks = detect_project_stacks(root)
+                suggested = {e for stack in stacks for e in stack.suggested_engines}
+                known_engine_ids = sorted(e for e in suggested if e in ENGINE_PACKAGES)
+                plan = build_provision_plan(root, known_engine_ids)
+            except Exception:  # noqa: BLE001, S110 -- reservation must never
+                # crash admission; fall back to the two operation-wide keys.
+                pass
+            else:
+                keys.update(
+                    {
+                        f"install:{entry.engine_id}": uuid.uuid4().hex
+                        for entry in plan.entries
+                    }
+                )
+        return keys
+    if operation == "configure":
+        return {"config_write": uuid.uuid4().hex} if arguments.get("apply") else {}
+    if operation == "memory_propose":
+        return {"artifact_create": uuid.uuid4().hex}
+    if operation == "memory_edit":
+        return {"artifact_edit": uuid.uuid4().hex} if arguments.get("apply") else {}
+    if operation == "memory_archive":
+        return {"artifact_archive": uuid.uuid4().hex} if arguments.get("apply") else {}
+    if operation == "memory_delete":
+        if not arguments.get("apply"):
+            return {}
+        target_ids = arguments.get("artifact_ids")
+        if not isinstance(target_ids, list):
+            return {}
+        return {
+            f"delete:{target_id}": uuid.uuid4().hex
+            for target_id in sorted({str(t) for t in target_ids})
+        }
+    if operation == "memory_promote":
+        return {"candidate_create": uuid.uuid4().hex, "promotion": uuid.uuid4().hex}
+    if operation == "memory_maintain":
+        # S04 table: `<task>:<artifact_id>` subkeys are execution-time-only
+        # information (which artifacts a maintenance sweep touches is not
+        # knowable from `task`/`batch_size` alone) -- the operation-wide key
+        # is the reservable part.
+        return {"maintenance_run": uuid.uuid4().hex}
+    # noop, provision_plan, handoff_preview, handoff_status, memory_query,
+    # memory_expand, data_export, artifact_export: no domain effect keys.
+    return {}
 
 
 _MEMORY_SUBJECTS: tuple[MemorySubject, ...] = get_args(MemorySubject)
@@ -452,6 +616,24 @@ class _RateLimiter:
             return self._available(key, time.monotonic()) < 1.0
 
 
+# T027: every `DashboardContext` ever constructed, tracked weakly so test
+# teardown can stop its background recovery/outcome-retry threads without
+# every call site (there are dozens, across production and tests) having to
+# remember to do it itself. A daemon thread costs nothing at real process
+# exit, but a short test `recovery_interval` left running for the rest of
+# one pytest process's life is exactly how these accumulate into the T027
+# hang -- see `stop_all_dashboard_contexts` below.
+_live_dashboard_contexts: weakref.WeakSet = weakref.WeakSet()
+
+
+def stop_all_dashboard_contexts() -> None:
+    """Test-support: stop every live `DashboardContext`'s background
+    threads. Never called from production code -- a real server process
+    wants its recovery sweep running for its whole lifetime."""
+    for ctx in list(_live_dashboard_contexts):
+        ctx.stop_background_workers()
+
+
 class DashboardContext:
     """Per-server-instance state bundle: never a class attribute anywhere.
 
@@ -467,10 +649,22 @@ class DashboardContext:
         bound_host: str,
         bound_port: int,
         recovery_interval: float = 5.0,
+        data_root: Path | None = None,
     ) -> None:
+        # T027: every real on-disk piece below (`ProjectRegistry`'s
+        # mutation lock, `MutationLedger`'s durable db, `OwnerLock`, and
+        # `reconcile_admissions` below) already accepts an explicit
+        # `data_root` -- this context just never threaded one through
+        # before, so every one of them silently fell back to the real
+        # shared `default_data_root()` and never a caller-isolated root.
+        self.data_root = data_root
         self.auth = DashboardAuth()
-        self.projects = ProjectRegistry(projects)
-        self.mutations = MutationLedger()
+        self.projects = ProjectRegistry(projects, data_root=data_root)
+        self.mutations = MutationLedger(
+            db_path=(data_root / "dashboard" / "mutation_ledger.db")
+            if data_root is not None
+            else None
+        )
         self.scan_runs = ScanRunTracker()
         self.bound_host = bound_host
         self.bound_port = bound_port
@@ -481,14 +675,15 @@ class DashboardContext:
         # P69-01 subsection h: owner-liveness lock, keyed by this instance's
         # own immutable identity, held for this process's entire lifetime.
         self.owner_instance_id = f"{self.server_id}:{self.start_nonce}"
-        self._owner_lock = OwnerLock(self.owner_instance_id)
+        self._owner_lock = OwnerLock(self.owner_instance_id, data_root=data_root)
         self.bootstrap_failure_limiter = _RateLimiter(
             BOOTSTRAP_FAILURE_LIMIT, BOOTSTRAP_FAILURE_WINDOW_SECONDS
         )
         self.action_limiter = _RateLimiter(
             ACTION_RATE_LIMIT, ACTION_RATE_WINDOW_SECONDS
         )
-        self._bootstrap_exchange_lock = threading.Lock()
+        # S11: bootstrap single-use is now enforced by DashboardAuth's own
+        # owning lock (auth.py) -- no route-only lock needed here.
         # P69-02.2g: this server process owns retrying every worker's terminal
         # outcome (the durable pending-outcome write, then the idempotent
         # terminalize-and-release transaction) -- never the exiting worker.
@@ -502,16 +697,25 @@ class DashboardContext:
         self.recovery_interval = recovery_interval
         self._recovery_stop = threading.Event()
         with suppress(Exception):
-            reconcile_admissions(self.mutations)
+            reconcile_admissions(
+                self.mutations,
+                data_root=self.data_root,
+                recovering_owner_instance_id=self.owner_instance_id,
+            )
         self._recovery_thread = threading.Thread(
             target=self._recovery_loop, daemon=True, name="rush-dashboard-recovery"
         )
         self._recovery_thread.start()
+        _live_dashboard_contexts.add(self)
 
     def _recovery_loop(self) -> None:
         while not self._recovery_stop.wait(self.recovery_interval):
             with suppress(Exception):
-                reconcile_admissions(self.mutations)
+                reconcile_admissions(
+                    self.mutations,
+                    data_root=self.data_root,
+                    recovering_owner_instance_id=self.owner_instance_id,
+                )
 
     def stop_background_workers(self) -> None:
         """Stop this context's recovery sweep and outcome-retry queue. Both
@@ -526,11 +730,15 @@ class DashboardContext:
         token (legitimately re-served in plaintext on `GET /api/session`
         reload). The bootstrap token and session cookie value are no longer
         held in plaintext once minted (P69-01.3 CONNECT digest storage), so
-        there is nothing left here to redact them against."""
-        values: list[str] = [self.auth.control_capability]
-        for session in self.auth._sessions.values():
-            values.append(session.csrf_token)
-        return tuple(values)
+        there is nothing left here to redact them against -- a request's own
+        presented bootstrap/cookie value is redacted separately, by hash
+        match, via `DashboardAuth.match_presented_secret` (S12).
+
+        S12 point 1: sourced from `DashboardAuth`'s own lock-protected
+        snapshot rather than iterating its mutable private session dict
+        directly, so a concurrent session mint/expiry can never be observed
+        half-mutated."""
+        return self.auth.live_secret_values()
 
 
 # --- Phase 66 P66-04: full scan triage and repair controls -----------------
@@ -644,6 +852,53 @@ def _check_expected_identity(
     return None
 
 
+def _validate_memory_owner_scope(
+    operation: str,
+    arguments: dict[str, Any],
+    *,
+    project_id: str,
+    session_owner_scope_id: str,
+) -> None:
+    """M08: reject an omitted, malformed, or cross-project/cross-session
+    `owner_scope` on every memory mutation before any reservation, row,
+    version, or receipt change -- called from `_handle_action` before
+    `body_hash`/`MutationLedger.commit`, never left to a dispatch function's
+    own later validation. A no-op for every operation outside
+    `_MEMORY_OWNER_SCOPED_OPERATIONS`.
+
+    Identity rules (P69-07 subsection b): a `project`-kind owner must equal
+    this request's own URL-selected project id; a `session`-kind owner must
+    equal this request's own authenticated session's `owner_scope_id`;
+    `user`/`agent`-kind ids are opaque, non-blank, and structurally validated
+    only (`OwnerScope.__post_init__` already enforces non-blank).
+
+    Normalizes `arguments["owner_scope"]` in place to the validated
+    `{"kind", "id"}` dict so every dispatch function downstream sees exactly
+    the same, already-validated owner."""
+    if operation not in _MEMORY_OWNER_SCOPED_OPERATIONS:
+        return
+    try:
+        owner = OwnerScope.from_value(arguments.get("owner_scope"))
+    except ValueError as exc:
+        raise _ActionDenied(
+            400, "malformed_request", f"{operation} requires a valid owner_scope: {exc}"
+        ) from exc
+    if owner.kind == "project" and owner.id != project_id:
+        raise _ActionDenied(
+            400,
+            "malformed_request",
+            f"owner_scope project id {owner.id!r} does not name this request's "
+            f"own project {project_id!r}",
+        )
+    if owner.kind == "session" and owner.id != session_owner_scope_id:
+        raise _ActionDenied(
+            400,
+            "malformed_request",
+            "owner_scope session id must match this request's own authenticated session",
+        )
+    arguments["owner_scope"] = owner.as_dict()
+
+
 def _scan_plan_kwargs(arguments: dict[str, Any]) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     if "exclude" in arguments:
@@ -733,15 +988,37 @@ def _dispatch_provision_apply(
             "provision plan changed since review; re-review before applying",
         )
     permissions = _permissions_from_grants(grants)
+    # S16: provisioning allocates its own durable run/attempt job identity
+    # before the effect, distinct from scan admission -- returned through
+    # 202/status/receipts so a crash immediately after 202 recovers without
+    # reminting or substituting an attempt (the ledger's own idempotent
+    # request-id replay already returns this exact cached 202 body).
     run_id = str(uuid.uuid4())
+    attempt_id = str(uuid.uuid4())
 
     def _body() -> dict[str, Any]:
+        # S07: revalidate the reviewed plan immediately before the real
+        # effect -- the check above ran synchronously before this thread was
+        # even launched; this is the independent, second check from inside
+        # the worker, closing the gap during which the project's real
+        # readiness/provision plan can change.
+        recheck = run_setup_wizard(root, install=True, permissions=None)
+        if recheck.get("plan_id") != reviewed_plan_id:
+            return {
+                "status": "conflict",
+                "code": "stale_expected_identity",
+                "message": (
+                    "provision plan changed between accept and execution; "
+                    "re-review before applying"
+                ),
+            }
         applied = run_setup_wizard(
             root, install=True, permissions=permissions, project_id=project_id
         )
         return {
             "status": "success",
             "run_id": run_id,
+            "attempt_id": attempt_id,
             "provision": applied.get("provision", {}),
         }
 
@@ -752,6 +1029,7 @@ def _dispatch_provision_apply(
     return 202, {
         "operation_id": operation_id,
         "run_id": run_id,
+        "attempt_id": attempt_id,
         "plan_id": reviewed_plan_id,
     }
 
@@ -830,7 +1108,8 @@ def _admit_and_launch(
     run_id: str,
     plan_id: str,
     thread: Any,
-) -> tuple[str, str, bool]:
+    attempt_id: str = "",
+) -> tuple[str, str, str, bool]:
     """P69-02.2f/g: durable admission, then launch -- in that order.
 
     `ctx.mutations.admit()` only returns once its own transaction has
@@ -839,7 +1118,12 @@ def _admit_and_launch(
     any worker closure (the closure never runs), so it is caught here and
     terminalized through the same idempotent transaction every other exit
     path uses.
-    """
+
+    S09: `attempt_id` is this request's own preallocated attempt, minted
+    before this call. Returns `(run_id, plan_id, attempt_id, started)` --
+    on attach, the returned `attempt_id` is the *admitted executor's own*
+    stored attempt (durable, never a best-effort disk lookup or the losing
+    request's own minted value)."""
     admission = ctx.mutations.admit(
         project_id,
         execution_identity=execution_identity,
@@ -848,13 +1132,14 @@ def _admit_and_launch(
         run_id=run_id,
         plan_id=plan_id,
         owner_instance_id=ctx.owner_instance_id,
+        attempt_id=attempt_id,
     )
     if admission.conflict:
         raise ScanConflictError(
             project_id, admission.execution_identity, admission.run_id
         )
     if not admission.started:
-        return admission.run_id, admission.plan_id, False
+        return admission.run_id, admission.plan_id, admission.attempt_id, False
     ctx.scan_runs.register(project_id, run_id=run_id, plan_id=plan_id, thread=thread)
     try:
         thread.start()
@@ -875,7 +1160,7 @@ def _admit_and_launch(
             "unavailable",
             "background worker thread could not be launched",
         ) from None
-    return run_id, plan_id, True
+    return run_id, plan_id, attempt_id, True
 
 
 def _resolved_operation_id(ctx: DashboardContext, operation_id: str) -> str:
@@ -915,6 +1200,69 @@ def _scan_file_inventory(root: Path) -> list[dict[str, str]]:
     return entries
 
 
+_UNAVAILABLE_SOURCE_IDENTITY = "source-identity-unavailable"
+
+
+def _manifest_scan_provenance(
+    manifest: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]]:
+    """M02 bullet 1: the scalar `ProjectRecord.source_identity` a publish or
+    hydrate uses must be a deterministic aggregate digest derived from the
+    manifest's own content-derived `source_identity` object (set by
+    `_finalize_attempt`'s `_source_identity(digests, root)` in
+    `project_run.py`), never a live re-scan of the current tree at publish
+    time -- `_source_signature(root)` is deliberately the *pre-execution*
+    cheap guard, not a provenance certificate (project_run.py's own
+    docstring). A manifest with no persisted identity object (a legacy
+    attempt, or CHECK_SUITE before this fix) has genuinely unavailable
+    provenance -- it gets the fixed unavailable sentinel rather than a live
+    substitute, per Fix bullet 1's `Remove live _source_signature(root)
+    fallback for completed attempts`. Returns `(scalar_identity,
+    full_provenance_object)`; the full object is persisted separately as
+    `scan_provenance` (never assigned into the scalar identity field)."""
+    provenance = dict((manifest or {}).get("source_identity") or {})
+    if not provenance:
+        return _UNAVAILABLE_SOURCE_IDENTITY, {}
+    digest = hashlib.sha256(
+        json.dumps(provenance, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return digest, provenance
+
+
+def _manifest_file_inventory(
+    manifest: dict[str, Any], root: Path
+) -> tuple[list[dict[str, str]], bool]:
+    """M03 Fix bullet 3: a manifest with the `file_inventory` key present --
+    even an empty list, a real if empty persisted inventory -- keeps today's
+    behavior unchanged (`or _scan_file_inventory(root)`, since an empty list
+    is falsy). A manifest with the key genuinely absent (a legacy attempt
+    written before this field existed) has no known inventory and must
+    expose that rather than silently substituting a live rewalk of whatever
+    files happen to be present now -- the same missing-vs-substituted
+    distinction `_manifest_scan_provenance` already applies to
+    `source_identity`. Returns `(inventory, missing)`."""
+    if "file_inventory" not in manifest:
+        return [], True
+    return manifest.get("file_inventory") or _scan_file_inventory(root), False
+
+
+def _content_digests(root: Path, inventory: list[dict[str, str]]) -> dict[str, str]:
+    """M02 bullet 2: per-file sha256 digests of `inventory`'s live tree,
+    for `_source_identity`'s aggregate content identity -- CHECK_SUITE has
+    no staged copy to read digests back from (unlike the real scan
+    pipeline's `_finalize_attempt`), so this hashes the exact files just
+    consumed at manifest-write time. A file that vanishes between listing
+    and hashing is skipped rather than failing the whole publish."""
+    digests: dict[str, str] = {}
+    for entry in inventory:
+        path = root / entry["path"]
+        try:
+            digests[entry["path"]] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return digests
+
+
 def _snapshot_from_scan_result(
     project_id: str,
     result: Any,
@@ -950,14 +1298,18 @@ def _snapshot_from_scan_result(
         for finding in aggregate.get("findings") or []
     ]
     prior = existing_snapshot or {}
+    # M01 bullet 3: `memories`/`agents` are deliberately never carried
+    # forward from `existing_snapshot` here (a pre-lock read) -- they are
+    # scan-owned-field-disjoint data `ProjectRegistry.publish_scan_result`
+    # merges from its own lock-current record instead, so a concurrent
+    # `refresh_memories` between this adapter running and the eventual
+    # publish is never lost. This function returns scan-owned fields only.
     return {
         "schema_version": 1,
         "project_id": project_id,
         "root": prior.get("root"),
         "files": file_inventory,
         "findings": findings,
-        "memories": list(prior.get("memories") or []),
-        "agents": list(prior.get("agents") or []),
     }
 
 
@@ -986,16 +1338,38 @@ def _publish_scan_snapshot(
     operations at two different times, never one upsert."""
     record = ctx.projects.get(project_id)
     existing = record.snapshot if record is not None else None
+    manifest = (
+        load_run_manifest(root, run_id, attempt_id=attempt_id or None)
+        if run_id
+        else None
+    )
+    if run_id and attempt_id:
+        # M04 bullets 1-2: real producer connection -- catch up this
+        # project's durable `/events` stream with every candidate progress
+        # event already durable in this attempt's own `events.json`
+        # (`load_scan_events`, the existing event sink), instead of the
+        # dashboard ledger only ever receiving status transitions. Reads
+        # the full attempt log every time (not just a tail), so a restart
+        # between a candidate's log write and this ingestion still catches
+        # up idempotently on the next publish.
+        ctx.mutations.ingest_attempt_events(
+            project_id,
+            run_id,
+            attempt_id,
+            load_scan_events(root, run_id, attempt_id).get("events") or [],
+        )
+    source_identity, scan_provenance = _manifest_scan_provenance(manifest)
     snapshot = _snapshot_from_scan_result(
         project_id,
         result,
         file_inventory=_scan_file_inventory(root),
         existing_snapshot=existing,
     )
+    snapshot["scan_provenance"] = scan_provenance
     published = ctx.projects.publish_scan_result(
         project_id,
         snapshot=snapshot,
-        source_identity=_source_signature(root),
+        source_identity=source_identity,
         generation=generation,
     )
     if generation is not None and run_id and attempt_id:
@@ -1069,16 +1443,20 @@ def _hydrate_published_scan(ctx: DashboardContext, project_id: str) -> None:
     # `file_inventory` is persisted into the manifest by P69-03b; until that
     # lands, the hydrating server reads the same project root off the shared
     # disk it already reads the manifest from.
+    source_identity, scan_provenance = _manifest_scan_provenance(manifest)
+    inventory, inventory_missing = _manifest_file_inventory(manifest, root)
     snapshot = _snapshot_from_scan_result(
         project_id,
         {"run": manifest},
-        file_inventory=manifest.get("file_inventory") or _scan_file_inventory(root),
+        file_inventory=inventory,
         existing_snapshot=record.snapshot,
     )
+    snapshot["scan_provenance"] = scan_provenance
+    snapshot["file_inventory_missing"] = inventory_missing
     ctx.projects.publish_scan_result(
         project_id,
         snapshot=snapshot,
-        source_identity=_source_signature(root),
+        source_identity=source_identity,
         generation=pointer["published_generation"],
     )
 
@@ -1152,15 +1530,17 @@ def _historical_map_snapshot(
     # A memory deleted from the live store after freezing stays visible here
     # unchanged -- `frozen["memories"]` is a persisted copy, not a live
     # reference, so it never silently vanishes from this historical view.
+    inventory, inventory_missing = _manifest_file_inventory(manifest, root)
     snapshot = _snapshot_from_scan_result(
         project_id,
         {"run": manifest},
-        file_inventory=manifest.get("file_inventory") or _scan_file_inventory(root),
+        file_inventory=inventory,
         existing_snapshot=None,
     )
     snapshot["memories"] = frozen["memories"]
     snapshot["agents"] = frozen["agents"]
     snapshot["root"] = record.snapshot.get("root")
+    snapshot["file_inventory_missing"] = inventory_missing
     return snapshot
 
 
@@ -1191,6 +1571,7 @@ def publish_check_suite_scan(
     run_id: str | None = None,
     attempt_id: str | None = None,
     scan_generation: int | None = None,
+    artifact_snapshots: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> tuple[str, str]:
     """P69-03.2: CHECK_SUITE's initial-launch scan (`dashboard_cmd`) has no
     `ScanPlan`/manifest of its own -- `run_workflow_suite()` returns a bare
@@ -1214,7 +1595,16 @@ def publish_check_suite_scan(
     `run_workflow_suite` starts, so a slow initial scan can never overwrite a
     faster user-requested scan that was accepted after it). A caller that
     passes none allocates here instead -- still ordered, just from publish
-    time rather than launch time."""
+    time rather than launch time.
+
+    M12 Fix item 2 (CHECK_SUITE per-child capture parity): `artifact_snapshots`
+    is `{tool_name: {declared_path: snapshot_entry}}`, already captured by
+    the caller's own `on_tool_complete` closure (mirroring `project_run.py`'s
+    `_capture_artifact_snapshots`) as each child finished -- folded here into
+    a `scheduled` list shaped exactly like a real scan manifest's own
+    (`candidate_id`/`artifact_snapshots`), so the artifact-download route's
+    manifest lookup (`_read_artifact_content_page`) works identically for a
+    CHECK_SUITE-produced artifact reference."""
     run_id = run_id or str(uuid.uuid4())
     attempt_id = attempt_id or "1"
     if scan_generation is None:
@@ -1224,6 +1614,14 @@ def publish_check_suite_scan(
         tool, _sep, engine_part = provenance.partition("/")
         engine = None if engine_part in ("", "no-engine") else engine_part
         cast(dict[str, Any], finding)["finding_id"] = _finding_id(tool, engine, finding)
+    # M02 bullet 2 / M03: CHECK_SUITE's own manifest previously carried no
+    # content identity, inventory, or Git provenance at all (unlike
+    # `_build_manifest`'s real scan pipeline) -- it has no staged tree to
+    # read digests back from, so this captures the live tree's content
+    # identity/inventory at this exact moment, the actual bytes CHECK_SUITE
+    # just consumed.
+    file_inventory = _scan_file_inventory(root)
+    digests = _content_digests(root, file_inventory)
     manifest = {
         "schema_version": 1,
         "run_id": run_id,
@@ -1232,6 +1630,18 @@ def publish_check_suite_scan(
         "created_at": datetime.now(UTC).isoformat(),
         "aggregate": dict(aggregate),
         "totals": {"finding_count": len(aggregate.get("findings") or [])},
+        "file_inventory": file_inventory,
+        "source_identity": _source_identity(digests, root),
+        "scan_generation": scan_generation,
+        # M12 Fix item 2: same "scheduled"/"candidate_id"/"artifact_snapshots"
+        # shape a real scan manifest's own `CandidateResult.to_dict()`
+        # produces, so `_read_artifact_content_page` resolves a CHECK_SUITE
+        # artifact reference exactly like any other.
+        "scheduled": [
+            {"candidate_id": tool_name, "artifact_snapshots": dict(snapshots)}
+            for tool_name, snapshots in (artifact_snapshots or {}).items()
+            if snapshots
+        ],
     }
     manifest_bytes = (
         json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8") + b"\n"
@@ -1289,6 +1699,19 @@ def _dispatch_check_suite(
     identity = f"check_suite:{CHECK_SUITE.name}"
     cancelled = threading.Event()
 
+    def _cancel_check() -> bool:
+        # T044: nothing ever sets `cancelled` -- also consult the same
+        # attempt-scoped filesystem cooperative-cancel marker normal scans
+        # already use, so `scan_cancel` (which writes that marker for any
+        # run_id/attempt_id, including this suite's) actually reaches a
+        # dashboard-owned CHECK_SUITE run.
+        return cancelled.is_set() or _cancel_requested(root, run_id, attempt_id)
+
+    # M12 Fix item 2: CHECK_SUITE per-child capture parity -- snapshot each
+    # child's declared artifact bytes the moment it completes, before the
+    # next tool in the suite can run and physically overwrite the same path.
+    check_suite_snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+
     def _on_tool_complete(child: ToolResult) -> None:
         # P69-06f: each completed tool is durable before the suite finishes,
         # so a cancel or a kill leaves a reconstructable partial result.
@@ -1302,6 +1725,11 @@ def _dispatch_check_suite(
                     "status": child.get("status"),
                 },
             )
+        tool_name = str(child.get("tool") or "")
+        if tool_name:
+            check_suite_snapshots[tool_name] = _capture_artifact_snapshots(
+                root, run_id, attempt_id, tool_name, child
+            )
 
     def _body() -> dict[str, Any]:
         aggregate = run_workflow_suite(
@@ -1310,11 +1738,27 @@ def _dispatch_check_suite(
             # CHECK_SUITE negotiates no grants of its own -- denied by
             # default, never `scan_start`'s cache_write/artifact_write.
             permissions=ExecutionPermissions(),
-            cancel_check=cancelled.is_set,
+            cancel_check=_cancel_check,
             on_tool_complete=_on_tool_complete,
             owner_instance_id=ctx.owner_instance_id,
             run_id=run_id,
         )
+        payload = {
+            "status": "success",
+            "suite": CHECK_SUITE.name,
+            "run_id": run_id,
+            "cancelled": bool((aggregate.get("metadata") or {}).get("cancelled")),
+        }
+        # T037: release this project's admission slot (and terminalize the
+        # ledger) *before* the snapshot below becomes client-visible, not
+        # after this thread returns -- closes the window where a same-project
+        # rescan/scan_start admitted right after publish sees this row still
+        # occupied (spurious 409), and where a reader's active_run_id still
+        # names this run after its snapshot is already visible.
+        # `_run_supervised`'s own `finally` still calls this again on exit;
+        # both `ctx.outcomes.submit` and the ledger release it wraps are
+        # idempotent, so the repeat is a safe no-op, not a double-release.
+        ctx.outcomes.submit(slot_id, operation_id=operation_id, payload=payload)
         publish_check_suite_scan(
             ctx,
             project_id,
@@ -1323,20 +1767,16 @@ def _dispatch_check_suite(
             run_id=run_id,
             attempt_id=attempt_id,
             scan_generation=scan_generation,
+            artifact_snapshots=check_suite_snapshots,
         )
-        return {
-            "status": "success",
-            "suite": CHECK_SUITE.name,
-            "run_id": run_id,
-            "cancelled": bool((aggregate.get("metadata") or {}).get("cancelled")),
-        }
+        return payload
 
     thread = threading.Thread(
         target=_run_supervised,
         args=(ctx, slot_id, operation_id, _body),
         daemon=True,
     )
-    attached_run_id, attached_plan_id, started = _admit_and_launch(
+    attached_run_id, attached_plan_id, attached_attempt_id, started = _admit_and_launch(
         ctx,
         project_id,
         execution_identity=identity,
@@ -1345,12 +1785,14 @@ def _dispatch_check_suite(
         run_id=run_id,
         plan_id=identity,
         thread=thread,
+        attempt_id=attempt_id,
     )
     return 202, {
         "operation_id": operation_id,
         "suite": CHECK_SUITE.name,
         "run_id": attached_run_id,
         "plan_id": attached_plan_id,
+        "attempt_id": attached_attempt_id or attempt_id,
         "attached_to_existing": not started,
     }
 
@@ -1398,6 +1840,13 @@ def _dispatch_scan_start(
         run = execute_scan(
             staged_plan, run_id=run_id, attempt_id=attempt_id, permissions=permissions
         )
+        payload = {
+            "status": "success",
+            "run_id": run.run_id,
+            "attempt_id": run.attempt_id,
+        }
+        # T037: release before publish -- see _dispatch_check_suite._body.
+        ctx.outcomes.submit(slot_id, operation_id=operation_id, payload=payload)
         _publish_scan_snapshot(
             ctx,
             project_id,
@@ -1407,18 +1856,14 @@ def _dispatch_scan_start(
             run_id=run.run_id,
             attempt_id=run.attempt_id,
         )
-        return {
-            "status": "success",
-            "run_id": run.run_id,
-            "attempt_id": run.attempt_id,
-        }
+        return payload
 
     thread = threading.Thread(
         target=_run_supervised,
         args=(ctx, slot_id, operation_id, _body),
         daemon=True,
     )
-    attached_run_id, attached_plan_id, started = _admit_and_launch(
+    attached_run_id, attached_plan_id, attached_attempt_id, started = _admit_and_launch(
         ctx,
         project_id,
         execution_identity=f"scan_start:{plan_id}",
@@ -1427,17 +1872,12 @@ def _dispatch_scan_start(
         run_id=run_id,
         plan_id=plan_id,
         thread=thread,
+        attempt_id=attempt_id,
     )
-    # P69-02d: the attempt actually being run already minted its own id
-    # above; an attach onto an already-active job has no durable record of
-    # that job's own attempt_id (the admission table tracks plan_id/run_id,
-    # not attempt_id), so this is a best-effort disk read rather than a
-    # guaranteed-correct value for that edge case.
-    resolved_attempt_id = (
-        attempt_id
-        if started
-        else (latest_attempt_id(project_id, attached_run_id) or attempt_id)
-    )
+    # S09: the admission table now durably tracks the winning executor's own
+    # attempt_id, so an attach resolves to that stored value -- never a
+    # best-effort disk read of "whatever the latest attempt happens to be".
+    resolved_attempt_id = attached_attempt_id or attempt_id
     return 202, {
         "operation_id": operation_id,
         "run_id": attached_run_id,
@@ -1448,19 +1888,66 @@ def _dispatch_scan_start(
 
 
 def _dispatch_scan_cancel(
-    project_id: str, arguments: dict[str, Any], grants: dict[str, Any]
+    ctx: DashboardContext,
+    project_id: str,
+    arguments: dict[str, Any],
+    grants: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
     """Calls the exact shared `cancel_scan_run` cooperative marker -- the
     running job's own candidate loop stops at its next boundary and its
-    already-executed candidates remain as real partial evidence."""
+    already-executed candidates remain as real partial evidence.
+
+    S10: `arguments.operation_id` (an accepted/attached caller's own logical
+    operation id) resolves through the durable attachment chain to its real
+    executor, then to that executor's currently-admitted run/attempt --
+    never a bare `run_id` guess. `arguments.run_id` alone is retained as
+    explicit legacy compatibility. An `operation_id` naming a different
+    project, or no known operation at all, 404s uniformly rather than
+    revealing which."""
     _require_grants(grants, "cache_write", operation="scan_cancel")
     run_id = arguments.get("run_id")
+    operation_id = arguments.get("operation_id")
+    attempt_id: str | None = None
+    if operation_id is not None:
+        if not isinstance(operation_id, str) or not operation_id:
+            raise _ActionDenied(
+                400,
+                "malformed_request",
+                "scan_cancel arguments.operation_id must be a non-empty string",
+            )
+        if _operation_project_id(ctx, operation_id) != project_id:
+            raise _ActionDenied(404, "not_found", "unknown operation_id")
+        resolved_operation_id = _resolved_operation_id(ctx, operation_id)
+        status = ctx.mutations.get_operation_status(resolved_operation_id)
+        if status is not None and status.get("status") == "terminal":
+            # Already terminal: return its stored outcome rather than
+            # attempting a fresh cancel against work that is already over.
+            return 202, {
+                "operation_id": operation_id,
+                "run_id": run_id or "",
+                "already_terminal": True,
+                "cancel_requested_at": None,
+            }
+        admission = ctx.mutations.admission_for_project(project_id)
+        if (
+            admission is not None
+            and admission.get("operation_id") == resolved_operation_id
+        ):
+            run_id = admission.get("run_id") or run_id
+            attempt_id = admission.get("attempt_id") or None
     if not isinstance(run_id, str) or not run_id:
         raise _ActionDenied(
-            400, "malformed_request", "scan_cancel requires arguments.run_id"
+            400,
+            "malformed_request",
+            "scan_cancel requires arguments.run_id or arguments.operation_id",
         )
-    payload = cancel_scan_run(project_id, run_id)
-    return 202, {"run_id": run_id, "cancel_requested_at": payload["requested_at"]}
+    payload = cancel_scan_run(project_id, run_id, attempt_id=attempt_id)
+    return 202, {
+        "operation_id": operation_id,
+        "run_id": run_id,
+        "attempt_id": payload.get("attempt_id"),
+        "cancel_requested_at": payload["requested_at"],
+    }
 
 
 def _dispatch_scan_resume(
@@ -1502,7 +1989,15 @@ def _dispatch_scan_resume(
             permissions=permissions,
             attempt_id=new_attempt_id,
             expected_attempt_id=captured_attempt_id,
+            owner_instance_id=ctx.owner_instance_id,
         )
+        payload = {
+            "status": "success",
+            "run_id": run.run_id,
+            "attempt_id": run.attempt_id,
+        }
+        # T037: release before publish -- see _dispatch_check_suite._body.
+        ctx.outcomes.submit(slot_id, operation_id=operation_id, payload=payload)
         _publish_scan_snapshot(
             ctx,
             project_id,
@@ -1512,18 +2007,14 @@ def _dispatch_scan_resume(
             run_id=run.run_id,
             attempt_id=run.attempt_id,
         )
-        return {
-            "status": "success",
-            "run_id": run.run_id,
-            "attempt_id": run.attempt_id,
-        }
+        return payload
 
     thread = threading.Thread(
         target=_run_supervised,
         args=(ctx, slot_id, operation_id, _body),
         daemon=True,
     )
-    attached_run_id, _plan_id, started = _admit_and_launch(
+    attached_run_id, _plan_id, attached_attempt_id, started = _admit_and_launch(
         ctx,
         project_id,
         # P69-02j: reuses round-8's precedent of repurposing the admission
@@ -1539,12 +2030,9 @@ def _dispatch_scan_resume(
         run_id=run_id,
         plan_id="",
         thread=thread,
+        attempt_id=new_attempt_id,
     )
-    resolved_attempt_id = (
-        new_attempt_id
-        if started
-        else (latest_attempt_id(project_id, attached_run_id) or new_attempt_id)
-    )
+    resolved_attempt_id = attached_attempt_id or new_attempt_id
     return 202, {
         "operation_id": operation_id,
         "run_id": attached_run_id,
@@ -1600,8 +2088,16 @@ def _dispatch_rescan(
             new_run_id=new_run_id,
             attempt_id=new_attempt_id,
             expected_attempt_id=captured_attempt_id,
+            owner_instance_id=ctx.owner_instance_id,
         )
         new_run = result.get("run") or {}
+        payload = {
+            "status": "success",
+            "run_id": new_run.get("run_id"),
+            "attempt_id": new_run.get("attempt_id"),
+        }
+        # T037: release before publish -- see _dispatch_check_suite._body.
+        ctx.outcomes.submit(slot_id, operation_id=operation_id, payload=payload)
         _publish_scan_snapshot(
             ctx,
             project_id,
@@ -1611,18 +2107,14 @@ def _dispatch_rescan(
             run_id=str(new_run.get("run_id") or new_run_id),
             attempt_id=str(new_run.get("attempt_id") or new_attempt_id),
         )
-        return {
-            "status": "success",
-            "run_id": new_run.get("run_id"),
-            "attempt_id": new_run.get("attempt_id"),
-        }
+        return payload
 
     thread = threading.Thread(
         target=_run_supervised,
         args=(ctx, slot_id, operation_id, _body),
         daemon=True,
     )
-    attached_run_id, _plan_id, started = _admit_and_launch(
+    attached_run_id, _plan_id, attached_attempt_id, started = _admit_and_launch(
         ctx,
         project_id,
         # P69-02j: same op-type-prefixed, attempt-pinned identity pattern as
@@ -1634,12 +2126,9 @@ def _dispatch_rescan(
         run_id=baseline_run_id,
         plan_id="",
         thread=thread,
+        attempt_id=new_attempt_id,
     )
-    resolved_attempt_id = (
-        new_attempt_id
-        if started
-        else (latest_attempt_id(project_id, new_run_id) or new_attempt_id)
-    )
+    resolved_attempt_id = attached_attempt_id or new_attempt_id
     return 202, {
         "operation_id": operation_id,
         "baseline_run_id": attached_run_id,
@@ -1650,18 +2139,24 @@ def _dispatch_rescan(
 
 
 def _handoff_preview_hash(handoff: ScanHandoff) -> str:
-    """P69-02.2n: canonical hash binding the complete reviewed handoff
-    envelope -- project, run, agent, exact selected findings, current
-    source identity, and budgets -- not `_build_packet()`'s own fields
-    alone. `handoff_preview` returns this as the response's `handoff_id`;
-    `handoff_send` recomputes it server-side from the identical inputs and
-    rejects with 409 if it no longer matches (tamper/staleness detection)."""
+    """P69-02.2n/S06: canonical hash binding the *complete* reviewed handoff
+    envelope -- project, run, exact attempt, agent, exact selected findings
+    and the packet content built from them (so an evidence artifact's
+    version changing between preview and send changes the packet, and so
+    the hash), current source identity, session allowlist, and budgets --
+    not `_build_packet()`'s own top-level fields alone. `handoff_preview`
+    returns this as the response's `handoff_id`; `handoff_send` recomputes
+    it server-side from the identical inputs and rejects with 409 if it no
+    longer matches (tamper/staleness detection)."""
     envelope = {
         "project_id": handoff.project_id,
         "run_id": handoff.run_id,
+        "attempt_id": handoff.attempt_id,
         "agent_id": handoff.agent_id,
         "finding_ids": sorted(handoff.finding_ids),
+        "packet": handoff.packet,
         "source_signature": handoff.source_signature,
+        "session_allowlist": [handoff.root],
         "max_tokens": handoff.packet.get("max_tokens"),
         "max_bytes": handoff.packet.get("max_bytes"),
         "granted_actions": sorted(handoff.granted_actions),
@@ -1682,11 +2177,16 @@ def _dispatch_handoff_preview(
     content hash `handoff_send` must echo back."""
     run_id = arguments.get("run_id")
     agent_id = arguments.get("agent_id")
+    # S06: an explicit `attempt_id` pins the exact manifest the preview's
+    # packet/hash is built from; omitted, `build_handoff` keeps its legacy
+    # latest-attempt behavior (a pre-S06 caller that never sends one).
+    attempt_id = arguments.get("attempt_id") or ""
     if (
         not isinstance(run_id, str)
         or not run_id
         or not isinstance(agent_id, str)
         or not agent_id
+        or not isinstance(attempt_id, str)
     ):
         raise _ActionDenied(
             400,
@@ -1701,6 +2201,7 @@ def _dispatch_handoff_preview(
         max_tokens=int(arguments.get("max_tokens", 2048)),
         max_bytes=int(arguments.get("max_bytes", 8192)),
         persist=False,
+        attempt_id=attempt_id,
     )
     body = handoff.to_dict()
     body["handoff_id"] = _handoff_preview_hash(handoff)
@@ -1724,12 +2225,18 @@ def _dispatch_handoff_send(
     _require_grants(grants, "cache_write", "artifact_write", operation="handoff_send")
     run_id = arguments.get("run_id")
     agent_id = arguments.get("agent_id")
+    # S06: optional for the same legacy-compatibility reason as
+    # `_dispatch_handoff_preview` above -- when supplied it must exactly
+    # match what the accepted preview was built from (enforced by the hash
+    # comparison below, since it's part of the hashed envelope).
+    attempt_id = arguments.get("attempt_id") or ""
     claimed_hash = arguments.get("handoff_id")
     if (
         not isinstance(run_id, str)
         or not run_id
         or not isinstance(agent_id, str)
         or not agent_id
+        or not isinstance(attempt_id, str)
         or not isinstance(claimed_hash, str)
         or not claimed_hash
     ):
@@ -1742,15 +2249,20 @@ def _dispatch_handoff_send(
     finding_ids = tuple(arguments.get("finding_ids") or ())
     max_tokens = int(arguments.get("max_tokens", 2048))
     max_bytes = int(arguments.get("max_bytes", 8192))
-    preview = build_handoff(
-        project_id,
-        run_id,
-        agent_id,
-        finding_ids=finding_ids,
-        max_tokens=max_tokens,
-        max_bytes=max_bytes,
-        persist=False,
-    )
+
+    def _build_preview() -> ScanHandoff:
+        return build_handoff(
+            project_id,
+            run_id,
+            agent_id,
+            finding_ids=finding_ids,
+            max_tokens=max_tokens,
+            max_bytes=max_bytes,
+            persist=False,
+            attempt_id=attempt_id,
+        )
+
+    preview = _build_preview()
     if _handoff_preview_hash(preview) != claimed_hash:
         raise _ActionDenied(
             409,
@@ -1760,6 +2272,32 @@ def _dispatch_handoff_send(
     root = Path(resolve_project(project_id)["root"])
 
     def _body() -> dict[str, Any]:
+        # S07: revalidate the pinned attempt/envelope immediately before the
+        # real effect -- the accept-time check above ran in the HTTP thread;
+        # this is the independent, second check from inside the worker,
+        # closing the gap during which the source/evidence backing this
+        # exact attempt can go stale.
+        try:
+            fresh_preview = _build_preview()
+        except ScanInvalidRequestError:
+            return {
+                "status": "conflict",
+                "code": "stale_expected_identity",
+                "message": "pinned run/attempt no longer exists at execution time",
+            }
+        if _handoff_preview_hash(fresh_preview) != claimed_hash:
+            return {
+                "status": "conflict",
+                "code": "stale_expected_identity",
+                "message": (
+                    "handoff envelope changed between accept and execution; "
+                    "re-preview before sending"
+                ),
+            }
+        # S04: consume this operation's already-reserved effect ids rather
+        # than letting `build_handoff` mint fresh receipt ids per sub-effect.
+        reservation = ctx.mutations.get_reservation(operation_id)
+        effect_ids = reservation["effect_ids"] if reservation else {}
         handoff = build_handoff(
             project_id,
             run_id,
@@ -1768,16 +2306,41 @@ def _dispatch_handoff_send(
             max_tokens=max_tokens,
             max_bytes=max_bytes,
             persist=True,
+            attempt_id=attempt_id,
+            operation_id=operation_id,
+            effect_ids=effect_ids,
+            # T038: the only linkage from a dead owner_instance_id (S02's
+            # reconcile_admissions) to this handoff if this process crashes
+            # between prepare and dispatch.
+            owner_instance_id=ctx.owner_instance_id,
         )
-        dispatch_handoff(project_id, handoff.handoff_id, handoff.session_capability)
+        # S05 bullet 3: this operation's already-reserved delivery receipt
+        # id -- shared with `recover_prepared_handoff`'s claimed-recovery
+        # path so the two never mint independent, conflicting receipts.
+        dispatch_handoff(
+            project_id,
+            handoff.handoff_id,
+            handoff.session_capability,
+            delivery_receipt_id=effect_ids.get("delivery_transition", ""),
+        )
         _refresh_project_memories(ctx, project_id, root)
-        return {"status": "success", "handoff_id": handoff.handoff_id, "run_id": run_id}
+        return {
+            "status": "success",
+            "handoff_id": handoff.handoff_id,
+            "run_id": run_id,
+            "attempt_id": attempt_id,
+        }
 
     thread = threading.Thread(
         target=_run_terminal_supervised, args=(ctx, operation_id, _body), daemon=True
     )
     thread.start()
-    return 202, {"operation_id": operation_id, "run_id": run_id, "agent_id": agent_id}
+    return 202, {
+        "operation_id": operation_id,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "agent_id": agent_id,
+    }
 
 
 # --- Phase 66 P66-05: memory administration mutations -----------------------
@@ -1818,10 +2381,11 @@ def _tool_result_response(result: ToolResult) -> tuple[int, dict[str, Any]]:
 
 
 def _dispatch_memory_edit(
+    ctx: DashboardContext,
     project_id: str,
     arguments: dict[str, Any],
     grants: dict[str, Any],
-    operation_id: str = "",
+    effect_ids: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     if bool(arguments.get("apply")):
         _require_grants(grants, "cache_write", operation="memory_edit")
@@ -1838,22 +2402,30 @@ def _dispatch_memory_edit(
         )
         if key in arguments
     }
-    if operation_id:
-        request["receipt_operation_id"] = operation_id
+    # S04: consume the reserved `artifact_edit` effect id preallocated in
+    # the same ledger transaction as this operation's reservation, never a
+    # separate generic operation_id (which risks a mutation_receipts
+    # PRIMARY-KEY clobber with an unrelated receipt).
+    reserved = (effect_ids or {}).get("artifact_edit")
+    if reserved:
+        request["receipt_operation_id"] = reserved
     result = MemoryTool().run(
         root,
         operation="edit",
         request=request,
         permissions=_permissions_from_grants(grants),
     )
-    return _tool_result_response(result)
+    status_code, body = _tool_result_response(result)
+    _refresh_project_memories_if_store_exists(ctx, project_id, root)
+    return status_code, body
 
 
 def _dispatch_memory_archive(
+    ctx: DashboardContext,
     project_id: str,
     arguments: dict[str, Any],
     grants: dict[str, Any],
-    operation_id: str = "",
+    effect_ids: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     if bool(arguments.get("apply")):
         _require_grants(grants, "cache_write", operation="memory_archive")
@@ -1870,22 +2442,27 @@ def _dispatch_memory_archive(
         )
         if key in arguments
     }
-    if operation_id:
-        request["receipt_operation_id"] = operation_id
+    # S04: reserved `artifact_archive` effect id, not a generic operation_id.
+    reserved = (effect_ids or {}).get("artifact_archive")
+    if reserved:
+        request["receipt_operation_id"] = reserved
     result = MemoryTool().run(
         root,
         operation="archive",
         request=request,
         permissions=_permissions_from_grants(grants),
     )
-    return _tool_result_response(result)
+    status_code, body = _tool_result_response(result)
+    _refresh_project_memories_if_store_exists(ctx, project_id, root)
+    return status_code, body
 
 
 def _dispatch_memory_delete(
+    ctx: DashboardContext,
     project_id: str,
     arguments: dict[str, Any],
     grants: dict[str, Any],
-    operation_id: str = "",
+    effect_ids: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """P65-07's batch delete, previewed then approved: `apply=False` (the
     default) returns exactly the candidate `affected` records and writes
@@ -1906,22 +2483,37 @@ def _dispatch_memory_delete(
         )
         if key in arguments
     }
-    if operation_id:
-        request["receipt_operation_id"] = operation_id
+    # S04: `_s04_effect_ids` reserves one `delete:<artifact_id>` id per
+    # validated target (review doc's per-artifact spec). Thread the full
+    # target_id -> reserved-id mapping through so `delete_batch` (memory/
+    # store.py) writes one real receipt per target, not just a single
+    # batch-wide one.
+    target_ids = arguments.get("artifact_ids")
+    receipt_ids: dict[str, str] = {}
+    if isinstance(target_ids, list):
+        for target_id in {str(t) for t in target_ids}:
+            candidate = (effect_ids or {}).get(f"delete:{target_id}")
+            if candidate:
+                receipt_ids[target_id] = candidate
+    if receipt_ids:
+        request["receipt_operation_ids"] = receipt_ids
     result = MemoryTool().run(
         root,
         operation="delete",
         request=request,
         permissions=_permissions_from_grants(grants),
     )
-    return _tool_result_response(result)
+    status_code, body = _tool_result_response(result)
+    _refresh_project_memories_if_store_exists(ctx, project_id, root)
+    return status_code, body
 
 
 def _dispatch_memory_promote(
+    ctx: DashboardContext,
     project_id: str,
     arguments: dict[str, Any],
     grants: dict[str, Any],
-    operation_id: str = "",
+    effect_ids: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Always requires `cache_write` -- unlike edit/archive/delete, `promote`
     has no read-only preview mode (it always writes a fresh candidate
@@ -1955,6 +2547,10 @@ def _dispatch_memory_promote(
             400, "malformed_request", "candidate_sources must be a list of strings"
         )
     root = Path(resolve_project(project_id)["root"])
+    # S04: `MemoryTool.run`'s promote path consumes two independently-reserved
+    # effect ids -- `candidate_create` for the candidate-write receipt and
+    # `promotion` for the separate promotion-decision receipt -- never one
+    # shared base id derived into two suffixed strings.
     result = MemoryTool().run(
         root,
         operation="promote",
@@ -1967,9 +2563,11 @@ def _dispatch_memory_promote(
         candidate_sources=candidate_sources,
         owner_scope=arguments.get("owner_scope"),
         permissions=_permissions_from_grants(grants),
-        receipt_operation_id=operation_id or None,
+        receipt_operation_ids=effect_ids or None,
     )
-    return _tool_result_response(result)
+    status_code, body = _tool_result_response(result)
+    _refresh_project_memories_if_store_exists(ctx, project_id, root)
+    return status_code, body
 
 
 def _dispatch_scan_action(
@@ -1981,6 +2579,7 @@ def _dispatch_scan_action(
     *,
     operation_id: str = "",
     expected: dict[str, Any] | None = None,
+    effect_ids: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     try:
         if operation == "provision_plan":
@@ -1999,7 +2598,7 @@ def _dispatch_scan_action(
                 expected=expected,
             )
         if operation == "scan_cancel":
-            return _dispatch_scan_cancel(project_id, arguments, grants)
+            return _dispatch_scan_cancel(ctx, project_id, arguments, grants)
         if operation == "scan_resume":
             return _dispatch_scan_resume(
                 ctx,
@@ -2027,15 +2626,21 @@ def _dispatch_scan_action(
         if operation == "handoff_status":
             return _dispatch_handoff_status(project_id, arguments, grants)
         if operation == "configure":
-            return _dispatch_configure(project_id, arguments, grants)
+            return _dispatch_configure(ctx, project_id, arguments, grants)
         if operation == "memory_edit":
-            return _dispatch_memory_edit(project_id, arguments, grants, operation_id)
+            return _dispatch_memory_edit(ctx, project_id, arguments, grants, effect_ids)
         if operation == "memory_archive":
-            return _dispatch_memory_archive(project_id, arguments, grants, operation_id)
+            return _dispatch_memory_archive(
+                ctx, project_id, arguments, grants, effect_ids
+            )
         if operation == "memory_delete":
-            return _dispatch_memory_delete(project_id, arguments, grants, operation_id)
+            return _dispatch_memory_delete(
+                ctx, project_id, arguments, grants, effect_ids
+            )
         if operation == "memory_promote":
-            return _dispatch_memory_promote(project_id, arguments, grants, operation_id)
+            return _dispatch_memory_promote(
+                ctx, project_id, arguments, grants, effect_ids
+            )
         if operation == "memory_query":
             return _dispatch_memory_query(project_id, arguments, grants)
         if operation == "memory_expand":
@@ -2086,7 +2691,10 @@ def _dispatch_artifact_export(
 
 
 def _dispatch_configure(
-    project_id: str, arguments: dict[str, Any], grants: dict[str, Any]
+    ctx: DashboardContext,
+    project_id: str,
+    arguments: dict[str, Any],
+    grants: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
     """`rush_project configure`: a preview (`apply=False`, the default)
     requires no grant; an actual apply requires `cache_write` and
@@ -2104,6 +2712,7 @@ def _dispatch_configure(
         apply=apply,
         plan_id=arguments.get("plan_id"),
         permissions=_permissions_from_grants(grants),
+        data_root=ctx.data_root,
     )
     return _tool_result_response(result)
 
@@ -2236,6 +2845,27 @@ def _refresh_project_memories(
     ctx.projects.refresh_memories(project_id, memories, generation)
 
 
+def _refresh_project_memories_if_store_exists(
+    ctx: DashboardContext, project_id: str, root: Path
+) -> None:
+    """M07: shared post-commit refresh for edit/archive/delete/promote, which
+    (unlike propose/maintain) have a genuine read-only preview mode and can
+    fail before writing anything -- so this must never itself spring a
+    `.rush/memory.db` into existence just to check for updates. Only calls
+    the write-adjacent `TypedArtifactStore(root)` (and hence
+    `_refresh_project_memories`) once a store already exists on disk;
+    `refresh_memories()`'s own generation gate (state.py) still rejects a
+    non-newer generation, so a preview or a zero-write failure against an
+    *existing* store still publishes no fabricated sequence bump. A
+    promotion that writes a candidate before its trust decision is later
+    denied still refreshes, since the store now carries that real commit."""
+    opened = TypedArtifactStore.open_readonly(root)
+    if not opened.available or opened.connection is None:
+        return
+    opened.connection.close()
+    _refresh_project_memories(ctx, project_id, root)
+
+
 def _dispatch_memory_propose(
     ctx: DashboardContext,
     project_id: str,
@@ -2290,7 +2920,15 @@ def _dispatch_memory_maintain(
 ) -> tuple[int, dict[str, Any]]:
     """`memory_maintain` maps to `MemoryTool`'s `maintain` -- validates
     `task` against the shared `MaintenanceTask` enum, never an arbitrary
-    string. Always requires `cache_write`."""
+    string. Always requires `cache_write`.
+
+    S04/T034 investigation: unlike edit/archive/delete/promote, this
+    dispatcher does NOT need the identical reserved-effect-id fix.
+    `MemoryTool.run`'s `maintain` operation (tools/memory.py) has no
+    `receipt_operation_id` parameter on its dispatch-table lambda or on
+    `_run_maintain` at all -- there is no write site here to thread the
+    reserved `maintenance_run` id into. Adding one would mean editing
+    tools/memory.py, outside this task's allowed_files."""
     _require_grants(grants, "cache_write", operation="memory_maintain")
     task = arguments.get("task")
     if task not in get_args(MaintenanceTask):
@@ -2308,6 +2946,7 @@ def _dispatch_memory_maintain(
         operation="maintain",
         task=task,
         batch_size=batch_size,
+        owner_scope=arguments.get("owner_scope"),
         permissions=_permissions_from_grants(grants),
     )
     status_code, body = _tool_result_response(result)
@@ -2482,35 +3121,70 @@ def _read_excerpt(root: Path, rel_path: str, *, start: int, end: int) -> dict[st
 _MAX_ARTIFACT_PAGE_BYTES = 1024 * 1024
 
 
-def _read_artifact_page(
-    root: Path, rel_path: str, *, offset: int, limit: int
+def _read_artifact_content_page(
+    root: Path, entry: dict[str, Any], rel_path: str, *, offset: int, limit: int
 ) -> dict[str, Any]:
-    """Bounded, path-traversal-safe byte-range content page for the
+    """M12: bounded, path-traversal-safe byte-range content page for the
     artifact-download route (plan §3.6: artifact reads paginate at
-    1MiB/page) -- real content, not the excerpt/metadata-only view."""
+    1MiB/page) -- resolved only from this exact run/attempt's own captured
+    immutable snapshot (`CandidateResult.artifact_snapshots`, `project_run.py`),
+    never from the live/staged current-project tree. A reference minted for
+    one attempt can therefore never return another attempt's (or another
+    candidate's) bytes for the same declared logical path, even when both
+    declared the identical filename. Raw bytes travel base64-encoded
+    (`content_base64`), never UTF-8-decoded -- lossless for binary content
+    and for multi-byte characters that straddle a page boundary. A manifest
+    that predates this fix (or a candidate that never captured this path)
+    has no snapshot entry: reported as `immutable_content_unavailable`,
+    never a live-file fallback."""
+    run_id = entry.get("run_id")
+    attempt_id = entry.get("attempt_id")
+    tool_id = entry.get("tool_id")
+    manifest = (
+        load_run_manifest(root, run_id, attempt_id=attempt_id)
+        if run_id and attempt_id
+        else None
+    )
+    snapshot = None
+    if manifest is not None and tool_id is not None:
+        for item in manifest.get("scheduled") or []:
+            if item.get("candidate_id") == tool_id:
+                snapshot = (item.get("artifact_snapshots") or {}).get(rel_path)
+                break
+    if not isinstance(snapshot, dict):
+        return {
+            "path": rel_path,
+            "error": "immutable_content_unavailable",
+            "content_base64": None,
+        }
+    immutable_path = snapshot.get("immutable_path")
+    total_size = snapshot.get("size")
     try:
-        target = (root / rel_path).resolve()
+        target = (root / str(immutable_path)).resolve()
         target.relative_to(root.resolve())
     except (ValueError, OSError):
-        return {"path": rel_path, "error": "invalid_path", "content": None}
+        return {"path": rel_path, "error": "invalid_path", "content_base64": None}
     if not target.is_file():
-        return {"path": rel_path, "error": "not_found", "content": None}
+        return {"path": rel_path, "error": "not_found", "content_base64": None}
     offset = max(0, offset)
     limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
     try:
-        size = target.stat().st_size
         with target.open("rb") as handle:
             handle.seek(offset)
             chunk = handle.read(limit)
     except OSError:
-        return {"path": rel_path, "error": "read_failed", "content": None}
-    next_offset = offset + len(chunk) if offset + len(chunk) < size else None
+        return {"path": rel_path, "error": "read_failed", "content_base64": None}
+    next_offset = (
+        offset + len(chunk) if offset + len(chunk) < (total_size or 0) else None
+    )
     return {
         "path": rel_path,
         "offset": offset,
-        "size": size,
-        "content": chunk.decode("utf-8", errors="replace"),
+        "size": total_size,
+        "content_base64": base64.b64encode(chunk).decode("ascii"),
         "next_offset": next_offset,
+        "sha256": snapshot.get("sha256"),
+        "media_type": snapshot.get("media_type"),
     }
 
 
@@ -2556,7 +3230,13 @@ def _build_scans_section(
             manifests.append(manifest)
     manifests.sort(key=lambda m: str(m.get("created_at") or ""))
     runs_summary = [_run_summary(m) for m in manifests]
-    active_run_id = ctx.scan_runs.active_run_id(project_id)
+    # T037: authoritative from the durable `scan_admission` row, not
+    # `ScanRunTracker.active_run_id`'s `thread.is_alive()` -- the admission
+    # row is released (see the `_body` closures above) no later than the
+    # moment a terminal snapshot becomes visible, while the thread itself
+    # stays alive a little longer, unwinding through `_run_supervised`.
+    admission = ctx.mutations.admission_for_project(project_id)
+    active_run_id = (admission or {}).get("run_id") or None
 
     result: dict[str, Any] = {
         "runs": runs_summary,
@@ -2711,12 +3391,26 @@ def _build_scans_section(
 
 
 # P69-07 subsection g: `scope_artifacts()`'s own default `scan_limit` (512) once capped
-# browse to whatever fit in one call; this batches past it, `_MEMORY_BROWSE_MAX_BATCHES`
-# batches deep (10,240 rows/subject).
-# ponytail: bounded loop, not unbounded pagination -- raise the cap or add real
-# server-side cursoring here if a project needs deeper same-subject browse than that.
+# browse to whatever fit in one call; this batches past it, one `_MEMORY_BROWSE_BATCH`
+# chunk at a time, until a batch comes back shorter than requested (exhausted) -- M14:
+# no iteration-count ceiling, so a subject with more than 10,240 rows no longer gets
+# silently truncated with a wrong `total`.
 _MEMORY_BROWSE_BATCH = 512
-_MEMORY_BROWSE_MAX_BATCHES = 20
+# Perf: `_build_memory_section` is called once per page-request HTTP call, and the
+# browse branch (empty query) below re-derives the full matching-row set from scratch
+# every time -- O(N^2/P) row-fetches across a full N-row/P-page-size traversal (root
+# cause of a real slow-test/full-suite-runtime bug, .scratch/dashboard-memory-pagination-perf/).
+# Cache the raw (pre source_filter/freshness) browse item list per (root, subjects,
+# trust filter, include_archived, known sources, store generation) -- a write bumps
+# `current_generation()`, which is part of the key, so a stale cache entry is never
+# served across a mutation; it just ages out of the bounded LRU unused. Query-mode
+# (non-empty query text) is deliberately NEVER cached here -- its live per-row staleness
+# re-check against the current codebase must run on every request, not just the first
+# page of a traversal. This adds no new filter/SQL logic (correctness-neutral by
+# construction), only reuses work across sequential browse-page requests against an
+# unchanged store -- the common client pattern.
+_MEMORY_BROWSE_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
+_MEMORY_BROWSE_CACHE_MAXSIZE = 32
 
 
 def _all_known_sources(store: TypedArtifactStore) -> list[str]:
@@ -2765,6 +3459,7 @@ def _build_memory_section(
     root = Path(resolve_project(project_id)["root"])
     store = TypedArtifactStore(root)
     all_sources = _all_known_sources(store)
+    browse_revision = str(store.current_generation())
 
     requested_subjects = _split_csv(query.get("subject", []))
     subjects = [s for s in requested_subjects if s in _MEMORY_SUBJECTS] or list(
@@ -2776,44 +3471,39 @@ def _build_memory_section(
     include_archived = query.get("include_archived", ["false"])[0] == "true"
     query_text = query.get("query", [""])[0]
 
-    items: list[dict[str, Any]] = []
-    if query_text and all_sources:
-        for subject in subjects:
-            result = MemoryTool().run(
-                root,
-                operation="list",
-                subject=subject,
-                query=query_text,
-                session_allowlist=all_sources,
-                include_archived=include_archived,
-            )
-            for artifact in result.get("raw") or []:
-                item = dict(artifact)
-                item["dynamic_freshness_checked"] = True
-                items.append(item)
-        if trust_filter:
-            items = [i for i in items if i.get("trust_tier") in trust_filter]
-    elif all_sources:
-        for subject in subjects:
-            # P69-07 subsection g: batch past scope_artifacts()'s own scan_limit default
-            # instead of one capped call, and exclude archived rows by default (matching
-            # search()'s existing include_archived precedent) -- both real leaks in the
-            # pre-P69-07 browse path.
-            subject_offset = 0
-            for _ in range(_MEMORY_BROWSE_MAX_BATCHES):
-                batch = store.scope_artifacts(
-                    subject,
-                    source_allowlist=all_sources,
-                    trust_tiers=trust_filter or None,
-                    include_expired=include_archived,
-                    include_archived=include_archived,
-                    scan_offset=subject_offset,
-                    scan_limit=_MEMORY_BROWSE_BATCH,
-                )
-                items.extend(_scope_artifact_row(row) for row in batch)
-                if len(batch) < _MEMORY_BROWSE_BATCH:
-                    break
-                subject_offset += len(batch)
+    # Only the browse (empty-query) path is cache-eligible: its own docstring
+    # documents it as static (`dynamic_freshness_checked: false`, persisted
+    # `stale` column only). Query-mode's `list` dispatch does a genuinely live
+    # per-row staleness re-check against the current codebase on every call --
+    # caching it would silently skip that re-check for a file that changes
+    # mid-traversal, which a subsequent page's request would otherwise catch.
+    browse_cache_key = (
+        str(root),
+        tuple(subjects),
+        frozenset(trust_filter),
+        include_archived,
+        tuple(sorted(all_sources)),
+        browse_revision,
+    )
+    cached_items = None if query_text else _MEMORY_BROWSE_CACHE.get(browse_cache_key)
+    if cached_items is not None:
+        _MEMORY_BROWSE_CACHE.move_to_end(browse_cache_key)
+        items = list(cached_items)
+    else:
+        items = _fetch_memory_browse_items(
+            store,
+            root=root,
+            all_sources=all_sources,
+            subjects=subjects,
+            trust_filter=trust_filter,
+            include_archived=include_archived,
+            query_text=query_text,
+        )
+        if not query_text:
+            _MEMORY_BROWSE_CACHE[browse_cache_key] = list(items)
+            _MEMORY_BROWSE_CACHE.move_to_end(browse_cache_key)
+            while len(_MEMORY_BROWSE_CACHE) > _MEMORY_BROWSE_CACHE_MAXSIZE:
+                _MEMORY_BROWSE_CACHE.popitem(last=False)
 
     if source_filter:
         items = [i for i in items if i.get("source") in source_filter]
@@ -2834,7 +3524,7 @@ def _build_memory_section(
     # (`TypedArtifactStore.current_generation()`) -- a write between two
     # page requests advances it, rejecting the second page rather than
     # silently splicing pre- and post-mutation results into one response.
-    revision = str(store.current_generation())
+    revision = browse_revision
     offset = _decode_revision_cursor(cursor, revision=revision)
     page = items[offset : offset + limit]
     next_cursor = (
@@ -2882,6 +3572,62 @@ def _build_memory_section(
     return section_data
 
 
+def _fetch_memory_browse_items(
+    store: TypedArtifactStore,
+    *,
+    root: Path,
+    all_sources: list[str],
+    subjects: list[str],
+    trust_filter: set[str],
+    include_archived: bool,
+    query_text: str,
+) -> list[dict[str, Any]]:
+    """The actual (uncached) row-fetch this section's browse/query branches
+    used to run on every single page request -- factored out so
+    `_build_memory_section`'s per-generation cache can skip it entirely on a
+    cache hit. Behavior is unchanged from before the cache was added."""
+    items: list[dict[str, Any]] = []
+    if query_text and all_sources:
+        for subject in subjects:
+            result = MemoryTool().run(
+                root,
+                operation="list",
+                subject=subject,
+                query=query_text,
+                session_allowlist=all_sources,
+                include_archived=include_archived,
+            )
+            for artifact in result.get("raw") or []:
+                item = dict(artifact)
+                item["dynamic_freshness_checked"] = True
+                items.append(item)
+        if trust_filter:
+            items = [i for i in items if i.get("trust_tier") in trust_filter]
+    elif all_sources:
+        for subject in subjects:
+            # P69-07 subsection g: batch past scope_artifacts()'s own scan_limit default
+            # instead of one capped call, and exclude archived rows by default (matching
+            # search()'s existing include_archived precedent) -- both real leaks in the
+            # pre-P69-07 browse path.
+            subject_offset = 0
+            while True:
+                batch = store.scope_artifacts(
+                    subject,
+                    source_allowlist=all_sources,
+                    trust_tiers=trust_filter or None,
+                    include_expired=include_archived,
+                    include_archived=include_archived,
+                    scan_offset=subject_offset,
+                    scan_limit=_MEMORY_BROWSE_BATCH,
+                )
+                items.extend(_scope_artifact_row(row) for row in batch)
+                if len(batch) < _MEMORY_BROWSE_BATCH:
+                    break
+                subject_offset += len(batch)
+
+    return items
+
+
 # --- Phase 66 P66-05: token use snapshot section -----------------------------
 
 _MEMORY_EVENT_KINDS = ("retrieval", "expansion", "packing", "handoff", "embedding")
@@ -2918,9 +3664,20 @@ def _build_tokens_section(
     stays explicitly `available: false` rather than fabricating a number."""
     root = Path(resolve_project(project_id)["root"])
     telemetry = TelemetryStore(root)
-    summary = telemetry.get_summary()
+    # M10: one selection, parsed once, applied identically to token totals,
+    # memory-event-by-kind totals, and handoff rows -- never filtering only
+    # the handoff rows while leaving the displayed totals project-wide.
+    run_filter = query.get("run_id", [None])[0]
+    agent_filter = query.get("agent_id", [None])[0]
+    session_filter = query.get("session_id", [None])[0]
+    summary = telemetry.get_summary(
+        run_id=run_filter, agent_id=agent_filter, session_id=session_filter
+    )
     by_kind = {
-        kind: telemetry.get_memory_event_total(kind) for kind in _MEMORY_EVENT_KINDS
+        kind: telemetry.get_memory_event_total(
+            kind, run_id=run_filter, agent_id=agent_filter, session_id=session_filter
+        )
+        for kind in _MEMORY_EVENT_KINDS
     }
     store = TypedArtifactStore(root)
     cache_fill_count = sum(
@@ -2928,12 +3685,12 @@ def _build_tokens_section(
     )
 
     handoffs = _list_project_handoffs(root)
-    run_filter = query.get("run_id", [None])[0]
-    agent_filter = query.get("agent_id", [None])[0]
     if run_filter:
         handoffs = [h for h in handoffs if h.get("run_id") == run_filter]
     if agent_filter:
         handoffs = [h for h in handoffs if h.get("agent_id") == agent_filter]
+    if session_filter:
+        handoffs = [h for h in handoffs if h.get("memory_session_id") == session_filter]
 
     rows = [
         {
@@ -3129,10 +3886,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Cache-Control", "no-store")
+            for key, value in SECURITY_RESPONSE_HEADERS:
+                self.send_header(key, value)
             for key, value in (extra_headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
@@ -3142,10 +3897,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Cache-Control", "no-store")
+            for key, value in SECURITY_RESPONSE_HEADERS:
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -3153,9 +3906,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "application/javascript; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Cache-Control", "no-store")
+            for key, value in SECURITY_RESPONSE_HEADERS:
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -3163,9 +3915,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "text/css; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Cache-Control", "no-store")
+            for key, value in SECURITY_RESPONSE_HEADERS:
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -3189,7 +3940,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     code,
                     message,
                     retryable=retryable,
-                    redact=ctx.live_secrets(),
+                    redact=self._redact_secrets(),
                     details=details,
                 ),
                 extra_headers=extra_headers,
@@ -3223,6 +3974,23 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if header and header.startswith("Bearer "):
                 return header[len("Bearer ") :]
             return None
+
+        def _redact_secrets(self) -> tuple[str, ...]:
+            """S12 point 2/3: every secret this response's body may redact --
+            the server's always-live plaintext secrets (control capability,
+            active CSRF tokens) plus this request's own presented bootstrap
+            token and/or session cookie, included only if each hash-matches
+            a currently-live secret via `DashboardAuth.match_presented_secret`.
+            A presented value that fails that match is never added -- this
+            never blanket-replaces an arbitrary caller-supplied substring."""
+            secrets_to_redact = list(ctx.live_secrets())
+            bearer = self._bearer()
+            if bearer and ctx.auth.match_presented_secret(bearer):
+                secrets_to_redact.append(bearer)
+            cookie = self._cookie()
+            if cookie and ctx.auth.match_presented_secret(cookie):
+                secrets_to_redact.append(cookie)
+            return tuple(secrets_to_redact)
 
         def _check_request_limits(
             self, *, require_content_length: bool = False
@@ -3556,14 +4324,10 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             payload = self._read_json_body(declared_length, request_id)
             if payload is None:
                 return
-            schema_version = payload.get("schema_version", 1)
-            if schema_version != 1:
-                self._send_error(
-                    400,
-                    "unsupported_schema_version",
-                    f"schema_version must be 1, got {schema_version!r}",
-                    request_id,
-                )
+            schema_error = _schema_version_error(payload)
+            if schema_error is not None:
+                code, message = schema_error
+                self._send_error(400, code, message, request_id)
                 return
             project_id = payload.get("project_id")
             mutation_id = payload.get("request_id")
@@ -3600,7 +4364,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         "conflict",
                         str(exc),
                         retryable=True,
-                        redact=ctx.live_secrets(),
+                        redact=self._redact_secrets(),
                     )
                 except _ActionDenied as exc:
                     return exc.status, _error_body(
@@ -3609,7 +4373,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         exc.code,
                         str(exc),
                         retryable=exc.retryable,
-                        redact=ctx.live_secrets(),
+                        redact=self._redact_secrets(),
                     )
                 except ProjectError as exc:
                     return 404, _error_body(
@@ -3617,14 +4381,14 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         project_id,
                         "not_found",
                         str(exc),
-                        redact=ctx.live_secrets(),
+                        redact=self._redact_secrets(),
                     )
                 return status_code, _success_body(
                     request_id,
                     project_id,
                     record.sequence,
                     data,
-                    redact=ctx.live_secrets(),
+                    redact=self._redact_secrets(),
                 )
 
             try:
@@ -3635,6 +4399,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     _build,
                     operation_type="check_suite",
                     mutating=True,
+                    validated_arguments=payload,
+                    effect_ids=_s04_effect_ids("check_suite", payload),
                 )
             except (TypeError, ValueError):
                 self._send_error(
@@ -3669,11 +4435,11 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 )
                 return
             bearer = self._bearer()
-            # Serialize the whole verify-then-consume-then-mint sequence so
-            # two concurrent requests presenting the same bootstrap token
-            # can never both mint a session from it.
-            with ctx._bootstrap_exchange_lock:
-                exchanged = ctx.auth.exchange_bootstrap(bearer)
+            # S11: DashboardAuth.exchange_bootstrap holds its own owning
+            # lock across verify-then-consume-then-mint, so two concurrent
+            # requests presenting the same bootstrap token can never both
+            # mint a session from it -- no route-level lock needed here.
+            exchanged = ctx.auth.exchange_bootstrap(bearer)
             if exchanged is None:
                 ctx.bootstrap_failure_limiter.try_consume(client_key)
                 self._send_error(
@@ -3689,6 +4455,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     "schema_version": 1,
                     "request_id": request_id,
                     "csrf_token": session.csrf_token,
+                    "owner_scope_id": session.owner_scope_id,
                 }
             ).encode("utf-8")
             cookie_header = f"{ctx.auth.cookie_name}={cookie_value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800"
@@ -3704,6 +4471,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     "schema_version": 1,
                     "request_id": request_id,
                     "csrf_token": session.csrf_token,
+                    "owner_scope_id": session.owner_scope_id,
                 }
             ).encode("utf-8")
             self._send_json(200, body)
@@ -3748,7 +4516,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     project_id,
                     record.sequence,
                     status,
-                    redact=ctx.live_secrets(),
+                    redact=self._redact_secrets(),
                 ),
             )
 
@@ -3772,6 +4540,30 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     404, "not_found", "unknown project", request_id, project_id
                 )
                 return
+            # M04 bullets 1-2: while a scan is actively admitted, catch up
+            # this project's durable `/events` stream with whatever real
+            # candidate progress its attempt has already written to its own
+            # `events.json` -- otherwise a caller polling this route mid-scan
+            # only ever sees status transitions until the run's own
+            # completion flush (`_publish_scan_snapshot`) ingests the rest.
+            admission = ctx.mutations.admission_for_project(project_id)
+            admitted_run_id = admission.get("run_id") if admission else None
+            admitted_attempt_id = admission.get("attempt_id") if admission else None
+            if admitted_run_id and admitted_attempt_id:
+                try:
+                    admitted_root = Path(resolve_project(project_id)["root"])
+                except ProjectError:
+                    admitted_root = None
+                if admitted_root is not None:
+                    ctx.mutations.ingest_attempt_events(
+                        project_id,
+                        admitted_run_id,
+                        admitted_attempt_id,
+                        load_scan_events(
+                            admitted_root, admitted_run_id, admitted_attempt_id
+                        ).get("events")
+                        or [],
+                    )
             query = parse_qs(urlparse(self.path).query)
             try:
                 after = int(query.get("after", ["0"])[0])
@@ -3798,7 +4590,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     project_id,
                     record.sequence,
                     {"events": events, "after": next_after, "has_more": has_more},
-                    redact=ctx.live_secrets(),
+                    redact=self._redact_secrets(),
                 ),
             )
 
@@ -3830,6 +4622,26 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 requested_run_id = query.get("run_id", [None])[0]
                 requested_attempt_id = query.get("attempt_id", [None])[0]
                 map_snapshot = record.snapshot
+                # M06 bullet 1: a historical view requires both `run_id` and
+                # `attempt_id` supplied together -- `run_id` alone let
+                # `_historical_map_snapshot` (and `load_run_manifest`'s own
+                # latest-attempt fallback) silently resolve whichever attempt
+                # happens to be latest, changing what a caller-selected
+                # historical URL shows out from under it.
+                if requested_run_id and not requested_attempt_id:
+                    self._send_error(
+                        400,
+                        "invalid_request",
+                        "a historical map request requires both run_id and attempt_id",
+                        request_id,
+                        project_id,
+                    )
+                    return
+                view_id: tuple[Any, ...] = (
+                    ("current",)
+                    if not requested_run_id
+                    else ("run", requested_run_id, requested_attempt_id)
+                )
                 if requested_run_id:
                     # P69-03r/s: a caller-selected historical run, pinned to
                     # its exact attempt with frozen memory/agent data --
@@ -3885,23 +4697,25 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                             )
                             return
                         data = expand_group_edge(
-                            record.snapshot,
+                            map_snapshot,
                             edge_id,
                             node_types=node_types,
                             severity=severity,
                             status=status,
                             query=query_text,
                             cursor=cursor,
+                            view_id=view_id,
                         )
                     elif group_id:
                         data = expand_group(
-                            record.snapshot,
+                            map_snapshot,
                             group_id,
                             node_types=node_types,
                             severity=severity,
                             status=status,
                             query=query_text,
                             cursor=cursor,
+                            view_id=view_id,
                         )
                     else:
                         data = build_project_map(
@@ -4051,7 +4865,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     project_id,
                     record.sequence,
                     data,
-                    redact=ctx.live_secrets(),
+                    redact=self._redact_secrets(),
                 )
             except (TypeError, ValueError):
                 self._send_error(
@@ -4072,7 +4886,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 None,
                 1,
                 {"theme": THEME, "motion": MOTION},
-                redact=ctx.live_secrets(),
+                redact=self._redact_secrets(),
             )
             self._send_json(200, body)
 
@@ -4100,7 +4914,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 None,
                 1,
                 {"items": items, "next_cursor": next_cursor},
-                redact=ctx.live_secrets(),
+                redact=self._redact_secrets(),
             )
             self._send_json(200, body)
 
@@ -4109,7 +4923,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 return
             result = AgentConnectionTool().run(None, action="list")
             body = _success_body(
-                request_id, None, 1, dict(result), redact=ctx.live_secrets()
+                request_id, None, 1, dict(result), redact=self._redact_secrets()
             )
             self._send_json(200, body)
 
@@ -4151,7 +4965,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 permissions=_permissions_from_grants(grants),
             )
             body = _success_body(
-                request_id, None, 1, dict(result), redact=ctx.live_secrets()
+                request_id, None, 1, dict(result), redact=self._redact_secrets()
             )
             self._send_json(200, body)
 
@@ -4175,7 +4989,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     404, "not_found", "unknown artifact_id", request_id, project_id
                 )
                 return
-            paths = (result.get("entry") or {}).get("paths") or []
+            entry = result.get("entry") or {}
+            paths = entry.get("paths") or []
             if paths:
                 query = parse_qs(urlparse(self.path).query)
                 rel_path = query.get("path", [None])[0] or paths[0]
@@ -4191,15 +5006,15 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     except ValueError:
                         limit = _MAX_ARTIFACT_PAGE_BYTES
                     root = Path(resolve_project(project_id)["root"])
-                    result["content"] = _read_artifact_page(
-                        root, rel_path, offset=offset, limit=limit
+                    result["content"] = _read_artifact_content_page(
+                        root, entry, rel_path, offset=offset, limit=limit
                     )
             body = _success_body(
                 request_id,
                 project_id,
                 record.sequence,
                 result,
-                redact=ctx.live_secrets(),
+                redact=self._redact_secrets(),
             )
             self._send_json(200, body)
 
@@ -4344,18 +5159,13 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             payload = self._read_json_body(declared_length, request_id)
             if payload is None:
                 return
-            # P69-02.2a: structural validation first -- an absent
-            # schema_version defaults to 1 (every pre-existing caller predates
-            # this field), but a present, wrong value is rejected outright.
-            schema_version = payload.get("schema_version", 1)
-            if schema_version != 1:
-                self._send_error(
-                    400,
-                    "unsupported_schema_version",
-                    f"schema_version must be 1, got {schema_version!r}",
-                    request_id,
-                    project_id,
-                )
+            # P69-02.2a/S14: structural validation first -- schema_version
+            # must be explicitly present as the supported integer 1; missing,
+            # null, string, and bool values are all rejected, never defaulted.
+            schema_error = _schema_version_error(payload)
+            if schema_error is not None:
+                code, message = schema_error
+                self._send_error(400, code, message, request_id, project_id)
                 return
             operation = payload.get("operation")
             mutation_id = payload.get("request_id")
@@ -4454,6 +5264,21 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 )
                 return
 
+            # M08: reject an omitted/malformed/cross-project/cross-session
+            # owner_scope before any reservation -- strictly before body_hash
+            # and MutationLedger.commit, never left to a dispatch function's
+            # own later validation.
+            try:
+                _validate_memory_owner_scope(
+                    operation,
+                    arguments,
+                    project_id=project_id,
+                    session_owner_scope_id=session.owner_scope_id,
+                )
+            except _ActionDenied as exc:
+                self._send_error(exc.status, exc.code, str(exc), request_id, project_id)
+                return
+
             body_hash = hashlib.sha256(
                 json.dumps(payload, sort_keys=True).encode("utf-8")
             ).hexdigest()
@@ -4472,61 +5297,77 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         project_id,
                         record.sequence,
                         data,
-                        redact=ctx.live_secrets(),
+                        redact=self._redact_secrets(),
                     )
-                # P69-02.2b: the MutationLedger reservation above already
-                # decided this is a genuinely new request_id -- `_build` is
-                # never called for a cached replay -- so it's now safe to
-                # compare `expected` against current state exactly once.
-                conflict_reason = _check_expected_identity(record, expected)
-                if conflict_reason is not None:
-                    return 409, _error_body(
-                        request_id,
-                        project_id,
-                        "stale_expected_identity",
-                        conflict_reason,
-                        retryable=True,
-                        redact=ctx.live_secrets(),
-                    )
-                try:
-                    status_code, data = _dispatch_scan_action(
-                        ctx,
-                        project_id,
-                        operation,
-                        arguments,
-                        grants,
-                        operation_id=operation_id,
-                        expected=expected,
-                    )
-                except _ActionDenied as exc:
-                    return exc.status, _error_body(
-                        request_id,
-                        project_id,
-                        exc.code,
-                        str(exc),
-                        retryable=exc.retryable,
-                        redact=ctx.live_secrets(),
-                    )
-                except Exception:  # noqa: BLE001 -- P69-01.2m exception boundary:
-                    # any exception dispatch itself doesn't already convert to a
-                    # structured error (a raw ActionDenied/ProjectError) must still
-                    # return the envelope, never a raw exception body/stack trace.
-                    return 500, _error_body(
-                        request_id,
-                        project_id,
-                        "internal_error",
-                        f"unexpected error handling {operation}",
-                        redact=ctx.live_secrets(),
-                    )
+                # S08: the check (against `expected`) and the effect it gates
+                # share one per-project exclusion window from here on -- a
+                # second concurrent request for the same project can no
+                # longer pass an identical, now-invalidated `expected` while
+                # this one's effect is still in flight, closing the
+                # check-then-act race between `_check_expected_identity` and
+                # dispatch. Never held nested with any run-level lock.
+                with ctx.projects.mutation_lock(project_id):
+                    # P69-02.2b: the MutationLedger reservation above already
+                    # decided this is a genuinely new request_id -- `_build` is
+                    # never called for a cached replay -- so it's now safe to
+                    # compare `expected` against current state exactly once.
+                    conflict_reason = _check_expected_identity(record, expected)
+                    if conflict_reason is not None:
+                        return 409, _error_body(
+                            request_id,
+                            project_id,
+                            "stale_expected_identity",
+                            conflict_reason,
+                            retryable=True,
+                            redact=self._redact_secrets(),
+                        )
+                    try:
+                        status_code, data = _dispatch_scan_action(
+                            ctx,
+                            project_id,
+                            operation,
+                            arguments,
+                            grants,
+                            operation_id=operation_id,
+                            expected=expected,
+                            effect_ids=effect_ids,
+                        )
+                    except _ActionDenied as exc:
+                        return exc.status, _error_body(
+                            request_id,
+                            project_id,
+                            exc.code,
+                            str(exc),
+                            retryable=exc.retryable,
+                            redact=self._redact_secrets(),
+                        )
+                    except Exception:  # noqa: BLE001 -- P69-01.2m exception
+                        # boundary: any exception dispatch itself doesn't
+                        # already convert to a structured error (a raw
+                        # ActionDenied/ProjectError) must still return the
+                        # envelope, never a raw exception body/stack trace.
+                        return 500, _error_body(
+                            request_id,
+                            project_id,
+                            "internal_error",
+                            f"unexpected error handling {operation}",
+                            redact=self._redact_secrets(),
+                        )
                 return status_code, _success_body(
                     request_id,
                     project_id,
                     record.sequence,
                     data,
-                    redact=ctx.live_secrets(),
+                    redact=self._redact_secrets(),
                 )
 
             mutating = _classify_mutating(operation, arguments)
+            # S04: preallocate this operation's proposed effect-key map
+            # before reservation so it's persisted in the same transaction
+            # as the operation_id -- never reminted by a builder afterward.
+            effect_ids = (
+                _s04_effect_ids(operation, arguments, project_id) if mutating else {}
+            )
             try:
                 (status_code, body), conflict = ctx.mutations.commit(
                     project_id,
@@ -4535,6 +5376,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     _build,
                     operation_type=operation,
                     mutating=mutating,
+                    validated_arguments=arguments,
+                    effect_ids=effect_ids,
                 )
             except (TypeError, ValueError):
                 self._send_error(
@@ -4559,6 +5402,19 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
     return _CanonicalHandler
 
 
+# S13: built once from the same shared header source normal responses use.
+# The pre-thread admission gate below rejects a connection before any
+# handler is allocated, so it cannot call `_send_json` -- it must carry the
+# exact same security headers by hand.
+_PRE_THREAD_503_RESPONSE = (
+    "HTTP/1.1 503 Service Unavailable\r\n"
+    "Content-Length: 0\r\n"
+    "Retry-After: 1\r\n"
+    + "".join(f"{key}: {value}\r\n" for key, value in SECURITY_RESPONSE_HEADERS)
+    + "Connection: close\r\n\r\n"
+).encode("ascii")
+
+
 class _AdmissionControlledServer(ThreadingHTTPServer):
     """ThreadingHTTPServer that gates worker-thread creation on a bounded
     admission semaphore.
@@ -4580,12 +5436,7 @@ class _AdmissionControlledServer(ThreadingHTTPServer):
     def process_request(self, request: Any, client_address: Any) -> None:
         if not self._admission.acquire(blocking=False):
             with suppress(OSError):
-                request.sendall(
-                    b"HTTP/1.1 503 Service Unavailable\r\n"
-                    b"Content-Length: 0\r\n"
-                    b"Retry-After: 1\r\n"
-                    b"Connection: close\r\n\r\n"
-                )
+                request.sendall(_PRE_THREAD_503_RESPONSE)
             with suppress(OSError):
                 request.close()
             return
@@ -4599,7 +5450,11 @@ class _AdmissionControlledServer(ThreadingHTTPServer):
 
 
 def create_dashboard_server(
-    projects: dict[str, dict[str, Any]], *, host: str = "127.0.0.1", port: int = 0
+    projects: dict[str, dict[str, Any]],
+    *,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    data_root: Path | None = None,
 ) -> tuple[ThreadingHTTPServer, DashboardContext, str]:
     """Start a canonical per-server authenticated dashboard API.
 
@@ -4612,7 +5467,9 @@ def create_dashboard_server(
     server = _AdmissionControlledServer((host, port), BaseHTTPRequestHandler)
     actual_port = server.server_address[1]
 
-    ctx = DashboardContext(projects, bound_host=host, bound_port=actual_port)
+    ctx = DashboardContext(
+        projects, bound_host=host, bound_port=actual_port, data_root=data_root
+    )
     bootstrap_token = ctx.auth.issue_bootstrap()
     # Swap in the real per-instance handler class after the port is known,
     # rather than closing and rebinding (which would race another process
@@ -4751,5 +5608,30 @@ def dispatch_dashboard_action(
         },
     )
     with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read())
+    return dict(payload.get("data") or {})
+
+
+def dispatch_dashboard_operation_status(
+    base_url: str,
+    project_id: str,
+    operation_id: str,
+    *,
+    session: tuple[str, str],
+) -> dict[str, Any]:
+    """U02: client side of `GET /api/projects/{project_id}/operations/
+    {operation_id}`, using an already-exchanged `(cookie, csrf)` session
+    pair -- this function never bootstraps; the caller (`DashboardOwner`)
+    owns session acquisition/caching/renewal across repeated polls. The
+    route itself never requires CSRF for a plain read."""
+    import urllib.request
+
+    cookie, _csrf = session
+    request = urllib.request.Request(
+        f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+        method="GET",
+        headers={"Cookie": cookie, "Origin": base_url},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
         payload = json.loads(response.read())
     return dict(payload.get("data") or {})

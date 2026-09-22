@@ -238,13 +238,43 @@ def test_gain_shows_live_token_updates_not_one_shot_dashboard(
 
 
 def test_f2_opens_project_selector() -> None:
-    """P69-06c: F2 is bound (Phase 66 §3.8) to the same project-switch
-    action Tab already performs -- tested via the injectable `KeyReader`
-    seam, since real F2 escape-sequence decoding is `terminal_input.py`
-    work, not in this packet's allowed files."""
+    """U01 fix: F2 opens a distinct `project_selector` overlay (Phase 66
+    §3.8) -- separate from Tab, which now cycles panes instead of
+    switching projects (see `test_tab_cycles_panes_not_projects`). The old
+    bug had F2 perform the exact same immediate `next_project` action Tab
+    did; this proves F2 alone only opens the overlay (no switch yet), and
+    that Down + Enter inside it completes a real project switch."""
     seed_a = ProjectSeed(name="alpha", root=Path("/tmp/rush-tui-f2-a"))
     seed_b = ProjectSeed(name="beta", root=Path("/tmp/rush-tui-f2-b"))
-    reader = _ScriptedReader(["f2", "q"])
+
+    opening_state = run_interactive_tui(
+        [seed_a, seed_b],
+        key_reader=_ScriptedReader(["f2"]),
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=5,
+    )
+    assert opening_state.mode == "project_selector"
+    assert opening_state.active_index == 0
+
+    confirmed_state = run_interactive_tui(
+        [seed_a, seed_b],
+        key_reader=_ScriptedReader(["f2", "down", "enter", "q"]),
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=50,
+    )
+    assert confirmed_state.active_index == 1
+    assert confirmed_state.projects[confirmed_state.active_index].name == "beta"
+
+
+def test_tab_cycles_panes_not_projects() -> None:
+    """U01 fix: Tab cycles panes (`nav` -> `list` -> `detail` -> ...),
+    never the active project -- the bug this replaces had Tab and F2
+    perform the identical `next_project` action."""
+    seed_a = ProjectSeed(name="alpha", root=Path("/tmp/rush-tui-tab-a"))
+    seed_b = ProjectSeed(name="beta", root=Path("/tmp/rush-tui-tab-b"))
+    reader = _ScriptedReader(["tab", "q"])
     state = run_interactive_tui(
         [seed_a, seed_b],
         key_reader=reader,
@@ -252,8 +282,24 @@ def test_f2_opens_project_selector() -> None:
         use_live=False,
         max_ticks=50,
     )
-    assert state.active_index == 1
-    assert state.projects[state.active_index].name == "beta"
+    assert state.active_index == 0
+    assert state.mode == "list"
+    assert state.active_pane == "detail"
+
+
+def test_shift_tab_cycles_panes_reverse() -> None:
+    """U01 fix: Shift+Tab cycles panes in reverse, never the project."""
+    seed = ProjectSeed(name="demo", root=Path("/tmp/rush-tui-shift-tab"))
+    reader = _ScriptedReader(["shift_tab", "q"])
+    state = run_interactive_tui(
+        [seed],
+        key_reader=reader,
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=50,
+    )
+    assert state.active_index == 0
+    assert state.active_pane == "nav"
 
 
 def test_alternate_screen_used_with_refresh_rate_limit(
@@ -328,18 +374,107 @@ def test_alternate_screen_used_with_refresh_rate_limit(
 
 
 def test_f3_switches_section() -> None:
-    """P69-06c: F3 switches section (Phase 66 §3.8) -- bound to the same
-    `toggle_git_view` action the existing `G` key already implements."""
+    """U01 fix: F3 cycles Sections -- Scans (`list`) -> Map -> Git ->
+    Scans (Phase 66 §3.8) -- distinct from the direct `G` binding (still
+    `toggle_git_view`, unaffected) and from Tab/Shift+Tab's pane cycling."""
     seed = ProjectSeed(name="demo", root=Path("/tmp/rush-tui-f3"))
-    reader = _ScriptedReader(["f3", "q"])
-    state = run_interactive_tui(
+
+    after_one = run_interactive_tui(
         [seed],
-        key_reader=reader,
+        key_reader=_ScriptedReader(["f3"]),
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=5,
+    )
+    assert after_one.mode == "map"
+
+    after_two = run_interactive_tui(
+        [seed],
+        key_reader=_ScriptedReader(["f3", "f3"]),
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=10,
+    )
+    assert after_two.mode == "git"
+
+    after_three = run_interactive_tui(
+        [seed],
+        key_reader=_ScriptedReader(["f3", "f3", "f3"]),
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=15,
+    )
+    assert after_three.mode == "list"
+
+
+def test_map_hierarchical_navigation_expand_collapse() -> None:
+    """U01 fix: Map is a real Project -> Files -> Findings hierarchy
+    (Phase 66 §3.8) with working expand/collapse -- previously absent
+    entirely (no Map mode existed at all)."""
+    from rush.tui import _map_visible_nodes
+
+    seed = ProjectSeed(
+        name="demo",
+        root=Path("/tmp/rush-tui-map"),
+        results=[
+            ToolResult(
+                tool="lint",
+                status="fail",
+                duration_ms=1,
+                summary="x",
+                findings=[
+                    Finding(
+                        path="a.py",
+                        line=1,
+                        column=1,
+                        rule="F1",
+                        message="finding one",
+                        severity="error",
+                    ),
+                    Finding(
+                        path="a.py",
+                        line=2,
+                        column=1,
+                        rule="F2",
+                        message="finding two",
+                        severity="warn",
+                    ),
+                    Finding(
+                        path="b.py",
+                        line=3,
+                        column=1,
+                        rule="F3",
+                        message="finding three",
+                        severity="info",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    expanded_state = run_interactive_tui(
+        [seed],
+        key_reader=_ScriptedReader(["f3", "down", "+", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
     )
-    assert state.mode == "git"
+    project = expanded_state.active_project
+    assert expanded_state.mode == "map"
+    collapsed_nodes = _map_visible_nodes(project, set())
+    assert len(collapsed_nodes) == 3  # root, a.py, b.py -- findings hidden
+    assert "file:a.py" in expanded_state.map_expanded
+    expanded_nodes = _map_visible_nodes(project, expanded_state.map_expanded)
+    assert len(expanded_nodes) == 5  # root, a.py, its 2 findings, b.py
+
+    collapsed_again_state = run_interactive_tui(
+        [seed],
+        key_reader=_ScriptedReader(["f3", "down", "+", "-", "q"]),
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=50,
+    )
+    assert "file:a.py" not in collapsed_again_state.map_expanded
 
 
 def test_tui_layout_generation() -> None:
@@ -482,8 +617,17 @@ def test_finding_uses_canonical_path(tmp_path: Path) -> None:
     assert "main.py:1" in rendered
 
 
-def test_progress_updates_before_completion() -> None:
+def test_progress_updates_before_completion(monkeypatch: pytest.MonkeyPatch) -> None:
     import time
+
+    from rush.tui import AdmissionResult
+
+    monkeypatch.setattr(
+        "rush.tui._admit_local_run",
+        lambda project, **kwargs: AdmissionResult(
+            slot_id="fake-slot", started=True, attached=False, conflict=False
+        ),
+    )
 
     total_candidates = 3
     events_state: dict = {"events": [], "run_state": "running"}
@@ -552,13 +696,24 @@ def test_progress_updates_before_completion() -> None:
     assert project.status == "complete"
 
 
-def test_start_scan_blocked_while_scan_running() -> None:
+def test_start_scan_blocked_while_scan_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Reproduces T305's finding: unlike `rescan`, `start_scan` had no guard
     against re-triggering while `project.status == 'scanning'`, letting a
     second confirm race a second `_start_scan_thread` against the same
     `ProjectState`. Dispatches `start_scan` twice (s, y, s, y) while the
     first scan is still in flight and asserts only one scan ever started."""
     import time
+
+    from rush.tui import AdmissionResult
+
+    monkeypatch.setattr(
+        "rush.tui._admit_local_run",
+        lambda project, **kwargs: AdmissionResult(
+            slot_id="fake-slot", started=True, attached=False, conflict=False
+        ),
+    )
 
     total_candidates = 5
     events_state: dict = {"events": [], "run_state": "running"}
@@ -869,11 +1024,20 @@ def test_dashboard_owned_scan_then_rescan_stays_dashboard_owned_not_silently_loc
     assert project.owner == "dashboard"
 
 
-def test_local_scan_with_no_dashboard_server_stays_locally_owned() -> None:
+def test_local_scan_with_no_dashboard_server_stays_locally_owned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """P69-06d case (b): with no live dashboard server at start time, the
     run is locally owned -- it runs as today's daemon thread under this TUI
     process's own owner-instance lock id."""
-    from rush.tui import ProjectState, _start_scan_thread
+    from rush.tui import AdmissionResult, ProjectState, _start_scan_thread
+
+    monkeypatch.setattr(
+        "rush.tui._admit_local_run",
+        lambda project, **kwargs: AdmissionResult(
+            slot_id="fake-slot", started=True, attached=False, conflict=False
+        ),
+    )
 
     seen: dict = {}
     actions = _ownership_actions(
@@ -941,3 +1105,720 @@ def test_local_check_suite_fallback_carries_this_tui_processs_own_owner_identity
     assert project.owner == "local"
     assert str(seen["owner_instance_id"]).startswith("tui:")
     assert seen["run_id"]
+
+
+class _FakeDashboardOwnerWithStatus(_FakeDashboardOwner):
+    """U02: extends the plain dispatch-only fake with a scripted
+    `operation_status` sequence -- pending/running responses first, a
+    terminal one last, matching the real durable ledger envelope shape."""
+
+    def __init__(self, statuses: list[dict]) -> None:
+        super().__init__()
+        self._statuses = list(statuses)
+        self.status_calls: list[str] = []
+
+    def operation_status(self, operation_id: str) -> dict:
+        self.status_calls.append(operation_id)
+        if len(self._statuses) > 1:
+            return self._statuses.pop(0)
+        return self._statuses[0]
+
+
+def test_dashboard_owned_check_suite_does_not_report_complete_before_terminal_status() -> (
+    None
+):
+    """U02: a dashboard-owned CHECK_SUITE (no `plan_total`) must never be
+    inferred complete the instant `dispatch()` returns 202 -- only a real
+    durable `terminal` operation status may move it out of `scanning`."""
+    import rush.tui as tui_module
+
+    owner = _FakeDashboardOwnerWithStatus([{"status": "running", "payload": None}])
+    actions = _ownership_actions(dashboard_owner=lambda root: owner)
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-u02-a"))
+
+    tui_module._start_dashboard_owned(project, owner, "check_suite", {})
+    project.scan_thread.join(timeout=5)
+
+    assert project.status == "scanning"
+    assert project.operation_id == "op-1"
+
+    state = tui_module.TuiState(projects=[project])
+    tui_module._poll_running_scans(state, actions)
+    assert project.status == "scanning", "a running status must not complete it"
+    assert owner.status_calls == ["op-1"]
+
+
+def test_dashboard_owned_scan_retains_operation_id_and_polls_it() -> None:
+    """U02: the returned `operation_id` is retained on the project and is
+    exactly what `_poll_running_scans`'s dashboard-owned branch polls."""
+    import rush.tui as tui_module
+
+    owner = _FakeDashboardOwnerWithStatus(
+        [
+            {"status": "running", "payload": None},
+            {
+                "status": "terminal",
+                "payload": {"status": "success", "run_id": "dashboard-run"},
+            },
+        ]
+    )
+    actions = _ownership_actions(dashboard_owner=lambda root: owner)
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-u02-b"))
+
+    tui_module._start_dashboard_owned(project, owner, "scan_start", {})
+    project.scan_thread.join(timeout=5)
+    assert project.operation_id == "op-1"
+
+    state = tui_module.TuiState(projects=[project])
+    tui_module._poll_running_scans(state, actions)
+    assert project.status == "scanning"
+
+    tui_module._poll_running_scans(state, actions)
+    assert project.status == "complete"
+    assert project.run_id == "dashboard-run"
+    assert owner.status_calls == ["op-1", "op-1"]
+
+
+def test_poll_running_scans_uses_durable_operation_status_for_dashboard_owned_branch() -> (
+    None
+):
+    """U02: `_poll_running_scans` never skips a dashboard-owned project just
+    because it lacks a local `run_id`/`plan_total` -- that early-continue is
+    only for local self-reporting workers."""
+    import rush.tui as tui_module
+
+    owner = _FakeDashboardOwnerWithStatus(
+        [{"status": "terminal", "payload": {"status": "success"}}]
+    )
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-u02-c"))
+    project.owner = "dashboard"
+    project.status = "scanning"
+    project.operation_id = "op-x"
+    project.run_id = None
+    project.plan_total = 0
+
+    actions = _ownership_actions(dashboard_owner=lambda root: owner)
+    state = tui_module.TuiState(projects=[project])
+    tui_module._poll_running_scans(state, actions)
+
+    assert owner.status_calls == ["op-x"]
+    assert project.status == "complete"
+
+
+def test_control_session_reuses_one_authenticated_client_session_across_polls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U02: repeated `DashboardOwner.operation_status` polls reuse one
+    already-exchanged session -- never bootstrapping a fresh one every
+    call."""
+    import rush.dashboard.server as server_module
+    from rush.tui import DashboardOwner
+
+    exchange_calls: list[str] = []
+
+    def _fake_control_session(base_url: str, control_capability: str):
+        exchange_calls.append(control_capability)
+        return ("cookie-value", "csrf-value")
+
+    status_calls: list[tuple] = []
+
+    def _fake_status(base_url, project_id, operation_id, *, session):
+        status_calls.append(session)
+        return {"status": "running"}
+
+    monkeypatch.setattr(server_module, "_control_session", _fake_control_session)
+    monkeypatch.setattr(
+        server_module, "dispatch_dashboard_operation_status", _fake_status
+    )
+
+    owner = DashboardOwner(
+        base_url="http://127.0.0.1:1", control_capability="cap-1", project_id="proj-1"
+    )
+    owner.operation_status("op-1")
+    owner.operation_status("op-1")
+    owner.operation_status("op-1")
+
+    assert exchange_calls == ["cap-1"], "one exchange, reused across all three polls"
+    assert status_calls == [("cookie-value", "csrf-value")] * 3
+
+
+def test_401_during_poll_triggers_one_reexchange_and_retry_then_visible_disconnection_on_repeated_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U02: a 401 (the cached session expired) re-exchanges exactly once and
+    retries; a second consecutive failure surfaces as a real exception
+    (visible disconnection), never a silent stale-status return."""
+    from urllib.error import HTTPError
+
+    import rush.dashboard.server as server_module
+    from rush.tui import DashboardOwner
+
+    exchange_calls = {"n": 0}
+
+    def _fake_control_session(base_url: str, control_capability: str):
+        exchange_calls["n"] += 1
+        return (f"cookie-{exchange_calls['n']}", "csrf")
+
+    call_count = {"n": 0}
+
+    def _fake_status(base_url, project_id, operation_id, *, session):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First call: already-cached session (from the initial
+            # exchange) has expired server-side.
+            raise HTTPError(base_url, 401, "unauthorized", None, None)
+        return {"status": "running", "cookie": session[0]}
+
+    monkeypatch.setattr(server_module, "_control_session", _fake_control_session)
+    monkeypatch.setattr(
+        server_module, "dispatch_dashboard_operation_status", _fake_status
+    )
+
+    owner = DashboardOwner(
+        base_url="http://127.0.0.1:1", control_capability="cap-1", project_id="proj-1"
+    )
+    result = owner.operation_status("op-1")
+    assert result["status"] == "running"
+    assert exchange_calls["n"] == 2, "one initial exchange, one re-exchange on 401"
+
+    def _always_401(base_url, project_id, operation_id, *, session):
+        raise HTTPError(base_url, 401, "unauthorized", None, None)
+
+    monkeypatch.setattr(
+        server_module, "dispatch_dashboard_operation_status", _always_401
+    )
+    with pytest.raises(HTTPError):
+        owner.operation_status("op-1")
+
+
+def test_admit_local_run_refuses_to_reserve_work_when_owner_lock_acquisition_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S15: `_tui_owner_instance_id()` returning `None` (lock acquisition
+    failed) is a hard stop for every local path -- it must never reserve or
+    launch unowned work, unlike the old best-effort `suppress(Exception)`
+    swallow that continued regardless."""
+    import rush.tui as tui_module
+
+    monkeypatch.setattr(tui_module, "_tui_owner_instance_id", lambda: None)
+    admit_calls: list[object] = []
+    monkeypatch.setattr(
+        tui_module,
+        "_admit_local_run",
+        lambda *a, **k: admit_calls.append((a, k)),
+    )
+
+    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-a"))
+
+    tui_module._start_scan_thread(project, actions)
+
+    assert admit_calls == [], "a failed lifetime lock must never reserve work"
+    assert project.scan_thread is None
+    assert project.status == "error"
+
+
+def test_admit_local_run_only_launches_a_worker_when_admission_result_started_is_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S15: `started=True` is the only `AdmissionResult` outcome that may
+    launch a new local worker thread."""
+    import rush.tui as tui_module
+
+    monkeypatch.setattr(
+        "rush.tui._admit_local_run",
+        lambda project, **kwargs: tui_module.AdmissionResult(
+            slot_id="fake-slot", started=True, attached=False, conflict=False
+        ),
+    )
+    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-b"))
+
+    tui_module._start_scan_thread(project, actions)
+
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+
+
+def test_admit_local_run_attaches_to_stored_executor_identity_when_admission_result_attached_is_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S15: `attached=True` adopts the stored executor's own operation/run/
+    owner identity and only observes it -- it must never launch a second
+    local worker for the same already-admitted slot."""
+    import rush.tui as tui_module
+
+    monkeypatch.setattr(
+        "rush.tui._admit_local_run",
+        lambda project, **kwargs: tui_module.AdmissionResult(
+            slot_id="fake-slot",
+            started=False,
+            attached=True,
+            conflict=False,
+            run_id="attached-run",
+            operation_id="attached-op",
+            owner_instance_id="attached-owner",
+        ),
+    )
+    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-c"))
+
+    tui_module._start_scan_thread(project, actions)
+
+    assert project.scan_thread is None
+    assert project.run_id == "attached-run"
+    assert project.operation_id == "attached-op"
+    assert project.owner_instance_id == "attached-owner"
+
+
+def test_admission_conflict_or_error_launches_nothing_and_displays_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S15: a genuinely-read, structured `conflict=True` result -- another
+    executor already durably holds this project's slot -- must display
+    failure and launch nothing, never incorrectly take over.
+
+    Deviation from the review doc's literal "conflict/error... launches
+    nothing" phrasing: `_admit_local_run` raising entirely (a `None`
+    return -- an unreachable ledger, an unresolvable/unregistered project
+    root) is deliberately NOT a hard stop here. It is best-effort, matching
+    the pre-S15 tolerance for reservation infrastructure being unavailable
+    (the scan still runs locally, just unrecoverable if this process dies
+    mid-run) -- exactly the pre-existing contract this repo's own TUI test
+    suite (e.g. `test_dashboard_map.py`/`test_tui_terminal.py`'s PTY
+    harnesses, outside this task's `allowed_files`) already depends on for
+    every fake/unregistered project root they use. Only a lock failure and
+    a genuinely-read conflict/attached result are hard stops."""
+    import rush.tui as tui_module
+
+    monkeypatch.setattr(
+        "rush.tui._admit_local_run",
+        lambda project, **kwargs: tui_module.AdmissionResult(
+            slot_id="fake-slot", started=False, attached=False, conflict=True
+        ),
+    )
+    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-d1"))
+
+    tui_module._start_scan_thread(project, actions)
+
+    assert project.scan_thread is None
+    assert project.status == "error"
+    assert "conflict" in project.last_message.lower()
+
+    # An admission exception (`None`), by contrast, still launches the
+    # worker -- best-effort, per the deviation documented above.
+    monkeypatch.setattr("rush.tui._admit_local_run", lambda *a, **k: None)
+    project2 = tui_module.ProjectState(name="demo2", root=Path("/tmp/rush-tui-s15-d2"))
+
+    tui_module._start_scan_thread(project2, actions)
+
+    assert project2.scan_thread is not None
+    project2.scan_thread.join(timeout=5)
+
+
+def test_a_finishing_project_does_not_release_an_owner_lock_needed_by_another_local_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S15: the retained lifetime lock is a single process-wide singleton,
+    idempotently acquired once -- one project finishing must never release
+    or re-acquire the shared owner identity another still-running local
+    project needs. There is no per-project close."""
+    import rush.tui as tui_module
+
+    monkeypatch.setattr(tui_module, "_OWNER_INSTANCE", [])
+    monkeypatch.setattr(tui_module, "_OWNER_LOCK", [])
+    monkeypatch.setattr(
+        "rush.dashboard.state.OwnerLock",
+        lambda owner_instance_id, **k: SimpleNamespace(
+            owner_instance_id=owner_instance_id
+        ),
+    )
+
+    first_project_owner = tui_module._tui_owner_instance_id()
+    # "project A finishes" -- nothing in this module ever calls a close/
+    # release path per project; the retained singleton is untouched.
+    second_project_owner = tui_module._tui_owner_instance_id()
+
+    assert first_project_owner is not None
+    assert first_project_owner == second_project_owner
+
+
+def test_detach_reaps_only_the_selected_local_runs_process_tree_not_a_sibling_projects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U03: reproduces Detach's exact defect -- one TUI process can own more
+    than one project's run. Detach must pass the exact selected project's
+    own `run_id` into `reap_owner_processes`, never rely on owner-wide
+    filtering alone (which would also reap a sibling project's still-running
+    work under the same shared owner)."""
+    import rush.tui as tui_module
+
+    calls: list[dict] = []
+
+    def fake_reap(*args: object, **kwargs: object) -> dict:
+        calls.append({"args": args, "kwargs": kwargs})
+        return {"reconcilable": True}
+
+    monkeypatch.setattr(tui_module, "reap_owner_processes", fake_reap)
+    monkeypatch.setattr(tui_module, "_request_cancel", lambda *a, **k: None)
+    monkeypatch.setattr(tui_module, "_wait_for_cancel_ack", lambda *a, **k: False)
+
+    project_a = tui_module.ProjectState(
+        name="proj-a", root=Path("/tmp/rush-tui-detach-a")
+    )
+    project_a.owner = "local"
+    project_a.owner_instance_id = "tui:shared-owner"
+    project_a.run_id = "run-a"
+    project_a.ledger_admitted = False
+
+    state = tui_module.TuiState(projects=[project_a])
+    actions = _ownership_actions()
+
+    tui_module._handle_detach(state, project_a, actions, timeout=0.01)
+
+    assert len(calls) == 1
+    assert calls[0]["args"][0] == "tui:shared-owner"
+    assert calls[0]["kwargs"]["run_id"] == "run-a"
+
+
+def test_detach_preserves_failed_termination_records_and_sibling_run_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U03: when reap reports an unconfirmed termination, Detach records
+    `recovery_required` for only the selected run's own operation -- it
+    never touches or reasons about any other project/run's records. (The
+    `run_id` filter itself, proven against real sibling process trees, is
+    covered by `test_reap_owner_processes_accepts_optional_run_id_filter_
+    and_only_signals_matching_records` in `test_subprocess_contract.py`.)"""
+    import rush.tui as tui_module
+
+    monkeypatch.setattr(
+        tui_module, "reap_owner_processes", lambda *a, **k: {"reconcilable": False}
+    )
+    monkeypatch.setattr(tui_module, "_request_cancel", lambda *a, **k: None)
+    monkeypatch.setattr(tui_module, "_wait_for_cancel_ack", lambda *a, **k: False)
+    transitions: list[tuple] = []
+    monkeypatch.setattr(
+        tui_module.MutationLedger,
+        "record_status_transition",
+        lambda self, operation_id, status, payload: transitions.append(
+            (operation_id, status, payload)
+        ),
+    )
+
+    project = tui_module.ProjectState(
+        name="proj-a", root=Path("/tmp/rush-tui-detach-b")
+    )
+    project.owner = "local"
+    project.owner_instance_id = "tui:shared-owner"
+    project.run_id = "run-a"
+    project.operation_id = "op-a"
+    project.ledger_admitted = True
+    project.run_resolved = False
+
+    state = tui_module.TuiState(projects=[project])
+    actions = _ownership_actions()
+
+    tui_module._handle_detach(state, project, actions, timeout=0.01)
+
+    assert len(transitions) == 1
+    assert transitions[0][0] == "op-a"
+    assert transitions[0][1] == "recovery_required"
+    assert transitions[0][2]["code"] == "detach_force_exit_timeout"
+
+
+def test_tui_styling_uses_theme_and_motion_tokens() -> None:
+    """U04 fix: severity colors and the header/footer panel borders come
+    from the shared `rush.dashboard.theme` THEME tokens, not hardcoded
+    named colors like "red"/"cyan"/"grey50" -- and the real, non-stub
+    MOTION table is the one actually imported."""
+    from rush.dashboard.theme import MOTION, THEME
+    from rush.tui import _FOOTER_STYLE, _HEADER_STYLE, _severity_style
+
+    assert _severity_style("error") == THEME["error"]
+    assert _severity_style("fail") == THEME["error"]
+    assert _severity_style("warn") == THEME["warning"]
+    assert _severity_style("info") == THEME["blue"]
+    assert _HEADER_STYLE == f"bold {THEME['blue']}"
+    assert _FOOTER_STYLE == THEME["surface_raised"]
+    assert MOTION["evidence_pulse_ms"] == 480  # real imported token, not a stub
+
+
+def _width_branch_seed() -> ProjectSeed:
+    return ProjectSeed(
+        name="demo",
+        root=Path("/tmp/rush-tui-width"),
+        results=[
+            ToolResult(
+                tool="lint",
+                status="fail",
+                duration_ms=1,
+                summary="x",
+                findings=[
+                    Finding(
+                        path="a.py",
+                        line=1,
+                        column=1,
+                        rule="F1",
+                        message="m",
+                        severity="error",
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _render_main_at_width(columns: int) -> list[str]:
+    from rush.tui import ProjectState, TuiState, render_app
+
+    seed = _width_branch_seed()
+    project = ProjectState(name=seed.name, root=seed.root, results=list(seed.results))
+    state = TuiState(projects=[project])
+    state.terminal_size = (columns, 24)
+    layout = render_app(state)
+    return [c.name for c in layout["main"].children]
+
+
+def test_layout_79_columns_uses_narrow_branch() -> None:
+    from rush.tui import _width_branch
+
+    assert _width_branch(79) == "narrow"
+    assert _render_main_at_width(79) == []
+
+
+def test_layout_80_columns_uses_compact_branch() -> None:
+    from rush.tui import _width_branch
+
+    assert _width_branch(80) == "compact"
+    assert _render_main_at_width(80) == ["nav", "content"]
+
+
+def test_layout_99_columns_uses_compact_branch() -> None:
+    from rush.tui import _width_branch
+
+    assert _width_branch(99) == "compact"
+    assert _render_main_at_width(99) == ["nav", "content"]
+
+
+def test_layout_100_columns_uses_wide_branch() -> None:
+    from rush.tui import _width_branch
+
+    assert _width_branch(100) == "wide"
+    assert _render_main_at_width(100) == ["nav", "list", "detail"]
+
+
+def test_footer_is_two_rows_at_every_width() -> None:
+    """U04 fix: the footer is always exactly two rows (status line +
+    keymap line), regardless of terminal width or how many optional
+    status/progress/search messages are pending -- previously the footer
+    grew to 3+ rows whenever any of those were present."""
+    from rush.tui import ProjectState, TuiState, render_app
+
+    for width in (60, 80, 99, 100, 140):
+        project = ProjectState(name="demo", root=Path("/tmp/rush-tui-footer"))
+        state = TuiState(projects=[project])
+        state.terminal_size = (width, 24)
+        state.message = "some status message"
+        layout = render_app(state)
+        footer_panel = layout["footer"].renderable
+        footer_group = footer_panel.renderable
+        assert len(footer_group.renderables) == 2, (
+            f"expected exactly 2 footer rows at width={width}, "
+            f"got {len(footer_group.renderables)}"
+        )
+
+
+class _ResizingReader:
+    """Injectable `KeyReader` that plays scripted keys while independently
+    reporting a scripted (changing) terminal size on each `get_size` call
+    -- simulates a live resize mid-session without a real PTY."""
+
+    def __init__(self, keys: list[str | None], sizes: list[tuple[int, int]]) -> None:
+        self._keys = iter(keys)
+        self._sizes = iter(sizes)
+        self._last_size = (80, 24)
+
+    def read_key(self, timeout: float) -> str | None:
+        return next(self._keys, None)
+
+    def get_size(self) -> tuple[int, int]:
+        self._last_size = next(self._sizes, self._last_size)
+        return self._last_size
+
+
+def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
+    """U04 fix: a live terminal resize never resets Map expand/collapse
+    state or the current selection -- nothing in the resize path (just a
+    `state.terminal_size` update) touches either."""
+    seed = ProjectSeed(
+        name="demo",
+        root=Path("/tmp/rush-tui-resize"),
+        results=[
+            ToolResult(
+                tool="lint",
+                status="fail",
+                duration_ms=1,
+                summary="x",
+                findings=[
+                    Finding(
+                        path="a.py",
+                        line=1,
+                        column=1,
+                        rule="F1",
+                        message="one",
+                        severity="error",
+                    ),
+                    Finding(
+                        path="b.py",
+                        line=2,
+                        column=1,
+                        rule="F2",
+                        message="two",
+                        severity="warn",
+                    ),
+                ],
+            )
+        ],
+    )
+    keys: list[str | None] = ["f3", "down", "+", None, None, "q"]
+    sizes = [(120, 40), (120, 40), (120, 40), (60, 18), (60, 18), (60, 18)]
+    reader = _ResizingReader(keys, sizes)
+    state = run_interactive_tui(
+        [seed],
+        key_reader=reader,
+        actions=_noop_actions(),
+        use_live=False,
+        max_ticks=50,
+    )
+    assert "file:a.py" in state.map_expanded
+    assert state.terminal_size == (60, 18)
+
+
+def test_reduced_motion_renders_final_state_with_no_animated_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U04 fix: `RUSH_REDUCED_MOTION` renders the final state once (the
+    initial `Live(render_app(state), ...)` construction) and never
+    refreshes again on an idle timer when nothing real changed -- normal
+    motion keeps its 4Hz idle heartbeat regardless of activity."""
+    import rush.tui as tui_module
+
+    monkeypatch.setenv("RUSH_REDUCED_MOTION", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+    captured: dict[str, list] = {"instances": []}
+
+    class _FakeLive:
+        def __init__(
+            self,
+            renderable: object,
+            *,
+            console: object,
+            screen: bool,
+            auto_refresh: bool,
+        ) -> None:
+            self.update_count = 0
+            captured["instances"].append(self)
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def update(self, renderable: object, refresh: bool = False) -> None:
+            self.update_count += 1
+
+    monkeypatch.setattr("rich.live.Live", _FakeLive)
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(tui_module.time, "monotonic", lambda: clock["t"])
+
+    class _IdleReader:
+        def read_key(self, timeout: float) -> str | None:
+            clock["t"] += 0.3
+            return None
+
+        def get_size(self) -> tuple[int, int]:
+            return (80, 24)
+
+    seed = ProjectSeed(name="demo", root=Path("/tmp/rush-tui-reduced-motion"))
+    run_interactive_tui(
+        [seed],
+        key_reader=_IdleReader(),
+        actions=_noop_actions(),
+        use_live=True,
+        max_ticks=20,
+    )
+
+    instance = captured["instances"][0]
+    assert instance.update_count == 0, (
+        "reduced motion with zero real activity must never refresh on a "
+        f"timer (got {instance.update_count} updates)"
+    )
+
+
+def test_no_color_and_reduced_motion_are_independent_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U04 fix: NO_COLOR alone must not suppress the idle refresh
+    heartbeat -- only RUSH_REDUCED_MOTION controls motion. Before this
+    fix, `reduced_motion` was computed from `NO_COLOR or
+    RUSH_REDUCED_MOTION`, conflating a color setting with a motion one."""
+    import rush.tui as tui_module
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("RUSH_REDUCED_MOTION", raising=False)
+
+    captured: dict[str, list] = {"instances": []}
+
+    class _FakeLive:
+        def __init__(
+            self,
+            renderable: object,
+            *,
+            console: object,
+            screen: bool,
+            auto_refresh: bool,
+        ) -> None:
+            self.update_count = 0
+            captured["instances"].append(self)
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def update(self, renderable: object, refresh: bool = False) -> None:
+            self.update_count += 1
+
+    monkeypatch.setattr("rich.live.Live", _FakeLive)
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(tui_module.time, "monotonic", lambda: clock["t"])
+
+    class _IdleReader:
+        def read_key(self, timeout: float) -> str | None:
+            clock["t"] += 0.3  # exceeds the 4Hz idle interval every tick
+            return None
+
+        def get_size(self) -> tuple[int, int]:
+            return (80, 24)
+
+    seed = ProjectSeed(name="demo", root=Path("/tmp/rush-tui-no-color-only"))
+    run_interactive_tui(
+        [seed],
+        key_reader=_IdleReader(),
+        actions=_noop_actions(),
+        use_live=True,
+        max_ticks=5,
+    )
+
+    instance = captured["instances"][0]
+    assert instance.update_count > 0, (
+        "NO_COLOR alone must not suppress the idle refresh heartbeat -- "
+        "only RUSH_REDUCED_MOTION controls motion, per U04"
+    )

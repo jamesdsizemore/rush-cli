@@ -1,0 +1,680 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "CI dependency installation — stop skipping tests for missing tools"
+  slug: "ci-dependency-installation"
+  kind: existing_plan
+  tranche: "Validate, implement, and CI-verify docs/phase-plans/ci-dependency-installation-plan.md on a dedicated branch, then stop for the user's merge decision."
+  status: done
+  completion_note: "full_outcome_complete: true per T006's final audit (CI run 34768489692, zero skips, all 7 jobs green). PR #1 (phase/ci-dependency-installation -> main) merged into main at James's explicit instruction ('merge it into main'), commit f040d2d, 2026-09-13T16:41:46Z. Post-merge CI run 34769358880 on main independently verified by PM: all 7 jobs green, zero SKIPPED and zero FAILED/ERROR across every job's raw log (pulled directly via gh api, not inferred from job conclusions). Goal fully and finally complete on main."
+  oracle:
+    signal: "gh run view <run-id> --json jobs -q '.jobs[] | {name, conclusion}' shows every job green AND zero SKIPPED lines anywhere in the run's job logs -- not just the original 9 named items. CORRECTED 2026-09-13: James's standing rule is zero skips, period; the 5 pre-existing test_executed_modes.py real_workload skips in Quality and tests must also be eliminated (deselected there, since they already run for real in Executed workload contracts)."
+    cadence: "after each Worker package and at final audit"
+    final_proof: "CI run on phase/ci-dependency-installation shows every job green AND zero SKIPPED lines in any job's log."
+  intake:
+    original_request: "/goal-prep ci-dependency-installation-plan.md"
+    interpreted_outcome: "Every dependency the 9 skipped tests need is really installed in CI, verified by an actual green run with those skips gone, without breaking any other job."
+    input_shape: existing_plan
+    audience: "James (repo owner) / future CI reliability"
+    authority: requested
+    proof_type: test
+    completion_proof: "CI run on the dedicated branch matches the oracle signal exactly."
+    likely_misfire: "Declaring success from job conclusion=success without grepping the Run tests log for the 9 specific skip lines; or pinning knip/jscpd to latest instead of the tested major (verified breakage risk to existing normalizers)."
+    blind_spots_considered:
+      - "rush.__version__ accessor was never confirmed in the plan; must verify before touching build_release_archive."
+      - "PyInstaller build adds real wall-clock time to Quality and tests; watch for job timeout."
+      - "npm has no cache configured on the new job; acceptable, not a correctness risk."
+    existing_plan_facts:
+      - "docs/phase-plans/ci-dependency-installation-plan.md is the source of truth for pinned versions and YAML."
+      - "Pins: vulture==2.16, radon==6.0.1, sloppylint==0.5.1, knip@5.88.1, jscpd@3.5.10, prettier@3.9.6, promptfoo@0.123.0."
+      - "New job static-tool-acceptance (ubuntu-latest) installs the pip + npm tools and runs tests/test_static_tools.py tests/test_ai_eval.py tests/test_engines.py."
+      - "Quality and tests job gains one new step before Run tests: install pyinstaller, run the exact release.yml pyinstaller --onefile invocation, then call build_release_archive to produce dist/rush-linux-x86_64.tar.gz."
+      - "Do not touch engine-contracts, windows-contracts, artifact-probes, or representative-engines jobs."
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  exact_human_approval_can_terminal_wait: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  # goal-scout / goal-worker / goal-judge confirmed present in this session's
+  # available Agent tool types (direct evidence, not inferred).
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  selected: local
+  local:
+    status: not_requested
+    url: null
+    command: "node ~/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/ci-dependency-installation"
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Validate docs/phase-plans/ci-dependency-installation-plan.md against current repo state before any Worker touches ci.yml."
+    inputs:
+      - "docs/phase-plans/ci-dependency-installation-plan.md"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "src/rush/__init__.py"
+    constraints:
+      - "Read-only."
+      - "Do not edit ci.yml or any implementation file."
+      - "Confirm the exact rush.__version__ (or equivalent) accessor for build_release_archive's version argument."
+      - "Confirm ci.yml's current Quality and tests job steps still match what the plan assumes (no drift since the plan was written)."
+      - "Re-confirm vulture==2.16, radon==6.0.1, sloppylint==0.5.1, knip@5.88.1, jscpd@3.5.10, prettier@3.9.6, promptfoo@0.123.0 still resolve (pip/npm registry check)."
+    expected_output:
+      - "Confirmed version accessor for rush.__version__"
+      - "Confirmed or corrected ci.yml insertion points (exact step to insert before, exact job list position)"
+      - "Any plan facts that have drifted, with corrections"
+      - "Go / no-go for Worker execution"
+    receipt:
+      result: done
+      decision: corrections_needed
+      full_outcome_complete: false
+      rationale: "Version accessor, ci.yml insertion point, and all 7 package pins confirmed with no drift (independently re-verified by PM against real source: src/rush/__init__.py, .github/workflows/ci.yml, .github/workflows/release.yml, scripts/probe_installed_artifacts.py, and the two artifact test files). But the native-archive build step has 3 verified blocking gaps: rush_entry.py is never created (confirmed absent from repo via git ls-files and find), SHA256SUMS is never written (verify_archive_checksum confirmed to return False, not raise, when the checksums file is missing, and both artifact tests assert verify_archive_checksum(...) is True after the archive-exists skip guard -- so applying the plan as-written flips these two tests from SKIPPED to FAILING), and missing --no-sync risks uv auto-removing the ad-hoc pyinstaller install (existing engine-contracts job in this same ci.yml already uses --no-sync for exactly this reason). static-tool-acceptance job is correct as written in the plan -- no changes needed there. Go for T002 using the corrected build step in place of the plan doc's snippet for that one step."
+      worker_package:
+        objective: "On branch phase/ci-dependency-installation, implement the validated plan in .github/workflows/ci.yml: (1) add the static-tool-acceptance job exactly as written in docs/phase-plans/ci-dependency-installation-plan.md (pins: vulture==2.16, radon==6.0.1, sloppylint==0.5.1, knip@5.88.1, jscpd@3.5.10, prettier@3.9.6, promptfoo@0.123.0; runs tests/test_static_tools.py tests/test_ai_eval.py tests/test_engines.py with uv run --no-sync); (2) insert this corrected build step into the 'Quality and tests' (quality) job immediately after the existing 'Build distribution artifacts' step and before 'Run tests' -- this supersedes the plan doc's version of this one step, which is missing rush_entry.py creation, SHA256SUMS generation, and --no-sync (T001 findings, independently re-verified by PM):\n\n      - name: Build native release archive for installed-artifact probes\n        run: |\n          uv pip install pyinstaller\n          cat > rush_entry.py <<'PYEOF'\n          from rush.cli import cli\n\n          if __name__ == \"__main__\":\n              cli()\n          PYEOF\n          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py\n          uv run --no-sync python -c \"\n          from pathlib import Path\n          from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums\n          import rush\n          archive = build_release_archive(Path('dist/rush'), Path('dist'), 'rush-linux-x86_64.tar.gz', rush.__version__)\n          write_sha256sums([archive], Path('dist/SHA256SUMS'))\n          \"\n\nDo not touch engine-contracts, windows-contracts, artifact-probes, or representative-engines jobs. Commit and push to phase/ci-dependency-installation."
+        allowed_files:
+          - .github/workflows/ci.yml
+        verify:
+          - "git branch --show-current shows phase/ci-dependency-installation"
+          - "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\" (workflow YAML is valid)"
+          - "git push origin phase/ci-dependency-installation succeeds"
+        stop_if:
+          - "T001 returned no-go or found unresolved drift."
+          - "rush.__version__ accessor from T001 does not exist when actually imported."
+          - "Need to touch any file outside allowed_files."
+          - "The corrected build step above is not used verbatim (i.e. rush_entry.py creation, write_sha256sums, or --no-sync is omitted)."
+      evidence:
+        - "src/rush/__init__.py:16-20 __version__ = version(\"rush-cli\") via importlib.metadata, fallback \"0.3.0\", __all__ = [\"__version__\"]"
+        - ".github/workflows/ci.yml quality job step order confirmed: Build distribution artifacts (line 39) -> Run tests (line 42)"
+        - ".github/workflows/release.yml lines 70,79: rush_entry.py heredoc + pyinstaller invocation verified verbatim match to plan"
+        - "scripts/probe_installed_artifacts.py:153 build_release_archive signature matches plan's call args"
+        - "scripts/probe_installed_artifacts.py:131-143 verify_archive_checksum returns False (not raise) when archive_path or checksums_path missing"
+        - "tests/test_phase52_installed_artifacts.py:156-158 skip guard checks only dist/rush-linux-x86_64.tar.gz existence; line 200 then asserts verify_archive_checksum(...) is True requiring dist/SHA256SUMS"
+        - "tests/test_release_asset_contract.py:76 same assertion pattern"
+        - "git ls-files -- '*rush_entry*' and find . -iname 'rush_entry.py' both empty: file absent from repo"
+        - ".github/workflows/ci.yml:117 existing precedent: uv run --no-sync pytest ... in engine-contracts job"
+        - "PyPI/npm registry check (Judge, re-verified pins unchanged): vulture 2.16, radon 6.0.1, sloppylint 0.5.1, knip 5.88.1, jscpd 3.5.10, prettier 3.9.6, promptfoo 0.123.0 all resolve"
+  - id: T002
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "On branch phase/ci-dependency-installation, implement the validated plan: add the static-tool-acceptance job and the native-archive build step to .github/workflows/ci.yml exactly as validated by T001, commit, and push."
+    allowed_files:
+      - ".github/workflows/ci.yml"
+    verify:
+      - "git branch --show-current shows phase/ci-dependency-installation"
+      - "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\" (workflow YAML is valid)"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "T001 returned no-go or found unresolved drift."
+      - "rush.__version__ accessor from T001 does not exist when actually imported."
+      - "Need to touch any file outside allowed_files."
+    receipt:
+      result: done
+      changed_files:
+        - .github/workflows/ci.yml
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\""
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff main phase/ci-dependency-installation -- .github/workflows/ci.yml (52 insertions, 0 deletions, only ci.yml touched)"
+          status: pass
+      summary: "Created phase/ci-dependency-installation from main. Added static-tool-acceptance job (pinned pip/npm tools, targeted pytest run) and the T001-corrected native-archive build step (rush_entry.py heredoc, --no-sync, write_sha256sums) into the quality job between Build distribution artifacts and Run tests. Commit 2f6de74 pushed to origin/phase/ci-dependency-installation. PM independently confirmed via git diff that only .github/workflows/ci.yml changed (52 insertions) and the diff content matches the T001 worker_package exactly."
+  - id: T003
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Watch the CI run triggered by T002's push and check it against the goal oracle: every job's conclusion AND the Run tests log's actual skip lines."
+    inputs:
+      - "T002 receipt (branch name, push confirmation)"
+      - "gh run list / gh run view for the pushed branch"
+    constraints:
+      - "Do not implement or push fixes directly; if something is broken, produce a corrective Worker task instead."
+      - "Job conclusion=success alone is not sufficient evidence -- must grep the Run tests step log for the 9 named skip lines and confirm each is gone."
+    expected_output:
+      - "Per-job conclusion table"
+      - "Confirmation the 9 named skips are gone (or which remain, with cause)"
+      - "Confirmation engine-contracts/windows-contracts/artifact-probes/representative-engines are unaffected"
+      - "Pass/fail decision, and a follow-up Worker task if fail"
+    receipt:
+      result: done
+      decision: approved
+      full_outcome_complete: false
+      rationale: "CI run 34762764534 on PR #1 (phase/ci-dependency-installation -> main): status completed, conclusion success, 7/7 jobs success (PM independently re-confirmed via gh run view --json jobs). PM independently pulled and grepped both job logs (not job conclusions alone): static-tool-acceptance job shows '67 passed in 12.10s', 0 skipped, 0 failed -- the 7 tool-dependent tests (promptfoo, prettier, vulture, knip, radon, jscpd, sloppylint) all run for real and pass there. Quality-and-tests job shows '2276 passed, 12 skipped', 0 FAILED/ERROR anywhere in the log, vs the prior main-branch baseline run (34761367913) of '2274 passed, 14 skipped' -- an exact +2 passed / -2 skipped delta matching the 2 native-archive tests (test_phase52_installed_artifacts.py, test_release_asset_contract.py) moving from skipped to passed. The remaining 12 skips in Quality-and-tests are expected: 5 pre-existing out-of-scope test_executed_modes.py real_workload tests (PM independently verified these are gated by RUSH_REQUIRE_REAL_ENGINES != '1' at tests/test_executed_modes.py:326 etc., and already run for real in the separate Executed workload contracts job with RUSH_REQUIRE_REAL_ENGINES=1 set per .github/workflows/ci.yml:167-168 -- deliberate, not a gap, not in the plan's 9-item Problem table) plus the 7 tool tests re-skipping in that job specifically because tools are only installed in the new static-tool-acceptance job, not in Quality-and-tests itself. All 9 named skips from the plan's Problem table are accounted for and resolved (7 now run+pass in the new job, 2 now run+pass in Quality-and-tests). engine-contracts/windows-contracts/artifact-probes/representative-engines all still green (job names in current ci.yml: Executed workload contracts, Windows runtime and installed contracts, Isolated artifact probes ubuntu/windows-latest, Representative Python engine smoke -- all success). This is CI verification (T003), not the final audit (T999) -- full_outcome_complete stays false pending T999."
+      evidence:
+        - "gh run view 34762764534 --json jobs: 7/7 jobs conclusion=success (PM independently re-ran this check)"
+        - "pr_static_log.txt line 416: '67 passed in 12.10s', 0 SKIPPED/FAILED grep hits in that job's log"
+        - "pr_quality_log.txt line 551: '2276 passed, 12 skipped in 321.11s', 0 FAILED/ERROR grep hits"
+        - "pr_quality_log.txt lines 539-550: 12 SKIPPED lines = 5 real_workload (test_executed_modes.py:327,688,1006,1063,1504) + 7 tool tests (test_ai_eval.py:191, test_engines.py:138, test_static_tools.py:43 x5) -- test_phase52_installed_artifacts.py and test_release_asset_contract.py absent from this list entirely"
+        - "baseline comparison: main-branch run 34761367913 quality log showed '2274 passed, 14 skipped' with the same 14 lines as above PLUS the 2 archive tests -- delta of +2 passed/-2 skipped exactly matches the 2 archive tests resolving"
+        - "tests/test_executed_modes.py:326,687,1005,1062,1503 (approx): all 5 real_workload skip guards read 'if os.environ.get(\"RUSH_REQUIRE_REAL_ENGINES\") != \"1\": pytest.skip(...)'"
+        - ".github/workflows/ci.yml:167-168: Executed workload contracts job's 'Run real workload contracts' step sets RUSH_REQUIRE_REAL_ENGINES: \"1\" and runs pytest tests/test_executed_modes.py -q -k real_workload -- confirmed this job is green in run 34762764534"
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Final audit: does the CI run on phase/ci-dependency-installation fully satisfy the goal oracle? If yes, the goal is complete pending the user's own merge decision -- do not merge."
+    inputs:
+      - "All done task receipts"
+      - "T003's CI verification"
+    constraints:
+      - "Do not implement."
+      - "Do not merge phase/ci-dependency-installation into main."
+      - "Reject completion if any of the 9 named skips remain, or if any previously-green job regressed."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "missing evidence, if any"
+      - "explicit note that merge is a separate user decision, not part of this goal's completion"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      rationale: "Independently re-verified: 7/7 jobs green on run 34762764534 (PR #1, phase/ci-dependency-installation, unmerged). All 9 plan-named skips resolved. Remaining 12 skips in Quality-and-tests are the 7 tool tests (expected, run for real elsewhere) plus 5 real_workload tests gated by RUSH_REQUIRE_REAL_ENGINES, exercised for real in the green Executed workload contracts job. git diff shows only the two approved insertion points touched. PR #1 confirmed OPEN, not merged. NOTE (PM, post-hoc): this verdict correctly closes the ORIGINAL 9-item scope as defined in goal.md at the time this task ran. Immediately after this receipt, the user corrected the goal's actual requirement to zero skips anywhere in CI, period -- the 5 real_workload skips are not acceptable regardless of being pre-existing/out-of-scope-as-originally-charted. This receipt stands as an accurate record of the 9-item audit; it does NOT close the goal. See T004/T005 for the corrected full scope."
+      evidence:
+        - "gh run view 34762764534 --json jobs: 7/7 conclusion=success"
+        - "static-tool-acceptance job log: '67 passed in 12.10s', 0 SKIPPED/FAILED/ERROR"
+        - "Quality and tests job log: '2276 passed, 12 skipped', 0 FAILED/ERROR"
+        - "baseline main run 34761367913 Quality-and-tests log: '2274 passed, 14 skipped'"
+        - "tests/test_executed_modes.py:326,687,1005,1062,1503 RUSH_REQUIRE_REAL_ENGINES guards confirmed"
+        - ".github/workflows/ci.yml:138-169 Executed workload contracts job green, runs those tests for real"
+        - "git diff main phase/ci-dependency-installation -- .github/workflows/ci.yml: 52 insertions, 0 deletions"
+        - "gh pr view 1 --json state,mergedAt,closed: OPEN, not merged"
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "On branch phase/ci-dependency-installation, eliminate the 5 remaining SKIPPED lines in the Quality and tests job's Run tests step (test_executed_modes.py real_workload tests: test_mutation_real_workload, test_fuzz_real_workload, test_load_real_workload, test_load_real_workload_clean_target, test_contract_real_workload). These already run for real in the separate 'Executed workload contracts' job (RUSH_REQUIRE_REAL_ENGINES=1, pytest -k real_workload). Do NOT install mutmut/atheris/pact-python-cli/k6 into Quality and tests (duplicates that job for no benefit). Instead, change Quality and tests' 'Run tests' step's pytest invocation to deselect these 5 tests by keyword, e.g. change `uv run pytest tests/ -q` to `uv run pytest tests/ -q -k \"not real_workload\"` (confirm this keyword expression only matches these 5 tests and nothing else -- grep tests/ for other uses of 'real_workload' in test names first). Goal: zero SKIPPED lines anywhere in the full CI run (both Quality and tests and static-tool-acceptance job logs)."
+    allowed_files:
+      - ".github/workflows/ci.yml"
+    verify:
+      - "git branch --show-current shows phase/ci-dependency-installation"
+      - "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\" (workflow YAML is valid)"
+      - "grep -c real_workload tests/*.py confirms only the 5 known tests match the -k deselect keyword, no unintended exclusions"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "The -k \"not real_workload\" keyword also deselects tests outside the 5 named ones (check via pytest --collect-only -q -k \"not real_workload\" tests/test_executed_modes.py vs without the filter, diff the collected list)."
+      - "Need to touch any file outside .github/workflows/ci.yml."
+      - "Executed workload contracts job would stop covering these 5 tests as a result of this change (it must not -- that job's own invocation is untouched)."
+    receipt:
+      result: done
+      changed_files:
+        - .github/workflows/ci.yml
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\""
+          status: pass
+        - cmd: "grep -c real_workload tests/*.py -- only test_executed_modes.py matches, 5 hits"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff 2f6de74 c7802b9 -- .github/workflows/ci.yml (1 insertion, 1 deletion, only line changed: Run tests step now -k \"not real_workload\")"
+          status: pass
+      summary: "Changed Quality and tests job's Run tests step from `uv run pytest tests/ -q` to `uv run pytest tests/ -q -k \"not real_workload\"`. PM independently confirmed via git diff that exactly one line changed (+1/-1), Executed workload contracts job's own real_workload invocation untouched. Committed c7802b9, pushed to origin/phase/ci-dependency-installation."
+  - id: T005
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Watch the CI run triggered by T004's push. Verify zero SKIPPED lines anywhere in the run (grep every job's log, not just Quality and tests), all jobs green, PR #1 still open and unmerged. This replaces T003/T999's now-superseded 9-item verdict with the corrected zero-skip oracle."
+    inputs:
+      - "T004 receipt"
+      - "gh run view for the pushed commit"
+    constraints:
+      - "Do not implement fixes directly; produce a corrective Worker task if anything fails."
+      - "Job conclusion=success alone is not sufficient -- grep every job's log for SKIPPED lines, confirm the count is zero across the entire run."
+      - "Confirm Executed workload contracts job still actually runs the 5 real_workload tests for real (they must not silently vanish from CI coverage -- deselected in Quality and tests, but still executed for real elsewhere)."
+    expected_output:
+      - "Per-job conclusion table"
+      - "Total SKIPPED count across all job logs (must be 0)"
+      - "Confirmation the 5 real_workload tests still run for real in Executed workload contracts"
+      - "Pass/fail decision"
+    receipt:
+      result: done
+      decision: rejected
+      full_outcome_complete: false
+      rationale: "Run 34763871506: 7/7 jobs success, PR #1 still open/unmerged. T004's -k \"not real_workload\" correctly eliminated the 5 real_workload skips (now 5 deselected, still executed for real in Executed workload contracts: 5 passed, 0 skipped there). But total SKIPPED across all job logs is 7, not 0: Quality and tests still emits SKIPPED for promptfoo (test_ai_eval.py:191), prettier (test_engines.py:138), and 5 needs_X-marked parametrizations in test_static_tools.py (vulture/knip/radon/jscpd/sloppylint) -- these tools are only installed in the separate static-tool-acceptance job, and T004 never applied the same deselect treatment to these 7. PM independently re-confirmed via fresh log pulls: Quality-and-tests summary '2276 passed, 7 skipped, 5 deselected', Executed-workload-contracts summary '5 passed, 47 deselected'. Corrected zero-skip oracle fails. PM has already constructed and locally verified (uv run pytest --collect-only) the exact deselect fix: adding -m 'not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint' plus -k additions for the two unmarked tests (test_eval_live_local_provider, test_prettier_engine_check_mode) to Quality-and-tests' Run tests step -- verified locally to deselect exactly 12 tests (5 real_workload + 7 tool tests), 2276/2288 collected, matching the expected passed count exactly."
+      evidence:
+        - "gh run view 34763871506 --json jobs: 7/7 conclusion=success"
+        - "Quality and tests / Run tests log: 7 SKIPPED lines (test_ai_eval.py:191, test_engines.py:138, test_static_tools.py:43 x5) + '2276 passed, 7 skipped, 5 deselected in 302.30s'"
+        - "Static tool acceptance (real binaries) log: 0 SKIPPED, '67 passed in 11.33s'"
+        - "Executed workload contracts log: 0 SKIPPED, '5 passed, 47 deselected in 10.31s', RUSH_REQUIRE_REAL_ENGINES confirmed set"
+        - "tests/test_static_tools.py:25-44: parametrized test with pytest marks needs_mypy/needs_tsc/needs_vulture/needs_knip/needs_radon/needs_jscpd/needs_sloppylint -- mypy/tsc pass (installed), other 5 skip in Quality-and-tests"
+        - "tests/test_ai_eval.py:189-191 test_eval_live_local_provider: inline pytest.skip() call, no mark -- needs -k deselect by name"
+        - "tests/test_engines.py:139-140 test_prettier_engine_check_mode: @pytest.mark.skipif (built-in mark, not a custom needs_prettier mark despite pyproject.toml registering needs_prettier) -- needs -k deselect by name"
+        - "pyproject.toml:86: addopts = '-ra --strict-markers'"
+        - "gh pr view 1 --json state,mergedAt,closed: OPEN, not merged"
+        - "PM local verification: uv run pytest tests/ -q -k 'not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode' -m 'not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint' --collect-only -> '2276/2288 tests collected (12 deselected) in 1.76s', exit 0"
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "On branch phase/ci-dependency-installation, eliminate the remaining 7 SKIPPED lines in the Quality and tests job's Run tests step: promptfoo (tests/test_ai_eval.py:191, test_eval_live_local_provider, plain inline pytest.skip(), no mark), prettier (tests/test_engines.py:139, test_prettier_engine_check_mode, @pytest.mark.skipif builtin mark, not a custom mark), and 5 needs_X-marked parametrizations in tests/test_static_tools.py (needs_vulture, needs_knip, needs_radon, needs_jscpd, needs_sloppylint -- real pytest marks, registered in pyproject.toml). All 7 already run for real and pass in the separate static-tool-acceptance job (67 passed, 0 skipped there). PM has already verified the exact fix locally: change the Run tests step's pytest invocation from `uv run pytest tests/ -q -k \"not real_workload\"` (T004's fix) to `uv run pytest tests/ -q -k \"not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode\" -m \"not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint\"`. PM ran this exact command with --collect-only locally: '2276/2288 tests collected (12 deselected) in 1.76s', exit 0 -- confirmed it deselects exactly the 5 real_workload + 7 tool tests and nothing else. Use this exact command verbatim."
+    allowed_files:
+      - ".github/workflows/ci.yml"
+    verify:
+      - "git branch --show-current shows phase/ci-dependency-installation"
+      - "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\" (workflow YAML is valid)"
+      - "uv run pytest tests/ -q -k \"not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode\" -m \"not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint\" --collect-only shows '2276/2288 tests collected (12 deselected)'"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "The --collect-only count does not match 2276/2288 collected (12 deselected) exactly -- something else is being unintentionally excluded or included."
+      - "Need to touch any file outside .github/workflows/ci.yml."
+      - "static-tool-acceptance job's own test invocation would be affected by this change in any way (it must not -- untouched)."
+    receipt:
+      result: done
+      changed_files:
+        - .github/workflows/ci.yml
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\""
+          status: pass
+        - cmd: "uv run pytest ... --collect-only shows 2276/2288 tests collected (12 deselected)"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff c7802b9 7922592 -- .github/workflows/ci.yml (1 insertion, 1 deletion, exact match to pre-verified command)"
+          status: pass
+      summary: "Changed Quality and tests Run tests step to deselect the remaining 7 tool-gated tests (promptfoo, prettier, vulture, knip, radon, jscpd, sloppylint) via -k additions and a new -m expression, matching the PM's pre-verified local collect-only count exactly. Committed 7922592, pushed to origin/phase/ci-dependency-installation. New CI run 34764600023 triggered on PR #1."
+  - id: T010
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Watch CI run 34764600023 (triggered by T009's push, commit 7922592, PR #1). Verify TOTAL SKIPPED count across every job log is zero -- the corrected, full oracle. All jobs green, PR still open/unmerged."
+    inputs:
+      - "T009 receipt"
+      - "gh run view for 34764600023"
+    constraints:
+      - "Do not implement fixes directly; produce a corrective Worker task if anything fails."
+      - "Grep every pytest-running job's log (Quality and tests, static-tool-acceptance, Executed workload contracts) for SKIPPED lines. State the exact total count."
+      - "Confirm all 12 deselected tests (5 real_workload + 7 tool tests) actually execute for real somewhere in the run -- none may vanish from coverage."
+    expected_output:
+      - "Per-job conclusion table"
+      - "Total SKIPPED count across all job logs (must be 0)"
+      - "Confirmation all 12 previously-skipped-or-deselected tests execute for real in the correct job"
+      - "Pass/fail decision"
+    receipt:
+      result: done
+      decision: rejected
+      full_outcome_complete: false
+      rationale: "CI run 34764600023: all 7 jobs green, 12 previously-deselected tests confirmed running for real (PM independently re-confirmed: Executed workload contracts 5 passed/47 deselected summing to exactly 52; Static tool acceptance 67 passed unfiltered, 0 skipped; Quality and tests 2276 passed/12 deselected, 0 skipped). But 1 genuine SKIPPED test remains, previously unchecked in this goal: Windows runtime and installed contracts job never builds a native archive before running test_phase52_installed_artifacts.py, so it self-skips there and runs nowhere else on Windows. Zero-skip oracle not met -- total is 1, not 0. PR #1 confirmed open, unmerged. Separately, PM traced a new pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning to scripts/sync_docs.py's lazy import of rush.mcp.mcp_server (third-party MCP SDK's own lifespan field, confirmed by repo-wide grep finding zero matches for 'lifespan' outside .venv, and by reproducing the warning locally via uv run python -W always scripts/sync_docs.py --check)."
+      evidence:
+        - "gh run view 34764600023 --json jobs: all 7 conclusion=success"
+        - "windows_runtime.log: 'SKIPPED [1] tests\\test_phase52_installed_artifacts.py:193: No native release archive at ...rush-windows-x86_64.zip... CI does not build PyInstaller archives yet.' / '39 passed, 1 skipped in 29.21s'"
+        - "quality.log: '2276 passed, 12 deselected in 329.03s', 0 SKIPPED lines"
+        - "executed_workload.log: '5 passed, 47 deselected in 10.73s' (5+47=52, accounts for every test in test_executed_modes.py)"
+        - "static_tool.log: '67 passed in 11.03s', 0 SKIPPED, unfiltered invocation of the 3 target test files"
+        - "ci.yml: windows-contracts job has no archive-build step, unlike the quality-tests job's step added by T002"
+        - "gh pr view 1 --json state,mergedAt,closed: OPEN, not merged"
+        - "PM local reproduction: uv run python -W always scripts/sync_docs.py --check shows the IncompleteFieldDefinitionWarning; bare uv run python -c 'pass' shows nothing (rules out environment-wide cause); sync_docs.py:307 from rush.mcp import mcp_server is the lazy import that triggers it; repo-wide grep for 'lifespan' outside .venv/node_modules: zero matches, confirming it is not our own field"
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "On branch phase/ci-dependency-installation, fix a Node.js runtime deprecation warning surfaced by CI run 34763871506 on the static-tool-acceptance job: 'Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/setup-node@v4.' The new static-tool-acceptance job (added by T002) uses actions/setup-node@v4, which targets the deprecated node20 runtime. Bump the pin to actions/setup-node@v7.0.0, confirmed (PM, via GitHub API) to declare `using: 'node24'` in its action.yml -- the current released major that runs natively on node24, matching this repo's other pinned actions (actions/checkout@v7.0.1, actions/setup-python@v7.0.0, astral-sh/setup-uv@v10.0.1 are all similarly pinned to exact versions). Do not change the node-version input (stays \"22\", that's the Node.js version installed for the job's own npm installs -- unrelated to the action's own runtime)."
+    allowed_files:
+      - ".github/workflows/ci.yml"
+    verify:
+      - "git branch --show-current shows phase/ci-dependency-installation"
+      - "grep -n 'actions/setup-node@' .github/workflows/ci.yml shows v7.0.0"
+      - "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\" (workflow YAML is valid)"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "Need to touch any file outside .github/workflows/ci.yml."
+      - "actions/setup-node@v7.0.0 turns out to have a breaking change affecting this job's Node.js 22 setup (verify the node-version input still works the same way in v7 before committing)."
+    receipt:
+      result: done
+      changed_files:
+        - .github/workflows/ci.yml
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "grep -n 'actions/setup-node@' .github/workflows/ci.yml"
+          status: pass
+        - cmd: "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\""
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff 842838d b0b330b -- .github/workflows/ci.yml (1 insertion, 1 deletion, v4 -> v7.0.0, node-version input untouched)"
+          status: pass
+      summary: "Bumped actions/setup-node from v4 to v7.0.0 in static-tool-acceptance job, silencing the Node 20 deprecation annotation (v7.0.0 runs natively on node24). Committed b0b330b, pushed to origin/phase/ci-dependency-installation."
+  - id: T008
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: high
+    objective: "Investigate whether jscpd can be bumped off the deprecated, unmaintained 3.5.10 pin (currently required per T001/the plan because src/rush/engines/jscpd.py's JscpdEngine.normalize() parses jscpd's console text output with a hand-written regex: `^(?P<path>.+?):(?P<line>\\d+)-\\d+\\s+-\\s+(?P<message>.+)$`, tied to jscpd 3.x's exact console reporter format) without silently breaking duplicate-code detection. jscpd 3.5.10 pulls deprecated transitive npm packages (inflight, rimraf@3.0.2, glob@7.2.3/10.5.0, boolean@3.2.0) that surface as noisy npm warn deprecation lines in the static-tool-acceptance job's install step -- confirmed 3.5.10 is already the latest patch on the 3.x line (no newer 3.x exists), so those deprecation warnings cannot be eliminated without a major bump."
+    inputs:
+      - "src/rush/engines/jscpd.py (the exact regex JscpdEngine.normalize() depends on)"
+      - "tests/test_engines.py (jscpd-related test cases -- read what fixture/expected output they assert against)"
+      - "jscpd's own changelog/release notes for v4 and v5 (check https://github.com/kucherenko/jscpd or npm registry README for console reporter output format changes between 3.x, 4.x, and 5.x)"
+    constraints:
+      - "Read-only. Do not modify jscpd.py, ci.yml, or any package pin."
+      - "To verify the console output format empirically (not just from changelog prose), it is acceptable to `npm install -g jscpd@latest-4` (or `jscpd@5`) in a scratch/sandbox location and run it against a small local fixture with a known duplicate, then diff its console stdout format against the regex above -- do NOT install into or modify the repo's own environment or ci.yml."
+    expected_output:
+      - "Whether jscpd v4 (maintained) and/or v5 (current, Rust engine) still produce console stdout matching JscpdEngine's exact regex, with the actual command run and actual output shown as evidence -- not inferred from documentation alone"
+      - "If a version is compatible: exact recommended new pin + version"
+      - "If no version is compatible: explicit statement that this is a genuine, verified inherent limitation of the JscpdEngine regex-based normalizer (not a shrug -- state exactly what breaks and why), for the PM to report back to James as a real tradeoff requiring his decision (rewrite the normalizer for the new format, or accept the deprecated 3.x pin as a known, permanent exception)"
+    receipt:
+      result: done
+      summary: "Empirically tested jscpd 4.3.0 (latest-4) and 5.2.0 (current) against a real duplicated-TS fixture in an isolated scratch dir. Both use a completely different console format than 3.x's 'path:line-endline - message' line format -- a multi-line 'Clone found (...):' block with bracketed [line:col - line:col] ranges, plus (v5) ANSI color codes even when piped. JscpdEngine.normalize()'s regex matches zero lines from either version's real captured output (verified via re.compile(pattern).match() against the actual captured stdout, not inferred). Bumping jscpd unmodified would make the engine silently report zero findings forever (status always 'ok') instead of erroring -- the worst-case outcome. No repo artifacts left behind (scratch dir isolated, git status --porcelain unchanged before/after)."
+      evidence:
+        - "src/rush/engines/jscpd.py:27 regex: ^(?P<path>.+?):(?P<line>\\d+)-\\d+\\s+-\\s+(?P<message>.+)$"
+        - "jscpd@latest-4 (4.3.0) real output: 'Clone found (typescript):\\n - a.ts [1:27 - 7:32] (6 lines, 57 tokens)\\n   b.ts [1:26 - 7:31]' plus summary table -- zero regex matches"
+        - "jscpd current (5.2.0, Rust engine) real output: same block shape plus ANSI escape codes even in non-TTY redirect -- zero regex matches"
+        - "tests/test_jscpd_reference.py and tests/fixtures/engine_reports/jscpd.txt use synthetic 3.5.10-style stdout matching the regex, not captured real tool output -- existing tests would not catch this breakage either"
+        - "3.5.10 confirmed the latest 3.x patch, no newer compatible patch exists"
+      decision_needed: "PM/user: keep jscpd==3.5.10 pinned permanently as a documented exception (accept the npm deprecation warnings as cosmetic, non-blocking noise) vs. invest in rewriting JscpdEngine.normalize() for the v4/v5 'Clone found' block format (parse header + 2 indented path/range lines per clone, strip ANSI for v5) plus new real-captured-output test fixtures. Not part of the zero-skip oracle -- these are npm install-time warnings, not test skips, so this does not block T006's final audit."
+  - id: T011
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "On branch phase/ci-dependency-installation, fix the 'Windows runtime and installed contracts' job in .github/workflows/ci.yml: it never builds a native release archive before running tests/test_phase52_installed_artifacts.py, so that test self-skips there (confirmed by T010, the only genuine remaining SKIPPED test anywhere in CI: ci.yml:192, log 'SKIPPED [1] tests\\test_phase52_installed_artifacts.py:193: No native release archive at ...rush-windows-x86_64.zip ... CI does not build PyInstaller archives yet.'). Mirror the existing 'Build native release archive for installed-artifact probes' step (added by T002, currently in the Quality and tests job around ci.yml:42-58 -- read it first for the exact pattern: uv pip install pyinstaller, write rush_entry.py heredoc, uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py, then a python -c block calling scripts.probe_installed_artifacts.build_release_archive + write_sha256sums) but adapted for Windows: PyInstaller on windows-latest produces dist/rush.exe not dist/rush, and the archive asset name must be 'rush-windows-x86_64.zip' (a .zip, not .tar.gz -- check build_release_archive's asset_name.endswith('.zip') branch in scripts/probe_installed_artifacts.py, which already special-cases 'rush.exe' as the staged binary name for .zip assets). Add this step to the windows-contracts job before its existing 'Verify Windows contracts' step. Also handle Windows shell syntax correctly (this job likely uses default pwsh or bash runner shell -- check the job's existing steps' shell usage first and match it, do not assume bash heredoc syntax works unmodified on Windows runners)."
+    allowed_files:
+      - ".github/workflows/ci.yml"
+    verify:
+      - "git branch --show-current shows phase/ci-dependency-installation"
+      - "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\" (workflow YAML is valid)"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "Need to touch any file outside .github/workflows/ci.yml."
+      - "Windows shell/PyInstaller invocation syntax is genuinely uncertain after reading existing Windows job steps -- report exact uncertainty rather than guessing at Windows-specific shell syntax."
+      - "This would meaningfully slow down the windows-contracts job beyond what's reasonable -- report and stop rather than force it."
+    receipt:
+      result: done
+      changed_files:
+        - .github/workflows/ci.yml
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "uv run python -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))\""
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff 7922592 d8a12c8 -- .github/workflows/ci.yml (19 insertions, 0 deletions, only windows-contracts job's new step, matches expected pattern exactly: dist/rush.exe, rush-windows-x86_64.zip, shell: bash)"
+          status: pass
+      summary: "Added native release-archive build step to windows-contracts job (between Build distribution artifacts and Verify Windows contracts), shell: bash explicit, dist/rush.exe as binary path, rush-windows-x86_64.zip as asset name. Committed d8a12c8, pushed to origin/phase/ci-dependency-installation."
+  - id: T012
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Fix a pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning ('Field lifespan has an incomplete definition...') that fires during scripts/sync_docs.py --check (both locally and in the 'Verify documentation parity & links' CI step). PM traced the exact source: scripts/sync_docs.py:307 lazily imports `from rush.mcp import mcp_server`; the MCP SDK's own Server class has a `lifespan` parameter whose pydantic-settings model has this incomplete forward-reference field -- third-party, not our own code (confirmed via repo-wide grep for 'lifespan': zero matches outside .venv). pyproject.toml:87-88 already suppresses this exact warning class for pytest (`filterwarnings = [\"ignore::pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning\"]`), but that ini-file filter only applies inside pytest runs, not to a plain `python scripts/sync_docs.py` invocation, so it currently leaks through in the doc-parity CI step. Apply the same suppression directly in scripts/sync_docs.py (e.g. `import warnings` at top plus `warnings.filterwarnings(\"ignore\", category=pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning)` before the lazy `from rush.mcp import mcp_server` import, or via `warnings.filterwarnings(\"ignore\", message=\"Field 'lifespan' has an incomplete definition.*\")` if importing the exact warning class is awkward) so it also works for anyone running sync_docs.py locally, not just in CI."
+    allowed_files:
+      - "scripts/sync_docs.py"
+    verify:
+      - "uv run python -W always scripts/sync_docs.py --check 2>&1 | grep -c 'IncompleteFieldDefinitionWarning' shows 0"
+      - "uv run python scripts/sync_docs.py --check still produces its normal output otherwise (same exit behavior / same non-warning output as before, only the warning line removed)"
+    stop_if:
+      - "Need to touch any file outside scripts/sync_docs.py."
+      - "Suppressing this warning would hide a DIFFERENT, currently-undetected real issue -- confirm first that this warning is purely about the third-party MCP SDK's own field, not about anything rush-cli defines."
+    receipt:
+      result: done
+      changed_files:
+        - scripts/sync_docs.py
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "grep -rn lifespan src/rush/ (0 matches) vs .venv MCP package (10 matches)"
+          status: pass
+        - cmd: "uv run python -c \"from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning\""
+          status: pass
+        - cmd: "uv run python -W always scripts/sync_docs.py --check | grep -c IncompleteFieldDefinitionWarning (result: 0)"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff d8a12c8 842838d -- scripts/sync_docs.py (8 insertions, 0 deletions, exact suppression pattern requested)"
+          status: pass
+      summary: "Added warnings.filterwarnings suppression for pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning to scripts/sync_docs.py, matching the existing pytest ini filter. Confirmed the lifespan field lives only in the third-party MCP SDK, not our own code. Committed 842838d, pushed to origin/phase/ci-dependency-installation."
+  - id: T013
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Fix a REAL production bug in src/rush/plugins/trust_store.py, surfaced by T011's fix removing the skip that was masking it: `test_native_artifact_needs_no_checkout_python_or_uv` now fails on Windows CI (run 34765320740) with `RuntimeError: Could not determine home directory` inside `PluginTrustStore` at trust_store.py:65. Root cause: `DEFAULT_LEDGER_PATH = Path.home() / \".rush\" / \"plugin_trust_ledger.json\"` is a CLASS-LEVEL attribute, evaluated EAGERLY at class-definition/import time -- meaning `rush` crashes on import (via rush.cli -> ... -> rush.plugins -> rush.plugins.closure -> rush.plugins.trust_store) on ANY machine/environment where HOME/USERPROFILE cannot resolve, not just in this test's deliberately-isolated sandbox. This is a real, live production bug, not a CI config issue. PM confirmed via grep (src/rush + tests, whole tree) only 2 references exist: the class-level definition itself (trust_store.py:65) and one instance-level access `self.DEFAULT_LEDGER_PATH.resolve()` inside `__init__` (trust_store.py:97) -- no external class-level (`PluginTrustStore.DEFAULT_LEDGER_PATH` without an instance) accessors exist anywhere. Fix: convert `DEFAULT_LEDGER_PATH` from an eager class-level attribute into a lazy `@property` method (same name, so `self.DEFAULT_LEDGER_PATH` at line 97 continues to work unchanged with zero external API change) that computes `Path.home() / \".rush\" / \"plugin_trust_ledger.json\"` only when actually accessed on an instance."
+    allowed_files:
+      - "src/rush/plugins/trust_store.py"
+    verify:
+      - "uv run python -c \"from rush.plugins.trust_store import PluginTrustStore\" succeeds (import itself no longer eagerly calls Path.home())"
+      - "uv run pytest tests/ -q -k trust_store (or the closest matching test selection for this module) passes"
+      - "uv run mypy src/rush/plugins/trust_store.py passes (property return type must stay Path)"
+    stop_if:
+      - "Need to touch any file outside src/rush/plugins/trust_store.py -- if the fix genuinely requires touching a caller, stop and report exactly which caller and why."
+      - "Converting to a @property breaks something because DEFAULT_LEDGER_PATH IS accessed at the class level somewhere the PM's grep missed -- re-grep broadly (including generated docs, string references, or dynamic getattr usage) before committing if any test fails after the change."
+    receipt:
+      result: done
+      changed_files:
+        - src/rush/plugins/trust_store.py
+      commands:
+        - cmd: "git branch --show-current"
+          status: pass
+        - cmd: "uv run python -c \"from rush.plugins.trust_store import PluginTrustStore\""
+          status: pass
+        - cmd: "uv run pytest tests/test_plugin_trust.py tests/test_phase56_plugin_trust.py tests/test_phase56_plugin_public_routes.py tests/test_phase56_plugin_launch_identity.py tests/test_phase61_skill_pattern.py tests/test_phase53_state_writers.py -q"
+          status: pass
+        - cmd: "uv run mypy src/rush/plugins/trust_store.py"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff b0b330b e79f022 -- src/rush/plugins/trust_store.py (4 insertions, 1 deletion, DEFAULT_LEDGER_PATH converted to @property exactly as specified)"
+          status: pass
+      summary: "Converted PluginTrustStore.DEFAULT_LEDGER_PATH from eager class-level attribute to lazy @property. Fixes a real production bug: rush no longer crashes on import when HOME/USERPROFILE cannot resolve. 23 tests pass, mypy clean. Committed e79f022, pushed to origin/phase/ci-dependency-installation."
+  - id: T015
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "Rewrite JscpdEngine (src/rush/engines/jscpd.py) to work with jscpd's current maintained output format instead of the deprecated 3.5.10 line format, and bump the CI pin off the deprecated jscpd@3.5.10. Decision made by the user: fix properly, do not leave a permanent deprecated pin. T008 (Scout) already empirically captured both candidate versions' real output: jscpd@latest-4 (4.3.0) and jscpd@5 (5.2.0, Rust engine) both use a 'Clone found (<language>):' block format: a header line, then one indented line per duplicated file with a `[startLine:startCol - endLine:endCol]` range and a lines/tokens count, e.g.:\n```\nClone found (typescript):\n - a.ts [1:27 - 7:32] (6 lines, 57 tokens)\n   b.ts [1:26 - 7:31]\n```\nv5 additionally emits ANSI escape codes in stdout even when piped (must be stripped before parsing). Prefer bumping to jscpd@5 (current, actively maintained, 24-37x faster per its own changelog) over @latest-4 unless the rewrite discovers a concrete reason v5's behavior is unsuitable (e.g. a CLI flag needed for JSON/deterministic output that v4 lacks and v5 also lacks) -- in that case use v4 and document why in the commit.\n\nSteps:\n1. Read src/rush/engines/jscpd.py in full (the current regex-based normalize()).\n2. Read tests/test_jscpd_reference.py and tests/fixtures/engine_reports/jscpd.txt (or equivalent) to understand current test structure -- these currently use SYNTHETIC 3.x-style fixture text, not real captured tool output; replace them with real captured output from the actual installed jscpd version this rewrite targets.\n3. In an isolated scratch location (not the repo, not touching ci.yml/package.json), install the target jscpd version and run it against a small fixture with a real, deliberate duplicate to capture its ACTUAL stdout (including ANSI codes if using v5) -- do not write the parser against paraphrased/assumed output, use the real captured bytes.\n4. Rewrite JscpdEngine.normalize() to parse the new 'Clone found (...):' block format: strip ANSI escape codes first (a small regex, e.g. `re.sub(r'\\x1b\\[[0-9;]*m', '', text)`), then parse each clone block into one or more Finding entries (path, starting line number, and a message describing the duplicate -- decide whether to emit one Finding per file-in-clone or one per clone-pair, matching whatever is most useful/consistent with how other engines report findings; look at another multi-file-finding engine in src/rush/engines/ for the established pattern if one exists).\n5. Replace the synthetic test fixture(s) with the real captured output from step 3, and update/add test_jscpd_reference.py assertions to match the new parser's actual behavior against that real fixture.\n6. Update the CI pin: in .github/workflows/ci.yml, change `jscpd@3.5.10` to the new target version (this DOES touch ci.yml -- allowed_files below includes it for exactly this one line).\n7. Update docs/phase-plans/ci-dependency-installation-plan.md's reference to the jscpd pin if it documents the exact pin elsewhere, OR leave the plan doc as historical record and note the deviation in the commit message -- do not silently leave the plan doc claiming a stale pin without at least a commit-message note explaining the supersession.\n\nThis is a genuine judgment call on Finding-shape (step 4) -- use your best engineering judgment matching existing engine patterns in this codebase, and explain the choice in the commit message."
+    allowed_files:
+      - "src/rush/engines/jscpd.py"
+      - "tests/test_jscpd_reference.py"
+      - "tests/fixtures/engine_reports/jscpd.txt"
+      - ".github/workflows/ci.yml"
+      - "tests/test_static_tools.py"
+    constraint_note: "AMENDED by PM after first dispatch attempt returned blocked: tests/test_static_tools.py::test_jscpd_normalizes_report_fixture (~line 248) independently reads tests/fixtures/engine_reports/jscpd.txt and asserts findings shaped for the OLD 3.x regex normalize(). Added to allowed_files so the Worker can update this test's assertions to match the new normalizer/fixture in the same commit -- do not leave it failing."
+    verify:
+      - "uv run pytest tests/test_jscpd_reference.py -q passes against the real captured fixture"
+      - "uv run pytest tests/test_static_tools.py::test_jscpd_normalizes_report_fixture -q passes against the new fixture/normalizer"
+      - "uv run mypy src/rush/engines/jscpd.py passes"
+      - "The rewritten normalize() actually produces non-empty findings when run against a real local fixture with a real duplicate (prove this by actually running it, not just unit-testing against the fixture -- create a throwaway local duplicate-code sample, run the real jscpd binary + JscpdEngine.run()+normalize() against it, confirm findings list is non-empty)"
+      - "grep -n 'jscpd@' .github/workflows/ci.yml shows the new pin, not 3.5.10"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "The real captured output structurally differs between different fixture inputs in a way that makes a single regex/parser insufficient without significantly more investigation -- report the exact variance found rather than shipping a parser that only works on the one sample tested."
+      - "Need to touch any file outside the allowed_files list above."
+    receipt:
+      result: done
+      changed_files:
+        - src/rush/engines/jscpd.py
+        - tests/test_jscpd_reference.py
+        - tests/fixtures/engine_reports/jscpd.txt
+        - tests/test_static_tools.py
+        - .github/workflows/ci.yml
+      commands:
+        - cmd: "uv run pytest tests/test_jscpd_reference.py -q"
+          status: pass
+        - cmd: "uv run pytest tests/test_static_tools.py::test_jscpd_normalizes_report_fixture -q"
+          status: pass
+        - cmd: "uv run mypy src/rush/engines/jscpd.py"
+          status: pass
+        - cmd: "real jscpd@5.2.0 binary via JscpdEngine.run()+normalize() against scratch duplicate sample produced non-empty findings"
+          status: pass
+        - cmd: "grep -n 'jscpd@' .github/workflows/ci.yml shows jscpd@5.2.0"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff e79f022 71b40c4 --stat (5 files, matches allowed_files exactly)"
+          status: pass
+        - cmd: "PM independent re-run: uv run pytest tests/test_jscpd_reference.py tests/test_static_tools.py -q (25 passed)"
+          status: pass
+        - cmd: "PM independent re-run: uv run mypy src/rush/engines/jscpd.py (no issues)"
+          status: pass
+        - cmd: "PM broader check: grep -rln 'engine_reports/jscpd' tests/ shows only test_static_tools.py (already fixed), no missed consumers"
+          status: pass
+      summary: "Rewrote JscpdEngine.normalize() for jscpd 5.x's 'Clone found (...)' multi-line block format (ANSI-stripped), one Finding per file in a clone naming the other duplicate file(s). Bumped CI pin from jscpd@3.5.10 to jscpd@5.2.0 (current, Rust engine). Replaced synthetic fixture with real captured jscpd@5.2.0 stdout; updated both consuming tests. PM independently re-verified: diff scope matches exactly, both tests re-run pass (25/25), mypy clean, no missed fixture consumers elsewhere in the test suite. Committed 71b40c4, pushed to origin/phase/ci-dependency-installation."
+  - id: T016
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Fix the ACTUAL root cause of the persistent Windows CI failure in test_native_artifact_needs_no_checkout_python_or_uv (still failing after T013's trust_store.py fix, confirmed via 3 consecutive Windows CI runs on commits d8a12c8, b0b330b, e79f022 -- and this is a DIFFERENT bug than T013 fixed, in a different file). PM confirmed via Python's actual ntpath.expanduser source: on Windows, Path.home() checks USERPROFILE (or HOMEDRIVE+HOMEPATH) -- it NEVER checks HOME. scripts/probe_installed_artifacts.py's probe_native_artifact() function (around line 219-220) sets `env = {\"PATH\": bare_path, \"HOME\": str(work_dir)}` unconditionally for both platforms -- this HOME assignment is a complete no-op on Windows, so Path.home() still raises RuntimeError there, which is exactly the error seen: 'RuntimeError: Could not determine home directory' inside PluginTrustStore when the extracted rush.exe runs in this isolated env. T013's fix (making DEFAULT_LEDGER_PATH lazy) was still correct and necessary but not sufficient for this specific test scenario, since PluginTrustStore is evidently instantiated during normal CLI startup and Path.home() genuinely has no way to resolve in this test's Windows environment as currently configured.\n\nFix: in scripts/probe_installed_artifacts.py's probe_native_artifact(), set the env dict per-platform so Windows gets USERPROFILE (pointing at work_dir, matching the existing HOME=work_dir intent for POSIX) instead of (or in addition to, harmlessly) HOME. E.g.:\n```python\nbare_path = \"C:\\\\Windows\\\\System32\" if sys.platform == \"win32\" else \"/usr/bin:/bin\"\nif sys.platform == \"win32\":\n    env = {\"PATH\": bare_path, \"USERPROFILE\": str(work_dir), \"HOMEDRIVE\": \"\", \"HOMEPATH\": str(work_dir)}\nelse:\n    env = {\"PATH\": bare_path, \"HOME\": str(work_dir)}\n```\n(Verify the exact minimal set needed -- USERPROFILE alone is checked FIRST by ntpath.expanduser and should be sufficient; only add HOMEDRIVE/HOMEPATH if USERPROFILE alone doesn't resolve it, confirmed by actually testing.)\n\nRead the function in full first to see its exact current structure (it also runs an MCP probe subprocess reusing the same env, further down in the function -- confirm the fix applies to whichever env dict(s) are used for BOTH the --version probe and the MCP probe, not just one)."
+    allowed_files:
+      - "scripts/probe_installed_artifacts.py"
+    verify:
+      - "uv run mypy scripts/probe_installed_artifacts.py passes"
+      - "Read the full function after your edit and confirm both subprocess.run env= usages (the --version probe and the MCP initialize probe, if it's a separate subprocess call) use the corrected per-platform env"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "You cannot verify locally on this machine whether USERPROFILE alone is sufficient (this repo runs on macOS/Linux locally, this bug is Windows-specific) -- in that case, make the fix based on the confirmed ntpath.expanduser source behavior (USERPROFILE checked first), push it, and note in the commit message that Windows CI itself is the only way to confirm the fix, since local verification isn't possible on this platform."
+      - "Need to touch any file outside scripts/probe_installed_artifacts.py."
+    receipt:
+      result: done
+      changed_files:
+        - scripts/probe_installed_artifacts.py
+      commands:
+        - cmd: "uv run python -c \"import scripts.probe_installed_artifacts\""
+          status: pass
+        - cmd: "uv run mypy scripts/probe_installed_artifacts.py"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff 71b40c4 74affb4 -- scripts/probe_installed_artifacts.py (6 insertions, 2 deletions, USERPROFILE branch confirmed for win32, HOME kept for other platforms, single shared env var used by both subprocess calls)"
+          status: pass
+      summary: "Fixed probe_native_artifact() to set USERPROFILE (not HOME) on Windows, since ntpath.expanduser never checks HOME. Single env dict shared by both the --version and MCP initialize subprocess calls, so both are fixed. Committed 74affb4, pushed to origin/phase/ci-dependency-installation. Cannot be locally verified (Windows-only code path on a macOS/Linux dev machine) -- Windows CI is the actual verification."
+  - id: T017
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "test_native_artifact_needs_no_checkout_python_or_uv is STILL failing on Windows CI after T016's fix (run 34766886331, commit 74affb4) but the ORIGINAL error is gone -- this is progress, not a repeat. PM confirmed via gh api job logs: the RuntimeError about home directory no longer appears. Now the failure is `AssertionError: Native artifact probe failed: ` with an EMPTY stderr string (`assert 'failed' == 'passed'`, no traceback shown). PM read scripts/probe_installed_artifacts.py's probe_native_artifact() in full: `status = 'failed'` fires if ANY of (version_probe.returncode == 0, origin_verified, mcp_initialized) is falsy, and the returned `stderr = version_probe.stderr or mcp_error` -- but `mcp_error` is ONLY set inside an `except (OSError, ValueError, json.JSONDecodeError)` block; if the MCP subprocess's stdout readline() returns an empty/unexpected line WITHOUT raising an exception (response ends up `{}`, `mcp_initialized` becomes False silently), or if `origin_verified` is simply False, NEITHER case populates any diagnostic text -- the function is diagnostically blind in exactly this scenario. Also notably: `proc.stderr` (the MCP subprocess's own stderr, piped via subprocess.Popen) is captured but NEVER READ anywhere in the function -- if the extracted binary's 'mcp serve' subcommand prints an error/warning to its own stderr instead of raising a Python exception here, that information is silently discarded.\n\nThis needs BETTER DIAGNOSTICS before another blind fix attempt -- do not guess at a root cause without evidence. Fix the function itself to surface the real failure reason:\n1. Read `proc.stderr` (with a short non-blocking read, e.g. after `proc.wait()`/`proc.communicate()` cleanup, or read available stderr before terminate) and include its content in the returned `stderr` field whenever `mcp_initialized` is False, even when no Python exception was raised.\n2. Also include which specific check(s) failed in the returned stderr/message: e.g. if version_probe.returncode != 0, say so explicitly; if origin_verified is False, say so; if mcp_initialized is False, include the raw response/line read from stdout (even if empty) plus any captured subprocess stderr.\n3. Do NOT change the pass/fail logic itself (the three-condition check for 'status') -- only make the returned stderr/diagnostic text actually informative in every failure case, so the NEXT CI run (which the PM will trigger and inspect) reveals the true root cause instead of an empty string.\n\nRead the full function first (already partially quoted above from PM's research -- confirm no drift) before editing."
+    allowed_files:
+      - "scripts/probe_installed_artifacts.py"
+    verify:
+      - "uv run python -c \"import scripts.probe_installed_artifacts\" succeeds"
+      - "uv run mypy scripts/probe_installed_artifacts.py passes"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "Need to touch any file outside scripts/probe_installed_artifacts.py."
+    receipt:
+      result: done
+      changed_files:
+        - scripts/probe_installed_artifacts.py
+      commands:
+        - cmd: "uv run python -c \"import scripts.probe_installed_artifacts\""
+          status: pass
+        - cmd: "uv run mypy scripts/probe_installed_artifacts.py"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff 74affb4 fd02445 -- scripts/probe_installed_artifacts.py (34 insertions, 4 deletions, pass/fail logic unchanged, stderr diagnostics now populated in every failure path via proc.communicate() instead of proc.wait())"
+          status: pass
+      summary: "Rewrote MCP-handshake cleanup to use proc.communicate(timeout=5) instead of terminate()+wait(), actually capturing the MCP subprocess's own stderr. Populated mcp_error with the raw stdout line when mcp_initialized is False without an exception. Return path now prefixes stderr with which of the three status conditions failed. Pass/fail logic and ArtifactProbeResult shape unchanged. Committed fd02445, pushed to origin/phase/ci-dependency-installation."
+  - id: T018
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Fix the ACTUAL root cause of the Windows CI failure, now visible thanks to T017's diagnostics fix. Run 34767433318 (commit fd02445) shows the real error: the extracted rush.exe's 'mcp serve' subcommand crashes with `OSError: [WinError 10106] The requested service provider could not be loaded or initialized` inside `asyncio\\windows_events.py` (triggered when asyncio imports _overlapped / initializes its Windows event loop / Winsock). This is a well-documented, verified issue (PM confirmed via web search, multiple independent sources including a CPython issue https://github.com/python/cpython/issues/118234 and an MCP-specific issue https://github.com/openai/codex/issues/3311): on Windows, asyncio/Winsock initialization depends on the `SystemRoot` (and `windir`) environment variable to resolve Winsock service provider DLLs via the registry. scripts/probe_installed_artifacts.py's probe_native_artifact() currently sets env to ONLY `{\"PATH\": \"C:\\\\Windows\\\\System32\", \"USERPROFILE\": str(work_dir)}` on Windows -- completely missing SystemRoot/windir, which breaks Winsock provider loading for any subprocess that uses asyncio's Windows event loop (exactly what `rush mcp serve` does).\n\nFix: add `SystemRoot` and `windir` to the Windows env dict, both pointing at the real system root (e.g. `os.environ.get(\"SystemRoot\", \"C:\\\\Windows\")` -- read the real value from the CI runner's own environment rather than hardcoding, in case it differs). This does NOT defeat the test's purpose (proving the binary doesn't need Python/uv/checkout on PATH) -- SystemRoot is a base OS environment variable, not related to Python/uv/checkout tooling.\n\nRead the current env-construction code first (already partially quoted above -- confirm no drift, this is right after T016's USERPROFILE fix in the same function)."
+    allowed_files:
+      - "scripts/probe_installed_artifacts.py"
+    verify:
+      - "uv run python -c \"import scripts.probe_installed_artifacts\" succeeds"
+      - "uv run mypy scripts/probe_installed_artifacts.py passes"
+      - "git push origin phase/ci-dependency-installation succeeds"
+    stop_if:
+      - "Need to touch any file outside scripts/probe_installed_artifacts.py."
+    receipt:
+      result: done
+      changed_files:
+        - scripts/probe_installed_artifacts.py
+      commands:
+        - cmd: "uv run python -c \"import scripts.probe_installed_artifacts\""
+          status: pass
+        - cmd: "uv run mypy scripts/probe_installed_artifacts.py"
+          status: pass
+        - cmd: "git push origin phase/ci-dependency-installation"
+          status: pass
+        - cmd: "PM re-verification: git diff fd02445 2e9b2aa -- scripts/probe_installed_artifacts.py (7 insertions, 1 deletion, SystemRoot/windir added to win32 env, sourced from os.environ not hardcoded, matches web-search-confirmed fix exactly)"
+          status: pass
+      summary: "Added SystemRoot and windir to probe_native_artifact's Windows env dict, sourced from os.environ.get('SystemRoot', 'C:\\\\Windows'). Fixes WinError 10106 Winsock init failure that T017's diagnostics revealed. Committed 2e9b2aa, pushed to origin/phase/ci-dependency-installation."
+  - id: T006
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Corrected final audit: does the CI run on phase/ci-dependency-installation show zero SKIPPED lines anywhere, all jobs green, and no regression? If yes, goal complete pending the user's own merge decision -- do not merge."
+    inputs:
+      - "All done task receipts including T004, T005"
+    constraints:
+      - "Do not implement."
+      - "Do not merge phase/ci-dependency-installation into main."
+      - "Reject completion if any SKIPPED line remains anywhere in the run, or if any previously-green job regressed, or if the 5 real_workload tests no longer run for real anywhere."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "missing evidence, if any"
+      - "explicit note that merge is a separate user decision, not part of this goal's completion"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      rationale: "Independently re-pulled all 7 job logs for run 34768489692 (commit 2e9b2aa, PR #1 headRefOid match, OPEN/mergedAt null): SKIPPED=0, FAILED=0 in every job, matching PM's independent report exactly. Confirmed the 12 Quality-and-tests deselections genuinely execute elsewhere: static-tool-acceptance's pytest invocation is fully unfiltered (67 passed, includes the 7 tool tests) and Executed workload contracts shows 5 passed/47 deselected=52 (full file), so the 5 real_workload tests run for real there. git diff origin/main..branch --stat shows exactly the 8 expected files, no scope creep. ci.yml diff confirms engine-contracts/artifact-probes/representative-engines bodies untouched, windows-contracts got only the one approved archive-build step, quality got only the one approved pytest-invocation change. Corrected zero-skip oracle fully satisfied, no regression. Merging phase/ci-dependency-installation into main is an explicit, separate user approval per goal.md's Non-Negotiable Constraints and Stop Rule -- this audit does not authorize or perform a merge, and none was performed."
+      evidence:
+        - "gh run view 34768489692 --json jobs: 7/7 conclusion=success, headSha 2e9b2aa"
+        - "Fresh pulls of all 7 job logs via gh api, grepped independently: SKIPPED=0 and FAILED=0 in every job"
+        - "Windows runtime and installed contracts: '40 passed in 33.11s'"
+        - "Executed workload contracts: '5 passed, 47 deselected in 10.96s'"
+        - "Quality and tests: '2276 passed, 12 deselected in 361.50s'"
+        - "Static tool acceptance: '67 passed in 12.23s', unfiltered invocation confirmed"
+        - "Representative Python engine smoke: '26 passed' + '7 passed'"
+        - "git diff origin/main origin/phase/ci-dependency-installation --stat: 8 files exactly matching expected list"
+        - "ci.yml diff: engine-contracts/artifact-probes/representative-engines job bodies unchanged; windows-contracts +1 approved step; quality job +1 approved line change"
+        - "gh pr view 1 --json state,mergedAt,closed: OPEN, mergedAt null, closed false"
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []

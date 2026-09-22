@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
-import fcntl
+import copy
+import dataclasses
+import hashlib
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -16,7 +19,137 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+if sys.platform != "win32":
+    import fcntl
+
 from rush.tools.base import ToolResult
+
+
+def genesis_identity(project_id: str) -> str:
+    """S08: the shared scalar identity a never-scanned project carries before
+    its first real publication -- a pure function of `project_id` alone, so
+    every server hydrates the identical value with nothing durable to read.
+    Never equal to a real scanned `source_identity` (a content-derived
+    value), so a genesis project can't be mistaken for an already-scanned
+    one with a colliding identity."""
+    return hashlib.sha256(
+        json.dumps(
+            {"kind": "unscanned", "project_id": project_id, "generation": 0},
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _project_mutation_lock_path(
+    project_id: str, *, data_root: Path | None = None
+) -> Path:
+    """S08 bullet 1: `<data_root>/dashboard/project_locks/<sha256(project_id)>.lock`
+    -- hashed like `_windows_mutex_name` below so an arbitrary project_id is
+    always a filesystem-safe name."""
+    if data_root is None:
+        from rush.setup.provision import default_data_root
+
+        data_root = default_data_root()
+    locks_dir = data_root / "dashboard" / "project_locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(project_id.encode("utf-8")).hexdigest()
+    return locks_dir / f"{digest}.lock"
+
+
+_cross_process_lock_depth = threading.local()
+
+
+@contextmanager
+def cross_process_project_lock(
+    project_id: str, *, data_root: Path | None = None
+) -> Iterator[None]:
+    """S08 bullet 1: blocking cross-process mutual exclusion for one
+    project's check-then-act mutation window (`_handle_action`'s
+    `_check_expected_identity` through its gated effect, `configure`'s
+    apply path in `rush.tools.project`). A second dashboard server process
+    racing the same project blocks here instead of both passing the same
+    now-stale `expected` comparison -- POSIX `flock()` associates the lock
+    with the open file description, not the process, so two threads in
+    this same process opening independent file descriptors to the same
+    path also correctly contend with each other, not just two separate
+    processes.
+
+    Reentrant *within one thread* (a thread-local depth counter, checked
+    before ever calling the OS primitive): `_handle_action` already holds
+    this lock for the whole dispatch window before `configure`'s dispatch
+    reaches `rush.tools.project`'s own acquisition of this same lock --
+    without this, that inner acquisition would self-deadlock (flock's
+    per-open-file-description exclusivity does not exempt the thread that
+    already holds a *different* file descriptor to the same path). A
+    second, genuinely different thread or process still blocks normally.
+
+    Blocking (no `LOCK_NB`), unlike `claim_dead_owner`'s non-blocking
+    best-effort claim above: this primitive is a real mutex a caller must
+    wait for, never one it silently skips."""
+    held = getattr(_cross_process_lock_depth, "held", None)
+    if held is None:
+        held = {}
+        _cross_process_lock_depth.held = held
+    if held.get(project_id, 0) > 0:
+        held[project_id] += 1
+        try:
+            yield
+        finally:
+            held[project_id] -= 1
+        return
+    held[project_id] = 1
+    try:
+        with _acquire_cross_process_project_lock(project_id, data_root=data_root):
+            yield
+    finally:
+        held[project_id] = 0
+
+
+@contextmanager
+def _acquire_cross_process_project_lock(
+    project_id: str, *, data_root: Path | None = None
+) -> Iterator[None]:
+    """The real OS-level acquisition `cross_process_project_lock` above
+    calls exactly once per outermost entry on a given thread."""
+    if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+        # runner reachable in this environment. Mirrors `OwnerLock`'s
+        # blocking-wait mutex pattern above, just with an infinite timeout
+        # instead of a park/release thread (no lifetime-of-process hold).
+        import ctypes
+
+        name = _windows_mutex_name(f"project-mutation:{project_id}")
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            raise OSError(f"CreateMutexW failed for {name!r}")
+        _INFINITE = 0xFFFFFFFF
+        kernel32.WaitForSingleObject(handle, _INFINITE)
+        try:
+            yield
+        finally:
+            kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
+        return
+    path = _project_mutation_lock_path(project_id, data_root=data_root)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _windows_mutex_name(owner_instance_id: str) -> str:
+    """S03: deterministic per-owner Windows named-mutex identity. Hashed
+    rather than embedding the raw id directly, so an arbitrary
+    `owner_instance_id` (e.g. `tui:<uuid>`) always produces a short,
+    kernel-object-namespace-safe name. Pure string derivation -- the one
+    piece of the Windows lifetime-lock path testable without a Windows
+    runner."""
+    digest = hashlib.sha256(owner_instance_id.encode("utf-8")).hexdigest()
+    return f"Local\\RushOwner-{digest}"
 
 
 @dataclass
@@ -76,8 +209,15 @@ class InMemoryStateStore:
 # boundary itself.
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProjectRecord:
+    """M01: immutable publication -- every field is set once at construction;
+    a state change (`bump_sequence`/`refresh_memories`/`publish_scan_result`)
+    replaces this whole object under `ProjectRegistry._lock` rather than
+    mutating attributes or the `snapshot` dict in place, so a reader holding
+    an already-returned record (or its `snapshot`) never observes a later
+    mutation underneath it."""
+
     project_id: str
     source_identity: str
     snapshot: dict[str, Any]
@@ -96,20 +236,51 @@ class ProjectRecord:
 class ProjectRegistry:
     """Per-server-instance registry of loaded project snapshots."""
 
-    def __init__(self, projects: dict[str, dict[str, Any]]) -> None:
+    def __init__(
+        self, projects: dict[str, dict[str, Any]], *, data_root: Path | None = None
+    ) -> None:
         self._lock = threading.Lock()
+        self._mutation_locks: dict[str, threading.Lock] = {}
+        self._data_root = data_root
         self._projects: dict[str, ProjectRecord] = {
             project_id: ProjectRecord(
                 project_id=project_id,
                 source_identity=body.get("source_identity", project_id),
-                snapshot=body,
+                snapshot=copy.deepcopy(body),
             )
             for project_id, body in projects.items()
         }
 
+    @staticmethod
+    def _detached(record: ProjectRecord) -> ProjectRecord:
+        """M01: a caller-owned copy -- mutating the returned record's
+        `snapshot` (or replacing an attribute via `dataclasses.replace`) never
+        reaches back into this registry's own stored object, and a later
+        internal update never mutates bytes this copy already handed out."""
+        return dataclasses.replace(record, snapshot=copy.deepcopy(record.snapshot))
+
     def get(self, project_id: str) -> ProjectRecord | None:
         with self._lock:
-            return self._projects.get(project_id)
+            record = self._projects.get(project_id)
+            return None if record is None else self._detached(record)
+
+    @contextmanager
+    def mutation_lock(self, project_id: str) -> Iterator[None]:
+        """S08 bullet 1: exclusion for one project's check-then-act window
+        between an `expected` comparison and the effect it gates -- never
+        nested with any other per-project/per-run lock. Holds this
+        process's in-memory `threading.Lock` (fast-path ordering among this
+        server's own threads) around `cross_process_project_lock` (a real
+        cross-process `flock()`, so a second dashboard server process
+        racing the same project also blocks here rather than both passing
+        a now-stale `expected` comparison)."""
+        with self._lock:
+            lock = self._mutation_locks.get(project_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._mutation_locks[project_id] = lock
+        with lock, cross_process_project_lock(project_id, data_root=self._data_root):
+            yield
 
     def register(self, project_id: str, snapshot: dict[str, Any]) -> ProjectRecord:
         """Insert a newly added/created project's snapshot (P66-02: real
@@ -119,14 +290,14 @@ class ProjectRegistry:
         with self._lock:
             existing = self._projects.get(project_id)
             if existing is not None:
-                return existing
+                return self._detached(existing)
             record = ProjectRecord(
                 project_id=project_id,
                 source_identity=snapshot.get("source_identity", project_id),
-                snapshot=snapshot,
+                snapshot=copy.deepcopy(snapshot),
             )
             self._projects[project_id] = record
-            return record
+            return self._detached(record)
 
     def list_page(
         self, *, cursor: str | None, limit: int
@@ -136,7 +307,7 @@ class ProjectRegistry:
         behind session auth and is never the durable multi-session registry
         `list_projects_page` (Phase 65) signs with an HMAC key."""
         with self._lock:
-            items = list(self._projects.values())
+            items = [self._detached(record) for record in self._projects.values()]
         offset = 0
         if cursor:
             try:
@@ -167,8 +338,11 @@ class ProjectRegistry:
         with self._lock:
             record = self._projects.get(project_id)
             if record is not None:
-                record.sequence += 1
-                record.snapshot["sequence"] = record.sequence
+                new_sequence = record.sequence + 1
+                new_snapshot = {**record.snapshot, "sequence": new_sequence}
+                self._projects[project_id] = dataclasses.replace(
+                    record, sequence=new_sequence, snapshot=new_snapshot
+                )
 
     def refresh_memories(
         self, project_id: str, memories: list[dict[str, Any]], generation: int
@@ -186,10 +360,18 @@ class ProjectRegistry:
             record = self._projects.get(project_id)
             if record is None or generation <= record.memory_generation:
                 return False
-            record.snapshot["memories"] = memories
-            record.memory_generation = generation
-            record.sequence += 1
-            record.snapshot["sequence"] = record.sequence
+            new_sequence = record.sequence + 1
+            new_snapshot = {
+                **record.snapshot,
+                "memories": memories,
+                "sequence": new_sequence,
+            }
+            self._projects[project_id] = dataclasses.replace(
+                record,
+                snapshot=new_snapshot,
+                memory_generation=generation,
+                sequence=new_sequence,
+            )
             return True
 
     def publish_scan_result(
@@ -231,13 +413,34 @@ class ProjectRegistry:
                 return False
             if generation is not None and generation <= record.scan_generation:
                 return False
-            record.snapshot = snapshot
-            record.source_identity = source_identity
-            if generation is not None:
-                record.scan_generation = generation
-            record.sequence += 1
-            record.snapshot["sequence"] = record.sequence
-            record.snapshot["source_identity"] = record.source_identity
+            # M01 bullet 2 / bullet 4 regression: `snapshot` (built by the
+            # caller before this lock was ever acquired, e.g.
+            # `_publish_scan_snapshot`) must never carry the scan's own stale
+            # pre-lock read of `memories`/`agents` into the published record --
+            # a concurrent `refresh_memories` that committed newer data while
+            # this scan was still adapting its result would otherwise be lost
+            # the instant this whole-dict replacement lands. Only this
+            # lock-current record's own memories/agents (whatever the most
+            # recent `refresh_memories` under this same lock actually
+            # committed) are authoritative; scan-owned fields come from the
+            # caller's `snapshot`.
+            merged = {
+                **copy.deepcopy(snapshot),
+                "memories": list(record.snapshot.get("memories") or []),
+                "agents": list(record.snapshot.get("agents") or []),
+            }
+            new_sequence = record.sequence + 1
+            merged["sequence"] = new_sequence
+            merged["source_identity"] = source_identity
+            self._projects[project_id] = dataclasses.replace(
+                record,
+                snapshot=merged,
+                source_identity=source_identity,
+                sequence=new_sequence,
+                scan_generation=(
+                    generation if generation is not None else record.scan_generation
+                ),
+            )
             return True
 
 
@@ -257,6 +460,10 @@ class AdmissionResult:
     operation_id: str = ""
     execution_identity: str = ""
     owner_instance_id: str = ""
+    # S09: the admitted executor's own preallocated attempt id -- for an
+    # attach/conflict this is the *active* row's attempt, never the losing
+    # request's own minted (and possibly never-executed) attempt.
+    attempt_id: str = ""
 
 
 @dataclass
@@ -387,11 +594,99 @@ class MutationLedger:
                     status TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     created_at REAL NOT NULL,
+                    run_id TEXT NOT NULL DEFAULT '',
+                    attempt_id TEXT NOT NULL DEFAULT '',
+                    attempt_sequence INTEGER NOT NULL DEFAULT 0,
+                    event_kind TEXT NOT NULL DEFAULT 'transition',
+                    candidate_id TEXT NOT NULL DEFAULT '',
+                    outcome TEXT NOT NULL DEFAULT '',
+                    stream TEXT NOT NULL DEFAULT 'operation',
+                    transition_ordinal INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (project_id, sequence)
+                );
+                CREATE TABLE IF NOT EXISTS event_cursor_floor (
+                    project_id TEXT PRIMARY KEY,
+                    floor INTEGER NOT NULL DEFAULT 0
                 );
                 """
             )
             conn.commit()
+            self._migrate_reservation_and_admission_columns(conn)
+
+    def _migrate_reservation_and_admission_columns(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """S04/S09: additive migration for two brand-new-since-P69-06
+        columns on each table, added under one `BEGIN IMMEDIATE` so two
+        server processes starting against the same pre-existing database
+        file at once serialize on this transaction rather than both racing
+        the same `ALTER TABLE` (SQLite's own busy-timeout, already set on
+        this connection, is what makes the loser simply wait its turn
+        instead of erroring)."""
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ledger_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(mutation_ledger)")
+            }
+            if "validated_arguments" not in ledger_columns:
+                conn.execute(
+                    "ALTER TABLE mutation_ledger ADD COLUMN "
+                    "validated_arguments TEXT NOT NULL DEFAULT '{}'"
+                )
+            if "effect_ids" not in ledger_columns:
+                conn.execute(
+                    "ALTER TABLE mutation_ledger ADD COLUMN "
+                    "effect_ids TEXT NOT NULL DEFAULT '{}'"
+                )
+            if "recovery_schema_version" not in ledger_columns:
+                conn.execute(
+                    "ALTER TABLE mutation_ledger ADD COLUMN "
+                    "recovery_schema_version INTEGER NOT NULL DEFAULT 0"
+                )
+            admission_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")
+            }
+            if "attempt_id" not in admission_columns:
+                conn.execute(
+                    "ALTER TABLE scan_admission ADD COLUMN "
+                    "attempt_id TEXT NOT NULL DEFAULT ''"
+                )
+            # M04 bullet 3: `run_id` on every durable event row, so retention
+            # can prune per `(project_id, run_id)` rather than per project
+            # globally -- a non-scan operation's events (empty `run_id`)
+            # keep their own separate allowance, never sharing a scan run's
+            # 2,000-row budget.
+            event_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(dashboard_events)")
+            }
+            if "run_id" not in event_columns:
+                conn.execute(
+                    "ALTER TABLE dashboard_events ADD COLUMN "
+                    "run_id TEXT NOT NULL DEFAULT ''"
+                )
+            # M04 bullets 1-2: durable event identity (attempt/attempt-local
+            # sequence/event-kind/candidate/outcome/stream) for real
+            # candidate-progress rows ingested from an attempt's own
+            # `events.json` (`ingest_attempt_events` below), alongside the
+            # existing status-transition rows.
+            for column, ddl in (
+                ("attempt_id", "attempt_id TEXT NOT NULL DEFAULT ''"),
+                ("attempt_sequence", "attempt_sequence INTEGER NOT NULL DEFAULT 0"),
+                ("event_kind", "event_kind TEXT NOT NULL DEFAULT 'transition'"),
+                ("candidate_id", "candidate_id TEXT NOT NULL DEFAULT ''"),
+                ("outcome", "outcome TEXT NOT NULL DEFAULT ''"),
+                ("stream", "stream TEXT NOT NULL DEFAULT 'operation'"),
+                (
+                    "transition_ordinal",
+                    "transition_ordinal INTEGER NOT NULL DEFAULT 0",
+                ),
+            ):
+                if column not in event_columns:
+                    conn.execute(f"ALTER TABLE dashboard_events ADD COLUMN {ddl}")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
     def reserve(
         self,
@@ -400,11 +695,19 @@ class MutationLedger:
         body_hash: str,
         *,
         operation_type: str = "",
+        validated_arguments: dict[str, Any] | None = None,
+        effect_ids: dict[str, Any] | None = None,
     ) -> _Reservation:
         """Preallocate an effect-id for (project_id, request_id) before any
         builder() runs (subsection e). Returns whichever of new-reservation /
         cached-replay / in-flight / conflict applies, decided by one
-        transactional insert-or-detect against the durable table."""
+        transactional insert-or-detect against the durable table.
+
+        S04: `validated_arguments`/`effect_ids` are optional -- a caller that
+        already validated/canonicalized its arguments and preallocated its
+        effect keys persists them here, in the same transaction as the
+        reservation itself, so a later crash can recover from persisted data
+        alone (`get_reservation`) rather than replaying `body_hash`."""
         operation_id = uuid.uuid4().hex
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -412,7 +715,9 @@ class MutationLedger:
                 conn.execute(
                     "INSERT INTO mutation_ledger "
                     "(project_id, request_id, operation_id, operation_type, "
-                    "body_hash, status, created_at) VALUES (?,?,?,?,?,?,?)",
+                    "body_hash, status, created_at, validated_arguments, "
+                    "effect_ids, recovery_schema_version) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,1)",
                     (
                         project_id,
                         request_id,
@@ -421,6 +726,8 @@ class MutationLedger:
                         body_hash,
                         "pending",
                         time.time(),
+                        json.dumps(validated_arguments or {}, sort_keys=True),
+                        json.dumps(effect_ids or {}, sort_keys=True),
                     ),
                 )
                 conn.commit()
@@ -504,6 +811,8 @@ class MutationLedger:
         *,
         operation_type: str = "",
         mutating: bool = True,
+        validated_arguments: dict[str, Any] | None = None,
+        effect_ids: dict[str, Any] | None = None,
     ) -> tuple[tuple[int, bytes], bool]:
         """Return ((status_code, response_body), is_conflict) for a mutation
         request_id. `builder` receives the preallocated operation_id (empty
@@ -511,7 +820,12 @@ class MutationLedger:
         if not mutating:
             return builder(""), False
         reservation = self.reserve(
-            project_id, request_id, body_hash, operation_type=operation_type
+            project_id,
+            request_id,
+            body_hash,
+            operation_type=operation_type,
+            validated_arguments=validated_arguments,
+            effect_ids=effect_ids,
         )
         if reservation.conflict:
             return (0, b""), True
@@ -525,6 +839,51 @@ class MutationLedger:
         response = builder(reservation.operation_id)
         self.finalize(project_id, request_id, response[0], response[1])
         return response, False
+
+    def _prune_run_events(
+        self, conn: sqlite3.Connection, project_id: str, run_id: str
+    ) -> None:
+        """M04 bullet 3: prune independently by `(project_id, run_id)` to
+        `_EVENT_RETENTION_PER_PROJECT` rows -- a run with heavy event volume
+        never evicts another run's (or a non-scan operation's, `run_id=''`)
+        own separate allowance. Also updates this project's persisted
+        `event_cursor_floor` to the greatest sequence ever deleted by any
+        run, so `list_events` can reject a stale cursor even when a
+        *different* run's surviving rows happen to have a lower sequence
+        (never comparing a project cursor against one arbitrary run's own
+        floor)."""
+        run_sequences = [
+            int(r["sequence"])
+            for r in conn.execute(
+                "SELECT sequence FROM dashboard_events "
+                "WHERE project_id = ? AND run_id = ? ORDER BY sequence DESC "
+                "LIMIT 1 OFFSET ?",
+                (project_id, run_id, _EVENT_RETENTION_PER_PROJECT - 1),
+            )
+        ]
+        if not run_sequences:
+            return
+        # `run_sequences[0]` is the oldest sequence to *keep* (rank
+        # `_EVENT_RETENTION_PER_PROJECT` from the newest) -- strictly-less-
+        # than, never `<=`, or this would delete that row too and retain
+        # only N-1.
+        deleted_max = conn.execute(
+            "SELECT MAX(sequence) FROM dashboard_events "
+            "WHERE project_id = ? AND run_id = ? AND sequence < ?",
+            (project_id, run_id, run_sequences[0]),
+        ).fetchone()[0]
+        conn.execute(
+            "DELETE FROM dashboard_events "
+            "WHERE project_id = ? AND run_id = ? AND sequence < ?",
+            (project_id, run_id, run_sequences[0]),
+        )
+        if deleted_max is not None:
+            conn.execute(
+                "INSERT INTO event_cursor_floor (project_id, floor) VALUES (?, ?) "
+                "ON CONFLICT(project_id) DO UPDATE SET "
+                "floor = MAX(floor, excluded.floor)",
+                (project_id, int(deleted_max)),
+            )
 
     def record_status_transition(
         self, operation_id: str, status: str, payload: dict[str, Any]
@@ -557,11 +916,21 @@ class MutationLedger:
                     (status, json.dumps(payload), operation_id),
                 )
             row = conn.execute(
-                "SELECT project_id FROM mutation_ledger WHERE operation_id = ?",
+                "SELECT ml.project_id AS project_id, sa.run_id AS run_id, "
+                "sa.attempt_id AS attempt_id "
+                "FROM mutation_ledger ml "
+                "LEFT JOIN scan_admission sa ON sa.operation_id = ml.operation_id "
+                "WHERE ml.operation_id = ?",
                 (operation_id,),
             ).fetchone()
             if row is not None:
                 project_id = row["project_id"]
+                # M04 bullet 1: scan lifecycle transitions carry the
+                # admitted run/attempt explicitly on the immutable event row
+                # itself, so correlation survives the admission slot's own
+                # later release (`scan_admission` is deleted on completion).
+                event_run_id = row["run_id"] or ""
+                event_attempt_id = row["attempt_id"] or ""
                 seq_row = conn.execute(
                     "INSERT INTO event_sequences (project_id, value) VALUES (?, 1) "
                     "ON CONFLICT(project_id) DO UPDATE SET value = value + 1 "
@@ -569,10 +938,21 @@ class MutationLedger:
                     (project_id,),
                 ).fetchone()
                 sequence = int(seq_row["value"])
+                # `(project_id, operation_id, transition_ordinal)` is this
+                # row's own dedupe key -- distinct from candidate events'
+                # `(project_id, run_id, attempt_id, attempt_sequence)`.
+                ordinal_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM dashboard_events "
+                    "WHERE project_id = ? AND operation_id = ?",
+                    (project_id, operation_id),
+                ).fetchone()
+                transition_ordinal = int(ordinal_row["c"]) + 1
                 conn.execute(
                     "INSERT INTO dashboard_events "
-                    "(project_id, sequence, operation_id, status, payload, created_at) "
-                    "VALUES (?,?,?,?,?,?)",
+                    "(project_id, sequence, operation_id, status, payload, "
+                    "created_at, run_id, attempt_id, event_kind, stream, "
+                    "transition_ordinal) "
+                    "VALUES (?,?,?,?,?,?,?,?,'transition',?,?)",
                     (
                         project_id,
                         sequence,
@@ -580,37 +960,105 @@ class MutationLedger:
                         status,
                         json.dumps(payload),
                         time.time(),
+                        event_run_id,
+                        event_attempt_id,
+                        "scan" if event_run_id else "operation",
+                        transition_ordinal,
                     ),
                 )
-                threshold = sequence - _EVENT_RETENTION_PER_PROJECT
-                if threshold > 0:
-                    conn.execute(
-                        "DELETE FROM dashboard_events "
-                        "WHERE project_id = ? AND sequence <= ?",
-                        (project_id, threshold),
-                    )
+                self._prune_run_events(conn, project_id, event_run_id)
             conn.commit()
+
+    def ingest_attempt_events(
+        self,
+        project_id: str,
+        run_id: str,
+        attempt_id: str,
+        events: list[dict[str, Any]],
+    ) -> int:
+        """M04 bullets 1-2: ingest real per-candidate progress events already
+        durable in the attempt's own `events.json`
+        (`workflows/project_run.py`'s `_append_event`/`load_scan_events` --
+        the existing event sink) into this project's `/events` stream.
+        Dedupes on `(project_id, run_id, attempt_id, attempt_sequence)` so
+        re-ingesting the same attempt after a restart, or a scan-completion
+        catch-up racing a mid-scan poll, never double-counts. Returns the
+        number of genuinely new rows ingested."""
+        ingested = 0
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for event in events:
+                    attempt_sequence = int(event.get("sequence", 0))
+                    existing = conn.execute(
+                        "SELECT 1 FROM dashboard_events WHERE project_id = ? "
+                        "AND run_id = ? AND attempt_id = ? AND attempt_sequence = ? "
+                        "AND event_kind = 'candidate'",
+                        (project_id, run_id, attempt_id, attempt_sequence),
+                    ).fetchone()
+                    if existing is not None:
+                        continue
+                    seq_row = conn.execute(
+                        "INSERT INTO event_sequences (project_id, value) VALUES (?, 1) "
+                        "ON CONFLICT(project_id) DO UPDATE SET value = value + 1 "
+                        "RETURNING value",
+                        (project_id,),
+                    ).fetchone()
+                    sequence = int(seq_row["value"])
+                    conn.execute(
+                        "INSERT INTO dashboard_events "
+                        "(project_id, sequence, operation_id, status, payload, "
+                        "created_at, run_id, attempt_id, attempt_sequence, "
+                        "event_kind, candidate_id, outcome, stream) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,'candidate',?,?,'scan')",
+                        (
+                            project_id,
+                            sequence,
+                            "",
+                            str(event.get("event", "")),
+                            json.dumps(event),
+                            time.time(),
+                            run_id,
+                            attempt_id,
+                            attempt_sequence,
+                            str(event.get("candidate_id") or ""),
+                            str(event.get("outcome") or ""),
+                        ),
+                    )
+                    ingested += 1
+                self._prune_run_events(conn, project_id, run_id)
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        return ingested
 
     def list_events(
         self, project_id: str, *, after: int, limit: int = _EVENT_PAGE_LIMIT
     ) -> tuple[list[dict[str, Any]], int, bool] | None:
         """P69-03p: durable read path over `dashboard_events` (written by
-        `record_status_transition` above). Returns `None` when `after` falls
-        outside this project's retained window -- the caller turns that into
-        `409 event_cursor_expired` with a snapshot-reload instruction, never
-        silently resetting to the oldest available event. Otherwise returns
-        `(events, next_after, has_more)`, capped at `_EVENT_PAGE_LIMIT` per
-        page regardless of the requested `limit`."""
+        `record_status_transition`/`ingest_attempt_events` above). Returns
+        `None` when `after` falls below this project's persisted
+        `event_cursor_floor` (M04 bullet 3: the greatest sequence ever
+        deleted by any run's own retention -- never derived from the
+        current MIN surviving sequence, which another run's independent
+        retention window could leave inconsistent) -- the caller turns that
+        into `409 event_cursor_expired` with a snapshot-reload instruction,
+        never silently resetting to the oldest available event. Otherwise
+        returns `(events, next_after, has_more)`, capped at
+        `_EVENT_PAGE_LIMIT` per page regardless of the requested `limit`."""
         limit = max(1, min(limit, _EVENT_PAGE_LIMIT))
         with self._connect() as conn:
-            oldest = conn.execute(
-                "SELECT MIN(sequence) FROM dashboard_events WHERE project_id = ?",
+            floor_row = conn.execute(
+                "SELECT floor FROM event_cursor_floor WHERE project_id = ?",
                 (project_id,),
-            ).fetchone()[0]
-            if oldest is not None and after < int(oldest) - 1:
+            ).fetchone()
+            floor = int(floor_row[0]) if floor_row is not None else 0
+            if after < floor:
                 return None
             rows = conn.execute(
-                "SELECT sequence, operation_id, status, payload, created_at "
+                "SELECT sequence, operation_id, status, payload, created_at, "
+                "run_id, attempt_id, event_kind, candidate_id, outcome "
                 "FROM dashboard_events WHERE project_id = ? AND sequence > ? "
                 "ORDER BY sequence LIMIT ?",
                 (project_id, after, limit + 1),
@@ -624,6 +1072,11 @@ class MutationLedger:
                 "status": row["status"],
                 "payload": json.loads(row["payload"]),
                 "created_at": row["created_at"],
+                "run_id": row["run_id"],
+                "attempt_id": row["attempt_id"],
+                "event_kind": row["event_kind"],
+                "candidate_id": row["candidate_id"],
+                "outcome": row["outcome"],
             }
             for row in rows
         ]
@@ -649,6 +1102,53 @@ class MutationLedger:
             "terminal_at": row["terminal_at"],
             "payload": payload,
         }
+
+    def get_reservation(self, operation_id: str) -> dict[str, Any] | None:
+        """S04 recovery primitive: the persisted reservation data for
+        `operation_id`, or `None` if unknown. `recovery_schema_version == 0`
+        means a legacy pre-S04 row with no reconstructable
+        `validated_arguments`/`effect_ids` -- callers must treat it as
+        recovery-required, never replay `body_hash` to reinvent them."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT operation_id, body_hash, validated_arguments, effect_ids, "
+                "recovery_schema_version FROM mutation_ledger WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "operation_id": row["operation_id"],
+            "body_hash": row["body_hash"],
+            "validated_arguments": json.loads(row["validated_arguments"] or "{}"),
+            "effect_ids": json.loads(row["effect_ids"] or "{}"),
+            "recovery_schema_version": int(row["recovery_schema_version"]),
+            "recovery_required": int(row["recovery_schema_version"]) < 1,
+        }
+
+    def list_reservations_for_project(self, project_id: str) -> list[dict[str, Any]]:
+        """T052/S05: every reservation ever made for `project_id` -- the
+        `handoff_send` receipt-leak recovery scan's own enumeration
+        primitive. `handoff_send` never calls `admit()` (no `scan_admission`
+        row, and this table has no `owner_instance_id` column at all), so
+        there is no owner- or admission-scoped way to find its reservations;
+        callers own scoping this safely themselves (a held
+        `cross_process_project_lock` for this exact project before touching
+        anything returned here)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT operation_id, effect_ids, recovery_schema_version "
+                "FROM mutation_ledger WHERE project_id = ?",
+                (project_id,),
+            ).fetchall()
+        return [
+            {
+                "operation_id": row["operation_id"],
+                "effect_ids": json.loads(row["effect_ids"] or "{}"),
+                "recovery_schema_version": int(row["recovery_schema_version"]),
+            }
+            for row in rows
+        ]
 
     # --- P69-03m: durable per-project scan-generation counter + pointer -----
     #
@@ -751,6 +1251,7 @@ class MutationLedger:
         run_id: str = "",
         plan_id: str = "",
         owner_instance_id: str = "",
+        attempt_id: str = "",
     ) -> AdmissionResult:
         """Subsection f: one durable admission decision per project, arbitrated
         by `scan_admission`'s `UNIQUE(project_id)` constraint rather than any
@@ -776,11 +1277,12 @@ class MutationLedger:
             run_id,
             plan_id,
             now,
+            attempt_id,
         )
         insert = (
             "INSERT INTO scan_admission (project_id, execution_identity, slot_id, "
-            "operation_id, owner_instance_id, run_id, plan_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?)"
+            "operation_id, owner_instance_id, run_id, plan_id, created_at, "
+            "attempt_id) VALUES (?,?,?,?,?,?,?,?,?)"
         )
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -790,8 +1292,8 @@ class MutationLedger:
                 except sqlite3.IntegrityError:
                     row = conn.execute(
                         "SELECT execution_identity, slot_id, operation_id, "
-                        "owner_instance_id, run_id, plan_id FROM scan_admission "
-                        "WHERE project_id = ?",
+                        "owner_instance_id, run_id, plan_id, attempt_id "
+                        "FROM scan_admission WHERE project_id = ?",
                         (project_id,),
                     ).fetchone()
                     if row is None:
@@ -811,6 +1313,7 @@ class MutationLedger:
                             operation_id=row["operation_id"],
                             execution_identity=row["execution_identity"],
                             owner_instance_id=row["owner_instance_id"],
+                            attempt_id=row["attempt_id"],
                         )
                     else:
                         if (
@@ -835,6 +1338,10 @@ class MutationLedger:
                             operation_id=row["operation_id"],
                             execution_identity=row["execution_identity"],
                             owner_instance_id=row["owner_instance_id"],
+                            # S09: the admitted executor's own preallocated
+                            # attempt, read from the active row -- never the
+                            # losing (attaching) request's own minted value.
+                            attempt_id=row["attempt_id"],
                         )
                 conn.commit()
             except BaseException:
@@ -850,6 +1357,7 @@ class MutationLedger:
             operation_id=operation_id,
             execution_identity=execution_identity,
             owner_instance_id=owner_instance_id,
+            attempt_id=attempt_id,
         )
 
     def terminalize_and_release(
@@ -933,7 +1441,7 @@ class MutationLedger:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT project_id, execution_identity, slot_id, operation_id, "
-                "owner_instance_id, run_id, plan_id FROM scan_admission "
+                "owner_instance_id, run_id, plan_id, attempt_id FROM scan_admission "
                 "WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
@@ -943,7 +1451,7 @@ class MutationLedger:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT project_id, execution_identity, slot_id, operation_id, "
-                "owner_instance_id, run_id, plan_id FROM scan_admission"
+                "owner_instance_id, run_id, plan_id, attempt_id FROM scan_admission"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1191,14 +1699,24 @@ class OwnerLock:
     alive) or succeeds (this owner is provably gone). See
     `probe_owner_alive`/`claim_dead_owner`.
 
-    POSIX only (`fcntl.flock`) -- the real Windows-equivalent named-mutex
-    primitive named in the plan is not implemented here.
+    POSIX (`fcntl.flock`) or, on Windows (S03), a session-local named mutex
+    (`Local\\RushOwner-<sha256(owner_instance_id)>`) held by a dedicated
+    coordinator thread for the same never-explicitly-released lifetime --
+    WinAPI mutex release is thread-affine, so the thread that waits on it
+    must be the one that (eventually) releases it.
     """
 
     def __init__(
         self, owner_instance_id: str, *, data_root: Path | None = None
     ) -> None:
         self.owner_instance_id = owner_instance_id
+        if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+            # runner reachable in this environment. See S03's own named
+            # tests: implemented per spec, unverified on real Windows.
+            self.path = None
+            self._fd = None
+            self._acquire_windows_mutex()
+            return
         self.path = _owner_lock_path(owner_instance_id, data_root=data_root)
         self._fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
@@ -1210,6 +1728,54 @@ class OwnerLock:
             ) from None
         # Intentionally never fcntl.LOCK_UN'd / os.close()'d here -- see
         # class docstring: the kernel is the only thing that releases it.
+
+    def _acquire_windows_mutex(self) -> None:  # pragma: no cover -- Windows-
+        # only; no runner reachable in this environment.
+        """`CreateMutexW` + zero-timeout `WaitForSingleObject` on a
+        dedicated daemon thread that parks (never released by this class)
+        until process exit, exactly mirroring the POSIX flock contract
+        above. `WAIT_TIMEOUT` means another owner holds the mutex;
+        `WAIT_OBJECT_0`/`WAIT_ABANDONED` gives this thread ownership."""
+        import ctypes
+
+        name = _windows_mutex_name(self.owner_instance_id)
+        acquired = threading.Event()
+        park = threading.Event()
+        failure: list[OwnerLockError] = []
+
+        def _hold() -> None:
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            kernel32.CreateMutexW.restype = ctypes.c_void_p
+            handle = kernel32.CreateMutexW(None, False, name)
+            if not handle:
+                failure.append(OwnerLockError(f"CreateMutexW failed for {name!r}"))
+                acquired.set()
+                return
+            _WAIT_TIMEOUT = 0x00000102
+            wait_result = kernel32.WaitForSingleObject(handle, 0)
+            if wait_result == _WAIT_TIMEOUT:
+                kernel32.CloseHandle(handle)
+                failure.append(
+                    OwnerLockError(
+                        f"owner-liveness lock already held for "
+                        f"{self.owner_instance_id!r}"
+                    )
+                )
+                acquired.set()
+                return
+            self._windows_mutex_handle = handle
+            acquired.set()
+            park.wait()
+            kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
+
+        thread = threading.Thread(target=_hold, daemon=True, name="rush-owner-mutex")
+        thread.start()
+        acquired.wait()
+        if failure:
+            raise failure[0]
+        self._windows_thread = thread
+        self._windows_park = park
 
 
 @contextmanager
@@ -1230,6 +1796,29 @@ def claim_dead_owner(
     so an OS reusing a dead owner's old PID for an unrelated live process
     cannot cause a false "alive" result (no PID-reuse failure mode).
     """
+    if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+        # runner reachable in this environment. See S03's own named tests.
+        import ctypes
+
+        name = _windows_mutex_name(owner_instance_id)
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            yield False
+            return
+        _WAIT_TIMEOUT = 0x00000102
+        wait_result = kernel32.WaitForSingleObject(handle, 0)
+        if wait_result == _WAIT_TIMEOUT:
+            kernel32.CloseHandle(handle)
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
+        return
     path = _owner_lock_path(owner_instance_id, data_root=data_root)
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
@@ -1360,31 +1949,52 @@ class PendingOutcomeQueue:
 
 
 def reconcile_admissions(
-    ledger: MutationLedger, *, data_root: Path | None = None
+    ledger: MutationLedger,
+    *,
+    data_root: Path | None = None,
+    recovering_owner_instance_id: str = "",
 ) -> int:
-    """P69-02.2h: the only path that clears an admission row this process does
-    not own, and the retry mechanism for a same-process terminalization that
-    failed on its own. Returns how many rows it reconciled.
+    """P69-02.2h/S02: the only path that clears an admission row this process
+    does not own, and the retry mechanism for a same-process terminalization
+    that failed on its own. Returns how many rows it reconciled.
+
+    `recovering_owner_instance_id` is *this* recovering server's own owner
+    identity -- required to tell "a durable pending outcome I already
+    attempted and am now retrying as bookkeeping" from "a durable pending
+    outcome belonging to some other owner", which alone is never permission
+    to release that other owner's admission while its children may still be
+    running.
 
     Two distinct checks per row, in order:
 
-    1. A durably-registered pending outcome (whether or not the owner is
-       alive) is retried using that recorded outcome -- bookkeeping only, the
-       operation's work is never re-executed.
-    2. An owner established dead by the kernel-held owner-liveness lock has
-       its row reconciled from the row's own recorded identity and written as
-       a real terminal outcome, which frees the admission row as a side
-       effect of the same transaction.
+    1. A durably-registered pending outcome belonging to *this* live,
+       recovering owner is retried using that recorded outcome -- bookkeeping
+       only, the operation's work is never re-executed, and its children are
+       never reaped (this owner is alive; S15/S01 own its process fencing).
+    2. An owner established dead by the kernel-held owner-liveness lock is
+       whole-owner reaped (S02) while the dead-owner claim is held. Only once
+       that reap reports every recorded process group's termination
+       confirmed (`reconcilable=True`) is the pending outcome/receipt reread
+       and the row terminalized/released as a real terminal outcome. An
+       unconfirmed reap leaves the admission and process records intact --
+       recorded `recovery_required`/`termination_unconfirmed` for the next
+       sweep to retry -- so a new executor can never enter while this dead
+       owner's subprocess may still be mutating files.
 
-    A live owner's row is never touched -- a live request that conflicts with
-    a dead owner's row still receives the ordinary structured conflict and
-    never attempts a takeover itself.
+    A live foreign owner's row is never touched -- a live request that
+    conflicts with a dead owner's row still receives the ordinary structured
+    conflict and never attempts a takeover itself.
     """
     reconciled = 0
     for row in ledger.list_admissions():
         slot_id = row["slot_id"]
+        owner_instance_id = row["owner_instance_id"]
         pending = ledger.pending_outcome(slot_id)
-        if pending is not None:
+        if (
+            pending is not None
+            and owner_instance_id
+            and owner_instance_id == recovering_owner_instance_id
+        ):
             try:
                 ledger.terminalize_and_release(
                     slot_id,
@@ -1397,24 +2007,184 @@ def reconcile_admissions(
                 continue
             reconciled += 1
             continue
-        owner_instance_id = row["owner_instance_id"]
         if not owner_instance_id:
             continue
         with claim_dead_owner(owner_instance_id, data_root=data_root) as claimed:
             if not claimed:
                 continue
+            from rush.runtime.subprocesses import reap_owner_processes
+
+            reap_result = reap_owner_processes(owner_instance_id, data_root=data_root)
+            if not reap_result["reconcilable"]:
+                # S02 item 3: unconfirmed termination -- preserve admission
+                # and process records intact for the next recovery attempt;
+                # never release while a child may still be mutating files.
+                with suppress(Exception):
+                    # row intact and let the next sweep retry it.
+                    ledger.record_status_transition(
+                        row["operation_id"],
+                        "recovery_required",
+                        {
+                            "status": "recovery_required",
+                            "code": "termination_unconfirmed",
+                            "execution_identity": row["execution_identity"],
+                            "run_id": row["run_id"],
+                            "plan_id": row["plan_id"],
+                        },
+                    )
+                continue
+            # T038/S05: alongside this row's own scan-admission release, this
+            # same confirmed-dead owner may also have crashed mid
+            # `handoff_send` (prepare succeeded, dispatch never ran) --
+            # recover any handoff it left `prepared` for this row's project.
+            # Reuses S04's own reserved effect receipt ids from the ledger
+            # (`get_reservation`) rather than minting new ones, so recovery
+            # replays the exact receipts `build_handoff` already committed.
+            from rush.memory.store import TypedArtifactStore
+            from rush.workflows.project_run import (
+                handoff_descriptor_exists_for_operation,
+                list_prepared_handoffs,
+                recover_prepared_handoff,
+            )
+            from rush.workflows.projects import resolve_project
+
             try:
-                ledger.terminalize_and_release(
-                    slot_id,
-                    operation_id=row["operation_id"],
-                    payload={
-                        "status": "interrupted",
-                        "code": "owner_died",
-                        "execution_identity": row["execution_identity"],
-                        "run_id": row["run_id"],
-                        "plan_id": row["plan_id"],
-                    },
+                project_root = Path(
+                    resolve_project(row["project_id"], data_root=data_root)["root"]
                 )
+            except Exception:  # noqa: BLE001 -- an unresolvable project
+                # never blocks this row's own scan-admission reconciliation.
+                project_root = None
+            if project_root is not None:
+                for handoff in list_prepared_handoffs(project_root, owner_instance_id):
+                    reservation = ledger.get_reservation(handoff.operation_id)
+                    if reservation is None or reservation["recovery_required"]:
+                        continue
+                    effect_ids = reservation["effect_ids"]
+                    artifact_receipt_id = effect_ids.get("artifact_create")
+                    session_receipt_id = effect_ids.get("session_create")
+                    if not artifact_receipt_id or not session_receipt_id:
+                        continue
+                    recovered = None
+                    with suppress(Exception):
+                        recovered = recover_prepared_handoff(
+                            row["project_id"],
+                            handoff.handoff_id,
+                            claimed_operation_id=handoff.operation_id,
+                            artifact_create_receipt_id=artifact_receipt_id,
+                            session_create_receipt_id=session_receipt_id,
+                            delivery_receipt_id=effect_ids.get(
+                                "delivery_transition", ""
+                            ),
+                            data_root=data_root,
+                        )
+                    if recovered is None:
+                        # T045/S05 bullet 4: recovery itself already gave
+                        # up (revoked the session, orphaned the artifact)
+                        # or raised -- record the same recovery_required
+                        # transition the sibling scan-admission row above
+                        # uses, so this handoff's own operation surfaces
+                        # for the next sweep/consumer instead of vanishing
+                        # silently inside `suppress(Exception)`.
+                        with suppress(Exception):
+                            ledger.record_status_transition(
+                                handoff.operation_id,
+                                "recovery_required",
+                                {
+                                    "status": "recovery_required",
+                                    "code": "handoff_recovery_failed",
+                                    "handoff_id": handoff.handoff_id,
+                                    "project_id": row["project_id"],
+                                },
+                            )
+
+                # T052/S05: `build_handoff` commits its `artifact_create`/
+                # `session_create` receipts *before* ever reaching
+                # `_persist_handoff` (its own final statement) -- a crash in
+                # that window leaves no descriptor file at all for the
+                # `list_prepared_handoffs` loop above to glob, so its
+                # committed receipts never surface there. `handoff_send`
+                # never calls `admit()` (no `scan_admission` row, and
+                # `mutation_ledger` has no `owner_instance_id` column at
+                # all for it) -- the only way to find this leak is a
+                # project-wide receipt scan, made safe by acquiring this
+                # exact project's own real cross-process dispatch lock
+                # first: `_dispatch_handoff_send` holds it for the *entire*
+                # synchronous `build_handoff` call, so once acquired here no
+                # live process can possibly be mid-effect for this project
+                # -- any receipts-committed-no-descriptor reservation found
+                # while holding it is unambiguously abandoned, never a live
+                # owner's in-flight write.
+                with cross_process_project_lock(row["project_id"], data_root=data_root):
+                    for reservation in ledger.list_reservations_for_project(
+                        row["project_id"]
+                    ):
+                        if reservation["recovery_schema_version"] < 1:
+                            continue
+                        effect_ids = reservation["effect_ids"]
+                        artifact_receipt_id = effect_ids.get("artifact_create")
+                        session_receipt_id = effect_ids.get("session_create")
+                        # `memory_propose` also reserves a bare
+                        # `artifact_create` key with no `session_create`
+                        # sibling -- requiring both is what scopes this to a
+                        # `handoff_send` reservation specifically.
+                        if not artifact_receipt_id or not session_receipt_id:
+                            continue
+                        op_id = reservation["operation_id"]
+                        if handoff_descriptor_exists_for_operation(project_root, op_id):
+                            # Either the loop above already recovered it (a
+                            # `prepared` descriptor for a dead owner), or it
+                            # genuinely advanced past `prepared` -- never a
+                            # leak either way.
+                            continue
+                        leak_store = TypedArtifactStore(project_root)
+                        artifact_receipt = leak_store.get_receipt(artifact_receipt_id)
+                        session_receipt = leak_store.get_receipt(session_receipt_id)
+                        if artifact_receipt is None and session_receipt is None:
+                            continue
+                        with suppress(Exception):
+                            if artifact_receipt is not None:
+                                leak_store.mark_artifact_orphaned(
+                                    artifact_receipt["artifact_id"]
+                                )
+                            if session_receipt is not None:
+                                leak_store.revoke_handoff_session(
+                                    session_receipt["artifact_id"]
+                                )
+                            ledger.record_status_transition(
+                                op_id,
+                                "recovery_required",
+                                {
+                                    "status": "recovery_required",
+                                    "code": "handoff_leaked_before_descriptor",
+                                    "project_id": row["project_id"],
+                                },
+                            )
+
+            # Reap confirmed every recorded process group terminated -- safe
+            # to reread pending outcome/effect receipts and release now,
+            # still under the same held dead-owner claim.
+            reread_pending = ledger.pending_outcome(slot_id)
+            try:
+                if reread_pending is not None:
+                    ledger.terminalize_and_release(
+                        slot_id,
+                        operation_id=reread_pending["operation_id"]
+                        or row["operation_id"],
+                        payload=reread_pending["payload"],
+                    )
+                else:
+                    ledger.terminalize_and_release(
+                        slot_id,
+                        operation_id=row["operation_id"],
+                        payload={
+                            "status": "interrupted",
+                            "code": "owner_died",
+                            "execution_identity": row["execution_identity"],
+                            "run_id": row["run_id"],
+                            "plan_id": row["plan_id"],
+                        },
+                    )
             except Exception:  # noqa: BLE001,S112 -- as above: leave the
                 # row intact and let the next sweep retry it.
                 continue

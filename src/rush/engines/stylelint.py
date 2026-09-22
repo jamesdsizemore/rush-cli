@@ -41,7 +41,25 @@ class StylelintEngine(Engine):
             try:
                 parsed = json.loads(proc.stdout)
                 if isinstance(parsed, list):
+                    # M20: Stylelint's own top-level `source` field is not a
+                    # generic `_PATH_KEYS` name (`engines/staging.py`
+                    # deliberately never treats every key literally named
+                    # `source` as a path -- an unrelated engine's own
+                    # `source` field could mean anything else). Adapter-
+                    # specific remap, in place, before this decoded `parsed`
+                    # object becomes both `findings_raw[].source` and this
+                    # result's own `raw` field -- one remap fixes both, and
+                    # is a no-op (returns the value unchanged) once this
+                    # engine ever runs outside a staged attempt.
+                    from .staging import active_staging, map_staged_path
+
+                    staging = active_staging()
                     for file_res in parsed:
+                        source = file_res.get("source")
+                        if staging is not None and isinstance(source, str):
+                            file_res["source"] = map_staged_path(
+                                source, staging.staged_root, staging.original_root
+                            )
                         for warning in file_res.get("warnings", []):
                             findings_raw.append(
                                 {"source": file_res.get("source"), **warning}

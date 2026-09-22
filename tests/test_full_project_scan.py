@@ -23,6 +23,8 @@ binary and no adapter are both real, honest, distinct gaps).
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -175,9 +177,13 @@ def test_full_scan_covers_seeded_missing_engine_denied_and_failure(
         for finding in review_result.result.get("findings") or []
     )
 
-    # One missing engine: semgrep has no owning adapter, ever.
+    # One missing engine: semgrep has no owning adapter, ever, and isn't on
+    # PATH in this environment -- M17 now routes it through real execution,
+    # which reports the genuine not-on-PATH reason instead of a stub.
     assert by_id["semgrep"].outcome == "unavailable"
-    assert by_id["semgrep"].result["summary"] == "skipped: ENGINE_ROUTE_MISSING"
+    assert by_id["semgrep"].result["summary"] == (
+        "skipped: semgrep not on PATH (install: see engine docs)"
+    )
 
     # One denied slow/grant-gated check: ai-eval, no permission granted.
     assert by_id["ai-eval"].outcome == "permission_blocked"
@@ -498,3 +504,226 @@ def test_scantool_handle_request_rejects_unknown_field(tmp_path: Path) -> None:
     )
     assert result["status"] == "error"
     assert result["raw"]["error"]["code"] == "INVALID_REQUEST"
+
+
+# --- T049: M15/M16/M17 §12-named regression tests ---------------------------
+
+
+def test_offline_review_dead_asset_license_matrix_all_read_staged_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M15: offline-review, dead-asset, and license-matrix -- the review's
+    other named direct readers -- must also operate on the staged copy a
+    scan attempt already captured, never the live tree, mirroring the
+    slop-tool regression for each of the other affected routes."""
+    from rush.engines.staging import stage_inventory, staging_scope
+    from rush.tools import offline_runner as offline_runner_module
+    from rush.tools.dead_asset import DeadAssetTool
+    from rush.tools.license_matrix import LicenseMatrixTool
+    from rush.tools.offline_runner import OfflineReviewTool
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "index.html").write_text('<img src="logo.png">\n', encoding="utf-8")
+    (root / "logo.png").write_bytes(b"staged-bytes")
+    (root / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["safepkg"]\n', encoding="utf-8"
+    )
+    (root / "app.py").write_text("STAGED_MARKER = 1\n", encoding="utf-8")
+
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(
+        root, staged_root, ["index.html", "logo.png", "pyproject.toml", "app.py"]
+    )
+    with staging_scope(staging):
+        # Live content diverges after staging -- every assertion below must
+        # reflect the staged bytes captured before this mutation, not this.
+        (root / "index.html").write_text(
+            "no image reference here\n", encoding="utf-8"
+        )
+        (root / "pyproject.toml").write_text(
+            '[project]\ndependencies = ["riskypkg"]\n', encoding="utf-8"
+        )
+        (root / "app.py").write_text("LIVE_MARKER = 1\n", encoding="utf-8")
+
+        staged_workspace = staging.stage_path(root)
+
+        dead_asset_result = DeadAssetTool().run(staged_workspace)
+        assert not any(
+            finding.get("path", "").endswith("logo.png")
+            for finding in dead_asset_result.get("findings") or []
+        ), "logo.png must still show as referenced via the staged index.html"
+
+        # `package_licenses` keys are audited even when undiscovered, so
+        # only the staged manifest's real dependency ("safepkg") gets an
+        # override here -- if the tool fell through to live's "riskypkg"
+        # instead, that undeclared package would hit the real (unspecified)
+        # license lookup and produce a manual-review finding.
+        license_result = LicenseMatrixTool().run(
+            staged_workspace,
+            package_licenses={"safepkg": "MIT"},
+        )
+        assert license_result.get("findings") == [], (
+            "must evaluate staged pyproject.toml's 'safepkg', never live's 'riskypkg'"
+        )
+
+        captured_cmd: list[str] = []
+
+        def _fake_run_subprocess(cmd, **_kwargs):
+            captured_cmd.extend(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(
+            offline_runner_module,
+            "discover_local_runner",
+            lambda *_a, **_k: {"path": "ollama", "type": "ollama"},
+        )
+        monkeypatch.setattr(
+            offline_runner_module, "run_subprocess", _fake_run_subprocess
+        )
+        OfflineReviewTool().run(staged_workspace, model="codellama")
+
+    assert any("STAGED_MARKER" in part for part in captured_cmd), (
+        "offline-review's prompt must be built from staged source, not live"
+    )
+    assert not any("LIVE_MARKER" in part for part in captured_cmd)
+
+
+def test_explicit_configuration_file_target_is_recorded_as_declared_consumption(
+    tmp_path: Path,
+) -> None:
+    """M16 bullet 2: an explicitly passed configuration file belongs in
+    declared consumption alongside the engine's file targets -- it is not
+    silently dropped just because it is not itself a source scan target."""
+    from rush.engines.ruff import RuffEngine
+    from rush.engines.staging import stage_inventory, staging_scope
+    from rush.runtime.subprocesses import _staged_invocation
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "b.js").write_text("const y = 1;\n", encoding="utf-8")
+    (root / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
+    staged_root = tmp_path / "staged"
+    staging = stage_inventory(root, staged_root, ["a.py", "b.js", "ruff.toml"])
+    with staging_scope(staging):
+        _staged_invocation(
+            RuffEngine(),
+            root,
+            root,
+            [str(root / "a.py"), "--config", str(root / "ruff.toml")],
+            consumed_paths=[str(root / "a.py"), str(root / "ruff.toml")],
+        )
+        consumed = staging.take_candidate_digests()
+
+    assert set(consumed) == {"a.py", "ruff.toml"}, (
+        "an explicit configuration file target must be declared consumption "
+        "alongside the file target, and b.js must still not be claimed"
+    )
+
+
+def test_unregistered_engine_stays_engine_route_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M17 bullet 3: a registered `ENGINE_SPECS` row with no matching
+    `ENGINES` runtime entry is an honest `ENGINE_ROUTE_MISSING` skip --
+    never an invented tool route."""
+    import rush.engines as engines_module
+
+    monkeypatch.setattr(engines_module, "ENGINES", {})
+    candidate = project_run.ScanCandidate(
+        "semgrep", "engine", "security", "applicable", "static_analysis_default"
+    )
+
+    outcome, result = project_run._execute_candidate(
+        candidate,
+        root=tmp_path,
+        permissions=ExecutionPermissions(),
+        targets={},
+        config=None,
+        tools_by_name={},
+    )
+
+    assert outcome == "unavailable"
+    assert "ENGINE_ROUTE_MISSING" in result["summary"]
+
+
+def test_registered_engine_with_absent_binary_returns_structured_skipped_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M17 bullet 3: a registered engine whose binary is genuinely absent
+    from PATH returns `run_engine`'s structured skipped result --
+    `unavailable`, never a route-missing gap or an invented tool stub."""
+    import rush.tools.common as common_module
+
+    monkeypatch.setattr(common_module, "engine_on_path", lambda _binary: False)
+    candidate = project_run.ScanCandidate(
+        "semgrep", "engine", "security", "applicable", "static_analysis_default"
+    )
+
+    outcome, result = project_run._execute_candidate(
+        candidate,
+        root=tmp_path,
+        permissions=ExecutionPermissions(),
+        targets={},
+        config=None,
+        tools_by_name={},
+    )
+
+    assert outcome == "unavailable"
+    assert "not on PATH" in result["summary"]
+
+
+def test_denied_explicit_permission_returns_permission_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M17 bullet 3: an applicable candidate whose real required permission
+    is not granted returns `permission_blocked` -- distinct from an
+    unavailable/route-missing skip."""
+    _use_curated_tools(monkeypatch)
+    project_id, data_root = _register(tmp_path)
+
+    plan = plan_scan(project_id, data_root=data_root)
+    run = execute_scan(plan, permissions=ExecutionPermissions(), data_root=data_root)
+
+    by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
+    assert by_id["ai-eval"].outcome == "permission_blocked"
+
+
+def test_gitguard_candidate_executes_through_execute_scan_with_a_real_or_fixture_engine_binary_and_persists_evidence(
+    tmp_path: Path,
+) -> None:
+    """M17 bullet 4: an applicable GitGuard/repository-state candidate,
+    executed through the real, un-monkeypatched `execute_scan` route (no
+    dummy owning tool), actually subprocess-executes against `git` (always
+    present here) and persists real repository-state evidence -- not a
+    skipped/unavailable stub."""
+    root = tmp_path / "project"
+    root.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=root, check=True)
+    (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }
+    subprocess.run(
+        ["git", "commit", "--quiet", "-m", "seed"], cwd=root, check=True, env=git_env
+    )
+
+    data_root = tmp_path / "rush-data"
+    record = register_project(root, data_root=data_root)
+
+    plan = plan_scan(record.project_id, data_root=data_root)
+    run = execute_scan(
+        plan,
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+        data_root=data_root,
+    )
+
+    by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
+    assert by_id["git-guard"].outcome == "executed"
+    assert by_id["git-guard"].repository_state_evidence

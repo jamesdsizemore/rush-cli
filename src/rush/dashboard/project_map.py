@@ -371,14 +371,31 @@ def _sort_key(node: dict[str, Any]) -> tuple[str, str]:
     return (node.get("path") or "", node["id"])
 
 
-def _grouped_overview(
+def _group_page_membership(
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
     *,
     source_identity: str,
-    offset: int = 0,
+    offset: int,
     tuple_key: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], bool]:
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    set[str],
+    set[str],
+    dict[str, str],
+    bool,
+]:
+    """Shared by `_grouped_overview` (rendering) and `expand_group_edge`'s
+    overflow branch (M05 bullet 3): the exact same node-grouping and
+    page-window computation, so an overflow selector's `page_offset` can
+    reconstruct precisely which groups/nodes were visible when that overflow
+    bucket was minted -- same input always yields the same grouping, so
+    recomputing here from `(nodes, edges, offset)` alone is exact, not an
+    approximation. `edges` is accepted for signature symmetry with callers
+    but not used directly -- membership only depends on nodes/offset."""
     project_node = next(n for n in nodes if n["kind"] == "project")
     groupable = [n for n in nodes if n["kind"] != "project" and n.get("path")]
     ungroupable = [n for n in nodes if n["kind"] != "project" and not n.get("path")]
@@ -474,6 +491,81 @@ def _grouped_overview(
 
     visible_nodes = [project_node, *page]
     visible_ids = {n["id"] for n in visible_nodes}
+    return (
+        project_node,
+        group_nodes,
+        groups_meta,
+        page,
+        page_ids,
+        visible_ids,
+        member_group_id,
+        has_more,
+    )
+
+
+def _relation_overflow_members(
+    edges: list[dict[str, Any]],
+    *,
+    visible_ids: set[str],
+    page_ids: set[str],
+    member_group_id: dict[str, str],
+    relation: str,
+) -> list[dict[str, Any]]:
+    """The exact raw edges a `by_relation` overflow count (M05 bullet 3)
+    aggregates -- same inclusion test `_grouped_overview` uses to build
+    `summary_counts`, just not bucketed by (source, target), so every one of
+    them stays individually reachable through `expand_group_edge`."""
+    matched = []
+    for e in edges:
+        if e["relation"] != relation:
+            continue
+        if e["source"] in visible_ids and e["target"] in visible_ids:
+            continue
+        resolved_source = (
+            e["source"]
+            if e["source"] in visible_ids
+            else member_group_id.get(e["source"])
+        )
+        resolved_target = (
+            e["target"]
+            if e["target"] in visible_ids
+            else member_group_id.get(e["target"])
+        )
+        if resolved_source is None or resolved_target is None:
+            continue
+        if resolved_source.startswith("group:") and resolved_source not in page_ids:
+            continue
+        if resolved_target.startswith("group:") and resolved_target not in page_ids:
+            continue
+        matched.append(e)
+    return matched
+
+
+def _grouped_overview(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    *,
+    source_identity: str,
+    offset: int = 0,
+    tuple_key: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], bool]:
+    (
+        project_node,
+        group_nodes,
+        groups_meta,
+        page,
+        page_ids,
+        visible_ids,
+        member_group_id,
+        has_more,
+    ) = _group_page_membership(
+        nodes,
+        edges,
+        source_identity=source_identity,
+        offset=offset,
+        tuple_key=tuple_key,
+    )
+    visible_nodes = [project_node, *page]
     contains_edges = [
         _edge(
             edge_id=f"edge:contains:{project_node['id']}:{group['id']}",
@@ -512,8 +604,13 @@ def _grouped_overview(
         )
         if resolved_source is None or resolved_target is None:
             continue
-        if resolved_source == resolved_target:
-            continue
+        # M05 bullet 1: both endpoints collapsing into the same group is no
+        # longer a dropped relationship -- it becomes an expandable counted
+        # self-summary on that group (`expand_group_edge`'s own bucket
+        # matching already resolves a self-loop selector correctly: both
+        # the source and target bucket checks compare against the same
+        # `src`/`tgt` value). Previously every one of the 101 file<->finding
+        # relationships collapsing into one directory group vanished here.
         if resolved_source.startswith("group:") and resolved_source not in page_ids:
             continue
         if resolved_target.startswith("group:") and resolved_target not in page_ids:
@@ -537,6 +634,7 @@ def _grouped_overview(
                     "source": src,
                     "target": tgt,
                     "offset": 0,
+                    "page_offset": offset,
                 },
                 tuple_key=tuple_key,
             ),
@@ -572,6 +670,8 @@ def _grouped_overview(
                         "source": project_node["id"],
                         "target": project_node["id"],
                         "offset": 0,
+                        "page_offset": offset,
+                        "overflow": True,
                     },
                     tuple_key=tuple_key,
                 ),
@@ -701,6 +801,7 @@ def expand_group(
     query: str = "",
     cursor: str | None = None,
     page_size: int = GROUP_PAGE_SIZE,
+    view_id: tuple[Any, ...] = ("current",),
 ) -> dict[str, Any]:
     """Page through a group node's full membership (spec 3.5: "server-
     paginated members (100 per page)"). Loop until ``next_cursor`` is
@@ -723,7 +824,7 @@ def expand_group(
         source_identity=source_identity,
         sequence=sequence,
         filter_hash=filter_hash,
-        view_id=("current",),
+        view_id=view_id,
     )
     all_nodes, _all_edges = _build_full_graph(snapshot, source_identity)
     filtered_nodes = _apply_filters(
@@ -776,6 +877,7 @@ def expand_group_edge(
     query: str = "",
     cursor: str,
     page_size: int = GROUP_PAGE_SIZE,
+    view_id: tuple[Any, ...] = ("current",),
 ) -> dict[str, Any]:
     """P69-03q: page through the real, individual relationships a summary
     group-edge (`_grouped_overview`'s counted, expandable group-edge)
@@ -797,7 +899,7 @@ def expand_group_edge(
         source_identity=source_identity,
         sequence=sequence,
         filter_hash=filter_hash,
-        view_id=("current",),
+        view_id=view_id,
     )
     decoded = _cursor_decode(cursor, tuple_key=tuple_key)
     if decoded.get("edge") != edge_id:
@@ -806,6 +908,8 @@ def expand_group_edge(
     src = decoded.get("source")
     tgt = decoded.get("target")
     offset = int(decoded.get("offset", 0))
+    page_offset = int(decoded.get("page_offset", 0))
+    overflow = bool(decoded.get("overflow", False))
 
     all_nodes, all_edges = _build_full_graph(snapshot, source_identity)
     filtered_nodes = _apply_filters(
@@ -817,39 +921,72 @@ def expand_group_edge(
         for e in all_edges
         if e["source"] in filtered_ids and e["target"] in filtered_ids
     ]
-    nodes_by_id = {n["id"]: n for n in filtered_nodes}
 
-    def _bucket(node_id: str) -> str:
-        node = nodes_by_id.get(node_id)
-        if node is None:
-            return node_id
-        if node.get("path"):
-            top = _normalize_path(node["path"]).split("/", 1)[0] or "(root)"
-            return f"group:{top}"
-        return f"group:{node['kind']}"
+    if overflow:
+        # M05 bullet 3: an overflow selector's source/target are both the
+        # project node -- there is no literal/group pair to bucket-match
+        # against. Rebuild the exact page context the overflow bucket was
+        # minted under (`page_offset`) and collect every real edge that
+        # page's relation-level budget rolled up, instead of a selector that
+        # can never match anything.
+        (
+            _project_node,
+            _group_nodes,
+            _groups_meta,
+            _page,
+            page_ids,
+            visible_ids,
+            member_group_id,
+            _has_more,
+        ) = _group_page_membership(
+            filtered_nodes,
+            filtered_edges,
+            source_identity=source_identity,
+            offset=page_offset,
+            tuple_key=tuple_key,
+        )
+        matches = _relation_overflow_members(
+            filtered_edges,
+            visible_ids=visible_ids,
+            page_ids=page_ids,
+            member_group_id=member_group_id,
+            relation=relation,
+        )
+    else:
+        nodes_by_id = {n["id"]: n for n in filtered_nodes}
 
-    matches = [
-        e
-        for e in filtered_edges
-        if e["relation"] == relation
-        and (e["source"] if e["source"] == src else _bucket(e["source"])) == src
-        and (e["target"] if e["target"] == tgt else _bucket(e["target"])) == tgt
-    ]
+        def _bucket(node_id: str) -> str:
+            node = nodes_by_id.get(node_id)
+            if node is None:
+                return node_id
+            if node.get("path"):
+                top = _normalize_path(node["path"]).split("/", 1)[0] or "(root)"
+                return f"group:{top}"
+            return f"group:{node['kind']}"
+
+        matches = [
+            e
+            for e in filtered_edges
+            if e["relation"] == relation
+            and (e["source"] if e["source"] == src else _bucket(e["source"])) == src
+            and (e["target"] if e["target"] == tgt else _bucket(e["target"])) == tgt
+        ]
     matches = sorted(matches, key=lambda e: e["id"])
 
     page = matches[offset : offset + page_size]
     next_offset = offset + page_size
+    next_payload: dict[str, Any] = {
+        "edge": edge_id,
+        "relation": relation,
+        "source": src,
+        "target": tgt,
+        "offset": next_offset,
+        "page_offset": page_offset,
+    }
+    if overflow:
+        next_payload["overflow"] = True
     next_cursor = (
-        _cursor_encode(
-            {
-                "edge": edge_id,
-                "relation": relation,
-                "source": src,
-                "target": tgt,
-                "offset": next_offset,
-            },
-            tuple_key=tuple_key,
-        )
+        _cursor_encode(next_payload, tuple_key=tuple_key)
         if next_offset < len(matches)
         else None
     )

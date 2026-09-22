@@ -18,7 +18,7 @@ from typing import Any, cast
 
 import tiktoken
 
-from rush.memory.store import TypedArtifactStore
+from rush.memory.store import TypedArtifactStore, legacy_owner_scope
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryOperation, MemoryTool
 
@@ -90,7 +90,11 @@ def _probe_stale_record(
         )
         conn.commit()
     swept = tool.run(
-        root, operation="maintain", task="expiry_sweep", permissions=permissions
+        root,
+        operation="maintain",
+        task="expiry_sweep",
+        permissions=permissions,
+        owner_scope=legacy_owner_scope(root),
     )
     if swept["status"] != "ok":
         raise FixtureError(f"memory maintain failed: {swept['summary']}")

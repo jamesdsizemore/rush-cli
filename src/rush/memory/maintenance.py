@@ -83,17 +83,18 @@ def run_maintenance_cycle(
     *,
     batch_size: int = 500,
     project_root: Path | None = None,
-    owner_scope: OwnerScope | None = None,
+    owner_scope: OwnerScope,
 ) -> MaintenanceRunResult:
     """Runs one bounded maintenance sweep under a capability-scoped lock lease (§6.2).
 
     P69-07 subsection h: `owner_scope` scopes the sweep to exactly that owner (kind, id)
-    -- omitting it defaults to `legacy_owner_scope(root)` (this project's own path-form
-    owner, the same default a plain unscoped `store.write()` already uses), never a
-    wildcard sweep across every owner in this project's store.
+    -- required (M09: no silent default), never a wildcard sweep across every owner in
+    this project's store. Every caller (TUI, CLI, dashboard, `MemoryTool._run_maintain`)
+    must resolve and pass a real owner; `legacy_owner_scope(root)` is still the right
+    value to pass for an unregistered project, but it is never assumed here.
     """
     root = (project_root or Path.cwd()).resolve()
-    scope = owner_scope or legacy_owner_scope(root)
+    scope = owner_scope
     legacy_default = legacy_owner_scope(root)
     lock_manager = MeshLockManager(root)
     lease = lock_manager.acquire(

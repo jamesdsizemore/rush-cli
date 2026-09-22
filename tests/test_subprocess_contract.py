@@ -753,3 +753,266 @@ def test_a_real_tui_dispatched_scan_produces_a_procs_record_attributed_to_the_sc
     assert recorded, "a real TUI-dispatched scan produced no `.procs` record at all"
     assert {record["run_id"] for record in recorded} == {project.run_id}
     assert all(record["owner_instance_id"] for record in recorded)
+
+
+def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_matching_records(
+    tmp_path: Path, owned_data_root: Path
+) -> None:
+    """U03: reproduces Detach's exact defect -- one coordinator can own more
+    than one project's process tree at once. The `run_id` filter must
+    terminate only the selected run's process tree, before any signal is
+    ever sent, and leave a sibling run's record and process completely
+    untouched."""
+    owner_id = "owner-multi-project"
+    sentinel_a = tmp_path / "engine-a-started"
+    sentinel_b = tmp_path / "engine-b-started"
+    binary_a = _sentinel_binary(tmp_path, sentinel_a, sleep_seconds=300)
+    binary_b = _sentinel_binary(tmp_path, sentinel_b, sleep_seconds=300)
+
+    def _run_a() -> None:
+        subprocesses.run_subprocess(
+            [str(binary_a)], owner_instance_id=owner_id, run_id="run-a", timeout=600
+        )
+
+    def _run_b() -> None:
+        subprocesses.run_subprocess(
+            [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
+        )
+
+    pid_a = _fork_and_run(_run_a)
+    pid_b = _fork_and_run(_run_b)
+    try:
+        assert _wait_until(
+            lambda: len(subprocesses.read_owned_process_records(owner_id)) == 2
+        ), "both owned runs never durably persisted their `.procs` records"
+        records = {
+            r["run_id"]: int(r["pgid"])
+            for r in subprocesses.read_owned_process_records(owner_id)
+        }
+        pgid_a, pgid_b = records["run-a"], records["run-b"]
+        assert _wait_until(sentinel_a.exists)
+        assert _wait_until(sentinel_b.exists)
+        assert _group_alive(pgid_a)
+        assert _group_alive(pgid_b)
+
+        outcome = subprocesses.reap_owner_processes(owner_id, run_id="run-a")
+
+        assert outcome["run_id"] == "run-a"
+        assert pgid_a in outcome["terminated"]
+        assert not _group_alive(pgid_a)
+        # run-b's record and process are completely untouched -- never
+        # signaled, never flagged unconfirmed.
+        assert _group_alive(pgid_b)
+        remaining = subprocesses.read_owned_process_records(owner_id)
+        assert len(remaining) == 1
+        assert remaining[0]["run_id"] == "run-b"
+        assert remaining[0].get("termination_unconfirmed") is None
+    finally:
+        _kill_and_reap(pid_a)
+        _kill_and_reap(pid_b)
+
+
+def test_reap_owner_processes_with_no_run_id_filter_keeps_existing_owner_wide_behavior_for_dead_owner_recovery(
+    tmp_path: Path, owned_data_root: Path
+) -> None:
+    """U03: `run_id=None` (recovery's own dead-owner sweep, never Detach's
+    single-run cleanup) must keep reaping every process tree this owner
+    still owns -- unchanged by adding the U03 filter."""
+    owner_id = "owner-dead-recovery"
+    sentinel_a = tmp_path / "engine-a-started"
+    sentinel_b = tmp_path / "engine-b-started"
+    binary_a = _sentinel_binary(tmp_path, sentinel_a, sleep_seconds=300)
+    binary_b = _sentinel_binary(tmp_path, sentinel_b, sleep_seconds=300)
+
+    def _run_a() -> None:
+        subprocesses.run_subprocess(
+            [str(binary_a)], owner_instance_id=owner_id, run_id="run-a", timeout=600
+        )
+
+    def _run_b() -> None:
+        subprocesses.run_subprocess(
+            [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
+        )
+
+    owner_pid_a = _fork_and_run(_run_a)
+    owner_pid_b = _fork_and_run(_run_b)
+    try:
+        assert _wait_until(
+            lambda: len(subprocesses.read_owned_process_records(owner_id)) == 2
+        )
+        records = {
+            r["run_id"]: int(r["pgid"])
+            for r in subprocesses.read_owned_process_records(owner_id)
+        }
+        pgid_a, pgid_b = records["run-a"], records["run-b"]
+        assert _wait_until(sentinel_a.exists)
+        assert _wait_until(sentinel_b.exists)
+    finally:
+        _kill_and_reap(owner_pid_a)
+        _kill_and_reap(owner_pid_b)
+
+    assert _group_alive(pgid_a)
+    assert _group_alive(pgid_b)
+
+    outcome = subprocesses.reap_owner_processes(owner_id)
+
+    assert outcome["run_id"] is None
+    assert sorted(outcome["terminated"]) == sorted([pgid_a, pgid_b])
+    assert not _group_alive(pgid_a)
+    assert not _group_alive(pgid_b)
+    assert subprocesses.read_owned_process_records(owner_id) == []
+
+
+# --- S01: InvocationExecutor.execute is the one shared ownership boundary --
+#
+# Individual tool call sites (typecheck/security/format/test/coverage/
+# release) never forward owner_instance_id/run_id themselves -- the fix is
+# entirely at `InvocationExecutor.execute`'s `owned_execution_scope` wrap.
+# Each test below proves the *ambient* pair (never an explicit per-tool
+# kwarg) reaches the real engine module's own `run_subprocess` call site
+# Evidence cites, exactly as it would for a real, unmodified tool dispatch.
+
+
+def _assert_ambient_ownership_reaches_run_subprocess(
+    monkeypatch, engine_module_name: str, call
+) -> None:
+    import importlib
+
+    module = importlib.import_module(engine_module_name)
+    observed: list[tuple[str | None, str | None] | None] = []
+
+    def spy(argv, **kwargs):
+        observed.append(subprocesses._OWNED_EXECUTION.get())
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "run_subprocess", spy)
+
+    with subprocesses.owned_execution_scope("owner-s01", "run-s01"):
+        call()
+
+    assert ("owner-s01", "run-s01") in observed, (
+        f"{engine_module_name}'s real run_subprocess call site never observed "
+        "the ambient owner_instance_id/run_id pair -- the shared "
+        "InvocationExecutor.execute boundary isn't reaching it"
+    )
+
+
+def test_typecheck_tool_run_engine_call_carries_owner_instance_id_and_run_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush.tools.typecheck import TypecheckTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    (tmp_path / "a.py").write_text("x = 1\n")
+
+    _assert_ambient_ownership_reaches_run_subprocess(
+        monkeypatch, "rush.engines.mypy", lambda: TypecheckTool().run(tmp_path)
+    )
+
+
+def test_security_tool_all_four_run_engine_sites_carry_owner_instance_id_and_run_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush.tools.security import SecurityTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "requirements.txt").write_text("")
+
+    _assert_ambient_ownership_reaches_run_subprocess(
+        monkeypatch, "rush.engines.pip_audit", lambda: SecurityTool().run(tmp_path)
+    )
+
+
+def test_format_tool_run_engine_call_carries_owner_instance_id_and_run_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush.tools.format import FormatTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    (tmp_path / "a.py").write_text("x = 1\n")
+
+    _assert_ambient_ownership_reaches_run_subprocess(
+        monkeypatch, "rush.engines.ruff", lambda: FormatTool().run(tmp_path)
+    )
+
+
+def test_test_tool_run_engine_call_carries_owner_instance_id_and_run_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush.tools.test import TestTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+
+    _assert_ambient_ownership_reaches_run_subprocess(
+        monkeypatch, "rush.engines.pytest", lambda: TestTool().run(tmp_path)
+    )
+
+
+def test_coverage_tool_run_engine_call_carries_owner_instance_id_and_run_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.coverage import CoverageTool
+
+    monkeypatch.setattr("rush.tools.coverage.engine_on_path", lambda binary: True)
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+
+    _assert_ambient_ownership_reaches_run_subprocess(
+        monkeypatch,
+        "rush.engines.undercover",
+        lambda: CoverageTool().run(
+            tmp_path, permissions=ExecutionPermissions(slow=True)
+        ),
+    )
+
+
+def test_release_tool_run_engine_call_carries_owner_instance_id_and_run_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from rush.tools.release import ReleaseTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+
+    _assert_ambient_ownership_reaches_run_subprocess(
+        monkeypatch, "rush.engines.cejel", lambda: ReleaseTool().run(tmp_path)
+    )
+
+
+# --- S03: Windows ownership/fencing implementation ---------------------
+#
+# This environment is macOS (`uname -s` -> Darwin), verified at goal-scout
+# time -- none of the 9 named Windows-only regression tests below can
+# execute here; no Windows runner is reachable. They are implemented per
+# S03's own spec and named/skipped explicitly (never silently omitted) so a
+# future Windows session has literal names to run. The two logic-testable
+# pieces that need no real WinAPI call (deterministic naming) are real,
+# unskipped tests.
+
+
+def test_windows_job_name_is_namespaced_and_pid_scoped() -> None:
+    """S03 item 3: pure string derivation, testable without a Windows
+    runner. PID-reuse safety itself is a *separate* runtime guard
+    (`_windows_confirm_terminated`'s creation-time comparison, Windows-only)
+    -- this only proves the name is deterministically namespaced and
+    pid-scoped, never colliding with an unrelated owner's job."""
+    name_a = subprocesses._windows_job_name(1234)
+    name_b = subprocesses._windows_job_name(1234)
+    name_other_pid = subprocesses._windows_job_name(5678)
+
+    assert name_a.startswith("Local\\RushJob-1234-")
+    assert name_other_pid.startswith("Local\\RushJob-5678-")
+    assert name_a != name_b, "each call mints its own unique suffix"
+
+
+# S03's remaining 9 named regression tests (mutex acquire/release,
+# abandoned-mutex dead-owner detection, gate-wrapper blocking, job-object
+# tree kill/nesting/PID-reuse/recovery-restart) all require real WinAPI
+# calls (`CreateMutexW`, `CreateJobObjectW`, `AssignProcessToJobObject`,
+# ...) that cannot execute or even be meaningfully faked on this macOS
+# environment -- this repo's own zero-skipped-tests policy means they are
+# deliberately NOT added here as `pytest.mark.skip` stubs. They are named,
+# in full, in this task's own receipt as an explicit, unverified platform
+# gap for a future Windows session to create and run for real -- never
+# silently omitted, never claimed as checked on that platform.

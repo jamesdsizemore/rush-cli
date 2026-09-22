@@ -81,6 +81,23 @@ class PlaywrightEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        # `playwright` can resolve to the Python playwright package's CLI,
+        # which has no `test` subcommand -- a binary mismatch, not a crash.
+        if "unknown command" in (raw.get("stderr") or ""):
+            return ToolResult(
+                tool=tool_name,
+                engine=self.name,
+                engine_version=self.version(),
+                status="skipped",
+                duration_ms=raw.get("duration_ms", 0),
+                summary=(
+                    "playwright: resolved binary has no 'test' subcommand "
+                    "(Node @playwright/test required)"
+                ),
+                findings=[],
+                raw=None,
+            )
+
         findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(
