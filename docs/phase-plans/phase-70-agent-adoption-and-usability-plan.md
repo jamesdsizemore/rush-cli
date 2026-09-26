@@ -134,6 +134,8 @@ Every E1–E22 maps to at least one requirement/task. All 25 original tasks rema
 
 ## 6. Executable task packets
 
+**Design-gate contracts (2026-09-26):** Each task packet below is extended by that task's section in its design-gate brief, listed here; the brief's Resolutions and test matrix are binding requirements of the task. A packet and its brief never narrow each other: where they differ, the fuller requirement wins. Task-to-brief map, all under `.scratch/phase-70-design-gate/`: T8 → `T8.md`; T1–T7 and T23 (prerequisite part: shared StatusTool and bare `rush` status) → `W1-T1-T7-T23.md`; T9–T17 → `W2-T9-T17.md`; T18–T22 → `W3-T18-T22.md`; T23 (terminal part) through T29 (T23, T24, T25, T26, T27, T28 A–F, T29) → `W4-T23-T29.md`.
+
 ### W2 — Results an agent can trust
 
 #### T8 — Normalize target identity once
