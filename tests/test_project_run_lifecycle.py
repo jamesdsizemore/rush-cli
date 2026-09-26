@@ -1060,9 +1060,9 @@ def test_explicit_target_a_py_does_not_claim_unrelated_b_js_as_consumed(
     """M16: an engine invoked with root plus an explicit file target must
     record only that staged target as consumed, never the whole staged
     root -- an unrelated inventory file must not be falsely claimed."""
+    from rush.engines.ruff import RuffEngine
     from rush.engines.staging import stage_inventory, staging_scope
     from rush.runtime.subprocesses import _staged_invocation
-    from rush.engines.ruff import RuffEngine
 
     root = tmp_path / "project"
     root.mkdir()
@@ -1072,7 +1072,11 @@ def test_explicit_target_a_py_does_not_claim_unrelated_b_js_as_consumed(
     staging = stage_inventory(root, staged_root, ["a.py", "b.js"])
     with staging_scope(staging):
         _staged_invocation(
-            RuffEngine(), root, root, [str(root / "a.py")], consumed_paths=[str(root / "a.py")]
+            RuffEngine(),
+            root,
+            root,
+            [str(root / "a.py")],
+            consumed_paths=[str(root / "a.py")],
         )
         consumed = staging.take_candidate_digests()
 
@@ -1083,9 +1087,9 @@ def test_root_scoped_scan_records_its_full_staged_source_scope(tmp_path: Path) -
     """M16 bullet 2: an engine invoked with no explicit targets (a genuine
     root-scoped scan) still records its full staged source scope -- the
     `consumed_paths` narrowing must never regress that case."""
+    from rush.engines.ruff import RuffEngine
     from rush.engines.staging import stage_inventory, staging_scope
     from rush.runtime.subprocesses import _staged_invocation
-    from rush.engines.ruff import RuffEngine
 
     root = tmp_path / "project"
     root.mkdir()

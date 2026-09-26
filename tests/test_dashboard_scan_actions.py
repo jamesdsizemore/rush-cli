@@ -1326,8 +1326,7 @@ def test_scan_cancel_on_terminal_target_returns_stored_result_not_a_fresh_cancel
 
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         assert scans["data"]["run"]["run_state"] != "cancelled", (
-            "a completed run's terminal target must never retroactively "
-            "look cancelled"
+            "a completed run's terminal target must never retroactively look cancelled"
         )
     finally:
         server.shutdown()
@@ -2013,7 +2012,7 @@ def test_check_suite_cancel_actually_stops_the_dashboard_owned_run(
         run_id = data["run_id"]
 
         assert started.wait(timeout=5)
-        status, body = _action(
+        status, _body = _action(
             base_url,
             project_id,
             cookie,

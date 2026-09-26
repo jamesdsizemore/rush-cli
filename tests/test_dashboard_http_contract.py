@@ -3163,9 +3163,7 @@ def test_kill_recovery_after_confirmed_reap_but_before_finalization_restart_cons
         assert ledger.admission_for_project("project-a") is not None
         assert ledger.pending_outcome("op-dead") is not None
 
-        monkeypatch.setattr(
-            MutationLedger, "terminalize_and_release", real_terminalize
-        )
+        monkeypatch.setattr(MutationLedger, "terminalize_and_release", real_terminalize)
         assert (
             reconcile_admissions(
                 ledger, data_root=tmp_path, recovering_owner_instance_id="owner-live-2"
@@ -3200,9 +3198,7 @@ def test_admission_schema_carries_attempt_id_column(tmp_path) -> None:
     must persist and return whatever executing attempt is passed in."""
     ledger = MutationLedger(db_path=tmp_path / "admission.db")
     with sqlite3.connect(str(tmp_path / "admission.db")) as conn:
-        columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")
-        }
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")}
     assert "attempt_id" in columns
 
     result = ledger.admit(

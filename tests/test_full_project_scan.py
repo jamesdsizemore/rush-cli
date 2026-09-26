@@ -538,9 +538,7 @@ def test_offline_review_dead_asset_license_matrix_all_read_staged_bytes(
     with staging_scope(staging):
         # Live content diverges after staging -- every assertion below must
         # reflect the staged bytes captured before this mutation, not this.
-        (root / "index.html").write_text(
-            "no image reference here\n", encoding="utf-8"
-        )
+        (root / "index.html").write_text("no image reference here\n", encoding="utf-8")
         (root / "pyproject.toml").write_text(
             '[project]\ndependencies = ["riskypkg"]\n', encoding="utf-8"
         )

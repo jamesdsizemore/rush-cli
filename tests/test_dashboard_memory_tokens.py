@@ -1170,9 +1170,7 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         assert body["data"]["actual"]["events_count"] == 2
         assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 37
 
-        status, body = _snapshot(
-            base_url, project_id, cookie, "tokens", run_id="run-a"
-        )
+        status, body = _snapshot(base_url, project_id, cookie, "tokens", run_id="run-a")
         assert body["data"]["actual"]["raw_tokens"] == 1000
         assert body["data"]["actual"]["sent_tokens"] == 400
         assert body["data"]["actual"]["events_count"] == 1

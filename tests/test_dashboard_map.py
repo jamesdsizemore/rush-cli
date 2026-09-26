@@ -3305,6 +3305,7 @@ def test_crash_after_artifact_receipt_before_session_receipt_is_recoverable(
                 owner_instance_id=owner_id,
             )
             op_id_file.write_text(reservation.operation_id)
+
             # T052: simulate a real crash strictly between the
             # artifact_create receipt committing (`store.write`, already
             # run inside `build_handoff` before this point) and the
@@ -3409,6 +3410,7 @@ def test_crash_after_session_receipt_before_prepared_descriptor_is_recoverable(
                 owner_instance_id=owner_id,
             )
             op_id_file.write_text(reservation.operation_id)
+
             # T052: simulate a real crash strictly after both receipts have
             # committed (`store.write` then `prepare_handoff`, both already
             # run by this point) but before `build_handoff` ever reaches
@@ -3951,7 +3953,7 @@ def test_historical_map_request_without_attempt_id_is_rejected(
     attempt happens to be latest."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
-    _server, ctx, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    _server, _ctx, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
         _write_attempt(root, "run-a", "att-a", finding_id="finding-a")
         resp = _get(

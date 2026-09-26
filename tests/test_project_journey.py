@@ -108,7 +108,9 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
     # false positive, not a genuine finding), so only the 3 seeded review
     # findings are present.
     assert len(findings_a) == 3
-    review_findings = [f for f in findings_a if f["provenance"] == "review/heuristic-v1"]
+    review_findings = [
+        f for f in findings_a if f["provenance"] == "review/heuristic-v1"
+    ]
     assert len(review_findings) == 3
     by_line = {finding["line"]: finding for finding in review_findings}
     assert by_line[1]["rule"] == _MISSING_DOCSTRING
@@ -123,10 +125,14 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
     # M17: same real detect-secrets execution runs here too, with the same
     # CACHEDIR.TAG exclusion, so no extra finding is added.
     assert len(findings_b) == 1
-    review_findings_b = [f for f in findings_b if f["provenance"] == "review/heuristic-v1"]
+    review_findings_b = [
+        f for f in findings_b if f["provenance"] == "review/heuristic-v1"
+    ]
     assert len(review_findings_b) == 1
     assert review_findings_b[0]["rule"] == _MISSING_DOCSTRING
-    assert review_findings_b[0]["message"] == "function 'also_unreviewed' has no docstring"
+    assert (
+        review_findings_b[0]["message"] == "function 'also_unreviewed' has no docstring"
+    )
 
     # Cross-project isolation: no finding_id from A ever appears in B.
     assert {f["finding_id"] for f in findings_a}.isdisjoint(

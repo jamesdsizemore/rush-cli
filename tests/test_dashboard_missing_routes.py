@@ -1166,7 +1166,7 @@ def test_events_route_surfaces_real_candidate_progress_events(
     _isolate_data_roots(tmp_path, monkeypatch)
     monkeypatch.setattr(project_run_module, "ALL_TOOLS", [ReviewTool()])
     project_id, root = _register(tmp_path)
-    server, ctx, base_url, cookie, csrf = _start_dashboard_with_ctx(project_id, root)
+    server, _ctx, base_url, cookie, csrf = _start_dashboard_with_ctx(project_id, root)
     try:
         status, body = _action(
             base_url, project_id, cookie, csrf, operation="provision_plan"
@@ -1195,9 +1195,7 @@ def test_events_route_surfaces_real_candidate_progress_events(
         status, events_body = _events(base_url, project_id, cookie)
         assert status == 200
         candidate_events = [
-            e
-            for e in events_body["data"]["events"]
-            if e["event_kind"] == "candidate"
+            e for e in events_body["data"]["events"] if e["event_kind"] == "candidate"
         ]
         assert candidate_events, "real candidate progress events must reach /events"
         assert any(
