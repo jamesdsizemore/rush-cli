@@ -430,6 +430,11 @@ def _prerequisites(engine_id: str, source: EngineSource) -> tuple[str, ...]:
 def _version_policy(engine_id: str, source: EngineSource) -> str:
     if engine_id == "zally":
         return "pinned:v2.1.1"
+    if engine_id == "pyrefly":
+        # First release whose `check --help` offers both interpreter-selection
+        # flags T11 relies on (0.36.2 has neither); enforced at runtime by
+        # `PyreflyEngine.support_problem`.
+        return "minimum:0.37.0"
     if source == "maven":
         return "project_locked"
     if source == "internal":

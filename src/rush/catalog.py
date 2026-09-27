@@ -209,7 +209,20 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="quality",
         description="Type-check Python and JavaScript/TypeScript source.",
         mcp_description="Type-check Python and JS/TS at <path>; missing mypy or tsc returns status='skipped'.",
-        engine_names=("mypy", "tsc"),
+        engine_names=("mypy", "tsc", "pyrefly"),
+        option_specs=(
+            ToolOptionSpec(
+                name="environment",
+                value_type=str,
+                default=None,
+                choices=("project", "isolated"),
+                description=(
+                    "Python interpreter environment: project (.venv, requires "
+                    "--allow-build) or isolated. Default prefers project and "
+                    "falls back to isolated without the grant."
+                ),
+            ),
+        ),
     ),
     "dead": ToolSpec(
         name="dead",

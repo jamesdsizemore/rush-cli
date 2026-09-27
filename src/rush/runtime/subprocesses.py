@@ -24,7 +24,13 @@ from typing import TYPE_CHECKING, Any
 from ..permissions import build_execution_metadata, check_permissions
 from ..safety.redactor import SecretRedactor
 from ..tools.base import ToolResult
-from .binaries import engine_on_path, resolve_binary
+from .binaries import (
+    AnalysisScope,
+    analysis_scope,
+    current_analysis_scope,
+    engine_on_path,
+    resolve_binary,
+)
 from .result_helpers import elapsed_ms, error_result, now_ms, skipped_result
 
 if TYPE_CHECKING:
@@ -833,7 +839,17 @@ def _resolve_exec_argv(argv: list[str]) -> list[str]:
         if common is not None
         else resolve_binary
     )
-    resolved_cmd = resolver(argv[0]) or argv[0]
+    resolved = resolver(argv[0])
+    if (
+        resolved is None
+        and not os.path.dirname(argv[0])
+        and current_analysis_scope() is not None
+    ):
+        # S11.6: inside an engine dispatch, a bare name the trusted policy
+        # cannot resolve must not fall through to the OS PATH search, which
+        # would select a project-scoped executable after all.
+        raise FileNotFoundError(argv[0])
+    resolved_cmd = resolved or argv[0]
     if os.name != "nt":
         return [resolved_cmd, *argv[1:]]
     which_cmd = shutil.which(resolved_cmd) or resolved_cmd
@@ -1087,7 +1103,83 @@ def _merge_provenance_metadata(
         )
 
 
+def _engine_analysis_scope(
+    engine: Engine, path: Path, project_root: Path | None
+) -> AnalysisScope:
+    """S11.6: the roots this dispatch's executable resolution trusts nothing in.
+
+    The logical root is the caller's explicit ``project_root``, else an outer
+    ambient scope's, else ``path`` (its directory for a file). Under an
+    active staged scan the logical root is the original tree -- never the
+    temporary snapshot, even when ``path`` already points into it -- and the
+    snapshot itself is excluded too, as the execution root.
+    """
+    from ..engines.staging import active_staging
+
+    outer = current_analysis_scope()
+    execution_root: Path | None = None
+    if project_root is not None:
+        logical_root = project_root
+    elif outer is not None:
+        logical_root = outer.logical_root
+        execution_root = outer.execution_root
+    else:
+        logical_root = path if path.is_dir() else path.parent
+    staging = active_staging()
+    if staging is not None:
+        staged = os.path.realpath(str(staging.staged_root))
+        logical = os.path.realpath(str(logical_root))
+        if logical == staged or logical.startswith(staged.rstrip(os.sep) + os.sep):
+            logical_root = staging.original_root
+        execution_root = staging.staged_root
+    return AnalysisScope(
+        logical_root=logical_root,
+        execution_root=execution_root,
+        engine_id=engine.name,
+        binary=engine.binary,
+    )
+
+
 def run_engine(
+    engine: Engine,
+    path: Path,
+    args: list[str] | None = None,
+    *,
+    cwd: Path | None = None,
+    tool_name: str | None = None,
+    timeout: int = 120,
+    permissions: ExecutionPermissions | None = None,
+    required_permissions: ExecutionPermissions | None = None,
+    owner_instance_id: str | None = None,
+    run_id: str | None = None,
+    consumed_paths: list[str] | None = None,
+    project_root: Path | None = None,
+) -> ToolResult:
+    """Run an engine and always return a canonical result.
+
+    S11.6: the whole dispatch -- the PATH probe, the engine's own argv, its
+    `--version` probe and exec resolution -- runs inside an `analysis_scope`
+    for the logical project root (``project_root``, else ``path``), so a
+    verified project manifest wins and an executable found only inside the
+    project (or a staged snapshot of it) is never selected from PATH.
+    """
+    with analysis_scope(_engine_analysis_scope(engine, path, project_root)):
+        return _run_engine_in_scope(
+            engine,
+            path,
+            args,
+            cwd=cwd,
+            tool_name=tool_name,
+            timeout=timeout,
+            permissions=permissions,
+            required_permissions=required_permissions,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
+            consumed_paths=consumed_paths,
+        )
+
+
+def _run_engine_in_scope(
     engine: Engine,
     path: Path,
     args: list[str] | None = None,

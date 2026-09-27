@@ -154,15 +154,10 @@ class RuffEngine(Engine):
             return f"ruff exit {exit_code}"
         return f"{n_findings} ruff issue(s)" if n_findings else "ruff clean"
 
-    _cached_version: str | None = None
-
     def _version_str(self) -> str | None:
-        # Cache per-instance; first call shells out, subsequent return cached.
-        if RuffEngine._cached_version is not None:
-            return RuffEngine._cached_version
-        v = self.version()
-        RuffEngine._cached_version = v
-        return v
+        # `Engine.version()` caches by executable identity (S11.7); a
+        # class-global cache here would outlive a replaced ruff binary.
+        return self.version()
 
 
 def _ruff_severity(code: str) -> str:
