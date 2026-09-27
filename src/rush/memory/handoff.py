@@ -26,7 +26,11 @@ from pathlib import Path
 from typing import Any
 
 from rush.memory import intent as intent_module
-from rush.memory.store import TypedArtifactStore, VersionConflictError
+from rush.memory.store import (
+    TypedArtifactStore,
+    VersionConflictError,
+    sqlite_integer_in_range,
+)
 
 SESSION_TTL_SECONDS = 900.0
 DEFAULT_PAGE_SIZE = 50
@@ -323,6 +327,11 @@ def acknowledge_readback(
     session = load_session(store, session_id, capability, now=now)
     updates: list[tuple[str, int, str]] = []
     for entry in readbacks:
+        if not isinstance(entry, Mapping):
+            raise HandoffError(
+                "Each readback must be an object with id, version and digest.",
+                code="E_INPUT",
+            )
         artifact_id = entry.get("id")
         version = entry.get("version")
         digest = entry.get("digest")
@@ -334,6 +343,11 @@ def acknowledge_readback(
         ):
             raise HandoffError(
                 "Each readback requires id (str), version (int) and digest (str).",
+                code="E_INPUT",
+            )
+        if not sqlite_integer_in_range(version):
+            raise HandoffError(
+                f"Readback version {version} is outside the storable integer range.",
                 code="E_INPUT",
             )
         if artifact_id not in session.granted_ids:
