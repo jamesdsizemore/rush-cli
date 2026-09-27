@@ -134,6 +134,7 @@ from rush.tools.routing import (
     union_memory_attribution,
 )
 from rush.workflows.projects import ProjectError, resolve_project
+from rush.workflows.suites import memory_summary_clause
 
 Disposition = Literal[
     "applicable", "not_applicable", "requires_input", "unsupported", "excluded_by_user"
@@ -1280,6 +1281,10 @@ def _finalize_attempt(
     scan_metadata["children"] = [child_entry(child) for child in children]
     _attribute_attempt_memory(scan_metadata, scheduled, retained_ids)
     aggregate["metadata"] = scan_metadata
+    # T21 B1: this attempt's own receipts only, never `cache.original_memory`.
+    clause = memory_summary_clause(scan_metadata.get("memory"))
+    if clause is not None:
+        aggregate["summary"] += f"; {clause}"
 
     run_state: RunState
     if cancelled:
