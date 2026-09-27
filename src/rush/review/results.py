@@ -14,6 +14,46 @@ from rush.tools.base import Finding, LlmStatus, ToolResult, ToolStatus
 from rush.tools.common import elapsed_ms, finding_fingerprint
 
 
+def _consumed(target: Path) -> bool:
+    """The heuristics read a file only below the size cap (`collection`)."""
+    from rush.review.collection import MAX_FILE_BYTES
+
+    try:
+        return target.stat().st_size <= MAX_FILE_BYTES
+    except OSError:
+        return False
+
+
+def review_scope_v1(
+    scope: dict[str, Any],
+    *,
+    root: Path,
+    targets: Sequence[Path],
+    requested_file_count: int,
+) -> dict[str, Any]:
+    """T16 (finding 8): the §3.2 v1 scope, keeping review's own `mode` and
+    `files`. Requested = what the caller asked for (explicit files) or what
+    matched under the target; consumed = files the heuristics read."""
+    consumed = sum(1 for target in targets if _consumed(target))
+    if consumed == 0:
+        coverage, reason = "none", "no_reviewable_python_files"
+    elif consumed < requested_file_count:
+        coverage, reason = "partial", "requested_files_not_reviewed"
+    else:
+        coverage, reason = "complete", None
+    return {
+        "version": 1,
+        "kind": "file",
+        **scope,
+        "logical_root": str(root),
+        "requested_file_count": requested_file_count,
+        "matched_file_count": len(targets),
+        "consumed_file_count": consumed,
+        "coverage": coverage,
+        "reason": reason,
+    }
+
+
 def _sanitize_finding(finding: Finding) -> None:
     """Enrich finding in-place with evidence, fingerprint, and freshness."""
     if "evidence" not in finding and finding.get("path"):
@@ -146,4 +186,5 @@ __all__ = [
     "assemble_review_result",
     "build_empty_review_result",
     "build_error_review_result",
+    "review_scope_v1",
 ]

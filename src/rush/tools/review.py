@@ -51,6 +51,7 @@ from rush.review.results import (
     assemble_review_result,
     build_empty_review_result,
     build_error_review_result,
+    review_scope_v1,
 )
 
 from ..memory.retrieval import SourceValidationMemo, defended_recall
@@ -233,6 +234,14 @@ class ReviewTool(ToolFn):
             targets, scope = collect_reviewable_files(path, changed_files=changed_files)
         except ValueError as error:
             return build_error_review_result(str(error), start)
+        scope = review_scope_v1(
+            scope,
+            root=root,
+            targets=targets,
+            requested_file_count=len(targets)
+            if changed_files is None
+            else len(changed_files),
+        )
 
         if not targets:
             return build_empty_review_result(path, scope, start)

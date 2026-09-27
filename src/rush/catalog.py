@@ -100,6 +100,9 @@ class ToolSpec:
     option_specs: tuple[ToolOptionSpec, ...] = ()
     # T9/R9.1: `None` means "by category" (see `validates_target`).
     target_validation: bool | None = None
+    # T16 (R16.4): "operation" tools do not analyze files, so the executor's
+    # default scope says `not_file_analysis` instead of a file count.
+    scope_kind: Literal["file", "operation"] = "file"
 
     @property
     def validates_target(self) -> bool:
@@ -134,6 +137,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         engine_names=(),
         maturity="real_adapter",
+        scope_kind="operation",
     ),
     "memory": ToolSpec(
         name="memory",
@@ -156,6 +160,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 ),
             ),
         ),
+        scope_kind="operation",
     ),
     "semantic-drift": ToolSpec(
         name="semantic-drift",
@@ -468,6 +473,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Validate commit messages without rewriting history.",
         "Validate commit messages; it never rewrites Git history.",
         ("commitlint",),
+        scope_kind="operation",
     ),
     "ci": ToolSpec(
         "ci",
@@ -475,6 +481,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Inspect local CI workflow configuration.",
         "Inspect local CI configuration without exposing credentials.",
         (),
+        scope_kind="operation",
     ),
     "release": ToolSpec(
         "release",
@@ -482,6 +489,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Create a dry-run release plan.",
         "Create a dry-run release plan; publication requires confirmation.",
         (),
+        scope_kind="operation",
     ),
     "ai-eval": ToolSpec(
         "ai-eval",
@@ -499,6 +507,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         # W2 finding 20: a missing tdd target is TARGET_NOT_FOUND, never the
         # name-based "test suite verified" `ok`.
         target_validation=True,
+        scope_kind="operation",
     ),
     "fix": ToolSpec(
         "fix",
@@ -513,6 +522,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Diagnose environment health, toolchain integrity, and binary resolution.",
         "Diagnose environment health and binary resolution at <path>. Returns {status, findings[], summary}.",
         (),
+        scope_kind="operation",
     ),
     "patch-apply": ToolSpec(
         name="patch-apply",
@@ -552,6 +562,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Explicitly grant promotion writes.",
             ),
         ),
+        scope_kind="operation",
     ),
     "attest": ToolSpec(
         name="attest",
@@ -776,6 +787,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Base git reference for diff.",
             ),
         ),
+        scope_kind="operation",
     ),
     "benchmark": ToolSpec(
         name="benchmark",
@@ -810,6 +822,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Named benchmark baseline.",
             ),
         ),
+        scope_kind="operation",
     ),
     "error-catalog": ToolSpec(
         name="error-catalog",
@@ -845,6 +858,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Maximum number of commits to scan.",
             ),
         ),
+        scope_kind="operation",
     ),
     "dead-asset": ToolSpec(
         name="dead-asset",
@@ -885,6 +899,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Contained destination path to export PR summary Markdown.",
             ),
         ),
+        scope_kind="operation",
     ),
 }
 

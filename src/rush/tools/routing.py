@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rush.discovery.stack import PYTHON_MARKERS
 
@@ -98,7 +98,8 @@ def merge_scopes(
     return merged
 
 
-_STATUS_RANK = {"skipped": 0, "ok": 1, "warn": 2, "fail": 3, "error": 4}
+#: S16.3: error > fail > warn > skipped > ok.
+_STATUS_RANK: dict[str, int] = {"ok": 0, "skipped": 1, "warn": 2, "fail": 3, "error": 4}
 _SKIP_DIRS = frozenset(
     {".git", ".next", ".venv", "__pycache__", "build", "dist", "node_modules", "venv"}
 )
@@ -145,9 +146,109 @@ def no_target_scope(reason: str, **counts: int) -> dict[str, Any]:
     }
 
 
+def aggregate_status(statuses: Iterable[str]) -> ToolStatus:
+    """S16.3: the worst status by error>fail>warn>skipped>ok. Work that is
+    partly ok and partly skipped is `warn` (finding 9: every engine a tool
+    runs is required); no status at all is `skipped`."""
+    seen = {status for status in statuses if status in _STATUS_RANK}
+    if not seen:
+        return "skipped"
+    worst = cast("ToolStatus", max(seen, key=_STATUS_RANK.__getitem__))
+    if {"ok", "skipped"} <= seen and _STATUS_RANK[worst] < _STATUS_RANK["warn"]:
+        return "warn"
+    return worst
+
+
 def combine_status(left: ToolStatus, right: ToolStatus) -> ToolStatus:
-    """Return the worst Rush status while preserving known status semantics."""
-    return left if _STATUS_RANK.get(left, -1) >= _STATUS_RANK.get(right, -1) else right
+    """S16.3: `aggregate_status` of exactly two statuses."""
+    return aggregate_status([left, right])
+
+
+def _child_metadata(result: ToolResult) -> dict[str, Any]:
+    metadata = result.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _with_environment(entry: Any, metadata: dict[str, Any]) -> Any:
+    """A tool that records its analysis environment on the child after the
+    dispatch (typecheck) has it carried into that child's engine entry."""
+    environment = metadata.get("analysis_environment")
+    if not isinstance(entry, dict) or not isinstance(environment, dict):
+        return entry
+    if (entry.get("analysis_environment") or {}).get("mode") != "not_applicable":
+        return entry
+    return {**entry, "analysis_environment": environment}
+
+
+def concat_engine_entries(results: Sequence[ToolResult]) -> list[dict[str, Any]]:
+    """S16.2: every child's `metadata.engines` entries, in child order."""
+    return [
+        _with_environment(entry, _child_metadata(result))
+        for result in results
+        for entry in _child_metadata(result).get("engines") or []
+    ]
+
+
+def _aggregate_coverage(coverages: list[str]) -> str:
+    """§3 item 3: complete if all complete; none if all none; unavailable if
+    nothing is complete/partial and any is unavailable; else partial."""
+    kinds = set(coverages)
+    if not kinds or kinds == {"none"}:
+        return "none"
+    if kinds == {"complete"}:
+        return "complete"
+    if not kinds & {"complete", "partial"} and "unavailable" in kinds:
+        return "unavailable"
+    return "partial"
+
+
+def aggregate_scope(results: Sequence[ToolResult]) -> dict[str, Any]:
+    """§3 item 3: the aggregate scope of a multi-child result. File counts
+    stay on each child; a child that reports no scope counts as
+    `unavailable`."""
+    from rush.invocation.executor import current_invocation_root
+
+    scopes = [_child_metadata(result).get("scope") or {} for result in results]
+    root = current_invocation_root()
+    return {
+        "version": 1,
+        "kind": "aggregate",
+        "coverage": _aggregate_coverage(
+            [str(scope.get("coverage") or "unavailable") for scope in scopes]
+        ),
+        "requested_targets": sorted(
+            {str(t) for scope in scopes for t in scope.get("requested_targets") or []}
+        ),
+        "logical_root": str(root) if root is not None else None,
+    }
+
+
+def child_entry(result: ToolResult) -> dict[str, Any]:
+    """§3 item 3: one suite/scan child as `{tool, status, summary, reason,
+    engines, scope, execution}`."""
+    metadata = _child_metadata(result)
+    scope = metadata.get("scope") or {}
+    execution = metadata.get("execution") or {}
+    error = metadata.get("error") or {}
+    return {
+        "tool": result.get("tool"),
+        "status": result.get("status"),
+        "summary": result.get("summary"),
+        "reason": error.get("code") or execution.get("cause"),
+        "engines": [
+            entry.get("engine")
+            for entry in metadata.get("engines") or []
+            if entry.get("engine")
+        ],
+        "scope": {
+            "coverage": scope.get("coverage") or "unavailable",
+            "reason": scope.get("reason"),
+        },
+        "execution": {
+            "disposition": execution.get("disposition") or "executed",
+            "cause": execution.get("cause"),
+        },
+    }
 
 
 def collect_files(
@@ -212,9 +313,12 @@ def aggregate_results(
             summary=f"{tool}: no eligible engines",
             findings=[],
             raw=None,
+            metadata={"engines": [], "scope": aggregate_scope(())},
         )
 
-    status: ToolStatus = "skipped"
+    status = aggregate_status(
+        str(result.get("status", "skipped")) for result in results
+    )
     duration_ms = 0
     engines: list[str] = []
     findings: list[Finding] = []
@@ -233,10 +337,6 @@ def aggregate_results(
         )
 
     for result in ordered_results:
-        incoming_status = str(result.get("status", "skipped"))
-        match incoming_status:
-            case "ok" | "warn" | "fail" | "error" | "skipped":
-                status = combine_status(status, incoming_status)
         duration_ms += int(result.get("duration_ms", 0) or 0)
         engine = result.get("engine")
         if engine and engine not in engines:
@@ -291,8 +391,14 @@ def aggregate_results(
         output["metrics"] = metrics
     if artifacts:
         output["artifacts"] = artifacts
+    # S16.2/§3 item 3: every child's engine entries, in order, and the
+    # aggregate scope over the children.
+    metadata: dict[str, Any] = {
+        "engines": concat_engine_entries(ordered_results),
+        "scope": aggregate_scope(ordered_results),
+    }
     if tool == "review":
-        output["metadata"] = {
+        metadata |= {
             "aggregation": {
                 "mode": "serial",
                 "partial": any(
@@ -312,6 +418,7 @@ def aggregate_results(
             if baseline_fingerprints is not None
             else "not-provided",
         }
+    output["metadata"] = metadata
     return output
 
 
@@ -367,9 +474,13 @@ def _finding_sort_key(finding: Finding) -> tuple[str, int, int, str, str]:
 
 __all__ = [
     "aggregate_results",
+    "aggregate_scope",
+    "aggregate_status",
     "build_finding_baseline",
+    "child_entry",
     "collect_files",
     "combine_status",
+    "concat_engine_entries",
     "detect_project_languages",
     "no_target_scope",
 ]

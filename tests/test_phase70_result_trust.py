@@ -1443,12 +1443,26 @@ def _invoke(
     return out
 
 
+def _refused_child(tool: str, summary: str) -> dict:
+    """Phase 70 T16 §3 item 3: a suite child refused before it ran, as the
+    full child entry (T17 later adds the not_run disposition)."""
+    return {
+        "tool": tool,
+        "status": "error",
+        "summary": summary,
+        "reason": None,
+        "engines": [],
+        "scope": {"coverage": "unavailable", "reason": None},
+        "execution": {"disposition": "executed", "cause": None},
+    }
+
+
 def _assert_symlink_rejected(out: SimpleNamespace, transport: str, world) -> None:
     outside = (world.otherrepo, world.outdir)
     if transport == "suite":
         assert out.result["status"] == "error"
         assert out.result["metadata"]["children"] == [
-            {"tool": "t8-probe", "status": "error"}
+            _refused_child("t8-probe", f"error: {out.errors[0][1]}")
         ]
         assert out.result["metadata"]["executed_tools"] == ()
         assert len(out.errors) == 1
@@ -2009,7 +2023,11 @@ def test_t08_check_cli_rejects_symlink_escape_via_cli_runner(
     assert result.exit_code == 2, result.output
     payload = json.loads(result.stdout)
     assert payload["status"] == "error"
-    assert payload["metadata"]["children"] == [{"tool": "t8-probe", "status": "error"}]
+    (child,) = payload["metadata"]["children"]
+    assert child["summary"].startswith("error: [SYMLINK_DISALLOWED]"), child
+    assert payload["metadata"]["children"] == [
+        _refused_child("t8-probe", child["summary"])
+    ]
     assert payload["metadata"]["executed_tools"] == []
     assert "OUTSIDE_SECRET" not in result.output
     assert probe.calls == []
@@ -3323,14 +3341,21 @@ def test_t08_suite_walks_once(
         suite, Path("vendor/secret.py"), ExecutionPermissions(), fail_fast=False
     )
     assert walks == ["vendor/secret.py"]
+    summaries = [c["summary"] for c in rejected["metadata"]["children"]]
+    assert all(s.startswith("error: [SYMLINK_DISALLOWED]") for s in summaries)
     assert rejected["metadata"]["children"] == [
-        {"tool": p.name, "status": "error"} for p in probes
+        _refused_child(p.name, summary)
+        for p, summary in zip(probes, summaries, strict=True)
     ]
     assert all(p.calls == [] for p in probes)
     fast = run_workflow_suite(
         suite, Path("vendor/secret.py"), ExecutionPermissions(), fail_fast=True
     )
-    assert fast["metadata"]["children"] == [{"tool": "t8-step0", "status": "error"}]
+    (fast_child,) = fast["metadata"]["children"]
+    assert fast_child["summary"].startswith("error: [SYMLINK_DISALLOWED]")
+    assert fast["metadata"]["children"] == [
+        _refused_child("t8-step0", fast_child["summary"])
+    ]
 
 
 def _std_probe_wrapper(

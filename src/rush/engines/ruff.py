@@ -98,6 +98,35 @@ class RuffEngine(Engine):
             duration_ms=0,  # stamped by run_engine()
         )
 
+    def show_files(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+    ) -> list[str] | None:
+        """Phase 70 T16 (finding 24): the files `ruff check` would consume for
+        the identical argv, cwd and config, via `--show-files`. `None` when
+        the engine cannot list them (a config error)."""
+        binary_path = resolve_binary(self.binary) or self.binary
+        argv = [
+            binary_path,
+            "check",
+            "--show-files",
+            "--output-format=json",
+            "--no-cache",
+            str(path),
+            *args,
+        ]
+        proc = run_subprocess(argv, cwd=cwd, timeout=120)
+        if proc.returncode != 0:
+            return None
+        base = cwd if cwd is not None else Path.cwd()
+        return [
+            line if Path(line).is_absolute() else str(base / line)
+            for line in (item.strip() for item in proc.stdout.splitlines())
+            if line
+        ]
+
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         """Convert ruff JSON to canonical ToolResult."""
         from ..tools.common import elapsed_ms, normalize_findings

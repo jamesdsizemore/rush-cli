@@ -11,13 +11,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
 from .catalog import TOOL_SPECS
 from .contracts.results import ToolResultV1
+from .delivery.compact import LimitParam, MaxBytesParam
 from .logging import get_logger
 from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
@@ -264,11 +265,28 @@ def rush_token_outline(path: str, focus_symbol: str = "") -> str:
 
 
 # Phase 43 Tools
-def rush_context_retrieve(chunk_hash: str, path: str = ".") -> dict:
+def rush_context_retrieve(
+    chunk_hash: str,
+    path: str = ".",
+    view: Literal["result", "bytes"] | None = None,
+    cursor: str | None = None,
+    offset: int | None = None,
+    limit: LimitParam = None,
+    max_bytes: MaxBytesParam = None,
+) -> dict:
+    """T16 S16.6: without `view`, the legacy full chunk; with `view`, a
+    result page or bytes slice of a stored compact result."""
     from rush.tools.continuity import SessionContinuityTool
 
     result = SessionContinuityTool().run(
-        Path(path), operation="context_retrieve", context_handle=chunk_hash
+        Path(path),
+        operation="context_retrieve",
+        context_handle=chunk_hash,
+        view=view,
+        cursor=cursor,
+        offset=offset,
+        limit=limit,
+        max_bytes=max_bytes,
     )
     return result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
 

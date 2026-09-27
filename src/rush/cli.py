@@ -25,7 +25,11 @@ warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
 
 from . import __version__
 from .cli_support.catalog_commands import build_catalog_path_command
-from .cli_support.options import _extract_permissions, permission_options
+from .cli_support.options import (
+    _extract_permissions,
+    permission_options,
+    result_view_options,
+)
 from .cli_support.rendering import (
     TargetPath,
     _path_param_defaulted,
@@ -37,6 +41,7 @@ from .cli_support.rendering import (
     select_cli_target,
 )
 from .config import RushConfigError, load_config
+from .delivery.compact import ViewOptions
 from .invocation.models import InvocationError
 from .invocation.targets import RootSelection, assert_contained, select_root
 from .logging import setup_logging
@@ -300,6 +305,7 @@ def benchmark_status(output: Path) -> None:
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def benchmark_check_cmd(
     path: Path,
     threshold: float,
@@ -312,6 +318,9 @@ def benchmark_check_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Compare performance samples against baseline thresholds at <path>."""
     perms = _extract_permissions(
@@ -329,6 +338,7 @@ def benchmark_check_cmd(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"threshold_percent": threshold, "record": record},
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -352,6 +362,7 @@ def benchmark_check_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def review(
     path: Path,
     use_llm: bool,
@@ -365,6 +376,9 @@ def review(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Review code for deterministic heuristics. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -386,6 +400,7 @@ def review(
             "use_graft": use_graft,
             "changed_files": list(changed_files) or None,
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -396,6 +411,7 @@ def review(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def format(
     path: Path,
     check_only: bool,
@@ -407,6 +423,9 @@ def format(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Format Python and JS/TS safely. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -424,6 +443,7 @@ def format(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"check": check_only} if check_only else None,
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -439,6 +459,7 @@ def format(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def commit_msg_cmd(
     path: Path,
     message: str,
@@ -450,6 +471,9 @@ def commit_msg_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Validate commit messages without rewriting history. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -467,6 +491,7 @@ def commit_msg_cmd(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"message": message} if message else None,
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -487,6 +512,7 @@ def commit_msg_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def sbom_cmd(
     path: Path,
     output_path: Path | None,
@@ -499,6 +525,9 @@ def sbom_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Generate a safe SBOM artifact. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -519,6 +548,7 @@ def sbom_cmd(
             "output_path": output_path,
             "overwrite": overwrite,
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -537,6 +567,7 @@ def sbom_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def fix(
     path: Path,
     dry_run: bool,
@@ -549,6 +580,9 @@ def fix(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Safely auto-remediate formatting and linter issues across engines."""
     perms = _extract_permissions(
@@ -566,6 +600,7 @@ def fix(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"dry_run": dry_run, "force": force},
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -642,12 +677,26 @@ def cache_stats() -> None:
 
 @cache.command(name="clean")
 def cache_clean() -> None:
-    """Purge all cached results from .rush/cache.db."""
+    """Purge all cached results: .rush/cache.db entries and stored compact
+    results in .rush/cache/ccr.db (context-pack chunks are kept)."""
     from .cache import ResultCache
+    from .delivery.compact import purge_compact_results
 
     db = _logical_cache_db()
     count = ResultCache(db).clear() if db.is_file() else 0
+    # T16 R16.8/finding 28: only T16 storage objects leave ccr.db; a missing
+    # database is never created.
+    purged, retained = purge_compact_results(db.parent.parent)
     click.echo(f"Purged {count} cached result(s).")
+    click.echo(
+        json.dumps(
+            {
+                "result_cache": count,
+                "compact_results": purged,
+                "context_packs_retained": retained,
+            }
+        )
+    )
 
 
 def _logical_cache_db() -> Path:
@@ -1882,25 +1931,38 @@ def patch_group() -> None:
 @click.option(
     "--allow-artifact-write", is_flag=True, help="Permit verified patch promotion."
 )
+@click.option(
+    "--allow-cache-write",
+    is_flag=True,
+    help="Explicitly authorize local cache modification (compact result view).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print ToolResult JSON.")
+@result_view_options
 def patch_apply_cmd(
     patch_file: Path,
     dry_run: bool,
     circuit_breaker: bool,
     allow_artifact_write: bool,
+    allow_cache_write: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Verify PATH as a unified diff in isolation; explicitly grant promotion."""
     _run_tool(
         "patch-apply",
         Path.cwd(),
         as_json=as_json,
-        permissions=ExecutionPermissions(artifact_write=allow_artifact_write),
+        permissions=ExecutionPermissions(
+            artifact_write=allow_artifact_write, cache_write=allow_cache_write
+        ),
         extra_kwargs={
             "patch_file": patch_file,
             "dry_run": dry_run,
             "circuit_breaker": circuit_breaker,
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -3155,6 +3217,9 @@ def _build_memory_operation_command(operation: str):
         allow_artifact_write: bool,
         allow_browser: bool,
         as_json: bool,
+        result_view: str | None,
+        limit: int | None,
+        max_bytes: int | None,
     ) -> None:
         request = _memory_input_request(input_file)
         _run_tool(
@@ -3175,6 +3240,7 @@ def _build_memory_operation_command(operation: str):
                 "request": request,
                 "session_allowlist": list(session_allowlist) or None,
             },
+            view=ViewOptions(result_view, limit, max_bytes),
         )
 
     _cmd.__name__ = f"memory_{operation}_cmd"
@@ -3183,6 +3249,7 @@ def _build_memory_operation_command(operation: str):
         "--json", "as_json", is_flag=True, help="Print raw ToolResult JSON."
     )(_cmd)
     _cmd = permission_options(_cmd)
+    _cmd = result_view_options(_cmd)
     _cmd = click.option(
         "--session",
         "session_allowlist",
@@ -4524,14 +4591,51 @@ def context_group() -> None:
 
 @context_group.command(name="retrieve")
 @click.argument("chunk_hash")
+@click.option(
+    "--view",
+    type=click.Choice(["result", "bytes"]),
+    default=None,
+    help="Read a stored compact result: a findings page (result) or a byte "
+    "slice (bytes). Omit for the legacy full chunk.",
+)
+@click.option("--cursor", default=None, help="next_cursor from the previous page.")
+@click.option(
+    "--offset",
+    type=int,
+    default=None,
+    help="Start finding (result) or byte (bytes); not with --cursor.",
+)
+@click.option("--limit", type=int, default=None, help="Findings per page, 1-50.")
+@click.option(
+    "--max-bytes",
+    "max_bytes",
+    type=int,
+    default=None,
+    help="Size budget of the whole printed page, 4096-65536 bytes.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit canonical ToolResult JSON.")
-def context_retrieve_cmd(chunk_hash: str, as_json: bool) -> None:
+def context_retrieve_cmd(
+    chunk_hash: str,
+    view: str | None,
+    cursor: str | None,
+    offset: int | None,
+    limit: int | None,
+    max_bytes: int | None,
+    as_json: bool,
+) -> None:
     """Retrieve a CCR chunk through the shared continuity contract."""
     from rush.tools.continuity import SessionContinuityTool
 
     _render_session_result(
         SessionContinuityTool().run(
-            Path.cwd(), operation="context_retrieve", context_handle=chunk_hash
+            Path.cwd(),
+            operation="context_retrieve",
+            context_handle=chunk_hash,
+            view=view,
+            cursor=cursor,
+            offset=offset,
+            limit=limit,
+            max_bytes=max_bytes,
         ),
         as_json,
     )
@@ -5017,6 +5121,7 @@ def simulate_ci_cmd(workflow: str) -> None:
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def attest_cmd(
     path: Path,
     artifact_path: Path | None,
@@ -5033,6 +5138,9 @@ def attest_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Generate in-toto Statement v1 / SLSA Provenance v1 draft attestations."""
     perms = _extract_permissions(
@@ -5057,6 +5165,7 @@ def attest_cmd(
             "trusted_roots": tuple(trusted_roots) if trusted_roots else (),
             "allowed_signers": tuple(allowed_signers) if allowed_signers else (),
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -5069,6 +5178,7 @@ def attest_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def license_matrix_cmd(
     path: Path,
     allow_network: bool,
@@ -5079,6 +5189,9 @@ def license_matrix_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Audit project dependencies for copyleft and license risks."""
     perms = _extract_permissions(
@@ -5095,6 +5208,7 @@ def license_matrix_cmd(
         path,
         as_json=as_json,
         permissions=perms,
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -5115,6 +5229,7 @@ def license_matrix_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def iam_audit_cmd(
     path: Path,
     output_policy_file: Path | None,
@@ -5126,6 +5241,9 @@ def iam_audit_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Audit AWS SDK calls in source code and synthesize least-privilege IAM policy."""
     perms = _extract_permissions(
@@ -5147,6 +5265,7 @@ def iam_audit_cmd(
                 str(output_policy_file) if output_policy_file else None
             ),
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 

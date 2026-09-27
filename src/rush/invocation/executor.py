@@ -7,6 +7,7 @@ adaptation for CLI and MCP transports.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import inspect
 import json
 from collections.abc import Callable, Iterator
@@ -580,7 +581,7 @@ class InvocationExecutor:
         ):
             cached_result = self._cache.get(decision.cache_key)
             if cached_result is not None:
-                return cached_result
+                return mark_cache_hit(cached_result, decision.cache_key)
 
         args, kwargs = operation.signature_adapter(context)
 
@@ -603,6 +604,7 @@ class InvocationExecutor:
             _invocation_root_scope(context),
         ):
             result = operation.handler(*args, **kwargs)
+        result = with_default_scope(result, context)
 
         # MC05 §6.4: capture one real observation after execution, before the
         # result-cache write, only when opted in and host-granted cache_write.
@@ -631,6 +633,97 @@ class InvocationExecutor:
                 pass
 
         return result
+
+
+def _with_metadata(result: Any, update: Callable[[dict[str, Any]], None]) -> Any:
+    """Apply `update` to a copy of the result's metadata: legacy
+    `metadata`, or `extensions.metadata` of a strict ToolResultV1."""
+    if isinstance(result, ToolResultV1):
+        extensions = copy.deepcopy(result.extensions)
+        metadata = dict(extensions.get("metadata") or {})
+        update(metadata)
+        extensions["metadata"] = metadata
+        return dataclasses.replace(result, extensions=extensions)
+    if not isinstance(result, dict):
+        return result
+    updated = dict(result)
+    metadata = dict(updated.get("metadata") or {})
+    update(metadata)
+    updated["metadata"] = metadata
+    return updated
+
+
+def _current_metadata(result: Any) -> dict[str, Any]:
+    if isinstance(result, ToolResultV1):
+        return dict(result.extensions.get("metadata") or {})
+    if isinstance(result, dict):
+        return dict(result.get("metadata") or {})
+    return {}
+
+
+def mark_cache_hit(result: Any, cache_key: str) -> Any:
+    """T16 §3 item 4: a cache hit returns a copy carrying
+    `metadata.execution.cache={"hit": true, "cache_key": key}`; the cached
+    object -- and its original scope -- is never rewritten."""
+    result = copy.deepcopy(result)
+
+    def update(metadata: dict[str, Any]) -> None:
+        execution = dict(metadata.get("execution") or {})
+        execution["cache"] = {"hit": True, "cache_key": cache_key}
+        metadata["execution"] = execution
+
+    return _with_metadata(result, update)
+
+
+def default_scope(result: Any, context: InvocationContext) -> dict[str, Any]:
+    """R16.2: the scope of a catalog result whose tool reports none --
+    `unavailable` with a reason, never a guessed count."""
+    from rush.catalog import TOOL_SPECS
+
+    logical, _ = _invocation_roots(context)
+    kind = TOOL_SPECS[context.operation_id].scope_kind
+    engines = _current_metadata(result).get("engines") or []
+    originals = context.original_requested_targets
+    scope: dict[str, Any] = {
+        "version": 1,
+        "kind": kind,
+        "logical_root": str(logical),
+        "requested_targets": [t.relative_path.as_posix() for t in context.targets],
+        "original_requested_targets": [_redacted(o) for o in originals]
+        if originals
+        else None,
+        "invocation_start_cwd": str(context.invocation_start_cwd)
+        if context.invocation_start_cwd is not None
+        else None,
+        "execution_cwds": list(
+            dict.fromkeys(str(e["cwd"]) for e in engines if e.get("cwd"))
+        ),
+        "requested_file_count": None,
+        "matched_file_count": None,
+        "consumed_file_count": None,
+        "coverage": "unavailable",
+        "reason": "tool_reports_no_file_consumption",
+    }
+    if kind == "operation":
+        scope["file_count"] = None
+        scope["reason"] = "not_file_analysis"
+    return scope
+
+
+def with_default_scope(result: Any, context: InvocationContext) -> Any:
+    """S16.1: every catalog ToolResult carries a v1 `metadata.scope` (strict
+    V1: `extensions.metadata.scope`); a tool's own v1 scope is kept."""
+    from rush.catalog import TOOL_SPECS
+
+    if context.operation_id not in TOOL_SPECS:
+        return result
+    if not isinstance(result, (dict, ToolResultV1)):
+        return result
+    scope = _current_metadata(result).get("scope")
+    if isinstance(scope, dict) and scope.get("version") == 1:
+        return result
+    fallback = default_scope(result, context)
+    return _with_metadata(result, lambda metadata: metadata.update(scope=fallback))
 
 
 def format_signature_error_diagnostic(

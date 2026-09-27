@@ -127,7 +127,7 @@ from rush.tools.common import (
     skipped_result,
 )
 from rush.tools.quality import GuardedQualityTool
-from rush.tools.routing import aggregate_results
+from rush.tools.routing import aggregate_results, child_entry
 from rush.workflows.projects import ProjectError, resolve_project
 
 Disposition = Literal[
@@ -1214,6 +1214,15 @@ def _finalize_attempt(
             ),
         ]
     aggregate = aggregate_results("scan", children)
+    # T16 §3 item 3: one full entry per candidate child; the aggregate scope
+    # is anchored at the scanned root.
+    scan_metadata = dict(aggregate.get("metadata") or {})
+    scan_metadata["scope"] = {
+        **scan_metadata.get("scope", {}),
+        "logical_root": str(root),
+    }
+    scan_metadata["children"] = [child_entry(child) for child in children]
+    aggregate["metadata"] = scan_metadata
 
     run_state: RunState
     if cancelled:

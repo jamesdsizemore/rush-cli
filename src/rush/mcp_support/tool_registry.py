@@ -7,14 +7,15 @@ import inspect
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field
 
 from rush.config import RushConfigError, load_config
+from rush.delivery import compact
 from rush.invocation import InvocationContext, InvocationExecutor, resolve_invocation
 from rush.invocation.executor import invalid_target_result, invocation_arguments
-from rush.invocation.models import InvalidTargetError
+from rush.invocation.models import InvalidTargetError, SignatureAdaptationError
 from rush.invocation.targets import (
     anchor_path_value,
     assert_contained,
@@ -111,6 +112,111 @@ def _public_signature(sig: inspect.Signature) -> inspect.Signature:
     return sig.replace(parameters=params)
 
 
+# T16 R16.5/finding 1: the view parameters every catalog tool publishes.
+# name -> (default, published annotation, annotations a tool may declare).
+_VIEW_PARAMS: dict[str, tuple[Any, Any, tuple[Any, ...]]] = {
+    "result_view": (
+        None,
+        compact.ResultViewParam,
+        (str | None, Literal["full", "compact"] | None, compact.ResultViewParam),
+    ),
+    "limit": (None, compact.LimitParam, (int | None, compact.LimitParam)),
+    "max_bytes": (None, compact.MaxBytesParam, (int | None, compact.MaxBytesParam)),
+    "no_cache": (
+        False,
+        Annotated[
+            bool,
+            Field(description="Bypass the result cache; not allowed with compact."),
+        ],
+        (bool,),
+    ),
+}
+_ALLOW_CACHE_WRITE = inspect.Parameter(
+    "allow_cache_write",
+    kind=inspect.Parameter.KEYWORD_ONLY,
+    default=False,
+    annotation=Annotated[
+        bool, Field(description="Explicitly authorize local cache modification.")
+    ],
+)
+
+
+def _declared_view_params(tool_name: str, sig: inspect.Signature) -> frozenset[str]:
+    """Finding 1: view parameters the tool declares itself. Each must use the
+    identical contract (same default, an equivalent type); only a different
+    contract is a registration-time `SignatureAdaptationError`."""
+    declared = frozenset(_VIEW_PARAMS) & frozenset(sig.parameters)
+    for name in declared:
+        default, _, accepted = _VIEW_PARAMS[name]
+        param = sig.parameters[name]
+        annotation_ok = (
+            param.annotation is inspect.Parameter.empty or param.annotation in accepted
+        )
+        if param.default is not default or not annotation_ok:
+            raise SignatureAdaptationError(
+                f"Tool '{tool_name}' declares '{name}' with a contract that "
+                "differs from the shared result-view parameter",
+                operation_id=tool_name,
+                param_name=name,
+            )
+    return declared
+
+
+def _with_view_params(sig: inspect.Signature) -> inspect.Signature:
+    """Publish each view parameter exactly once (declared ones get the shared
+    annotation), plus `allow_cache_write` only when the tool lacks it."""
+    params = [
+        p.replace(annotation=_VIEW_PARAMS[p.name][1]) if p.name in _VIEW_PARAMS else p
+        for p in sig.parameters.values()
+    ]
+    names = {p.name for p in params}
+    extra = [
+        inspect.Parameter(
+            name,
+            kind=inspect.Parameter.KEYWORD_ONLY,
+            default=default,
+            annotation=annotation,
+        )
+        for name, (default, annotation, _) in _VIEW_PARAMS.items()
+        if name not in names
+    ]
+    if "allow_cache_write" not in names:
+        extra.append(_ALLOW_CACHE_WRITE)
+    insert_at = next(
+        (i for i, p in enumerate(params) if p.kind is inspect.Parameter.VAR_KEYWORD),
+        len(params),
+    )
+    return sig.replace(parameters=[*params[:insert_at], *extra, *params[insert_at:]])
+
+
+def _take_view_options(
+    call_args: dict[str, Any], declared: frozenset[str]
+) -> compact.ViewOptions:
+    """R16.5: injected view parameters are consumed here and never reach the
+    tool; declared ones stay for the tool too. `no_cache` becomes the
+    request's `cache_policy`."""
+    values = {
+        name: call_args.get(name) if name in declared else call_args.pop(name, None)
+        for name in _VIEW_PARAMS
+    }
+    if values["no_cache"]:
+        call_args["cache_policy"] = "bypass"
+    return compact.ViewOptions(
+        result_view=values["result_view"],
+        limit=values["limit"],
+        max_bytes=values["max_bytes"],
+        no_cache=bool(values["no_cache"]),
+    )
+
+
+def _mcp_serializer(wrapper: Callable[..., Any]) -> compact.Serializer:
+    """R16.6: measure with FastMCP's own result conversion for this tool."""
+    from mcp.server.fastmcp.tools.base import Tool
+
+    metadata = Tool.from_function(wrapper).fn_metadata
+    return compact.mcp_size(metadata.convert_result)
+
+
 def _declared_root(value: Any, anchor: Path, index: Mapping[str, str]) -> Path | None:
     """§3.2/T8: route a declared `project`/`project_id` (ID first, then a path
     anchored to the server-start cwd). `None` when nothing was declared."""
@@ -200,15 +306,15 @@ def make_tool_wrapper(
         executor.register(tool.name, tool.__call__)
     exec_instance = executor
     real_sig = inspect.signature(tool.__call__, eval_str=True)
-    public_sig = _public_signature(real_sig)
+    declared_views = _declared_view_params(tool.name, real_sig)
+    public_sig = _with_view_params(_public_signature(real_sig))
     inject = (
         "project_id" not in real_sig.parameters and "project" not in real_sig.parameters
     )
     cwd_relative = _CWD_RELATIVE_ARGS.get(tool.name, ())
+    serializer: list[compact.Serializer] = []
 
-    @functools.wraps(tool.__call__)
-    def tool_mcp_wrapper(*args: Any, **kwargs: Any) -> Any:
-        call_args = dict(public_sig.bind(*args, **kwargs).arguments)
+    def prepare(call_args: dict[str, Any]) -> compact.Prepared | dict[str, Any]:
         # T8: build_server's server-start snapshot stays fixed regardless of a
         # later chdir; a wrapper built without one uses the live cwd per call.
         server_anchor = anchor_cwd if anchor_cwd is not None else Path.cwd()
@@ -232,7 +338,25 @@ def make_tool_wrapper(
         except InvalidTargetError as exc:
             # T9/R9.2: malformed input is a result, never a traceback.
             return invalid_target_result(tool.name, exc)
-        return exec_instance.execute(context)
+        return context.workspace_root, lambda: exec_instance.execute(context)
+
+    def serialize(value: dict[str, Any]) -> int:
+        if not serializer:
+            serializer.append(_mcp_serializer(tool_mcp_wrapper))
+        return serializer[0](value)
+
+    @functools.wraps(tool.__call__)
+    def tool_mcp_wrapper(*args: Any, **kwargs: Any) -> Any:
+        call_args = dict(public_sig.bind(*args, **kwargs).arguments)
+        options = _take_view_options(call_args, declared_views)
+        # T16 §3 item 7: one delivery call per request, compact or full.
+        return compact.deliver(
+            tool.name,
+            options,
+            cache_write=bool(call_args.get("allow_cache_write")),
+            prepare=lambda: prepare(call_args),
+            serialize=serialize,
+        )
 
     tool_mcp_wrapper.__dict__["__self__"] = tool
     tool_mcp_wrapper.__dict__["__signature__"] = public_sig
