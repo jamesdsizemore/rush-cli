@@ -444,6 +444,16 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush agent connect --help",
             "admin",
         ),
+        # Phase 70 T3: `disconnect` removes Rush-owned MCP entries, instruction
+        # blocks and resources from third-party agent configs and project files
+        # -- the same administrative mutation class as `connect`.
+        "agent disconnect": (
+            None,
+            "rush.tools.agent_connection:AgentConnectionTool",
+            "stateful-mutation",
+            "rush agent disconnect --help",
+            "admin",
+        ),
         "agent doctor": (
             None,
             "rush.tools.agent_connection:AgentConnectionTool",

@@ -44,7 +44,7 @@ def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
     """T-58.21 (R-011 Governance Test): Probes all 153 operations from public-operations.toml with malformed payloads."""
     registry = get_operation_registry()
     assert isinstance(registry, OperationRegistry)
-    assert len(registry._adapters) == 189
+    assert len(registry._adapters) == 190
 
     # Verify adapter registration and boundary validation across all operations
     tool_count = 0
@@ -149,9 +149,9 @@ def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
                 registry.validate_output(op_id, sample_valid_tool_result)
 
     assert tool_count == 79
-    assert admin_count == 92
+    assert admin_count == 93
     assert service_count == 18
-    assert tool_count + admin_count + service_count == 189
+    assert tool_count + admin_count + service_count == 190
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ def test_admin_boundaries_emit_unwrapped_exit_codes() -> None:
     """T-58.23: Asserts admin commands emit native integer exit codes conforming to ClickExitCode contract without ToolResult wrapping."""
     registry = get_operation_registry()
     admin_adapters = [a for a in registry._adapters.values() if a.kind == "admin"]
-    assert len(admin_adapters) == 92
+    assert len(admin_adapters) == 93
 
     sample_tr = ToolResultV1(
         schema_version="1.0.0",

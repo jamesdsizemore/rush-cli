@@ -12,6 +12,14 @@ config file (or invokes its native registration command) and requires
 explicit cache-write + artifact-write permission, matching the write gate
 `ProjectTool` uses for `add`/`create`.
 
+Phase 70 T3: `connect` also previews the project instruction block
+(`CLAUDE.md`/`AGENTS.md`) and writes it only with separate guidance consent
+(`install_guidance=True`, or an interactive `confirm_guidance` prompt);
+memory consent, grants and `acknowledge` never imply it. Every file write of
+the transaction is journaled and undone on a later failure. `disconnect`
+removes only Rush-owned, unchanged components recorded in the ownership
+ledger.
+
 MCP registration (`rush_agent_connection` in `src/rush/mcp.py`) is out of
 this task's allowed files -- see this packet's own receipt for the exact
 disclosed gap; a follow-up task registers it against this same tool.
@@ -19,42 +27,53 @@ disclosed gap; a follow-up task registers it against this same tool.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
 from rush.integrations.agents import (
     AgentConnectionError,
-    acknowledge_agent_connection,
+    AgentTransactionError,
+    GuidanceConsent,
+    OwnedResource,
     agent_readiness,
-    apply_agent_registration,
+    connect_agent,
+    disconnect_agent,
     discover_agents,
-    initialize_agent_memory,
-    plan_agent_registration,
-    probe_agent_connection,
     read_agent_memory_state,
-    resolve_rush_binary,
 )
 from rush.permissions import ExecutionPermissions, check_permissions
 
 from .base import Finding, ToolFn, ToolResult, ToolStatus
 
-AgentAction = Literal["list", "connect", "doctor"]
+AgentAction = Literal["list", "connect", "doctor", "disconnect"]
 
 _CONNECT_PERMISSION = ExecutionPermissions(cache_write=True, artifact_write=True)
 
+_DISCONNECT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "operation",
+        "agent_id",
+        "project_root",
+        "allow_cache_write",
+        "allow_artifact_write",
+    }
+)
+
 
 class AgentConnectionTool(ToolFn):
-    """Discover, connect, and diagnose local MCP-capable coding agents."""
+    """Discover, connect, disconnect, and diagnose local MCP-capable coding agents."""
 
     name = "agent_connection"
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Discover and connect local coding agents. action=list|connect|doctor. "
-            "Returns {status, findings[], summary, raw}. `connect` requires explicit "
-            "cache-write and artifact-write permission; status='skipped' means denied."
+            "Discover/connect/disconnect local coding agents. "
+            "action=list|connect|doctor|disconnect. Returns {status, findings[], "
+            "summary, raw}. connect/disconnect need cache+artifact write grants."
         )
 
     def __call__(
@@ -65,6 +84,7 @@ class AgentConnectionTool(ToolFn):
         rush_binary: str | None = None,
         consent: bool = False,
         acknowledge: bool = False,
+        install_guidance: bool = False,
         allow_cache_write: bool = False,
         allow_artifact_write: bool = False,
     ) -> ToolResult:
@@ -75,6 +95,7 @@ class AgentConnectionTool(ToolFn):
             rush_binary=rush_binary,
             consent=consent,
             acknowledge=acknowledge,
+            install_guidance=install_guidance,
             permissions=ExecutionPermissions(
                 cache_write=allow_cache_write, artifact_write=allow_artifact_write
             ),
@@ -89,10 +110,13 @@ class AgentConnectionTool(ToolFn):
         rush_binary: str | None = None,
         consent: bool = False,
         acknowledge: bool = False,
+        install_guidance: bool = False,
+        confirm_guidance: GuidanceConsent | None = None,
         project_root: Path | None = None,
         permissions: ExecutionPermissions | None = None,
         home: Path | None = None,
         data_root: Path | None = None,
+        resources: Sequence[OwnedResource] = (),
     ) -> ToolResult:
         started = monotonic()
         granted = permissions or ExecutionPermissions()
@@ -112,15 +136,43 @@ class AgentConnectionTool(ToolFn):
                 rush_binary=rush_binary,
                 consent=consent,
                 acknowledge=acknowledge,
+                guidance_consent=(
+                    True if install_guidance else (confirm_guidance or False)
+                ),
                 project_root=project_root,
                 home=home,
                 data_root=data_root,
+                resources=resources,
+            )
+        except AgentTransactionError as exc:
+            return self._result(
+                started,
+                "error",
+                f"agent {action}: {exc}",
+                raw={"error": str(exc), "recovery_required": exc.recovery},
             )
         except AgentConnectionError as exc:
             return self._result(started, "error", f"agent {action}: {exc}")
         except ValueError as exc:
             return self._result(started, "error", f"agent {action}: {exc}")
 
+        if action == "connect":
+            guidance_state = raw["guidance"]["state"]
+            return self._result(
+                started,
+                "ok",
+                f"agent connect: ok; guidance: {guidance_state}",
+                raw=raw,
+            )
+        if action == "disconnect":
+            status: ToolStatus = "ok" if raw["status"] == "ok" else "warn"
+            return self._result(
+                started,
+                status,
+                f"agent disconnect: {raw['status']}; removed "
+                f"{len(raw['removed'])}, conflicts {len(raw['conflicts'])}",
+                raw=raw,
+            )
         return self._result(started, "ok", f"agent {action}: ok", raw=raw)
 
     def _dispatch(
@@ -132,9 +184,11 @@ class AgentConnectionTool(ToolFn):
         rush_binary: str | None,
         consent: bool,
         acknowledge: bool,
+        guidance_consent: GuidanceConsent,
         project_root: Path | None,
         home: Path | None,
         data_root: Path | None,
+        resources: Sequence[OwnedResource] = (),
     ) -> Any:
         if action == "list":
             return agent_readiness(home=home, rush_binary=rush_binary)
@@ -144,26 +198,25 @@ class AgentConnectionTool(ToolFn):
                 raise ValueError("connect requires agent_id")
             if not session_id:
                 raise ValueError("connect requires session_id")
-            binary = resolve_rush_binary(rush_binary)
-            plan = plan_agent_registration(agent_id, rush_binary=binary, home=home)
-            applied = apply_agent_registration(plan)
-            memory_entry = initialize_agent_memory(
+            return connect_agent(
                 agent_id,
-                session_id,
-                project_root=project_root,
-                data_root=data_root,
+                session_id=session_id,
+                rush_binary=rush_binary,
                 consent=consent,
+                acknowledge=acknowledge,
+                guidance_consent=guidance_consent,
+                project_root=project_root,
+                home=home,
+                data_root=data_root,
+                resources=resources,
             )
-            if applied.ok and acknowledge:
-                memory_entry = acknowledge_agent_connection(
-                    agent_id, session_id, project_root=project_root, data_root=data_root
-                )
-            probe = probe_agent_connection(agent_id, home=home, rush_binary=binary)
-            return {
-                "apply": applied.to_dict(),
-                "probe": probe.to_dict(),
-                "memory": memory_entry,
-            }
+
+        if action == "disconnect":
+            if not agent_id:
+                raise ValueError("disconnect requires agent_id")
+            return disconnect_agent(
+                agent_id, project_root=project_root, data_root=data_root, home=home
+            ).to_dict()
 
         if action == "doctor":
             statuses = discover_agents(home=home, rush_binary=rush_binary)
@@ -212,8 +265,15 @@ class AgentConnectionTool(ToolFn):
             raise _AgentInvalidRequestError("schema_version must be 1")
 
         operation = request.get("operation")
-        if operation not in ("list", "connect", "doctor"):
+        if operation not in ("list", "connect", "doctor", "disconnect"):
             raise _AgentInvalidRequestError(f"unknown operation: {operation!r}")
+
+        if operation == "disconnect":
+            return self._handle_disconnect_request(request)
+
+        install_guidance = request.get("install_guidance", False)
+        if type(install_guidance) is not bool:
+            raise _AgentInvalidRequestError("install_guidance must be a boolean")
 
         if operation == "connect":
             granted = ExecutionPermissions(
@@ -231,12 +291,50 @@ class AgentConnectionTool(ToolFn):
             rush_binary=request.get("rush_binary"),
             consent=bool(request.get("consent", False)),
             acknowledge=bool(request.get("acknowledge", False)),
+            guidance_consent=install_guidance,
             project_root=Path(request["project_root"])
             if request.get("project_root")
             else None,
             home=None,
             data_root=None,
         )
+
+    def _handle_disconnect_request(self, request: dict[str, Any]) -> Any:
+        """Strict fields: unknown keys, wrong types and non-bool grants are rejected."""
+        unknown = sorted(set(request) - _DISCONNECT_FIELDS)
+        if unknown:
+            raise _AgentInvalidRequestError(
+                f"unknown field(s) for disconnect: {', '.join(unknown)}"
+            )
+        agent_id = request.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise _AgentInvalidRequestError("disconnect requires a string agent_id")
+        project_root = request.get("project_root")
+        if project_root is not None and (
+            not isinstance(project_root, str) or not project_root
+        ):
+            raise _AgentInvalidRequestError(
+                "project_root must be a non-empty string or null"
+            )
+        grants = {
+            key: request.get(key, False)
+            for key in ("allow_cache_write", "allow_artifact_write")
+        }
+        if any(type(value) is not bool for value in grants.values()):
+            raise _AgentInvalidRequestError("permission grants must be booleans")
+        allowed, missing = check_permissions(
+            _CONNECT_PERMISSION,
+            ExecutionPermissions(
+                cache_write=grants["allow_cache_write"],
+                artifact_write=grants["allow_artifact_write"],
+            ),
+        )
+        if not allowed:
+            raise _ScopeDenied(f"missing permission(s): {', '.join(missing)}")
+        return disconnect_agent(
+            agent_id,
+            project_root=Path(project_root) if project_root else None,
+        ).to_dict()
 
     def _envelope_result(
         self,

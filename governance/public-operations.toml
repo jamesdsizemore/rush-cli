@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 189
+total_operations = 190
 
 [[operations]]
 id = "admin.agent_connect"
@@ -13,6 +13,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush agent connect --help"
+
+[[operations]]
+id = "admin.agent_disconnect"
+kind = "admin"
+canonical_impl = "rush.tools.agent_connection:AgentConnectionTool"
+cli_command = "agent disconnect"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush agent disconnect --help"
 
 [[operations]]
 id = "admin.install"
