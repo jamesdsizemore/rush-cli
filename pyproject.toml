@@ -110,7 +110,10 @@ markers = [
     "needs_jscpd: test requires `jscpd` on PATH",
     "needs_sloppylint: test requires `sloppylint` on PATH",
     "needs_aislop: test requires `aislop` on PATH",
+    "needs_promptfoo: test requires `promptfoo` on PATH",
     "slow: test's own runtime is large enough to dominate a full-suite run; excluded from the default local run (see `-m \"not slow\"` in addopts above), always included in CI/pre-merge (`pytest -m slow` or `pytest -m \"\"`)",
     "windows_only: test only applies on Windows; deselected (not skipped) on other platforms by conftest.py's pytest_collection_modifyitems, always collected and run in the Windows CI job",
     "atheris_only: test requires the real atheris fuzz engine, only installable/importable on Linux x86_64 (no macOS/Windows wheels exist); deselected (not skipped) elsewhere by conftest.py's pytest_collection_modifyitems, always collected and run on Linux x86_64 (CI's engine-contracts job)",
+    "posix_only: test only applies on POSIX (symlinks, shell-script fixtures, ptys); deselected (not skipped) on Windows by conftest.py's pytest_collection_modifyitems, always collected and run in every POSIX CI job",
+    "posix_nonroot: test only applies on POSIX as a non-root user (permission bits root bypasses); deselected (not skipped) on Windows or when the effective uid is 0 by conftest.py's pytest_collection_modifyitems, always collected and run in every POSIX CI job (non-root runners)",
 ]

@@ -154,7 +154,8 @@ def test_acp_package_without_adapter_falls_back(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("stage", ["version", "initialization"])
 def test_native_startup_timeout_reaps_child(monkeypatch, tmp_path, stage):
-    sdk = pytest.importorskip("claude_agent_sdk")
+    import claude_agent_sdk as sdk
+
     pidfile = tmp_path / "startup.pid"
     peer = tmp_path / "startup-peer"
     peer.write_text(
@@ -314,7 +315,9 @@ for line in sys.stdin:
     ],
 )
 def test_real_sdk_local_peer(monkeypatch, tmp_path, protocol, outcome):
-    sdk = pytest.importorskip("claude_agent_sdk" if protocol == "native_sdk" else "acp")
+    sdk = importlib.import_module(
+        "claude_agent_sdk" if protocol == "native_sdk" else "acp"
+    )
     peer = _peer(tmp_path, "claude" if protocol == "native_sdk" else "acp", outcome)
     outside = tmp_path / "outside-secret.txt"
     outside.write_text("synthetic-secret")

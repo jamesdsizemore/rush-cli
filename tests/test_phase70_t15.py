@@ -35,9 +35,7 @@ from rush.setup.engine_packages import (
 )
 from rush.tools import doctor as doctor_mod
 
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32", reason="posix shebang fixtures only"
-)
+pytestmark = pytest.mark.posix_only  # POSIX shebang fixtures
 
 
 # --- fixtures ---------------------------------------------------------------
