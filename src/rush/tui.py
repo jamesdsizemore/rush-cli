@@ -767,6 +767,10 @@ class TuiState:
     memory_expanded: dict[str, Any] | None = None
     memory_edit_buffer: str | None = None
     memory_message: str = ""
+    memory_filter_trust: str | None = None
+    memory_filter_source: str | None = None
+    memory_filter_freshness: str | None = None
+    memory_filter_archived: bool = False
     # P69-07 CONNECT: the owner every memory mutation this admin session makes is
     # attributed to (mode == "memory_owner" is the selector). `project`/`session`
     # kinds have a real derived default id (`_default_owner_scope_id`), so an empty
@@ -2200,12 +2204,22 @@ def _memory_refresh(
         state.memory_message = "no memory recorded for this project yet"
         return
     try:
+        filters: dict[str, Any] = {}
+        if state.memory_filter_trust is not None:
+            filters["trust_filter"] = state.memory_filter_trust
+        if state.memory_filter_source is not None:
+            filters["source_filter"] = state.memory_filter_source
+        if state.memory_filter_freshness is not None:
+            filters["freshness_filter"] = state.memory_filter_freshness
+        if state.memory_filter_archived:
+            filters["archived_filter"] = True
         result = actions.memory_run(
             project.root,
             operation="list",
             subject=state.memory_subject,
             query=query,
             session_allowlist=sources,
+            **filters,
         )
     except Exception as exc:  # noqa: BLE001 -- injectable Phase61/63 memory
         # seam; a failure must render as a retryable message, never crash the
