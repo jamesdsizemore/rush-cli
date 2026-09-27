@@ -2230,12 +2230,16 @@ def _apply_legacy_provision(
         **{k: v for k, v in fakes.items() if v is not None},
     )
     complete = not (outcome.failed or outcome.permission_blocked)
-    return {
+    result: dict[str, Any] = {
         "status": "ok" if complete else "partial",
         "project_id": project_id,
         "provision": _provision_summary(outcome),
         "raw": raw,
     }
+    if outcome.permission_blocked:
+        # A blocked engine's recovery line names this command plus its grants.
+        result["resume_command"] = setup_resume_command(Path(plan.project_root))
+    return result
 
 
 # --- T26: consent from the controlling terminal ---------------------------------
