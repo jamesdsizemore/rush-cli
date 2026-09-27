@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from rush.runtime.sqlite_util import ClosingConnection
+from rush.sqlite_util import ClosingConnection
 
 
 @dataclass(frozen=True)

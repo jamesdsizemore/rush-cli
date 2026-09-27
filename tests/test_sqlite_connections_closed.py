@@ -24,7 +24,7 @@ from rush.dashboard.state import MutationLedger
 from rush.delivery.compact import purge_compact_results
 from rush.memory.failure_ledger import FailureLedger
 from rush.patch.memory import PatchMemoryStore
-from rush.runtime.sqlite_util import ClosingConnection
+from rush.sqlite_util import ClosingConnection
 from rush.token_economy.ccr_store import CCRStore
 from rush.token_economy.telemetry import TelemetryStore
 

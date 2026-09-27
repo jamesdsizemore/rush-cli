@@ -22,8 +22,8 @@ from rush.contracts.results import (
 )
 from rush.invocation.cache_policy import decide_cache
 from rush.logging import get_logger, log_subsystem
-from rush.runtime.sqlite_util import ClosingConnection
 from rush.safety.redactor import sanitize_value
+from rush.sqlite_util import ClosingConnection
 from rush.tools.base import ToolResult
 
 logger = get_logger("cache")

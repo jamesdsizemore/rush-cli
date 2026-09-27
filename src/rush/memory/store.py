@@ -23,8 +23,8 @@ from typing import Any, Literal
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.trust import PromotionResult, evaluate_conflict, evaluate_promotion
-from rush.runtime.sqlite_util import ClosingConnection
 from rush.safety.redactor import sanitize_value
+from rush.sqlite_util import ClosingConnection
 
 MemoryFamily = Literal["handoff", "experience", "memory", "skill"]
 MemorySubject = Literal[

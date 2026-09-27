@@ -22,7 +22,7 @@ from typing import Any
 if sys.platform != "win32":
     import fcntl
 
-from rush.runtime.sqlite_util import ClosingConnection
+from rush.sqlite_util import ClosingConnection
 from rush.tools.base import ToolResult
 
 
