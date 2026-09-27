@@ -9,6 +9,7 @@ from typing import Any
 from ..memory.checkpoint_journal import CheckpointJournal
 from ..memory.failure_ledger import FailureLedger
 from ..memory.merkle_invalidator import MerkleInvalidator
+from ..memory.store import MemoryStoreUnreadableError
 from ..memory.trust import default_entry_tier
 from ..safety.redactor import SecretRedactor
 
@@ -19,11 +20,11 @@ def _extract_failure_receipt(
     if not isinstance(failure_fingerprint, str):
         return None
     try:
-        return FailureLedger(project_root).get_receipt(failure_fingerprint) or {
+        return FailureLedger.read_receipt(project_root, failure_fingerprint) or {
             "fingerprint": failure_fingerprint,
             "state": "tombstoned",
         }
-    except (OSError, sqlite3.DatabaseError):
+    except (OSError, sqlite3.DatabaseError, MemoryStoreUnreadableError):
         return {
             "fingerprint": failure_fingerprint,
             "state": "unavailable",

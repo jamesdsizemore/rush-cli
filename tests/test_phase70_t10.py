@@ -991,3 +991,279 @@ def test_t10_readonly_read_never_closes_last_over_a_leaked_writer(
     conn = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
     assert conn.execute("SELECT count(*) FROM t").fetchone()[0] == 1
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1: remaining read paths on T10 surfaces open read-only
+# ---------------------------------------------------------------------------
+
+
+def _pack_fixture(root: Path) -> None:
+    _git_dir_marker(root)
+    (root / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("existing_store", [False, True])
+def test_t10_context_pack_lookup_creates_nothing(
+    tmp_path: Path, spawn_spy: list[object], existing_store: bool
+) -> None:
+    """An ungranted `context_pack` (its memory cache lookup) creates no `.rush`,
+    `memory.db` or sidecar when no store exists, and leaves an existing store
+    byte-identical (a cache hit is served read-only).
+
+    RED: `check_memory_before_pack` constructed a creating `TypedArtifactStore`.
+    """
+    _pack_fixture(tmp_path)
+    tool = SessionContinuityTool()
+    if existing_store:
+        granted = tool.run(
+            tmp_path,
+            operation="context_pack",
+            context_path="a.py",
+            permissions=ExecutionPermissions(cache_write=True),
+        )
+        assert granted["status"] == "ok", granted
+        _close_writers()
+        assert _sidecars(tmp_path) == []
+    before = _byte_snapshot(tmp_path)
+    spawn_spy.clear()
+
+    result = tool.run(tmp_path, operation="context_pack", context_path="a.py")
+
+    assert result["status"] == "ok", result
+    assert _byte_snapshot(tmp_path) == before
+    assert _sidecars(tmp_path) == []
+    assert (tmp_path / ".rush").exists() is existing_store
+    assert spawn_spy == []
+
+
+@pytest.mark.parametrize("existing_ledger", [False, True])
+def test_t10_coordination_recovery_creates_nothing(
+    tmp_path: Path, existing_ledger: bool
+) -> None:
+    """Ungranted `coordination_recovery` reads the failure receipt read-only:
+    no `.rush/memory/failures.db` is created, an existing one is unchanged, and
+    its receipt is still returned. (It legitimately spawns a read-only
+    `git log --grep=Revert` for mistake guardrails, so no zero-spawn check.)
+
+    RED: the failure receipt read constructed `FailureLedger`, whose
+    constructor creates `.rush/memory/failures.db`.
+    """
+    from rush.memory.failure_ledger import FailureLedger
+
+    fingerprint = "b" * 64
+    if existing_ledger:
+        fingerprint = FailureLedger(tmp_path).record_failure("patch", "boom")
+        _close_writers()
+    before = _byte_snapshot(tmp_path)
+
+    result = SessionContinuityTool().run(
+        tmp_path,
+        operation="coordination_recovery",
+        flight_session_id="s1",
+        failure_fingerprint=fingerprint,
+    )
+
+    assert result["status"] != "error", result
+    assert _byte_snapshot(tmp_path) == before
+    assert _sidecars(tmp_path) == []
+    assert (tmp_path / ".rush").exists() is existing_ledger
+    receipt = FailureLedger.read_receipt(tmp_path, fingerprint)
+    if existing_ledger:
+        assert receipt is not None and receipt["fingerprint"] == fingerprint
+        assert "boom" in str(result)
+    else:
+        assert receipt is None
+
+
+@pytest.mark.parametrize("existing_db", [False, True])
+def test_t10_gain_panel_creates_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_db: bool
+) -> None:
+    """The CLI/TUI gain HUD reads telemetry read-only, anchored at the logical
+    root when no root is given.
+
+    RED: `build_gain_panel` constructed `TelemetryStore`, which creates
+    `.rush/telemetry/tokens.db`.
+    """
+    from rich.console import Console
+
+    from rush.token_economy.telemetry import TelemetryStore
+    from rush.token_economy.tui_gain import build_gain_panel
+
+    _git_dir_marker(tmp_path)
+    nested = tmp_path / "src"
+    nested.mkdir()
+    if existing_db:
+        TelemetryStore(tmp_path).record_savings("pack", 100, 40)
+        _close_writers()
+    before = _byte_snapshot(tmp_path)
+    monkeypatch.chdir(nested)
+
+    console = Console(record=True, width=120)
+    console.print(build_gain_panel())
+
+    assert _byte_snapshot(tmp_path) == before
+    assert _sidecars(tmp_path) == []
+    assert not (nested / ".rush").exists()
+    assert ("60" in console.export_text()) is existing_db
+
+
+# ---------------------------------------------------------------------------
+# Recovery procedure (finding 16) -- temp directories only
+# ---------------------------------------------------------------------------
+
+
+def _stray_rush(checkout: Path) -> Path:
+    """A main-checkout-like tree with a stray `src/rush/tools/.rush` holding a
+    cleanly closed WAL `memory.db` plus nested cache files."""
+    from rush.memory.store import MemoryArtifact, TypedArtifactStore
+
+    stray_root = checkout / "src" / "rush" / "tools"
+    stray_root.mkdir(parents=True)
+    TypedArtifactStore(stray_root).write(
+        MemoryArtifact(
+            id="m1",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="DERIVED",
+            content={"note": "keep"},
+            source="agent:notes",
+            created_at=1.0,
+        )
+    )
+    (stray_root / ".rush" / "cache" / "blob.bin").write_bytes(b"\x00\x01payload")
+    _close_writers()
+    return stray_root / ".rush"
+
+
+def test_t10_recovery_inventory_backup_quarantine_restore(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Inventory with hashes, byte-exact backup, verified quarantine, printed
+    restore command; running that command restores the identical bytes."""
+    import json
+    import subprocess
+
+    from scripts.phase70_t10_recovery import main
+
+    checkout = tmp_path / "checkout"
+    source = _stray_rush(checkout)
+    recovery = tmp_path / "rush-recovery" / "phase-70-t10"
+    original = _byte_snapshot(source)
+    assert "memory.db" in original and "cache/blob.bin" in original
+
+    assert (
+        main(
+            [
+                "--root",
+                str(checkout),
+                "--source",
+                str(source),
+                "--recovery",
+                str(recovery),
+            ]
+        )
+        == 0
+    )
+    listed = json.loads(capsys.readouterr().out)
+    assert {f["path"]: f["sha256"] for f in listed["files"]} == original
+    assert _byte_snapshot(source) == original
+    assert not recovery.exists()
+
+    assert (
+        main(
+            [
+                "--root",
+                str(checkout),
+                "--source",
+                str(source),
+                "--recovery",
+                str(recovery),
+                "--execute",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    restore = out.rsplit("RESTORE: ", 1)[1].strip()
+    assert not source.exists()
+    assert _byte_snapshot(recovery / "backup" / ".rush") == original
+    assert _byte_snapshot(recovery / "quarantine" / ".rush") == original
+    manifest = json.loads((recovery / "manifest.json").read_text())
+    assert manifest["restore_command"] == restore
+    assert {f["path"]: f["sha256"] for f in manifest["files"]} == original
+    assert all(
+        f["integrity"] == "ok" for f in manifest["files"] if f["path"].endswith(".db")
+    )
+
+    subprocess.run(restore, shell=True, check=True)
+    assert _byte_snapshot(source) == original
+    assert _byte_snapshot(recovery / "backup" / ".rush") == original
+
+
+def _refused(argv: list[str], capsys: pytest.CaptureFixture[str]) -> str:
+    from scripts.phase70_t10_recovery import main
+
+    assert main(argv) == 2
+    return capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "source-outside-root",
+        "not-dot-rush",
+        "symlinked-source",
+        "symlink-inside",
+        "recovery-inside-root",
+        "quarantine-exists",
+    ],
+)
+def test_t10_recovery_refuses_outside_given_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], case: str
+) -> None:
+    """Refuses (exit 2) and changes nothing for anything outside the given
+    paths or any link that could widen the copy or move."""
+    checkout = tmp_path / "checkout"
+    source = _stray_rush(checkout)
+    recovery = tmp_path / "recovery"
+    root = checkout
+    if case == "source-outside-root":
+        root = checkout / "src" / "rush" / "cli_support"
+        root.mkdir()
+    elif case == "not-dot-rush":
+        source = source / "cache"
+    elif case == "symlinked-source":
+        real = tmp_path / "elsewhere" / ".rush"
+        real.mkdir(parents=True)
+        (real / "x").write_text("x")
+        link_parent = checkout / "linked"
+        link_parent.mkdir()
+        (link_parent / ".rush").symlink_to(real, target_is_directory=True)
+        source = link_parent / ".rush"
+    elif case == "symlink-inside":
+        outside = tmp_path / "outside-secret"
+        outside.write_text("secret")
+        (source / "cache" / "escape").symlink_to(outside)
+    elif case == "recovery-inside-root":
+        recovery = checkout / "recovery"
+    elif case == "quarantine-exists":
+        (recovery / "quarantine" / ".rush").mkdir(parents=True)
+    before = _byte_snapshot(tmp_path)
+
+    err = _refused(
+        [
+            "--root",
+            str(root),
+            "--source",
+            str(source),
+            "--recovery",
+            str(recovery),
+            "--execute",
+        ],
+        capsys,
+    )
+
+    assert err.startswith("REFUSED:"), err
+    assert _byte_snapshot(tmp_path) == before

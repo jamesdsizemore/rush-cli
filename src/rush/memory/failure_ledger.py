@@ -5,6 +5,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from typing import Any
 
 from rush.safety.redactor import SecretRedactor
 
@@ -66,10 +67,38 @@ class FailureLedger:
                 "SELECT error_message, created_at FROM failure_ledgers WHERE fingerprint = ?",
                 (fingerprint,),
             ).fetchone()
-        if row is None:
+        return _receipt(fingerprint, row)
+
+    @staticmethod
+    def read_receipt(
+        project_root: Path, fingerprint: str
+    ) -> dict[str, str | int] | None:
+        """T10: `get_receipt` without constructing a ledger -- a read-only open that
+        never creates `.rush/memory/failures.db` or any sidecar. A missing DB or
+        table is no receipt."""
+        from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+        if not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
             return None
-        return {
-            "fingerprint": fingerprint,
-            "created_at": row[1],
-            "redacted_error": SecretRedactor.redact_text(row[0]),
-        }
+
+        def read(conn: sqlite3.Connection) -> tuple[str, int] | None:
+            if not sqlite_has_table(conn, "failure_ledgers"):
+                return None
+            return conn.execute(
+                "SELECT error_message, created_at FROM failure_ledgers WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+
+        db = project_root / ".rush" / "memory" / "failures.db"
+        return _receipt(fingerprint, read_sqlite_readonly(db, read))
+
+
+def _receipt(fingerprint: str, row: Any) -> dict[str, str | int] | None:
+    """Safe failure evidence without disclosing the failed patch."""
+    if row is None:
+        return None
+    return {
+        "fingerprint": fingerprint,
+        "created_at": row[1],
+        "redacted_error": SecretRedactor.redact_text(row[0]),
+    }
