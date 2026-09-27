@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +29,7 @@ class PatchMemoryStore:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS patch_memory (
@@ -49,7 +50,7 @@ class PatchMemoryStore:
 
         clean_patch = SecretRedactor.redact_text(diff_patch)
         sig_hash = hashlib.sha256(error_signature.encode("utf-8")).hexdigest()
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO patch_memory (error_signature, target_file, diff_patch, created_at, success_count)
@@ -64,7 +65,7 @@ class PatchMemoryStore:
 
     def lookup_patch(self, error_signature: str) -> str | None:
         sig_hash = hashlib.sha256(error_signature.encode("utf-8")).hexdigest()
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute(
                 "SELECT diff_patch FROM patch_memory WHERE error_signature = ?",
                 (sig_hash,),
@@ -73,7 +74,7 @@ class PatchMemoryStore:
             return row[0] if row else None
 
     def list_records(self) -> list[PatchMemoryRecord]:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute(
                 "SELECT error_signature, target_file, diff_patch, created_at, success_count FROM patch_memory ORDER BY created_at DESC"
             )
@@ -89,7 +90,7 @@ class PatchMemoryStore:
             ]
 
     def clear_memory(self) -> int:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute("DELETE FROM patch_memory")
             conn.commit()
             return cursor.rowcount

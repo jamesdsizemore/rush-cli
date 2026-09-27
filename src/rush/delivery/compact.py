@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -572,7 +573,7 @@ def purge_compact_results(root: Path) -> tuple[int, int]:
     db = ccr_path(root, "write")
     if not db.is_file():
         return 0, 0
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         rows = conn.execute("SELECT hash, content FROM chunks").fetchall()
         purge = [(digest,) for digest, content in rows if is_storage_object(content)]
         conn.executemany("DELETE FROM chunks WHERE hash = ?", purge)

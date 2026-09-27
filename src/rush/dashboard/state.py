@@ -22,6 +22,7 @@ from typing import Any
 if sys.platform != "win32":
     import fcntl
 
+from rush.runtime.sqlite_util import ClosingConnection
 from rush.tools.base import ToolResult
 
 
@@ -525,7 +526,9 @@ class MutationLedger:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._db_path), timeout=10.0)
+        conn = sqlite3.connect(
+            str(self._db_path), timeout=10.0, factory=ClosingConnection
+        )
         conn.row_factory = sqlite3.Row
         return conn
 

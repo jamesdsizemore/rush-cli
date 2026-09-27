@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 import time
 import urllib.parse
+from contextlib import closing
 from pathlib import Path
 
 
@@ -17,7 +18,7 @@ class CCRStore:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chunks (
@@ -38,7 +39,7 @@ class CCRStore:
         size = len(content.encode("utf-8"))
 
         self._init_db()
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO chunks (hash, content, byte_size, created_at, last_accessed_at)
@@ -69,7 +70,7 @@ class CCRStore:
                 conn.close()
             return row[0] if row else None
         now = int(time.time())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cur = conn.execute(
                 "SELECT content FROM chunks WHERE hash = ?", (chunk_hash,)
             )

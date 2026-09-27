@@ -2,6 +2,7 @@
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,7 @@ class TelemetryStore:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS token_events (
@@ -158,7 +159,7 @@ class TelemetryStore:
         if not (opt_in or cache_write):
             return False
         real_invocation_id = invocation_id if invocation_id is not None else request_id
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO memory_events
@@ -210,7 +211,7 @@ class TelemetryStore:
         sql = "SELECT COALESCE(SUM(tokens), 0) FROM memory_events"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             row = conn.execute(sql, params).fetchone()
         return int(row[0])
 
@@ -227,7 +228,7 @@ class TelemetryStore:
         session_id: str = _UNSCOPED,
     ) -> None:
         now = int(time.time())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO token_events
@@ -261,7 +262,7 @@ class TelemetryStore:
         the same clause shape `get_memory_event_total()` already uses -- omitted (the
         default) sums every row, unchanged from before this filter existed."""
         sql, params = _summary_query(project_id, run_id, agent_id, session_id)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cur = conn.execute(sql, params)
             count, total_raw, total_comp = cur.fetchone()
         return _summary_payload(count, total_raw, total_comp)
