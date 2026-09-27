@@ -105,5 +105,6 @@ markers = [
     "needs_radon: test requires `radon` on PATH",
     "needs_jscpd: test requires `jscpd` on PATH",
     "needs_sloppylint: test requires `sloppylint` on PATH",
+    "needs_aislop: test requires `aislop` on PATH",
     "slow: test's own runtime is large enough to dominate a full-suite run; excluded from the default local run (see `-m \"not slow\"` in addopts above), always included in CI/pre-merge (`pytest -m slow` or `pytest -m \"\"`)",
 ]

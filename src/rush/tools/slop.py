@@ -45,12 +45,14 @@ class SlopTool(ToolFn):
             engine_to_use = (
                 ENGINES["aislop"] if engine_on_path("aislop") else ENGINES["sloppylint"]
             )
-            result = run_engine(
-                engine_to_use,
-                path,
-                [str(file) for file in python_files],
-                tool_name=self.name,
+            # aislop scans the directory itself (one positional); sloppylint
+            # takes the explicit file list.
+            files = (
+                []
+                if engine_to_use.name == "aislop"
+                else [str(file) for file in python_files]
             )
+            result = run_engine(engine_to_use, path, files, tool_name=self.name)
             result["findings"] = sorted(
                 [*result["findings"], *findings],
                 key=lambda item: (
