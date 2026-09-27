@@ -22,6 +22,7 @@ import io
 import json
 import os
 import platform
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -382,6 +383,36 @@ _SOURCE_GRANTS: dict[str, tuple[str, ...]] = {
     "alias": (),
     "internal": (),
 }
+
+_GRANT_FLAGS: dict[str, str] = {
+    "network": "--allow-network",
+    "download": "--allow-download",
+    "cache_write": "--allow-cache-write",
+    "build": "--allow-build",
+}
+
+# Canonical flag order -- matches the order grants appear in `_SOURCE_GRANTS`
+# tuples above, so a single-source lookup emits identically to before.
+_GRANT_ORDER: tuple[str, ...] = ("network", "download", "cache_write", "build")
+
+
+def setup_action_command(root: Path, entries: list[EnginePackage]) -> str:
+    """The exact `rush setup` route to provision `entries` (S15.5).
+
+    Single shared builder for the doctor readiness action string -- T24
+    updates non-interactive apply flags here, in one place, for every
+    caller. Grants are the union of every entry's source grants
+    (`_SOURCE_GRANTS`), in canonical flag order; a single-entry call
+    reproduces exactly one source's grant list.
+    """
+    grants: set[str] = set()
+    for entry in entries:
+        grants.update(_SOURCE_GRANTS.get(entry.source, ()))
+    flags = " ".join(_GRANT_FLAGS[g] for g in _GRANT_ORDER if g in grants)
+    quoted_root = shlex.quote(str(root.resolve()))
+    base = f"rush setup {quoted_root} --install"
+    return f"{base} {flags}" if flags else base
+
 
 # --- Plan -------------------------------------------------------------------
 
