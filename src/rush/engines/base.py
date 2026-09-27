@@ -17,9 +17,16 @@ from ..tools.common import resolve_binary, run_subprocess
 RawFinding = dict[str, Any]
 
 
+class OwnershipKwargs(TypedDict, total=False):
+    """`run_subprocess` ownership kwargs; typed so `**` unpacking checks."""
+
+    owner_instance_id: str
+    run_id: str
+
+
 def ownership_kwargs(
     owner_instance_id: str | None, run_id: str | None
-) -> dict[str, str]:
+) -> OwnershipKwargs:
     """P69-01.2j: the ownership pair as `run_subprocess` kwargs, or `{}`.
 
     An engine forwards its own `owner_instance_id`/`run_id` into its

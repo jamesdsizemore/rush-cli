@@ -415,12 +415,17 @@ def _audit_python_dependency_inputs(
     )
     results.append(osv_result)
 
+    # The state comes from the real scan outcome, not the gate: osv-scanner
+    # can vanish, fail to spawn or error out after `_osv_gate` passed.
+    status = osv_result.get("status")
     summary = str(osv_result.get("summary") or "")
-    if "no offline vulnerability database available" in summary:
-        for entry in pending:
+    for entry in pending:
+        if "no offline vulnerability database available" in summary:
             entry["state"] = "db_unavailable"
-    else:
-        for entry in pending:
+        elif status in ("skipped", "error"):
+            entry["state"] = "scanner_unavailable"
+            entry["reason"] = summary
+        else:
             entry["state"] = "audited"
 
 
