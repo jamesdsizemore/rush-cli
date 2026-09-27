@@ -1271,8 +1271,47 @@ _GIT_DIFF_MAX_LINES = 500
 _GIT_LOG_FIELD_SEP = "\x1f"
 _GIT_REF_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
 # Read-only Git: never run a repository-configured fsmonitor hook, never take
-# the optional index lock (so a status read cannot rewrite `.git/index`).
-_GIT_READ = ("git", "-c", "core.fsmonitor=false", "--no-optional-locks")
+# the optional index lock (so a status read cannot rewrite `.git/index`), and
+# never show signatures (which runs the repository's `gpg.program`).
+_GIT_READ = (
+    "git",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "log.showSignature=false",
+    "--no-optional-locks",
+)
+
+
+def _git_read(root: Path) -> list[str]:
+    """`_GIT_READ` plus an empty clean/smudge/process command for every filter
+    driver the repository's own config defines (a hostile `.git/config` can
+    name any program there; `status` runs a clean filter on racily-clean
+    files). The user's global and system drivers (e.g. git-lfs) are trusted
+    and left active. Reading the config runs nothing."""
+    argv = list(_GIT_READ)
+    try:
+        listed = subprocess.run(
+            [
+                "git",
+                "config",
+                "--local",
+                "--includes",
+                "--name-only",
+                "--get-regexp",
+                r"^filter\..*\.(clean|smudge|process)$",
+            ],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        listed = ""
+    for name in sorted({line.strip() for line in listed.splitlines() if line.strip()}):
+        argv += ["-c", f"{name}="]
+    return argv
 
 
 def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
@@ -1283,8 +1322,9 @@ def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             [
-                *_GIT_READ,
+                *_git_read(root),
                 "log",
+                "--no-show-signature",
                 f"--format={fmt}",
                 f"-n{max(1, limit)}",
                 f"--skip={max(0, skip)}",
@@ -1317,7 +1357,7 @@ def _git_dirty_files(root: Path) -> list[dict[str, Any]]:
     line shape) -- never collapsed to a delete+add."""
     try:
         result = subprocess.run(
-            [*_GIT_READ, "status", "--porcelain=v1"],
+            [*_git_read(root), "status", "--porcelain=v1"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1356,7 +1396,7 @@ def _git_summary(root: Path) -> dict[str, Any]:
         }
     try:
         head = subprocess.run(
-            [*_GIT_READ, "rev-parse", "HEAD"],
+            [*_git_read(root), "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1364,7 +1404,7 @@ def _git_summary(root: Path) -> dict[str, Any]:
             timeout=5,
         ).stdout.strip()
         status = subprocess.run(
-            [*_GIT_READ, "status", "--porcelain"],
+            [*_git_read(root), "status", "--porcelain"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1441,8 +1481,9 @@ def project_git_commit_diff(
     try:
         patch = subprocess.run(
             [
-                *_GIT_READ,
+                *_git_read(root),
                 "show",
+                "--no-show-signature",
                 "--no-ext-diff",
                 "--no-textconv",
                 "--find-renames",
@@ -1458,8 +1499,9 @@ def project_git_commit_diff(
         ).stdout
         name_status = subprocess.run(
             [
-                *_GIT_READ,
+                *_git_read(root),
                 "show",
+                "--no-show-signature",
                 "--no-ext-diff",
                 "--no-textconv",
                 "--find-renames",
@@ -1509,7 +1551,7 @@ def _git_show_path_digest(root: Path, commit: str, path: str) -> str | None:
     engines use for `git_link["path_digests"]`."""
     try:
         result = subprocess.run(
-            [*_GIT_READ, "show", "--no-textconv", f"{commit}:{path}"],
+            [*_git_read(root), "show", "--no-textconv", f"{commit}:{path}"],
             cwd=root,
             check=True,
             capture_output=True,

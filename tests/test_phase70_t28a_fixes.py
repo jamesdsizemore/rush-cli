@@ -653,3 +653,117 @@ def test_resize_below_minimum_and_back_keeps_map_selection_and_expanded(
     assert "file:a.py" in state.map_expanded
     assert state.map_selected_index == 2
     assert state.terminal_size == big
+
+
+def _hostile_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A repo whose own .git/config names a clean filter and a gpg program
+    that each touch a marker, with a racily-clean tracked file and a commit
+    carrying a gpgsig header (so signature display would run gpg.program)."""
+    repo = tmp_path / "hostile"
+    repo.mkdir()
+    clean_marker = tmp_path / "clean-ran"
+    gpg_marker = tmp_path / "gpg-ran"
+    clean = tmp_path / "clean.sh"
+    clean.write_text(f'#!/bin/sh\ntouch "{clean_marker}"\ncat\n')
+    clean.chmod(0o755)
+    gpg = tmp_path / "gpg.sh"
+    gpg.write_text(f'#!/bin/sh\ntouch "{gpg_marker}"\nexit 1\n')
+    gpg.chmod(0o755)
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (repo / ".gitattributes").write_text("* filter=evil\n")
+    (repo / "a.txt").write_text("one\n")
+    git("add", "-A")
+    git("commit", "-qm", "one")
+    tree = git("rev-parse", "HEAD^{tree}")
+    parent = git("rev-parse", "HEAD")
+    signed = (
+        f"tree {tree}\nparent {parent}\n"
+        "author t <t@example.com> 1700000000 +0000\n"
+        "committer t <t@example.com> 1700000000 +0000\n"
+        "gpgsig -----BEGIN PGP SIGNATURE-----\n \n"
+        " iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n\nsigned\n"
+    )
+    commit = subprocess.run(
+        ["git", "hash-object", "-t", "commit", "-w", "--stdin"],
+        cwd=repo,
+        input=signed,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    git("update-ref", "HEAD", commit)
+    git("config", "filter.evil.clean", str(clean))
+    git("config", "gpg.program", str(gpg))
+    git("config", "log.showSignature", "true")
+    time.sleep(1.1)
+    (repo / "a.txt").write_text("two\n")
+    return repo, clean_marker, gpg_marker
+
+
+def test_overview_git_read_never_runs_repo_configured_filters_or_gpg(
+    tmp_path: Path,
+) -> None:
+    """Review round 3 #1: `git status` must not run a clean filter and
+    `git log`/`show` must not run gpg.program from the repo's own config."""
+    from rush.workflows import projects
+
+    repo, clean_marker, gpg_marker = _hostile_repo(tmp_path)
+    summary = projects._git_summary(repo)
+    head = summary["head"]
+    projects._git_show_path_digest(repo, head, "a.txt")
+    assert summary["has_git"] is True
+    assert summary["dirty"] is True
+    assert not clean_marker.exists(), "git ran the repository's clean filter"
+    assert not gpg_marker.exists(), "git ran the repository's gpg.program"
+
+
+def test_git_read_keeps_the_users_global_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only filter drivers from the repository's own config are neutralized;
+    a driver from the user's global config (e.g. git-lfs) stays active."""
+    from rush.workflows import projects
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text('[filter "lfs"]\n\tclean = git-lfs clean -- %f\n')
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    repo, _, _ = _hostile_repo(tmp_path)
+    argv = projects._git_read(repo)
+    assert "filter.evil.clean=" in argv
+    assert not any(part.startswith("filter.lfs.") for part in argv)
+
+
+def test_ui_plain_output_escapes_names_and_quotes_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path
+) -> None:
+    """Review round 3 #5: the non-TTY listing prints a project name taken from
+    the filesystem, so terminal controls are escaped, and the suggested
+    commands shell-quote the path so a path with spaces stays copyable."""
+    proj = tmp_path / "my proj\x1b[31m"
+    proj.mkdir()
+    result, calls = _ui_invoke(monkeypatch, tmp_path, [str(proj)])
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    assert "\x1b" not in result.output
+    assert "Next: rush status '" in result.output
+    assert "      rush check '" in result.output
+
+
+def test_ui_json_help_names_read_only_status() -> None:
+    """Review round 3 #6: `--json` reports `rush status`, not a check suite."""
+    from rush.cli import cli
+
+    result = CliRunner().invoke(cli, ["ui", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "read-only status" in result.output
+    assert "check-suite result" not in result.output

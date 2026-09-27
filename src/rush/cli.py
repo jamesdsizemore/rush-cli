@@ -1362,7 +1362,7 @@ def _interactive_terminal() -> bool:
     is_flag=True,
     default=False,
     help=(
-        "Print each project's check-suite result as JSON and exit, "
+        "Print each project's read-only status (`rush status`) as JSON and exit, "
         "instead of opening the interactive interface."
     ),
 )
@@ -1385,7 +1385,7 @@ def ui_cmd(
     when none are given. The interface starts immediately on a read-only
     Overview; the initial analysis is an explicit Start action (F5 refreshes
     the Overview). With `--json`, or when stdin or stdout is not a
-    terminal, prints each project's check-suite result and exits instead of
+    terminal, prints each project's read-only status and exits instead of
     opening the interface.
     """
     from .tui import ProjectSeed, default_scan_actions, run_interactive_tui
@@ -1435,10 +1435,18 @@ def ui_cmd(
         if json_output:
             click.echo(json.dumps(snapshots))
         else:
+            import shlex
+
+            from .theme import safe_terminal_text
+
             for snap, summary in zip(snapshots, summaries, strict=True):
-                click.echo(f"{snap['project']}: {summary}")
-                click.echo(f"Next: rush status {snap['path']} --json")
-                click.echo(f"      rush check {snap['path']}")
+                # Names and summaries come from the filesystem and producers:
+                # terminal-escaped; the paths in the commands are shell-quoted
+                # so a path with spaces or metacharacters stays copyable.
+                quoted = shlex.quote(str(snap["path"]))
+                click.echo(safe_terminal_text(f"{snap['project']}: {summary}"))
+                click.echo(safe_terminal_text(f"Next: rush status {quoted} --json"))
+                click.echo(safe_terminal_text(f"      rush check {quoted}"))
         return
 
     seeds = [
