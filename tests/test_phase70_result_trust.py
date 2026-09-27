@@ -2182,6 +2182,7 @@ def test_t08_ui_interactive_seeds_keep_resolved_root_and_carry_lexical_original(
 
     seen: list[list] = []
     monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: True)
     monkeypatch.setattr(
         tui, "run_interactive_tui", lambda seeds, **kwargs: seen.append(list(seeds))
     )
@@ -2214,8 +2215,11 @@ def test_t08_tui_state_copy_and_initial_check_pass_lexical_and_original(
         return {"tool": "suite", "status": "ok", "findings": [], "summary": "done"}
 
     class _QuitReader:
+        def __init__(self) -> None:
+            self._keys = ["C"]  # T28-A: analysis starts only on explicit Start
+
         def read_key(self, timeout: float) -> str | None:
-            return "q"
+            return self._keys.pop(0) if self._keys else "q"
 
         def get_size(self) -> tuple[int, int]:
             return (80, 24)
@@ -2321,6 +2325,7 @@ def _root_entry_ui_seeds(
 
     seen: list[list] = []
     monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: True)
     monkeypatch.setattr(
         tui, "run_interactive_tui", lambda seeds, **kwargs: seen.append(list(seeds))
     )
@@ -3266,6 +3271,7 @@ def test_t08_root_entry_dispatch_unmarked_and_registered_aliases(
     probe, captured = _probe_check_suite(monkeypatch)
     seeds: list[list] = []
     monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: transport == "ui")
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: transport == "ui")
     monkeypatch.setattr(
         tui, "run_interactive_tui", lambda s, **kwargs: seeds.append(list(s))
     )

@@ -59,6 +59,7 @@ def test_ui_cmd_accepts_multiple_project_paths(
     # exercising that interactive multi-seed path, not the non-tty snapshot
     # path Click's `CliRunner` would otherwise select by default.
     monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: True)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["ui", str(proj_a), str(proj_b)])
@@ -180,6 +181,8 @@ def test_ui_cmd_starts_interface_before_scan_completes() -> None:
 
         def read_key(self, timeout: float) -> str | None:
             self._ticks += 1
+            if self._ticks == 1:
+                return "C"  # T28-A: analysis starts only on an explicit Start
             if scan_started.is_set() and not scan_finished.is_set():
                 tick_seen_while_scanning.set()
             if self._ticks > 60:
@@ -374,14 +377,14 @@ def test_alternate_screen_used_with_refresh_rate_limit(
 
 
 def test_f3_switches_section() -> None:
-    """U01 fix: F3 cycles Sections -- Scans (`list`) -> Map -> Git ->
-    Scans (Phase 66 §3.8) -- distinct from the direct `G` binding (still
+    """T28-A: F3 opens the section chooser; a digit enters that section
+    (2 Map, 6 Git, 1 Overview) -- distinct from the direct `G` binding (still
     `toggle_git_view`, unaffected) and from Tab/Shift+Tab's pane cycling."""
     seed = ProjectSeed(name="demo", root=Path("/tmp/rush-tui-f3"))
 
     after_one = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3"]),
+        key_reader=_ScriptedReader(["f3", "2"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=5,
@@ -390,7 +393,7 @@ def test_f3_switches_section() -> None:
 
     after_two = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "f3"]),
+        key_reader=_ScriptedReader(["f3", "6"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=10,
@@ -399,7 +402,7 @@ def test_f3_switches_section() -> None:
 
     after_three = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "f3", "f3"]),
+        key_reader=_ScriptedReader(["f3", "2", "f3", "1"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=15,
@@ -454,7 +457,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     expanded_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "down", "+", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "+", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -469,7 +472,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     collapsed_again_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "down", "+", "-", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "+", "-", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -1682,8 +1685,16 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
             )
         ],
     )
-    keys: list[str | None] = ["f3", "down", "+", None, None, "q"]
-    sizes = [(120, 40), (120, 40), (120, 40), (60, 18), (60, 18), (60, 18)]
+    keys: list[str | None] = ["f3", "2", "down", "+", None, None, "q"]
+    sizes = [
+        (120, 40),
+        (120, 40),
+        (120, 40),
+        (120, 40),
+        (60, 18),
+        (60, 18),
+        (60, 18),
+    ]
     reader = _ResizingReader(keys, sizes)
     state = run_interactive_tui(
         [seed],

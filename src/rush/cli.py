@@ -1343,6 +1343,17 @@ def _stdout_is_tty() -> bool:
     return sys.stdout.isatty()
 
 
+def _stdin_is_tty() -> bool:
+    """Test seam (T28-A), same contract as `_stdout_is_tty`: the raw-terminal
+    key loop reads stdin, so interactive mode requires it to be a TTY too."""
+    return sys.stdin.isatty()
+
+
+def _interactive_terminal() -> bool:
+    """T28-A: interactive mode requires both stdin and stdout to be TTYs."""
+    return _stdin_is_tty() and _stdout_is_tty()
+
+
 @cli.command(name="ui")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -1371,11 +1382,11 @@ def ui_cmd(
 
     Accepts one or more project paths (`rush ui path1 path2 ...`) to open
     and switch between multiple projects; defaults to the current directory
-    when none are given. The interface starts immediately and runs each
-    project's initial check suite as a background job it attaches to,
-    rather than blocking startup on it. With `--json`, or when stdout is
-    not a terminal, prints each project's check-suite result and exits
-    instead of opening the interface.
+    when none are given. The interface starts immediately on a read-only
+    Overview; the initial analysis is an explicit Start action (F5 refreshes
+    the Overview). With `--json`, or when stdin or stdout is not a
+    terminal, prints each project's check-suite result and exits instead of
+    opening the interface.
     """
     from .tui import ProjectSeed, default_scan_actions, run_interactive_tui
 
@@ -1404,7 +1415,7 @@ def ui_cmd(
             sys.exit(2)
         entries.append((typed, selected))
 
-    if json_output or not _stdout_is_tty():
+    if json_output or not _interactive_terminal():
         from .workflows.suites import CHECK_SUITE, run_workflow_suite
 
         snapshots = []
@@ -1440,7 +1451,9 @@ def ui_cmd(
         )
         for raw, selection in entries
     ]
-    run_interactive_tui(seeds, actions=default_scan_actions(permissions=perms))
+    run_interactive_tui(
+        seeds, actions=default_scan_actions(permissions=perms), permissions=perms
+    )
 
 
 def _dashboard_descriptor_path(server_id: str) -> Path:

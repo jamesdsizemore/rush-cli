@@ -18,12 +18,14 @@ always executes.
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,6 +46,7 @@ from rush.runtime.subprocesses import (
     OWNED_TERMINATION_TIMEOUT_SECONDS,
     reap_owner_processes,
 )
+from rush.theme import safe_terminal_text
 from rush.tools.base import ToolResult
 
 PAGE_SIZE = 20
@@ -53,29 +56,43 @@ handoff previews) that has no dedicated terminal visualization."""
 _DETAIL_CONTEXT_LINES = 4
 _DETAIL_MAX_BYTES = 8192
 
-# P66-05: memory-admin entry point. `keymaps.py` (owned by an earlier packet)
-# is not part of this packet's allowed files, so the one new binding this
-# packet needs is appended locally rather than editing that module's own
-# DEFAULT_KEYBINDINGS list.
-_MEMORY_KEYBINDINGS = [
+# T28-A: TUI-local bindings appended to the shared DEFAULT_KEYBINDINGS; the
+# live `_KEYMAP` is built from both once `ACTIONS` (below) is defined, so every
+# bound key names a registered action with a real run function.
+_TUI_KEYBINDINGS = [
     KeybindingAction(
         key="M",
         action_name="toggle_memory_admin",
-        description="Memory admin: search/expand/promote/edit/delete",
+        description="Memory section: search/expand/promote/edit/delete",
     ),
-]
-
-# P66-06: Git history and every generated artifact view. Same rationale as
-# _MEMORY_KEYBINDINGS above -- `keymaps.py` is not part of this packet's
-# allowed files, so this one new binding is appended locally.
-_GIT_KEYBINDINGS = [
     KeybindingAction(
         key="G",
         action_name="toggle_git_view",
-        description="Git & artifacts: history, status, diff",
+        description="Git section: history, status, diff",
+    ),
+    KeybindingAction(
+        key="C", action_name="start_check", description="Start analysis (check suite)"
+    ),
+    KeybindingAction(
+        key="A",
+        action_name="project_add",
+        description="Add this folder as a project (reviewed)",
+    ),
+    KeybindingAction(
+        key="N",
+        action_name="project_create",
+        description="Create a new project (reviewed)",
+    ),
+    KeybindingAction(
+        key="R",
+        action_name="project_relink",
+        description="Relink a moved project root (reviewed)",
+    ),
+    KeybindingAction(
+        key="L", action_name="choose_later", description="Choose a project later"
     ),
 ]
-_KEYMAP = KeymapManager([*DEFAULT_KEYBINDINGS, *_MEMORY_KEYBINDINGS, *_GIT_KEYBINDINGS])
+_BINDINGS = [*DEFAULT_KEYBINDINGS, *_TUI_KEYBINDINGS]
 
 _TERMINAL_RUN_STATES = {
     "completed": "complete",
@@ -87,8 +104,66 @@ _TERMINAL_RUN_STATES = {
 # U01 fix: Tab/Shift+Tab cycle visible panes; F3 cycles Sections. Both are
 # state-only concerns here -- `render_app`'s width branches (U04) decide
 # which of these panes actually gets drawn at the current terminal size.
-PANE_CYCLE: tuple[str, ...] = ("nav", "list", "detail")
-SECTION_CYCLE: tuple[str, ...] = ("list", "map", "git")
+# T28-A shared state vocabulary (all packets).
+SECTIONS: tuple[str, ...] = (
+    "overview",
+    "map",
+    "scans",
+    "memory",
+    "tokens",
+    "git",
+    "artifacts",
+    "setup",
+)
+SECTION_LABELS = {
+    "overview": "Overview",
+    "map": "Map",
+    "scans": "Scans/Findings",
+    "memory": "Memory",
+    "tokens": "Tokens",
+    "git": "Git",
+    "artifacts": "Artifacts",
+    "setup": "Setup/Agents",
+}
+SECTION_STATES: tuple[str, ...] = (
+    "loading",
+    "populated",
+    "empty",
+    "unavailable",
+    "denied",
+    "failed",
+    "stale",
+    "disconnected",
+)
+OVERLAYS: tuple[str | None, ...] = (
+    None,
+    "projects",
+    "sections",
+    "help",
+    "grant_review",
+    "form",
+    "quit_confirm",
+    "resize_guidance",
+    "detaching",
+)
+FOCUS_CYCLE: tuple[str, ...] = ("nav", "list", "detail", "actions")
+# Sections rendered by an existing interaction mode; every other section is
+# drawn in mode "list" from `TuiState.section`.
+_SECTION_MODES = {"map": "map", "git": "git", "memory": "memory"}
+_MODE_OVERLAYS = {
+    "project_selector": "projects",
+    "help": "help",
+    "grant_review": "grant_review",
+    "quit_confirm": "quit_confirm",
+}
+# F3 chooser rows after the eight sections: (action id, label).
+_CHOOSER_EXTRAS: tuple[tuple[str, str], ...] = (
+    ("start_check", "Check"),
+    ("start_scan", "Scan"),
+    ("open_project_selector", "Projects"),
+    ("show_help", "Help"),
+    ("quit", "Quit"),
+)
 
 # U04 fix: the smallest Rich style mapping from the shared THEME tokens
 # (`rush.dashboard.theme`) -- replacing the hardcoded named colors
@@ -292,6 +367,10 @@ class ScanActions:
     # dispatch handle, or None for local ownership. Production wires
     # `_find_live_dashboard_owner`; tests inject a fake.
     dashboard_owner: Callable[..., Any] | None = None
+    # T28-A: `load_overview(root, *, project_id, data_root)` -> the read-only
+    # Overview payload (`rush status` data + Git/stack/run evidence +
+    # derived `registration`). Same trailing + defaulted contract as above.
+    load_overview: Callable[..., Any] | None = None
 
 
 def default_scan_actions(
@@ -353,7 +432,70 @@ def default_scan_actions(
         git_snapshot=project_snapshot,
         run_check_suite=_run_check_suite,
         dashboard_owner=_find_live_dashboard_owner,
+        load_overview=load_overview,
     )
+
+
+def _registration_from_status(data: Mapping[str, Any]) -> dict[str, Any]:
+    """T28-A: the project's registry state from `rush status` data -- a
+    corrupt/unreadable registry is never reported as "no project"."""
+    registry = data.get("registry") or {}
+    project = data.get("project") or {}
+    registry_state = registry.get("state")
+    if registry_state in ("corrupt", "unreadable"):
+        return {
+            "state": registry_state,
+            "reason": registry.get("error") or f"registry {registry_state}",
+        }
+    registration = project.get("registration")
+    if registration == "ambiguous":
+        return {
+            "state": "ambiguous",
+            "reason": "more than one registered project matches this root",
+        }
+    if registration != "registered":
+        return {"state": "none", "reason": "no project registered for this root"}
+    identity = {
+        "project_id": project.get("project_id"),
+        "revision": project.get("revision"),
+    }
+    if project.get("root_exists") is False:
+        return {"state": "moved", "reason": "registered root missing", **identity}
+    return {"state": "ok", "reason": None, **identity}
+
+
+def load_overview(
+    root: Path, *, project_id: str | None = None, data_root: Path | None = None
+) -> dict[str, Any]:
+    """T28-A default Overview loader: `rush status` (T23, zero-write) plus
+    `project_overview_evidence` (Git, stack, latest attempt counts)."""
+    from rush.tools.status import StatusTool
+    from rush.workflows.projects import project_overview_evidence
+
+    status = StatusTool()(root, data_root=data_root)
+    data = (status.get("raw") or {}).get("data") or {}
+    registration = _registration_from_status(data)
+    if registration["state"] == "none" and project_id:
+        # `rush status` resolves by path, so a moved root reads as
+        # unregistered; the known id tells the two apart.
+        from rush.workflows.projects import ProjectNotFoundError, resolve_project
+
+        with suppress(ProjectNotFoundError):
+            record = resolve_project(project_id, data_root=data_root)
+            if not record["exists"]:
+                registration = {
+                    "state": "moved",
+                    "reason": f"registered root missing: {record['root']}",
+                    "project_id": project_id,
+                    "revision": record["revision"],
+                }
+    resolved_id = registration.get("project_id") or project_id
+    return {
+        "status": data,
+        "status_summary": status.get("summary"),
+        "evidence": project_overview_evidence(root, resolved_id),
+        "registration": registration,
+    }
 
 
 @dataclass
@@ -423,6 +565,62 @@ class ProjectState:
         default_factory=threading.Lock, repr=False, compare=False
     )
     run_resolved: bool = True
+    # T28-A shared state. `registration`: {state none|ok|moved|corrupt|
+    # unreadable|ambiguous, reason, project_id?, revision?, deferred?}; None
+    # until the Overview has read it. `views` is only a constructor seed --
+    # `TuiState` absorbs it into its (project_key, section) map.
+    registration: dict[str, Any] | None = None
+    work_kind: str | None = None  # check | scan | rescan | dashboard
+    cancel_event: threading.Event = field(
+        default_factory=threading.Event, repr=False, compare=False
+    )
+    section: str = "overview"
+    views: dict[str, Any] = field(default_factory=dict, repr=False)
+    generation: int = 0
+    pending: dict[Any, tuple[int, tuple[Any, ...]]] = field(
+        default_factory=dict, repr=False
+    )
+
+    def identity(self) -> tuple[Any, ...]:
+        return (self.project_id, str(self.root), self.run_id)
+
+    def begin_request(self, key: Any) -> int:
+        """Start a background request for `key`; only its returned
+        generation, under this same identity, may later be applied."""
+        self.generation += 1
+        self.pending[key] = (self.generation, self.identity())
+        return self.generation
+
+    def invalidate(self) -> None:
+        """Switching away: every outstanding request becomes stale."""
+        self.generation += 1
+        self.pending.clear()
+
+    def accepts(self, key: Any, generation: int, identity: tuple[Any, ...]) -> bool:
+        return self.pending.get(key) == (generation, identity) and (
+            identity == self.identity()
+        )
+
+    def apply_delayed_result(
+        self,
+        result: Mapping[str, Any],
+        *,
+        generation: int | None,
+        key: Any = ("scans", "results"),
+    ) -> bool:
+        """Apply a background result only when `generation` is the current
+        outstanding request for `key` and the project identity is unchanged;
+        anything else (switched away, superseded, never requested) is dropped."""
+        outstanding = self.pending.get(key)
+        if (
+            generation is None
+            or outstanding is None
+            or not self.accepts(key, generation, outstanding[1])
+        ):
+            return False
+        del self.pending[key]
+        self.results.append(cast(ToolResult, dict(result)))
+        return True
 
     def flattened_findings(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -445,6 +643,35 @@ class ProjectState:
         ]
 
 
+def project_key(project: ProjectState) -> str:
+    """T28 view identity: the registered id, else the root path."""
+    return project.project_id or f"path:{project.root}"
+
+
+@dataclass
+class SectionView:
+    """One project's one section: its truthful load state plus the
+    selection/filter/scroll it restores to when the user returns."""
+
+    state: str = "loading"
+    reason: str | None = None
+    data: Any = None
+    loaded_at: str | None = None
+    generation: int = 0
+    selection: int = 0
+    scroll: int = 0
+    filters: dict[str, Any] = field(default_factory=dict)
+    expanded: set[str] = field(default_factory=set)
+    page_cursor: str | None = None
+
+
+def _coerce_view(value: SectionView | Mapping[str, Any]) -> SectionView:
+    if isinstance(value, SectionView):
+        return value
+    known = {f.name for f in fields(SectionView)}
+    return SectionView(**{k: v for k, v in value.items() if k in known})
+
+
 @dataclass
 class TuiState:
     projects: list[ProjectState]
@@ -455,7 +682,6 @@ class TuiState:
     pending_grant: dict[str, Any] | None = None
     message: str = ""
     should_quit: bool = False
-    show_memory: bool = False
     terminal_size: tuple[int, int] = (80, 24)
     # P66-05: memory administration (mode == "memory"/"memory_search"/
     # "memory_edit"). `memory_subject` is fixed per admin session (switch by
@@ -485,8 +711,23 @@ class TuiState:
     # project's history/status can never leak into the newly active one.
     git_data: dict[str, Any] | None = None
     git_message: str = ""
-    # U01 fix: Tab/Shift+Tab's pane-cycle position (see `PANE_CYCLE`).
-    active_pane: str = "list"
+    # T28-A: Tab/Shift+Tab focus position (`FOCUS_CYCLE`; `active_pane` alias).
+    focus: str = "list"
+    section: str = "overview"
+    overlay: str | None = None
+    views: dict[tuple[str, str], SectionView] = field(default_factory=dict)
+    result_queue: queue.SimpleQueue[Any] = field(
+        default_factory=queue.SimpleQueue, repr=False, compare=False
+    )
+    # (project_key, section) loads the loop submits on its next tick --
+    # dispatch and render never do I/O for a section load themselves.
+    load_requests: set[tuple[str, str]] = field(default_factory=set)
+    data_root: Path | None = None
+    nav_index: int = 0
+    action_index: int = 0
+    chooser_index: int = 0
+    form: dict[str, Any] | None = None
+    launch_permissions: ExecutionPermissions | None = None
     # U01 fix: `mode == "project_selector"` overlay state -- the project
     # F2 currently highlights, distinct from `active_index` (which only
     # changes once the selector is confirmed with Enter).
@@ -498,13 +739,34 @@ class TuiState:
     map_expanded: set[str] = field(default_factory=set)
     map_selected_index: int = 0
 
+    def __post_init__(self) -> None:
+        for project in self.projects:
+            self.absorb(project)
+
+    def absorb(self, project: ProjectState) -> None:
+        """Move a project's constructor `views` seed into the shared map."""
+        for section, view in project.views.items():
+            self.views[(project_key(project), section)] = _coerce_view(view)
+        project.views = {}
+
+    @property
+    def active_pane(self) -> str:
+        return self.focus
+
+    @active_pane.setter
+    def active_pane(self, value: str) -> None:
+        self.focus = value
+
     @property
     def active_project(self) -> ProjectState:
         return self.projects[self.active_index]
 
     def to_dict(self) -> dict[str, Any]:
+        if not self.projects:
+            return {"active_project": None, "mode": self.mode, "message": self.message}
         active = self.active_project
         return {
+            "section": self.section,
             "active_project": active.name,
             "active_index": self.active_index,
             "mode": self.mode,
@@ -1292,8 +1554,11 @@ def _handle_search_key(state: TuiState, key: str) -> None:
 def _execute_grant(
     state: TuiState, grant: dict[str, Any], actions: ScanActions
 ) -> None:
-    project = state.active_project
     kind = grant["kind"]
+    if kind.startswith("project_"):
+        _start_project_grant(state, grant)
+        return
+    project = state.active_project
     try:
         if kind == "start_scan":
             _start_scan_thread(project, actions)
@@ -1314,6 +1579,113 @@ def _execute_grant(
         # instead of crashing the interactive loop mid-render.
         state.message = f"{kind} failed: {exc}"
         project.status = "error"
+
+
+def _project_grant_worker(grant: Mapping[str, Any], data_root: Path | None) -> Any:
+    """The reviewed ProjectTool mutation, then an independent registry
+    readback of the resulting record (never the mutation's own echo)."""
+    from rush.tools.project import ProjectTool
+    from rush.workflows.projects import resolve_project
+
+    kind = grant["kind"]
+    permissions = ExecutionPermissions(cache_write=True, artifact_write=True)
+    tool = ProjectTool()
+    if kind == "project_add":
+        result = tool.run(
+            Path(grant["root"]),
+            action="add",
+            permissions=permissions,
+            data_root=data_root,
+        )
+    elif kind == "project_create":
+        result = tool.run(
+            Path(grant["parent"]),
+            action="create",
+            name=grant["name"],
+            init_git=bool(grant.get("init_git")),
+            permissions=permissions,
+            data_root=data_root,
+        )
+    else:
+        revision = grant.get("expected_revision")
+        result = tool.run(
+            Path(grant["new_root"]),
+            action="relink",
+            project_id=grant.get("project_id"),
+            expected_revision=None if revision is None else int(revision),
+            permissions=permissions,
+            data_root=data_root,
+        )
+    if result.get("status") != "ok":
+        raise RuntimeError(result.get("summary") or f"{kind} failed")
+    raw = result.get("raw") or {}
+    identifier = raw.get("project_id") if isinstance(raw, Mapping) else None
+    readback = identifier or grant.get("project_id") or grant.get("root")
+    if not readback:
+        raise RuntimeError(f"{kind}: no project id to read back")
+    return resolve_project(str(readback), data_root=data_root)
+
+
+def _start_project_grant(state: TuiState, grant: dict[str, Any]) -> None:
+    """Run a confirmed project add/create/relink on a daemon thread; the
+    readback is applied by `_drain_results` on a later tick."""
+    target = state.active_project if state.projects else None
+    data_root = state.data_root
+    results = state.result_queue
+
+    def _worker() -> None:
+        try:
+            payload, ok = _project_grant_worker(grant, data_root), True
+        except Exception as exc:  # noqa: BLE001 -- registry/filesystem
+            # failures of a user-confirmed mutation are shown in the footer,
+            # never raised into the render loop.
+            payload, ok = str(exc) or type(exc).__name__, False
+        results.put(("grant", grant["kind"], target, ok, payload))
+
+    state.message = f"{grant['kind'].replace('_', ' ')} running"
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_project_grant(
+    state: TuiState,
+    kind: str,
+    target: ProjectState | None,
+    ok: bool,
+    payload: Any,
+) -> None:
+    label = kind.replace("_", " ")
+    if not ok:
+        state.message = f"{label} failed: {payload}"
+        return
+    record = payload
+    registration = {
+        "state": "ok",
+        "reason": None,
+        "project_id": record.get("project_id"),
+        "revision": record.get("revision"),
+    }
+    if kind == "project_create" or target is None:
+        project = ProjectState(
+            name=str(record.get("name") or Path(record["root"]).name),
+            root=Path(record["root"]),
+            project_id=record.get("project_id"),
+            registration=registration,
+        )
+        if state.projects:
+            state.active_project.invalidate()
+        state.projects.append(project)
+        state.absorb(project)
+        state.active_index = len(state.projects) - 1
+        state.section = project.section = "overview"
+        state.mode = "list"
+    else:
+        project = target
+        if kind == "project_relink":
+            project.invalidate()
+            project.root = Path(record["root"])
+        _apply_registration(state, project, registration)
+    state.load_requests.add((project_key(project), "overview"))
+    state.message = f"{label} done: {safe_terminal_text(record.get('root'))}"
 
 
 # --------------------------------------------------------------------------
@@ -1910,33 +2282,165 @@ def _handle_quit_confirm_key(state: TuiState, key: str, actions: ScanActions) ->
     # any other key: stay in the menu, awaiting a valid choice.
 
 
-def _handle_project_selector_key(state: TuiState, key: str) -> None:
-    """U01 fix: F2's overlay -- Up/Down/j/k move the highlight, Enter
-    confirms the actual project switch (the only place `active_index`
-    changes here), Escape cancels back to `list` with no switch at all."""
-    if key in ("down", "j"):
-        state.project_selector_index = (state.project_selector_index + 1) % len(
-            state.projects
-        )
-    elif key in ("up", "k"):
-        state.project_selector_index = (state.project_selector_index - 1) % len(
-            state.projects
-        )
-    elif key == "enter":
-        state.active_index = state.project_selector_index
-        # P66-05/P66-06: same two-project isolation guarantee the old
-        # `next_project` action gave -- a prior project's memory-admin/git
-        # state never leaks into the newly active one.
-        state.memory_items = []
-        state.memory_selected_ids = set()
-        state.memory_pending_delete = None
-        state.memory_expanded = None
-        state.memory_message = ""
-        state.git_data = None
-        state.git_message = ""
-        state.mode = "list"
-    elif key == "escape":
-        state.mode = "list"
+# --------------------------------------------------------------------------
+# T28-A X7: section loads run on a daemon thread and post to
+# `state.result_queue`; the loop's per-tick `_pump` drains it and applies only
+# results for the project's current outstanding request. Dispatch and render
+# only ever add to `state.load_requests` -- neither does load I/O itself.
+# --------------------------------------------------------------------------
+
+LoadOutcome = tuple[str, str | None, Any]  # (section state, reason, data)
+
+
+def _load_overview_section(
+    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
+) -> LoadOutcome:
+    if actions.load_overview is None:
+        return "unavailable", "no overview loader configured", None
+    data = actions.load_overview(root, project_id=project_id, data_root=data_root)
+    return "populated", None, data
+
+
+def _load_tokens_section(
+    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
+) -> LoadOutcome:
+    if project_id is None:
+        return "unavailable", "project not registered", None
+    from rush.workflows.projects import project_token_usage
+
+    return "populated", None, project_token_usage(project_id, data_root=data_root)
+
+
+def _load_artifacts_section(
+    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
+) -> LoadOutcome:
+    if project_id is None:
+        return "unavailable", "project not registered", None
+    from rush.workflows.projects import list_project_artifacts
+
+    data = list_project_artifacts(project_id, data_root=data_root)
+    lists = [v for v in data.values() if isinstance(v, list)]
+    if lists and not any(lists):
+        return "empty", "no artifacts recorded yet", data
+    return "populated", None, data
+
+
+def _load_setup_section(
+    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
+) -> LoadOutcome:
+    agents = actions.list_agents()
+    if not agents:
+        return "empty", "no agents detected", agents
+    return "populated", None, agents
+
+
+_SECTION_LOADERS: dict[
+    str, Callable[[Path, str | None, Path | None, ScanActions], LoadOutcome]
+] = {
+    "overview": _load_overview_section,
+    "tokens": _load_tokens_section,
+    "artifacts": _load_artifacts_section,
+    "setup": _load_setup_section,
+}
+
+
+def _submit(
+    state: TuiState, project: ProjectState, section: str, actions: ScanActions
+) -> None:
+    """Start one background section load for `project`; its post carries the
+    request generation and project identity `_drain_results` checks."""
+    loader = _SECTION_LOADERS[section]
+    generation = project.begin_request(section)
+    identity = project.identity()
+    key = (project_key(project), section)
+    if key not in state.views:
+        state.views[key] = SectionView(state="loading", generation=generation)
+    args = (project.root, project.project_id, state.data_root, actions)
+    results = state.result_queue
+
+    def _worker() -> None:
+        try:
+            payload: Any = loader(*args)
+            ok = True
+        except Exception as exc:  # noqa: BLE001 -- a loader's failure space
+            # (registry, SQLite, Git, injected seams) is open-ended; it is
+            # posted and rendered as a failed/stale section, never raised
+            # into the render loop.
+            payload, ok = str(exc) or type(exc).__name__, False
+        results.put((project, section, generation, identity, ok, payload))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_registration(
+    state: TuiState, project: ProjectState, registration: Mapping[str, Any]
+) -> None:
+    """Record the Overview's registry state; a newly learned project id
+    re-keys this project's views and re-requests its outstanding loads."""
+    deferred = (project.registration or {}).get("deferred")
+    project.registration = {**registration, **({"deferred": True} if deferred else {})}
+    new_id = registration.get("project_id")
+    if not new_id or new_id == project.project_id:
+        return
+    old_key = project_key(project)
+    project.project_id = new_id
+    new_key = project_key(project)
+    for pkey, section in [k for k in state.views if k[0] == old_key]:
+        state.views[(new_key, section)] = state.views.pop((pkey, section))
+    for section in list(project.pending):
+        if section in _SECTION_LOADERS:
+            state.load_requests.add((new_key, section))
+    project.pending.clear()
+
+
+def _drain_results(state: TuiState) -> None:
+    while True:
+        try:
+            post = state.result_queue.get_nowait()
+        except queue.Empty:
+            return
+        if isinstance(post[0], str):  # ("grant", kind, target, ok, payload)
+            _apply_project_grant(state, *post[1:])
+            continue
+        project, section, generation, identity, ok, payload = post
+        if not any(p is project for p in state.projects):
+            continue
+        if not project.accepts(section, generation, identity):
+            continue  # superseded, switched away, or identity changed
+        del project.pending[section]
+        if ok and section == "overview" and isinstance(payload[2], Mapping):
+            registration = payload[2].get("registration")
+            if isinstance(registration, Mapping):
+                _apply_registration(state, project, registration)
+        key = (project_key(project), section)
+        prior = state.views.get(key)
+        if ok:
+            view_state, reason, data = payload
+            state.views[key] = SectionView(
+                state=view_state,
+                reason=reason,
+                data=data,
+                loaded_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                generation=generation,
+            )
+        elif prior is not None and prior.data is not None:
+            prior.state = "stale"
+            prior.reason = f"refresh failed: {payload}"
+        else:
+            state.views[key] = SectionView(
+                state="failed", reason=str(payload), generation=generation
+            )
+
+
+def _pump(state: TuiState, actions: ScanActions) -> None:
+    """One loop tick: apply finished loads, then start requested ones."""
+    _drain_results(state)
+    requests, state.load_requests = state.load_requests, set()
+    for pkey, section in requests:
+        for project in state.projects:
+            if project_key(project) == pkey and section in _SECTION_LOADERS:
+                _submit(state, project, section, actions)
+                break
 
 
 def _handle_grant_review_key(state: TuiState, key: str, actions: ScanActions) -> None:
@@ -1949,169 +2453,557 @@ def _handle_grant_review_key(state: TuiState, key: str, actions: ScanActions) ->
         state.message = "declined"
 
 
-def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
-    if state.mode == "search":
-        _handle_search_key(state, key)
-        return
-    if state.mode == "grant_review":
-        _handle_grant_review_key(state, key, actions)
-        return
-    if state.mode == "memory_search":
-        _handle_memory_search_key(state, key, actions)
-        return
-    if state.mode == "memory_edit":
-        _handle_memory_edit_key(state, key, actions)
-        return
-    if state.mode == "memory_owner":
-        _handle_memory_owner_key(state, key, actions)
-        return
-    if state.mode == "memory":
-        _handle_memory_key(state, key, actions)
-        return
-    if state.mode == "quit_confirm":
-        _handle_quit_confirm_key(state, key, actions)
-        return
-    if state.mode == "project_selector":
-        _handle_project_selector_key(state, key)
-        return
+def _handle_project_selector_key(
+    state: TuiState, key: str, actions: ScanActions
+) -> None:
+    """U01 fix: F2's overlay -- Up/Down/j/k move the highlight, Enter
+    confirms the actual project switch (the only place `active_index`
+    changes here), Escape cancels back with no switch at all. T28-A: the
+    outgoing project's outstanding requests are invalidated, and the
+    incoming project returns to its own last section."""
+    if key in ("down", "j"):
+        state.project_selector_index = (state.project_selector_index + 1) % len(
+            state.projects
+        )
+    elif key in ("up", "k"):
+        state.project_selector_index = (state.project_selector_index - 1) % len(
+            state.projects
+        )
+    elif key == "enter":
+        if state.project_selector_index != state.active_index:
+            state.active_project.invalidate()
+        state.active_index = state.project_selector_index
+        state.memory_items = []
+        state.memory_selected_ids = set()
+        state.memory_pending_delete = None
+        state.memory_expanded = None
+        state.memory_message = ""
+        state.git_data = None
+        state.git_message = ""
+        state.mode = "list"
+        _enter_section(state, state.active_project.section, actions)
+    elif key == "escape":
+        state.mode = "list"
 
-    action = _KEYMAP.get_action_for_key(key)
-    if action is None:
-        return
+
+def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
     project = state.active_project
-
-    if action == "quit":
-        # P69-06g: Phase 66 S3.9 -- quitting with running work offers a
-        # real three-way choice (Detach/Cancel run and stay/Return), never
-        # an immediate exit that silently loses or orphans that work.
-        if _has_running_work(project):
-            state.mode = "quit_confirm"
-            state.message = ""
-        else:
-            state.should_quit = True
-    elif action == "cursor_down":
-        if state.mode == "map":
-            _move_map_selection(state, project, 1)
-        else:
-            _move_selection(project, 1)
-    elif action == "cursor_up":
-        if state.mode == "map":
-            _move_map_selection(state, project, -1)
-        else:
-            _move_selection(project, -1)
-    elif action == "select_row":
-        if project.visible_findings():
-            state.mode = "detail"
-    elif action == "open_project_selector":
-        # U01 fix: opens the overlay -- the project only actually switches
-        # once Enter confirms a highlighted row (`_handle_project_selector_
-        # key`), distinct from Tab's `cycle_pane` (never switches projects).
-        state.project_selector_index = state.active_index
-        state.mode = "project_selector"
-    elif action == "cycle_pane":
-        idx = (
-            PANE_CYCLE.index(state.active_pane)
-            if state.active_pane in PANE_CYCLE
-            else 0
-        )
-        state.active_pane = PANE_CYCLE[(idx + 1) % len(PANE_CYCLE)]
-    elif action == "cycle_pane_reverse":
-        idx = (
-            PANE_CYCLE.index(state.active_pane)
-            if state.active_pane in PANE_CYCLE
-            else 0
-        )
-        state.active_pane = PANE_CYCLE[(idx - 1) % len(PANE_CYCLE)]
-    elif action == "next_section":
-        current = state.mode if state.mode in SECTION_CYCLE else "list"
-        idx = SECTION_CYCLE.index(current)
-        state.mode = SECTION_CYCLE[(idx + 1) % len(SECTION_CYCLE)]
-        if state.mode == "git":
-            _load_git_view(state, project, actions)
-    elif action == "map_expand":
-        if state.mode == "map":
-            nodes = _map_visible_nodes(project, state.map_expanded)
-            if 0 <= state.map_selected_index < len(nodes):
-                node = nodes[state.map_selected_index]
-                if node.get("children"):
-                    state.map_expanded.add(node["key"])
-    elif action == "map_collapse":
-        if state.mode == "map":
-            nodes = _map_visible_nodes(project, state.map_expanded)
-            if 0 <= state.map_selected_index < len(nodes):
-                node = nodes[state.map_selected_index]
-                state.map_expanded.discard(node["key"])
-    elif action == "focus_filter":
-        state.mode = "search"
-    elif action == "cancel":
-        if state.mode in ("detail", "git", "help", "map"):
-            state.mode = "list"
-        state.message = ""
-    elif action == "cycle_agent":
-        _cycle_agent(state, actions)
-    elif action == "toggle_memory":
-        state.show_memory = not state.show_memory
-    elif action == "show_help":
-        # P69-06c: a real "?" binding -- `_render_help` renders `_KEYMAP`'s
-        # actual current bindings, never a hardcoded string that can drift.
-        state.mode = "help"
-    elif action == "toggle_memory_admin":
-        state.mode = "memory"
-        state.memory_message = f"press / to search {state.memory_subject} memories"
-    elif action == "toggle_git_view":
-        state.mode = "git"
+    state.section = project.section = section
+    state.nav_index = SECTIONS.index(section)
+    state.mode = _SECTION_MODES.get(section, "list")
+    if section == "git":
         _load_git_view(state, project, actions)
-    elif action == "start_scan":
-        if project.status == "scanning":
-            state.message = "scan already running"
-        else:
-            state.pending_grant = {
-                "kind": "start_scan",
-                "project": project.name,
-                "root": str(project.root),
-                "summary": "Run a full scan against this project's real source.",
-            }
-            state.mode = "grant_review"
-    elif action == "rescan":
-        if project.run_id:
-            state.pending_grant = {
-                "kind": "rescan",
-                "project": project.name,
-                "root": str(project.root),
-                "run_id": project.run_id,
-                "summary": f"Rescan run {project.run_id} against current source.",
-            }
-            state.mode = "grant_review"
-        else:
-            state.message = "no completed run to rescan yet"
-    elif action == "prepare_handoff":
-        if not project.run_id:
-            state.message = "no completed run to hand off yet"
-        elif not state.selected_agent_id:
-            state.message = "press 'a' to choose a Setup/Agents target first"
-        else:
-            finding_count = len(project.visible_findings())
-            state.pending_grant = {
-                "kind": "handoff",
-                "project": project.name,
-                "root": str(project.root),
-                "run_id": project.run_id,
-                "agent_id": state.selected_agent_id,
-                "finding_count": finding_count,
-                "summary": (
-                    f"Send {finding_count} finding(s) from run {project.run_id} "
-                    f"to agent {state.selected_agent_id}."
-                ),
-            }
-            state.mode = "grant_review"
-    elif action == "cancel_scan":
-        _request_cancel(project, actions)
-    elif action == "confirm_grant":
-        pass  # only meaningful inside grant_review, handled above
+    elif section == "memory":
+        state.memory_message = f"press / to search {state.memory_subject} memories"
+    elif section in _SECTION_LOADERS:
+        state.load_requests.add((project_key(project), section))
 
 
-def _keymap_footer() -> Text:
-    parts = [f"{b.key}:{b.description}" for b in _KEYMAP.bindings]
+def _sync_section(state: TuiState) -> None:
+    if state.mode in _SECTION_MODES.values() or state.mode.startswith("memory"):
+        state.section = "memory" if state.mode.startswith("memory") else state.mode
+    elif state.mode == "list" and state.section in _SECTION_MODES:
+        state.section = "overview"
+    if state.projects:
+        state.active_project.section = state.section
+    if state.overlay not in ("sections", "form"):
+        state.overlay = _MODE_OVERLAYS.get(state.mode)
+
+
+def _chooser_rows() -> list[tuple[str, str]]:
+    return [(f"section:{s}", SECTION_LABELS[s]) for s in SECTIONS] + list(
+        _CHOOSER_EXTRAS
+    )
+
+
+def _handle_section_chooser_key(
+    state: TuiState, key: str, actions: ScanActions
+) -> None:
+    rows = _chooser_rows()
+    if key in [str(i) for i in range(1, len(SECTIONS) + 1)]:
+        state.overlay = None
+        _enter_section(state, SECTIONS[int(key) - 1], actions)
+    elif key == "f3":
+        state.chooser_index = (state.chooser_index + 1) % len(SECTIONS)
+        _enter_section(state, SECTIONS[state.chooser_index], actions)
+    elif key in ("down", "j"):
+        state.chooser_index = (state.chooser_index + 1) % len(rows)
+    elif key in ("up", "k"):
+        state.chooser_index = (state.chooser_index - 1) % len(rows)
+    elif key == "escape":
+        state.overlay = None
+    elif key == "enter":
+        state.overlay = None
+        target = rows[state.chooser_index][0]
+        if target.startswith("section:"):
+            _enter_section(state, target.split(":", 1)[1], actions)
+        else:
+            _run_action(state, _ACTIONS_BY_ID[target], actions)
+
+
+def _handle_focus_key(state: TuiState, key: str, actions: ScanActions) -> bool:
+    if state.focus == "nav":
+        if key in ("down", "j", "up", "k"):
+            step = 1 if key in ("down", "j") else -1
+            state.nav_index = (state.nav_index + step) % len(SECTIONS)
+            return True
+        if key == "enter":
+            _enter_section(state, SECTIONS[state.nav_index], actions)
+            return True
+    elif state.focus == "actions":
+        section_actions = _section_actions(state.section)
+        if key in ("down", "j", "up", "k"):
+            step = 1 if key in ("down", "j") else -1
+            state.action_index = (state.action_index + step) % len(section_actions)
+            return True
+        if key == "enter":
+            index = state.action_index % len(section_actions)
+            _run_action(state, section_actions[index], actions)
+            return True
+    return False
+
+
+_FORM_FIELDS: dict[str, tuple[str, ...]] = {
+    "project_create": ("name", "parent", "init_git"),
+    "project_relink": ("new_root",),
+}
+
+
+def _open_form(state: TuiState, kind: str, values: dict[str, str]) -> None:
+    state.form = {"kind": kind, "values": values, "field": 0, "error": ""}
+    state.overlay = "form"
+
+
+def _handle_form_key(state: TuiState, key: str) -> None:
+    form = state.form
+    if form is None:
+        state.overlay = None
+        return
+    names = _FORM_FIELDS[form["kind"]]
+    current = names[form["field"]]
+    if key == "escape":
+        state.form = None
+        state.overlay = None
+        state.message = "cancelled"
+    elif key == "tab":
+        form["field"] = (form["field"] + 1) % len(names)
+    elif key == "backspace":
+        form["values"][current] = form["values"][current][:-1]
+    elif key == "enter":
+        _review_form(state, form)
+    elif len(key) == 1 and key.isprintable():
+        form["values"][current] += key
+
+
+def _review_form(state: TuiState, form: dict[str, Any]) -> None:
+    values = {k: v.strip() for k, v in form["values"].items()}
+    missing = [name for name in _FORM_FIELDS[form["kind"]] if not values.get(name)]
+    if missing:
+        form["error"] = f"required: {', '.join(missing)}"
+        return
+    state.form = None
+    state.overlay = None
+    grant: dict[str, Any] = {"kind": form["kind"], **values}
+    if form["kind"] == "project_create":
+        grant["init_git"] = values["init_git"].lower() in ("y", "yes", "true")
+        grant["summary"] = (
+            f"Create folder {values['name']!r} under {values['parent']} and register it."
+        )
+    else:
+        project = state.active_project
+        registration = project.registration or {}
+        grant.update(
+            project_id=project.project_id or registration.get("project_id"),
+            expected_revision=registration.get("revision"),
+            summary=f"Relink project {project.name} to {values['new_root']}.",
+        )
+    _open_grant(state, grant)
+
+
+_PROJECT_WRITE_GRANTS = ("cache_write", "artifact_write")
+
+
+def _open_grant(state: TuiState, grant: dict[str, Any]) -> None:
+    if grant["kind"].startswith("project_"):
+        launch = state.launch_permissions or ExecutionPermissions()
+        grant["grants"] = ", ".join(_PROJECT_WRITE_GRANTS)
+        pre = [g for g in _PROJECT_WRITE_GRANTS if getattr(launch, g, False)]
+        grant["pre-granted at launch"] = ", ".join(pre) or "none"
+    state.pending_grant = grant
+    state.mode = "grant_review"
+
+
+@dataclass(frozen=True)
+class Action:
+    id: str
+    label: str
+    category: str  # Global | Navigation | Section | Text input | Running work
+    sections: tuple[str, ...]
+    run: Callable[[TuiState, ScanActions], None]
+    enabled: Callable[[TuiState], tuple[bool, str]] = lambda state: (True, "")
+
+
+def _run_action(state: TuiState, action: Action, actions: ScanActions) -> None:
+    ok, reason = action.enabled(state)
+    if not ok:
+        state.message = reason
+        return
+    action.run(state, actions)
+
+
+def _section_actions(section: str) -> list[Action]:
+    return [a for a in ACTIONS if section in a.sections]
+
+
+def _quit(state: TuiState, actions: ScanActions) -> None:
+    if state.projects and _has_running_work(state.active_project):
+        state.mode = "quit_confirm"
+        state.message = ""
+    else:
+        state.should_quit = True
+
+
+def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
+    def run(state: TuiState, actions: ScanActions) -> None:
+        if state.mode == "map":
+            _move_map_selection(state, state.active_project, step)
+        else:
+            _move_selection(state.active_project, step)
+
+    return run
+
+
+def _select_row(state: TuiState, actions: ScanActions) -> None:
+    if state.active_project.visible_findings():
+        state.mode = "detail"
+
+
+def _open_project_selector(state: TuiState, actions: ScanActions) -> None:
+    state.project_selector_index = state.active_index
+    state.mode = "project_selector"
+
+
+def _open_section_chooser(state: TuiState, actions: ScanActions) -> None:
+    state.chooser_index = SECTIONS.index(state.section)
+    state.overlay = "sections"
+
+
+def _cycle_focus(step: int) -> Callable[[TuiState, ScanActions], None]:
+    def run(state: TuiState, actions: ScanActions) -> None:
+        idx = FOCUS_CYCLE.index(state.focus) if state.focus in FOCUS_CYCLE else 1
+        state.focus = FOCUS_CYCLE[(idx + step) % len(FOCUS_CYCLE)]
+
+    return run
+
+
+def _map_expand(state: TuiState, actions: ScanActions) -> None:
+    if state.mode == "map":
+        nodes = _map_visible_nodes(state.active_project, state.map_expanded)
+        if 0 <= state.map_selected_index < len(nodes):
+            node = nodes[state.map_selected_index]
+            if node.get("children"):
+                state.map_expanded.add(node["key"])
+
+
+def _map_collapse(state: TuiState, actions: ScanActions) -> None:
+    if state.mode == "map":
+        nodes = _map_visible_nodes(state.active_project, state.map_expanded)
+        if 0 <= state.map_selected_index < len(nodes):
+            state.map_expanded.discard(nodes[state.map_selected_index]["key"])
+
+
+def _cancel(state: TuiState, actions: ScanActions) -> None:
+    if state.mode in ("detail", "help"):
+        state.mode = _SECTION_MODES.get(state.section, "list")
+    elif state.mode in ("git", "map"):
+        _enter_section(state, "overview", actions)
+    state.message = ""
+
+
+def _refresh(state: TuiState, actions: ScanActions) -> None:
+    if state.section == "git":
+        _load_git_view(state, state.active_project, actions)
+    elif state.section in _SECTION_LOADERS:
+        state.load_requests.add((project_key(state.active_project), state.section))
+    state.message = f"refreshing {SECTION_LABELS[state.section]}"
+
+
+def _goto(section: str) -> Callable[[TuiState, ScanActions], None]:
+    def run(state: TuiState, actions: ScanActions) -> None:
+        _enter_section(state, section, actions)
+
+    return run
+
+
+def _set_mode(mode: str) -> Callable[[TuiState, ScanActions], None]:
+    def run(state: TuiState, actions: ScanActions) -> None:
+        state.mode = mode
+
+    return run
+
+
+def _start_check(state: TuiState, actions: ScanActions) -> None:
+    if actions.run_check_suite is None:
+        state.message = "no check suite configured"
+        return
+    _start_initial_check_thread(state.active_project, actions)
+    state.message = "analysis started"
+
+
+def _start_scan_review(state: TuiState, actions: ScanActions) -> None:
+    project = state.active_project
+    _open_grant(
+        state,
+        {
+            "kind": "start_scan",
+            "project": project.name,
+            "root": str(project.root),
+            "summary": "Run a full scan against this project's real source.",
+        },
+    )
+
+
+def _rescan_review(state: TuiState, actions: ScanActions) -> None:
+    project = state.active_project
+    _open_grant(
+        state,
+        {
+            "kind": "rescan",
+            "project": project.name,
+            "root": str(project.root),
+            "run_id": project.run_id,
+            "summary": f"Rescan run {project.run_id} against current source.",
+        },
+    )
+
+
+def _handoff_review(state: TuiState, actions: ScanActions) -> None:
+    project = state.active_project
+    finding_count = len(project.visible_findings())
+    _open_grant(
+        state,
+        {
+            "kind": "handoff",
+            "project": project.name,
+            "root": str(project.root),
+            "run_id": project.run_id,
+            "agent_id": state.selected_agent_id,
+            "finding_count": finding_count,
+            "summary": (
+                f"Send {finding_count} finding(s) from run {project.run_id} "
+                f"to agent {state.selected_agent_id}."
+            ),
+        },
+    )
+
+
+def _project_add_review(state: TuiState, actions: ScanActions) -> None:
+    project = state.active_project
+    _open_grant(
+        state,
+        {
+            "kind": "project_add",
+            "project": project.name,
+            "root": str(project.root),
+            "summary": f"Register {project.root} as a Rush project.",
+        },
+    )
+
+
+def _project_create_form(state: TuiState, actions: ScanActions) -> None:
+    parent = str(state.active_project.root.parent) if state.projects else ""
+    _open_form(
+        state, "project_create", {"name": "", "parent": parent, "init_git": "no"}
+    )
+
+
+def _project_relink_form(state: TuiState, actions: ScanActions) -> None:
+    _open_form(state, "project_relink", {"new_root": ""})
+
+
+def _choose_later(state: TuiState, actions: ScanActions) -> None:
+    project = state.active_project
+    project.registration = {**(project.registration or {}), "deferred": True}
+    state.message = "project choice deferred -- A adds or N creates one any time"
+
+
+def _registration_state(state: TuiState) -> str | None:
+    if not state.projects:
+        return "none"
+    registration = state.active_project.registration
+    return registration.get("state") if registration else None
+
+
+def _scan_enabled(state: TuiState) -> tuple[bool, str]:
+    if state.active_project.status == "scanning":
+        return False, "scan already running"
+    return True, ""
+
+
+def _rescan_enabled(state: TuiState) -> tuple[bool, str]:
+    if not state.active_project.run_id:
+        return False, "no completed run to rescan yet"
+    return _scan_enabled(state)
+
+
+def _handoff_enabled(state: TuiState) -> tuple[bool, str]:
+    if not state.active_project.run_id:
+        return False, "no completed run to hand off yet"
+    if not state.selected_agent_id:
+        return False, "press 'a' to choose a Setup/Agents target first"
+    return True, ""
+
+
+def _cancel_enabled(state: TuiState) -> tuple[bool, str]:
+    if not _has_running_work(state.active_project):
+        return False, "no running work to cancel"
+    return True, ""
+
+
+def _add_enabled(state: TuiState) -> tuple[bool, str]:
+    if _registration_state(state) != "none":
+        return False, "project already registered or registry not readable"
+    return True, ""
+
+
+def _relink_enabled(state: TuiState) -> tuple[bool, str]:
+    if _registration_state(state) != "moved":
+        return False, "relink applies only to a moved project root"
+    return True, ""
+
+
+ACTIONS: tuple[Action, ...] = (
+    Action("quit", "Quit", "Global", (), _quit),
+    Action("open_project_selector", "Projects", "Global", (), _open_project_selector),
+    Action("open_section_chooser", "Sections", "Global", (), _open_section_chooser),
+    Action("show_help", "Help", "Global", (), _set_mode("help")),
+    Action("refresh", "Refresh", "Global", SECTIONS, _refresh),
+    Action("cancel", "Back", "Global", (), _cancel),
+    Action("cursor_down", "Down", "Navigation", (), _cursor(1)),
+    Action("cursor_up", "Up", "Navigation", (), _cursor(-1)),
+    Action("select_row", "Inspect", "Navigation", ("scans",), _select_row),
+    Action("cycle_pane", "Next pane", "Navigation", (), _cycle_focus(1)),
+    Action("cycle_pane_reverse", "Prev pane", "Navigation", (), _cycle_focus(-1)),
+    Action("map_expand", "Expand", "Navigation", ("map",), _map_expand),
+    Action("map_collapse", "Collapse", "Navigation", ("map",), _map_collapse),
+    Action("toggle_memory_admin", "Memory", "Navigation", (), _goto("memory")),
+    Action("toggle_git_view", "Git", "Navigation", (), _goto("git")),
+    Action("goto_tokens", "Tokens", "Navigation", (), _goto("tokens")),
+    Action(
+        "start_check",
+        "Check",
+        "Section",
+        ("overview", "scans"),
+        _start_check,
+        _scan_enabled,
+    ),
+    Action(
+        "start_scan",
+        "Scan",
+        "Section",
+        ("overview", "scans"),
+        _start_scan_review,
+        _scan_enabled,
+    ),
+    Action("rescan", "Rescan", "Section", ("scans",), _rescan_review, _rescan_enabled),
+    Action(
+        "prepare_handoff",
+        "Handoff",
+        "Section",
+        ("scans", "setup"),
+        _handoff_review,
+        _handoff_enabled,
+    ),
+    Action("cycle_agent", "Agent", "Section", ("setup",), _cycle_agent),
+    Action(
+        "project_add",
+        "Add",
+        "Section",
+        ("overview",),
+        _project_add_review,
+        _add_enabled,
+    ),
+    Action("project_create", "Create", "Section", ("overview",), _project_create_form),
+    Action(
+        "project_relink",
+        "Relink",
+        "Section",
+        ("overview",),
+        _project_relink_form,
+        _relink_enabled,
+    ),
+    Action("choose_later", "Later", "Section", (), _choose_later, _add_enabled),
+    Action("focus_filter", "Filter", "Text input", ("scans",), _set_mode("search")),
+    Action("confirm_grant", "Confirm", "Text input", (), lambda state, actions: None),
+    Action(
+        "cancel_scan",
+        "Cancel run",
+        "Running work",
+        ("overview", "scans"),
+        lambda state, actions: _request_cancel(state.active_project, actions),
+        _cancel_enabled,
+    ),
+)
+_ACTIONS_BY_ID = {action.id: action for action in ACTIONS}
+_ACTION_CATEGORIES = ("Global", "Navigation", "Section", "Text input", "Running work")
+_KEYMAP = KeymapManager(_BINDINGS)
+
+
+def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    _dispatch_key_inner(state, key, actions)
+    _sync_section(state)
+
+
+def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None:
+    if not state.projects:
+        if state.overlay == "form":
+            _handle_form_key(state, key)
+        elif key == "q":
+            state.should_quit = True
+        elif key == "N":
+            _project_create_form(state, actions)
+        elif key == "y" and state.pending_grant is not None:
+            _handle_grant_review_key(state, key, actions)
+        return
+    modal: dict[str, Callable[[TuiState, str, ScanActions], None]] = {
+        "search": lambda st, k, a: _handle_search_key(st, k),
+        "grant_review": _handle_grant_review_key,
+        "memory_search": _handle_memory_search_key,
+        "memory_edit": _handle_memory_edit_key,
+        "memory_owner": _handle_memory_owner_key,
+        "memory": _handle_memory_key,
+        "quit_confirm": _handle_quit_confirm_key,
+        "project_selector": _handle_project_selector_key,
+    }
+    if state.overlay == "sections":
+        _handle_section_chooser_key(state, key, actions)
+        return
+    if state.overlay == "form":
+        _handle_form_key(state, key)
+        return
+    if key == "f3" and state.mode == "memory":
+        # The Memory section's own key handler never swallows the global
+        # section chooser (its text-entry sub-modes still do).
+        _open_section_chooser(state, actions)
+        return
+    handler = modal.get(state.mode)
+    if handler is not None:
+        handler(state, key, actions)
+        return
+    if _handle_focus_key(state, key, actions):
+        return
+    action = _ACTIONS_BY_ID.get(_KEYMAP.get_action_for_key(key) or "")
+    if action is not None:
+        _run_action(state, action, actions)
+
+
+def _keymap_footer(state: TuiState) -> Text:
+    parts = []
+    for action in _section_actions(state.section)[:6] if state.projects else []:
+        keys = [b.key for b in _BINDINGS if b.action_name == action.id]
+        ok, reason = action.enabled(state)
+        parts.append(f"{keys[0]}:{action.label}" + ("" if ok else f" ({reason})"))
+    parts.extend(["F3:Sections", "F2:Projects", "?:Help"])
     return Text(" | ".join(parts), style="dim")
 
 
@@ -2137,19 +3029,147 @@ def _render_project_table(project: ProjectState) -> Panel:
     base = project.detail_page * PAGE_SIZE
     for idx, row in enumerate(page_items):
         marker = ">" if base + idx == project.selected_index else ""
-        sev = str(row.get("severity", "info"))
-        sev_style = _severity_style(sev)
+        sev = safe_terminal_text(row.get("severity", "info"))
         table.add_row(
-            marker,
-            str(row.get("tool", "")),
-            f"{_finding_path(row)}:{_finding_line(row)}",
-            f"[{sev_style}]{sev}[/{sev_style}]",
-            str(row.get("message", "")),
+            Text(marker),
+            _safe(row.get("tool", "")),
+            _safe(f"{_finding_path(row)}:{_finding_line(row)}"),
+            Text(sev, style=_severity_style(sev)),
+            _safe(row.get("message", "")),
         )
+    return Panel(
+        table, title=_findings_title(project, rows, total_pages), style="green"
+    )
+
+
+def _safe(value: object, style: str = "") -> Text:
+    """X3: a dynamic value as literal, control-free terminal text."""
+    return Text(safe_terminal_text(value), style=style)
+
+
+_UNAVAILABLE_STATUSES = ("skipped", "error")
+
+
+def _findings_title(
+    project: ProjectState, rows: list[dict[str, Any]], total_pages: int
+) -> Text:
+    """A count only when a tool actually completed: no result yet and
+    nothing-completed are never shown as zero findings."""
+    if not project.results:
+        return Text("Findings (no result yet)")
+    if all(r.get("status") in _UNAVAILABLE_STATUSES for r in project.results):
+        return Text("Findings (unavailable: no tool completed)")
     title = f"Findings ({len(rows)}) page {project.detail_page + 1}/{total_pages}"
     if project.filter_text:
         title += f" filter={project.filter_text!r}"
-    return Panel(table, title=title, style="green")
+    return _safe(title)
+
+
+def _outcome_line(result: Mapping[str, Any]) -> Text:
+    """One line per result: clean, N findings, unavailable, or error."""
+    status = result.get("status")
+    count = len(result.get("findings") or [])
+    if status == "skipped":
+        outcome, style = "unavailable", THEME["text_muted"]
+    elif status == "error":
+        outcome, style = "error", "bold red"
+    elif count:
+        outcome, style = f"{count} findings", "bold yellow"
+    else:
+        outcome, style = "clean", "bold green"
+    tool = safe_terminal_text(result.get("tool", ""))
+    summary = safe_terminal_text(result.get("summary", ""))
+    return Text(f"{tool}: {outcome} -- {summary}", style=style)
+
+
+def _registration_banner(project: ProjectState) -> list[Text]:
+    registration = project.registration or {}
+    kind = registration.get("state")
+    reason = safe_terminal_text(registration.get("reason") or "")
+    if kind == "none":
+        lines = [Text("No project registered for this folder.", style="bold yellow")]
+        if registration.get("deferred"):
+            lines.append(Text("Project choice deferred.", style=THEME["text_muted"]))
+        lines.append(
+            Text(
+                "[A] Add this folder  [N] Create a new project  [L] Choose later",
+                style="bold",
+            )
+        )
+        return lines
+    if kind == "moved":
+        return [
+            Text(f"Project root moved: {reason}", style="bold yellow"),
+            Text("[R] Relink to the new root (reviewed)", style="bold"),
+        ]
+    if kind in ("corrupt", "unreadable"):
+        return [Text(f"Registry {kind}: {reason}", style="bold red")]
+    if kind == "ambiguous":
+        return [Text(f"Registration ambiguous: {reason}", style="bold yellow")]
+    return []
+
+
+def _view_state_lines(label: str, view: SectionView | None) -> list[Text]:
+    """One fact per line: the state, then its time, then its cause."""
+    if view is None or view.state == "populated":
+        return []
+    lines: list[Text] = []
+    if view.state in ("failed", "stale"):
+        lines.append(Text(f"{label} {view.state} (F5 retry)", style="bold red"))
+    else:
+        lines.append(Text(f"{label} {view.state}", style="bold yellow"))
+    if view.state == "stale" and view.loaded_at:
+        lines.append(_safe(f"last loaded {view.loaded_at}"))
+    if view.reason:
+        lines.append(_safe(view.reason))
+    return lines
+
+
+def _data_lines(data: Any) -> list[Text]:
+    """A loaded section payload as bounded literal `key: value` lines."""
+    if isinstance(data, Mapping):
+        items = [(k, v) for k, v in data.items() if k != "registration"]
+    elif isinstance(data, list):
+        items = list(enumerate(data))
+    else:
+        items = [] if data is None else [("value", data)]
+    return [
+        _safe(f"{key}: {json.dumps(value, default=str)[:160]}")
+        for key, value in items[:PAGE_SIZE]
+    ]
+
+
+def _render_overview(state: TuiState, project: ProjectState) -> Panel:
+    view = state.views.get((project_key(project), "overview"))
+    lines: list[Any] = [*_registration_banner(project)]
+    lines.extend(_view_state_lines("Overview", view))
+    if view is not None and view.data is not None:
+        data = view.data if isinstance(view.data, Mapping) else {}
+        if data.get("status_summary"):
+            lines.append(_safe(f"status: {data['status_summary']}"))
+        lines.extend(_data_lines(data.get("evidence")))
+    lines.extend(_outcome_line(result) for result in project.results)
+    if project.status in ("scanning", "cancelling"):
+        lines.append(_safe(f"{project.work_kind or 'work'} running"))
+    if project.last_message:
+        lines.append(_safe(project.last_message))
+    if project.results:
+        lines.append(_render_project_table(project))
+    elif len(lines) == 0:
+        lines.append(Text("No analysis yet -- press C to check or s to scan."))
+    return Panel(Group(*lines), title="Overview", style=THEME["border"])
+
+
+def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
+    section = state.section
+    label = SECTION_LABELS[section]
+    view = state.views.get((project_key(project), section))
+    lines: list[Any] = _view_state_lines(label, view)
+    if view is None:
+        lines.append(Text(f"{label} not loaded yet (F5 load)"))
+    else:
+        lines.extend(_data_lines(view.data))
+    return Panel(Group(*lines), title=label, style=THEME["border"])
 
 
 def _render_detail(project: ProjectState) -> Panel:
@@ -2157,8 +3177,8 @@ def _render_detail(project: ProjectState) -> Panel:
     if not rows or project.selected_index >= len(rows):
         return Panel(Text("No finding selected."), title="Detail")
     finding = rows[project.selected_index]
-    body = Text(_bounded_local_detail(project.root, finding))
-    title = (
+    body = _safe(_bounded_local_detail(project.root, finding))
+    title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
     return Panel(body, title=title, style="magenta")
@@ -2310,22 +3330,92 @@ def _render_git_panel(state: TuiState) -> Panel:
 
 def _render_help(state: TuiState) -> Panel:
     """P69-06c: the real, current `_KEYMAP` bindings -- never a hardcoded
-    help string that can drift from what's actually bound."""
-    lines = [f"{b.key}: {b.description}" for b in _KEYMAP.bindings]
+    help string that can drift from what's actually bound. T28-A: grouped
+    by the bound action's `ACTIONS` category."""
+    lines: list[str] = []
+    for category in _ACTION_CATEGORIES:
+        bound = [
+            b
+            for b in _KEYMAP.bindings
+            if (action := _ACTIONS_BY_ID.get(b.action_name)) is not None
+            and action.category == category
+        ]
+        if bound:
+            lines.append(f"{category}:")
+            lines.extend(f"  {b.key}: {b.description}" for b in bound)
     return Panel(Text("\n".join(lines)), title="Key Bindings", style="cyan")
 
 
 def _render_nav_pane(state: TuiState) -> Panel:
-    """U04 fix: the persistent project list shown alongside the main
-    content at compact/wide widths (Phase 66 §3.8's nav pane)."""
-    lines = [
-        Text(
+    """U04 fix: the persistent nav pane shown alongside the main content at
+    compact/wide widths (Phase 66 §3.8). T28-A: the eight numbered sections,
+    the open projects, and the current section's actions with the reason
+    any of them is disabled."""
+    focus_nav = state.focus == "nav"
+    lines: list[Text] = []
+    for idx, section in enumerate(SECTIONS):
+        current = section == state.section
+        cursor = ">" if (focus_nav and idx == state.nav_index) or current else " "
+        lines.append(
+            Text(
+                f"{cursor}{idx + 1} {SECTION_LABELS[section]}",
+                style=THEME["blue"] if current else THEME["text_muted"],
+            )
+        )
+    lines.append(Text("Projects", style="bold"))
+    lines.extend(
+        _safe(
             f"{'>' if idx == state.active_index else ' '}{p.name}",
-            style=THEME["blue"] if idx == state.active_index else THEME["text_muted"],
+            THEME["blue"] if idx == state.active_index else THEME["text_muted"],
         )
         for idx, p in enumerate(state.projects)
-    ]
-    return Panel(Group(*lines), title="Projects", style=THEME["border"])
+    )
+    section_actions = _section_actions(state.section)
+    if section_actions and state.projects:
+        lines.append(Text("Actions", style="bold"))
+        for idx, action in enumerate(section_actions):
+            ok, reason = action.enabled(state)
+            cursor = (
+                ">" if state.focus == "actions" and idx == state.action_index else " "
+            )
+            lines.append(
+                Text(
+                    f"{cursor}{action.label}" + ("" if ok else f" ({reason})"),
+                    style=THEME["text"] if ok else THEME["text_muted"],
+                )
+            )
+    return Panel(Group(*lines), title="Navigate", style=THEME["border"])
+
+
+def _render_section_chooser(state: TuiState) -> Panel:
+    lines: list[Any] = []
+    for idx, (target, label) in enumerate(_chooser_rows()):
+        number = f"{idx + 1} " if target.startswith("section:") else "  "
+        lines.append(
+            Text(
+                f"{'>' if idx == state.chooser_index else ' '}{number}{label}",
+                style=THEME["blue"] if idx == state.chooser_index else THEME["text"],
+            )
+        )
+    lines.append(Text(""))
+    lines.append(Text("[1-8] go  [enter] choose  [escape] close", style="bold yellow"))
+    return Panel(Group(*lines), title="Sections", style=THEME["border"])
+
+
+def _render_form(state: TuiState) -> Panel:
+    form = state.form or {"kind": "form", "values": {}, "field": 0, "error": ""}
+    names = _FORM_FIELDS.get(form["kind"], ())
+    lines: list[Any] = []
+    for idx, name in enumerate(names):
+        cursor = ">" if idx == form["field"] else " "
+        lines.append(_safe(f"{cursor}{name}: {form['values'].get(name, '')}"))
+    if form.get("error"):
+        lines.append(_safe(form["error"], "bold red"))
+    lines.append(Text(""))
+    lines.append(
+        Text("[tab] next field  [enter] review  [escape] cancel", style="bold yellow")
+    )
+    return Panel(Group(*lines), title=_safe(form["kind"]), style=THEME["border"])
 
 
 def _render_project_selector(state: TuiState) -> Panel:
@@ -2333,7 +3423,9 @@ def _render_project_selector(state: TuiState) -> Panel:
     never `active_index` directly (that only changes on Enter)."""
     lines: list[Any] = [
         Text(
-            f"{'>' if idx == state.project_selector_index else ' '}{p.name}",
+            safe_terminal_text(
+                f"{'>' if idx == state.project_selector_index else ' '}{p.name}"
+            ),
             style=THEME["blue"]
             if idx == state.project_selector_index
             else THEME["text"],
@@ -2357,7 +3449,7 @@ def _render_map(state: TuiState, project: ProjectState) -> Panel:
         glyph = ""
         if node.get("children"):
             glyph = "[-] " if node["key"] in state.map_expanded else "[+] "
-        lines.append(Text(f"{marker}{indent}{glyph}{node['label']}"))
+        lines.append(_safe(f"{marker}{indent}{glyph}{node['label']}"))
     if not lines:
         lines.append(Text("No findings."))
     return Panel(Group(*lines), title="Map", style=THEME["blue"])
@@ -2387,11 +3479,71 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
     if project.status in ("scanning", "cancelling") and project.progress:
         return _render_progress_bar(project.progress)
     if state.message:
-        return Text(state.message, style="bold magenta")
+        return _safe(state.message, "bold magenta")
     return Text("")
 
 
+def _render_no_projects(state: TuiState) -> Layout:
+    """No project open at all: only the workspace chooser (or its form)."""
+    layout = Layout()
+    layout.split_column(
+        Layout(name="header", size=3),
+        Layout(name="main", ratio=1),
+        Layout(name="footer", size=3),
+    )
+    header = Text(
+        f"⚡ Rush Interactive Quality Explorer v{__version__}  (no project)",
+        style=_HEADER_STYLE,
+    )
+    layout["header"].update(Panel(header, style=_HEADER_STYLE))
+    if state.overlay == "form":
+        body: Any = _render_form(state)
+    elif state.mode == "grant_review" and state.pending_grant:
+        body = _render_grant_review(state.pending_grant)
+    else:
+        body = Panel(
+            Group(
+                Text("No project open.", style="bold yellow"),
+                Text("[N] Create a new project  [q] Quit", style="bold"),
+            ),
+            title="Choose a project",
+            style=THEME["border"],
+        )
+    layout["main"].update(body)
+    footer = Group(_safe(state.message, "bold magenta"), _keymap_footer(state))
+    layout["footer"].update(Panel(footer, style=_FOOTER_STYLE))
+    return layout
+
+
+def _render_body(state: TuiState, project: ProjectState) -> Any:
+    if state.overlay == "sections":
+        return _render_section_chooser(state)
+    if state.overlay == "form":
+        return _render_form(state)
+    if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
+        return _render_memory_admin(state)
+    if state.mode == "git":
+        return _render_git_panel(state)
+    if state.mode == "map":
+        return _render_map(state, project)
+    if state.mode == "project_selector":
+        return _render_project_selector(state)
+    if state.mode == "grant_review" and state.pending_grant:
+        return _render_grant_review(state.pending_grant)
+    if state.mode == "detail":
+        return _render_detail(project)
+    if state.mode == "help":
+        return _render_help(state)
+    if state.section == "overview":
+        return _render_overview(state, project)
+    if state.section == "scans":
+        return _render_project_table(project)
+    return _render_section_view(state, project)
+
+
 def render_app(state: TuiState) -> Layout:
+    if not state.projects:
+        return _render_no_projects(state)
     project = state.active_project
     layout = Layout()
     layout.split_column(
@@ -2400,57 +3552,35 @@ def render_app(state: TuiState) -> Layout:
         Layout(name="footer", size=3),
     )
 
-    header = Text(
+    header = _safe(
         f"⚡ Rush Interactive Quality Explorer v{__version__}  "
         f"[{state.active_index + 1}/{len(state.projects)}] {project.name}  "
+        f"{SECTION_LABELS[state.section]}  "
         f"({state.terminal_size[0]}x{state.terminal_size[1]})",
-        style=_HEADER_STYLE,
+        _HEADER_STYLE,
     )
     layout["header"].update(Panel(header, style=_HEADER_STYLE))
 
-    if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
-        body: Any = _render_memory_admin(state)
-    elif state.mode == "git":
-        body = _render_git_panel(state)
-    elif state.mode == "map":
-        body = _render_map(state, project)
-    elif state.mode == "project_selector":
-        body = _render_project_selector(state)
-    elif state.mode == "grant_review" and state.pending_grant:
-        body = _render_grant_review(state.pending_grant)
-    elif state.mode == "detail":
-        body = _render_detail(project)
-    elif state.mode == "help":
-        body = _render_help(state)
-    else:
-        body = _render_project_table(project)
+    body = _render_body(state, project)
 
     # U04 fix: real width-dependent pane layout (Phase 66 §3.8) --
     # wide (>=100 cols) splits nav/list/detail three ways, compact
     # (80-99) splits nav/content, narrow (<80) shows a single pane with no
     # nav pane at all. Previously there was only one `>= 100` check with
-    # no distinct 80-99/narrow behavior. `show_memory`'s split stays the
-    # highest-priority branch, unrelated to width.
+    # no distinct 80-99/narrow behavior.
     branch = _width_branch(state.terminal_size[0])
-    if state.show_memory:
-        from rush.token_economy.tui_gain import build_gain_panel
-
-        layout["main"].split_row(
-            Layout(name="primary", ratio=2),
-            Layout(name="memory", ratio=1),
-        )
-        layout["main"]["primary"].update(body)
-        layout["main"]["memory"].update(build_gain_panel(project.root))
-    elif branch == "wide" and state.mode in ("list", "map"):
+    in_pane_mode = state.mode in ("list", "map") and state.overlay is None
+    if branch == "wide" and in_pane_mode:
+        overview = state.mode == "list" and state.section == "overview"
         layout["main"].split_row(
             Layout(name="nav", size=24),
-            Layout(name="list", ratio=45),
-            Layout(name="detail", ratio=55),
+            Layout(name="list", ratio=70 if overview else 45),
+            Layout(name="detail", ratio=30 if overview else 55),
         )
         layout["main"]["nav"].update(_render_nav_pane(state))
         layout["main"]["list"].update(body)
         layout["main"]["detail"].update(_render_detail(project))
-    elif branch == "compact" and state.mode in ("list", "map"):
+    elif branch == "compact" and in_pane_mode:
         layout["main"].split_row(
             Layout(name="nav", size=20),
             Layout(name="content", ratio=1),
@@ -2463,7 +3593,7 @@ def render_app(state: TuiState) -> Layout:
     # U04 fix: the footer is always exactly two rows -- a single optional
     # status line plus the keymap line -- regardless of width or how many
     # of search/quit-confirm/progress/message conditions are active.
-    footer_body: Any = Group(_footer_status_line(state, project), _keymap_footer())
+    footer_body: Any = Group(_footer_status_line(state, project), _keymap_footer(state))
     layout["footer"].update(Panel(footer_body, style=_FOOTER_STYLE))
 
     return layout
@@ -2478,6 +3608,8 @@ def run_interactive_tui(
     tick_seconds: float = 0.05,
     max_ticks: int | None = None,
     use_live: bool = True,
+    permissions: ExecutionPermissions | None = None,
+    data_root: Path | None = None,
 ) -> TuiState:
     """Persistent Rich-Live interactive loop (P66-03/F36). Restores the
     terminal via `raw_terminal()` on both a clean 'q' exit and any
@@ -2507,17 +3639,16 @@ def run_interactive_tui(
                 original_input=seed.original_input,
             )
             for seed in project_seeds
-        ]
+        ],
+        data_root=data_root,
+        launch_permissions=permissions,
     )
     state.terminal_size = reader.get_size()
 
-    # P69-06a: start the interactive interface immediately -- the initial
-    # CHECK_SUITE runs as a background job the loop's own polling
-    # (`_poll_running_scans`/`project.status`) attaches to, instead of
-    # `ui_cmd` blocking interface startup on it.
-    for project in state.projects:
-        if not project.results and actions.run_check_suite is not None:
-            _start_initial_check_thread(project, actions)
+    # T28-A: launch never starts analysis (plan: initial analysis is an
+    # explicit Start action, `C`); the first tick only reads the Overview.
+    if state.projects:
+        state.load_requests.add((project_key(state.active_project), "overview"))
 
     # P69-06 CONNECT: explicit active/idle refresh-rate limiter -- 20Hz while
     # a key was just dispatched or a scan is running, 4Hz otherwise -- rather
@@ -2550,6 +3681,7 @@ def run_interactive_tui(
                 if size != state.terminal_size:
                     state.terminal_size = size
 
+                _pump(state, actions)
                 _poll_running_scans(state, actions)
 
                 key = reader.read_key(tick_seconds)
