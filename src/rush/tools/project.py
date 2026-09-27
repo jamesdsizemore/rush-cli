@@ -22,6 +22,7 @@ from time import monotonic
 from typing import Any, Literal
 
 from rush.permissions import ExecutionPermissions, check_permissions
+from rush.setup.provision import default_data_root
 from rush.workflows.projects import (
     DESCRIPTOR_RELATIVE_PATH,
     ProjectError,
@@ -31,6 +32,7 @@ from rush.workflows.projects import (
     list_project_artifacts,
     list_projects,
     project_snapshot,
+    read_session_selections_strict,
     register_project_outcome,
     relink_project,
     resolve_active_project,
@@ -41,6 +43,37 @@ from rush.workflows.projects import (
 from .base import Finding, ToolFn, ToolResult, ToolStatus
 
 _READBACK_FIELDS = ("project_id", "root", "name", "revision", "configured", "exists")
+
+
+def _select_view(
+    session_id: str, project_id: str, data_root: Path | None
+) -> dict[str, Any]:
+    """T27: select writes one session binding; report it and re-read it."""
+    view = select_project(session_id, project_id, data_root=data_root)
+    state = read_session_selections_strict(data_root or default_data_root())
+    bound = (state.get("selections") or {}).get(session_id)
+    return {
+        **view,
+        "changed": {"session_id": session_id, "project_id": project_id},
+        "readback": {"session_id": session_id, "selected_project_id": bound},
+    }
+
+
+def _configure_view(configured: dict[str, Any], *, applied: bool) -> dict[str, Any]:
+    """T27: a preview writes nothing; an apply names the new revision and
+    settings and re-reads them from the registry."""
+    if not applied:
+        return {**configured, "unchanged": "preview only; nothing written"}
+    view = resolve_project(configured["project_id"])
+    return {
+        **configured,
+        "changed": {
+            "project_id": configured["project_id"],
+            "revision": configured.get("revision"),
+            "settings": configured.get("settings"),
+        },
+        "readback": {key: view.get(key) for key in (*_READBACK_FIELDS, "settings")},
+    }
 
 
 def _mutation_view(project_id: str, *, created: bool) -> dict[str, Any]:
@@ -266,7 +299,7 @@ class ProjectTool(ToolFn):
         if action == "select":
             if not project_id or not session_id:
                 raise ValueError("select requires project_id and session_id")
-            return select_project(session_id, project_id)
+            return _select_view(session_id, project_id, data_root)
         if action == "configure":
             if not project_id:
                 raise ValueError("configure requires project_id")
@@ -281,7 +314,7 @@ class ProjectTool(ToolFn):
             # a CLI/MCP-driven one (both reach this same call site) serialize
             # on one real cross-process mutex, not just an in-process one.
             with cross_process_project_lock(project_id, data_root=data_root):
-                return configure_project(
+                configured = configure_project(
                     project_id,
                     settings,
                     expected_revision=expected_revision,
@@ -289,6 +322,7 @@ class ProjectTool(ToolFn):
                     plan_id=plan_id,
                     data_root=data_root,
                 )
+            return _configure_view(configured, applied=apply)
         if action == "relink":
             if not project_id:
                 raise ValueError("relink requires project_id")
@@ -414,7 +448,7 @@ class ProjectTool(ToolFn):
                 raise ProjectInvalidRequestError(
                     "select requires project and session_id"
                 )
-            return select_project(session_id, project)
+            return _select_view(session_id, project, None)
         if operation == "add":
             path = request.get("path")
             if not path:
@@ -454,7 +488,7 @@ class ProjectTool(ToolFn):
             from rush.dashboard.state import cross_process_project_lock
 
             with cross_process_project_lock(project, data_root=data_root):
-                return configure_project(
+                configured = configure_project(
                     project,
                     request.get("settings"),
                     expected_revision=expected_revision,
@@ -463,6 +497,7 @@ class ProjectTool(ToolFn):
                     lock_timeout=lock_timeout,
                     data_root=data_root,
                 )
+            return _configure_view(configured, applied=apply)
         raise ProjectInvalidRequestError(f"unknown operation: {operation!r}")
 
     def _envelope_result(

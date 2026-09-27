@@ -310,6 +310,28 @@ def _summary_payload(count: int, total_raw: int, total_comp: int) -> dict[str, A
     }
 
 
+def read_memory_event_totals_readonly(
+    project_root: Path, kinds: tuple[str, ...]
+) -> dict[str, int]:
+    """T27: `TelemetryStore.get_memory_event_total(kind)` per kind without
+    constructing a store; a missing DB or table counts zero and creates
+    nothing."""
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+
+    def read(conn: sqlite3.Connection) -> dict[str, int]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return {}
+        rows = conn.execute(
+            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events GROUP BY kind"
+        ).fetchall()
+        return {str(kind): int(total) for kind, total in rows}
+
+    totals = read_sqlite_readonly(db_path, read) or {}
+    return {kind: totals.get(kind, 0) for kind in kinds}
+
+
 def read_summary_readonly(
     project_root: Path,
     *,

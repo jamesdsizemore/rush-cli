@@ -4387,9 +4387,12 @@ def scan_rescan_cmd(
         )
         return
 
+    from .tools.scan import executed_work_status
+
     comparison = data["comparison"]
+    status = executed_work_status(data)  # T27: the re-executed run's outcome
     summary = (
-        f"scan rescan {run_id}: {len(comparison['resolved'])} resolved, "
+        f"scan rescan {run_id}: {status}; {len(comparison['resolved'])} resolved, "
         f"{len(comparison['persisting'])} persisting, "
         f"{len(comparison['new'])} new, "
         f"{len(comparison['unverified'])} unverified"
@@ -4397,7 +4400,7 @@ def scan_rescan_cmd(
     _render_session_result(
         {
             "tool": "scan-rescan",
-            "status": "ok",
+            "status": status,
             "duration_ms": 0,
             "summary": summary,
             "findings": [],
@@ -4446,12 +4449,27 @@ def scan_cancel_cmd(run_id: str, project: str, as_json: bool) -> None:
         )
         return
 
+    from .workflows.project_run import load_run_manifest
+    from .workflows.projects import resolve_project
+
+    # T27: an attempt with a terminal manifest has nothing left to stop; the
+    # idempotent marker is recorded, but the result says so.
+    manifest = load_run_manifest(
+        Path(resolve_project(project)["root"]), run_id, attempt_id=data["attempt_id"]
+    )
+    if manifest is not None:
+        state = manifest.get("run_state", "finished")
+        summary = f"scan cancel {run_id}: attempt already finished ({state}); nothing to cancel"
+        data = {**data, "already_finished": True, "run_state": state}
+    else:
+        summary = f"scan cancel {run_id}: requested"
+        data = {**data, "already_finished": False}
     _render_session_result(
         {
             "tool": "scan-cancel",
             "status": "ok",
             "duration_ms": 0,
-            "summary": f"scan cancel {run_id}: requested",
+            "summary": summary,
             "findings": [],
             "raw": data,
         },
@@ -4518,17 +4536,21 @@ def scan_resume_cmd(
         )
         return
 
+    from .tools.scan import executed_work_status
+
+    resumed = run.to_dict()
+    status = executed_work_status(resumed)  # T27: the attempt's own outcome
     _render_session_result(
         {
             "tool": "scan-resume",
-            "status": "ok",
+            "status": status,
             "duration_ms": 0,
             "summary": (
-                f"scan resume {run_id}: new attempt {run.attempt_id}, "
+                f"scan resume {run_id}: {status}; new attempt {run.attempt_id}, "
                 f"state={run.run_state}"
             ),
             "findings": [],
-            "raw": run.to_dict(),
+            "raw": resumed,
         },
         as_json,
     )

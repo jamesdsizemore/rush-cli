@@ -156,6 +156,10 @@ RunState = Literal[
 ]
 
 _NON_SCAN_REASON = "non_scan_workflow_operation"
+# T27: a scan analyzes; a tool that rewrites source runs only when asked
+# (`rush fix`), never as a scan candidate against the staged copy.
+_REMEDIATION_TOOLS = frozenset({"fix"})
+_REMEDIATION_REASON = "remediation_operation"
 _REPORT_INPUT_REASON = "requires_report_input"
 _DYNAMIC_TARGET_REASON = "requires_dynamic_target_and_grants"
 _STATIC_REASON = "comprehensive_static_analysis"
@@ -423,6 +427,8 @@ def _classify_tool(name: str, tools_by_name: dict[str, Any]) -> tuple[Dispositio
         return "applicable", _STATIC_REASON
     if spec.category == "workflow":
         return "not_applicable", _NON_SCAN_REASON
+    if name in _REMEDIATION_TOOLS:
+        return "not_applicable", _REMEDIATION_REASON
     if spec.maturity == "importer":
         return "requires_input", _REPORT_INPUT_REASON
     if spec.maturity == "browser_runtime":

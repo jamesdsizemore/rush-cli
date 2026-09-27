@@ -128,7 +128,7 @@ _REQUEST_FIELDS: dict[str, frozenset[str]] = {
 _WORK_STATUSES = ("ok", "warn", "fail", "error", "skipped")
 
 
-def _executed_work_status(data: Any) -> ToolStatus:
+def executed_work_status(data: Any) -> ToolStatus:
     """T27/R27.1: an executed run or rescan reports its own aggregate outcome
     (a run with failed or unavailable candidates is never a bare ok)."""
     run = data.get("run") if isinstance(data, dict) else None
@@ -233,7 +233,7 @@ class ScanTool(ToolFn):
         except ValueError as exc:
             return self._result(started, "error", f"scan {action}: {exc}")
 
-        status = _executed_work_status(raw) if action == "run" else "ok"
+        status = executed_work_status(raw) if action == "run" else "ok"
         return self._result(
             started,
             status,
@@ -332,7 +332,7 @@ class ScanTool(ToolFn):
             started,
             str(operation),
             status=(
-                _executed_work_status(data) if operation in ("run", "rescan") else "ok"
+                executed_work_status(data) if operation in ("run", "rescan") else "ok"
             ),
             data=data,
             compatibility=compatibility,

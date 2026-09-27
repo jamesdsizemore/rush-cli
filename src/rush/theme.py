@@ -182,9 +182,12 @@ _ROW_KEYS = (
     "root",
     "path",
 )
-_EMPTY_REASONS = {
+# Keyed by tool, or by (tool, operation) where one tool has several lists.
+_EMPTY_REASONS: dict[str | tuple[str, str], str] = {
     "project": "no projects are registered; register one with "
     "`rush project add PATH --allow-cache-write --allow-artifact-write`",
+    ("project", "artifacts"): "no artifacts are recorded for this project "
+    "(scan outputs, handoffs, memory)",
     "continuity": "no session checkpoints are saved",
     "agent_connection": "no agent hosts were found",
     "memory": "no memory records matched",
@@ -307,7 +310,12 @@ def _collection(result: Mapping[str, Any], c: Console) -> None:
     payload = _payload(result)
     rows = _rows_of(payload) or []
     if not rows:
-        reason = _EMPTY_REASONS.get(tool, "the producer returned no records")
+        raw = result.get("raw")
+        operation = str(raw.get("operation")) if isinstance(raw, Mapping) else ""
+        reason = _EMPTY_REASONS.get(
+            (tool, operation),
+            _EMPTY_REASONS.get(tool, "the producer returned no records"),
+        )
         c.print(_text(f"0 records: {reason}"))
         return
     total = payload.get("total") if isinstance(payload, Mapping) else None

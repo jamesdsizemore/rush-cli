@@ -67,6 +67,17 @@ _DISCONNECT_FIELDS = frozenset(
 )
 
 
+def _registration_failure(raw: Any) -> str | None:
+    """The cause when a connect's host registration (`apply`) failed and no
+    profile migration owns the outcome; None when it succeeded."""
+    apply = raw.get("apply") if isinstance(raw, dict) else None
+    if not isinstance(apply, dict) or apply.get("ok") is not False:
+        return None
+    if raw.get("migration") is not None:
+        return None
+    return str(apply.get("error") or "the host rejected the registration")
+
+
 class AgentConnectionTool(ToolFn):
     """Discover, connect, disconnect, and diagnose local MCP-capable coding agents."""
 
@@ -182,6 +193,15 @@ class AgentConnectionTool(ToolFn):
         only, declined, conflict, or a failed native add whose prior entry was
         restored); one needing a manual restore is `error`."""
         migration = raw.get("migration")
+        failure = _registration_failure(raw)
+        if migration is None and failure is not None:
+            # T27: the host registration itself did not happen.
+            return self._result(
+                started,
+                "error",
+                f"agent connect: registration failed: {failure}",
+                raw=raw,
+            )
         if migration is None:
             guidance_state = raw["guidance"]["state"]
             return self._result(
@@ -306,7 +326,10 @@ class AgentConnectionTool(ToolFn):
                 started, str(operation), status="skipped", error=denied
             )
 
-        return self._envelope_result(started, str(operation), status="ok", data=data)
+        failed = operation == "connect" and _registration_failure(data) is not None
+        return self._envelope_result(
+            started, str(operation), status="error" if failed else "ok", data=data
+        )
 
     def _handle_request_unsafe(self, request: dict[str, Any]) -> Any:
         if not isinstance(request, dict):

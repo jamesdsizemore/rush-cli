@@ -93,9 +93,11 @@
     "argv": [
       "agent",
       "connect",
-      "phase70-agent",
+      "claude-code",
       "--session",
       "phase70-session",
+      "--rush-binary",
+      "<rush-binary>",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -104,14 +106,19 @@
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "rush-shim"
+      ],
+      "processes": "host-cli",
       "json_paths": {
         "tool": "agent_connection",
-        "status": "error"
+        "status": "ok",
+        "raw.apply.ok": true
       },
       "human_contains": [
-        "agent_connection error"
+        "agent connect: ok"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -152,7 +159,11 @@
       "exit": 2
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<data-root>/agents/owned.json",
+        "<data-root>/user/.rush/agent_memory.json",
+        "<home>/.claude.json"
+      ]
     },
     "producer": "rush.cli:agent_connect_cmd",
     "blocker": null
@@ -162,21 +173,24 @@
     "argv": [
       "agent",
       "disconnect",
-      "phase70-agent",
+      "claude-code",
       "--json"
     ],
     "canonical": "rush agent disconnect",
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "connected-agent"
+      ],
+      "processes": "host-cli",
       "json_paths": {
-        "tool": "agent_connection",
-        "status": "error"
+        "status": "ok"
       },
       "human_contains": [
-        "agent_connection error"
+        "agent disconnect: ok; removed 1"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -2480,6 +2494,8 @@
     "id": "fix",
     "argv": [
       "fix",
+      "example.py",
+      "--dry-run",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -2488,14 +2504,25 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "example.py": "def example() -> int:\n    return 1\n"
+      },
+      "seed": [
+        "git-repo"
+      ],
+      "processes": [
+        "git",
+        "clean-engines"
+      ],
       "json_paths": {
         "tool": "fix",
-        "status": "error"
+        "status": "ok",
+        "engine": "ruff"
       },
       "human_contains": [
-        "fix error"
+        "fix: Ruff format/check completed (dry run)"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -5536,7 +5563,7 @@
     "argv": [
       "patch",
       "apply",
-      "<fixture-file>",
+      "change.diff",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -5545,14 +5572,25 @@
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "example.py": "def example() -> int:\n    return 1\n",
+        "change.diff": "--- a/example.py\n+++ b/example.py\n@@ -1,2 +1,2 @@\n def example() -> int:\n-    return 1\n+    return 2\n",
+        "test_example.py": "from example import example\n\n\ndef test_example() -> None:\n    assert example() == 2\n"
+      },
+      "seed": [
+        "git-repo"
+      ],
+      "processes": [
+        "git",
+        "python"
+      ],
       "json_paths": {
-        "tool": "patch-apply",
-        "status": "error"
+        "status": "ok"
       },
       "human_contains": [
-        "patch-apply error"
+        "Patch verified in isolated checkout; source unchanged."
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -5587,7 +5625,10 @@
       "exit": 2
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/.gitignore",
+        "<cwd>/.rush/worktrees"
+      ]
     },
     "producer": "rush.cli:patch_apply_cmd",
     "blocker": null
@@ -5640,17 +5681,25 @@
     "argv": [
       "patch",
       "test",
-      "<fixture-file>"
+      "change.diff"
     ],
     "canonical": "rush patch test",
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "example.py": "def example() -> int:\n    return 1\n",
+        "change.diff": "--- a/example.py\n+++ b/example.py\n@@ -1,2 +1,2 @@\n def example() -> int:\n-    return 1\n+    return 2\n"
+      },
+      "seed": [
+        "git-repo"
+      ],
+      "processes": "git",
       "json_paths": {},
       "human_contains": [
-        "[ERROR] Failed to"
+        "[PASS] Patch applied cleanly with valid syntax."
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "service route: not a record collection"
@@ -5671,7 +5720,10 @@
       "exit": 2
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/.gitignore",
+        "<cwd>/.rush/worktrees"
+      ]
     },
     "producer": "rush.cli:patch_test_cmd",
     "blocker": null
@@ -6015,21 +6067,25 @@
     "argv": [
       "project",
       "artifacts",
+      "--project-id",
+      "<project-id>",
       "--json"
     ],
     "canonical": "rush project artifacts",
     "family": "collection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "scanned-project"
+      ],
       "json_paths": {
         "tool": "project",
-        "status": "error",
-        "raw.operation": "artifacts"
+        "status": "ok"
       },
       "human_contains": [
-        "project error"
+        "project artifacts: ok"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "json_paths": {
@@ -6063,24 +6119,25 @@
     "argv": [
       "project",
       "configure",
-      "phase70-project",
-      "--allow-cache-write",
-      "--allow-artifact-write",
+      "<project-id>",
       "--json"
     ],
     "canonical": "rush project configure",
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "project"
+      ],
       "json_paths": {
         "tool": "project",
-        "status": "error",
-        "raw.operation": "configure"
+        "status": "ok",
+        "raw.data.unchanged": "preview only; nothing written"
       },
       "human_contains": [
-        "project error"
+        "unchanged: preview only; nothing written"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -6105,7 +6162,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<data-root>/dashboard/project_locks/*.lock"
+      ]
     },
     "producer": "rush.cli:project_configure_cmd",
     "blocker": null
@@ -6228,10 +6287,10 @@
     "argv": [
       "project",
       "relink",
-      "phase70-project",
-      "<fixture-file>",
+      "<project-id>",
+      "<new-root>",
       "--expected-revision",
-      "0",
+      "<project-revision>",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -6240,11 +6299,17 @@
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
-      "json_paths": {},
-      "human_contains": [
-        "Usage: cli project"
+      "seed": [
+        "moved-project"
       ],
-      "exit": 2
+      "json_paths": {
+        "tool": "project",
+        "status": "ok"
+      },
+      "human_contains": [
+        "project relink: ok"
+      ],
+      "exit": 0
     },
     "empty": {
       "not_applicable": "service route: not a record collection"
@@ -6292,7 +6357,7 @@
     "argv": [
       "project",
       "select",
-      "phase70-project",
+      "<project-id>",
       "--session",
       "phase70-session",
       "--allow-cache-write",
@@ -6303,14 +6368,18 @@
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "project"
+      ],
       "json_paths": {
         "tool": "project",
-        "status": "error"
+        "status": "ok"
       },
       "human_contains": [
-        "project error"
+        "changed: session_id=phase70-session",
+        "readback session_id: phase70-session"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -6336,7 +6405,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<data-root>/session_projects.json"
+      ]
     },
     "producer": "rush.cli:project_select_cmd",
     "blocker": null
@@ -6352,14 +6423,18 @@
     "family": "inspection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "project"
+      ],
       "json_paths": {
         "tool": "project",
-        "status": "error"
+        "status": "ok"
       },
       "human_contains": [
-        "project error"
+        "project show: ok",
+        "project_id:"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "inspection route: not a record collection"
@@ -6390,21 +6465,26 @@
     "argv": [
       "project",
       "snapshot",
+      "--project-id",
+      "<project-id>",
       "--json"
     ],
     "canonical": "rush project snapshot",
     "family": "inspection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "project"
+      ],
       "json_paths": {
         "tool": "project",
-        "status": "error",
-        "raw.operation": "snapshot"
+        "status": "ok"
       },
       "human_contains": [
-        "project error"
+        "project snapshot: ok",
+        "project.project_id:"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "inspection route: not a record collection"
@@ -6764,7 +6844,7 @@
     "argv": [
       "scan",
       "--project",
-      "<fixture-dir>",
+      ".",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -6773,15 +6853,18 @@
     "family": "inspection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "project"
+      ],
       "json_paths": {
         "tool": "scan",
-        "status": "error",
-        "raw.operation": "plan"
+        "status": "ok"
       },
       "human_contains": [
-        "scan error"
+        "scan plan: ok",
+        "plan_id:"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "inspection route: not a record collection"
@@ -6806,7 +6889,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/scan_plans/*.json"
+      ]
     },
     "producer": "rush.cli:scan_group",
     "blocker": null
@@ -6816,23 +6901,27 @@
     "argv": [
       "scan",
       "cancel",
-      "phase70-missing-run",
+      "<run-id>",
       "--project",
-      "<fixture-dir>",
+      ".",
       "--json"
     ],
     "canonical": "rush scan cancel",
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "scanned-project"
+      ],
       "json_paths": {
         "tool": "scan-cancel",
-        "status": "error"
+        "status": "ok",
+        "raw.already_finished": true
       },
       "human_contains": [
-        "scan-cancel error"
+        "already finished (incomplete); nothing to cancel"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -6844,7 +6933,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/runs/*/attempts/*/cancel_requested.json"
+      ]
     },
     "producer": "rush.cli:scan_cancel_cmd",
     "blocker": null
@@ -6854,11 +6945,11 @@
     "argv": [
       "scan",
       "handoff",
-      "phase70-missing-run",
+      "<run-id>",
       "--project",
-      "<fixture-dir>",
+      ".",
       "--agent",
-      "phase70-agent",
+      "claude-code",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -6867,14 +6958,18 @@
     "family": "inspection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "scanned-project-with-findings"
+      ],
       "json_paths": {
         "tool": "scan-handoff",
-        "status": "error"
+        "status": "ok"
       },
       "human_contains": [
-        "scan-handoff error"
+        "scan-handoff prepare: ok",
+        "handoff_id:"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "inspection route: not a record collection"
@@ -6902,7 +6997,11 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/cache",
+        "<cwd>/.rush/handoffs/*.json",
+        "<cwd>/.rush/memory.db"
+      ]
     },
     "producer": "rush.cli:scan_handoff_cmd",
     "blocker": null
@@ -6912,9 +7011,9 @@
     "argv": [
       "scan",
       "rescan",
-      "phase70-missing-run",
+      "<run-id>",
       "--project",
-      "<fixture-dir>",
+      ".",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -6923,14 +7022,22 @@
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "scanned-project"
+      ],
+      "processes": [
+        "git",
+        "clean-engines"
+      ],
       "json_paths": {
         "tool": "scan-rescan",
-        "status": "error"
+        "status": "warn"
       },
       "human_contains": [
-        "scan-rescan error"
+        "scan-rescan warn",
+        "persisting, 0 new, 0 unverified"
       ],
-      "exit": 2
+      "exit": 1
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -6956,7 +7063,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/runs/*"
+      ]
     },
     "producer": "rush.cli:scan_rescan_cmd",
     "blocker": null
@@ -6966,9 +7075,9 @@
     "argv": [
       "scan",
       "resume",
-      "phase70-missing-run",
+      "<run-id>",
       "--project",
-      "<fixture-dir>",
+      ".",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -6977,14 +7086,22 @@
     "family": "mutation",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": [
+        "scanned-project"
+      ],
+      "processes": [
+        "git",
+        "clean-engines"
+      ],
       "json_paths": {
         "tool": "scan-resume",
-        "status": "error"
+        "status": "warn"
       },
       "human_contains": [
-        "scan-resume error"
+        "scan-resume warn",
+        "state=incomplete"
       ],
-      "exit": 2
+      "exit": 1
     },
     "empty": {
       "not_applicable": "mutation route: not a record collection"
@@ -7010,7 +7127,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<cwd>/.rush/runs/*"
+      ]
     },
     "producer": "rush.cli:scan_resume_cmd",
     "blocker": null
@@ -8217,12 +8336,15 @@
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        ".env.example": "API_URL=\nDEBUG=\n",
+        ".env": "API_URL=https://example.invalid\nDEBUG=0\n"
+      },
       "json_paths": {},
       "human_contains": [
-        "Invalid value for '[ENV_EXAMPLE]'",
-        "does not exist"
+        "All environment variables in .env.example are present in .env."
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "argv": [

@@ -54,7 +54,6 @@ from typing import Any, ClassVar
 from rush.config import load_config
 from rush.memory.store import (
     MemoryStoreUnreadableError,
-    TypedArtifactStore,
     is_internal_memory_source,
     read_sqlite_readonly,
     readonly_view_reason,
@@ -62,7 +61,10 @@ from rush.memory.store import (
 )
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
-from rush.token_economy.telemetry import TelemetryStore
+from rush.token_economy.telemetry import (
+    read_memory_event_totals_readonly,
+    read_summary_readonly,
+)
 from rush.tools.routing import detect_project_languages
 
 REGISTRY_FILE = "projects.json"
@@ -1613,7 +1615,7 @@ def list_project_artifacts(
             }
         )
 
-    store = TypedArtifactStore(root)
+    live_rows, deleted_rows = _readonly_memory_refs(root)
     memory_refs = [
         {
             "artifact_ref": f"memory:{row['id']}",
@@ -1625,7 +1627,7 @@ def list_project_artifacts(
             "trust_tier": row["trust_tier"],
             "deleted": False,
         }
-        for row in store.list_artifact_refs()
+        for row in live_rows
         if include_internal or not is_internal_memory_source(row["source"])
     ] + [
         {
@@ -1636,7 +1638,7 @@ def list_project_artifacts(
             "artifact_version": row.get("revision"),
             "deleted": True,
         }
-        for row in store.list_deleted_refs()
+        for row in deleted_rows
     ]
 
     return {
@@ -1717,11 +1719,9 @@ def project_token_usage(
             tokenizer_total += tokens
             tokenizer_packets += 1
 
-    telemetry = TelemetryStore(root)
+    # T27: a read never constructs the telemetry store (no DB is created).
     cache_kinds = ("retrieval", "expansion", "packing", "handoff", "embedding")
-    cache_by_kind = {
-        kind: telemetry.get_memory_event_total(kind) for kind in cache_kinds
-    }
+    cache_by_kind = read_memory_event_totals_readonly(root, cache_kinds)
 
     return {
         "provider_reported": {
@@ -1738,7 +1738,7 @@ def project_token_usage(
             "total_tokens": sum(cache_by_kind.values()),
             "by_kind": cache_by_kind,
         },
-        "estimated_avoided": telemetry.get_summary(),
+        "estimated_avoided": read_summary_readonly(root),
     }
 
 
@@ -1762,6 +1762,38 @@ def _memory_counts(
         "AND artifact_id NOT IN (SELECT id FROM memory_artifacts)"
     ).fetchone()[0]
     return counts, int(deleted)
+
+
+def _readonly_memory_refs(
+    root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """T27: `TypedArtifactStore.list_artifact_refs`/`list_deleted_refs` over the
+    zero-write reader; no DB means no refs, and nothing is created."""
+    db = Path(root).resolve() / ".rush" / "memory.db"
+
+    def read(
+        conn: sqlite3.Connection,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        conn.row_factory = sqlite3.Row
+        if not sqlite_has_table(conn, "memory_artifacts"):
+            return [], []
+        live = conn.execute(
+            "SELECT id, family, subject, trust_tier, source, created_at, "
+            "artifact_version FROM memory_artifacts ORDER BY id ASC"
+        ).fetchall()
+        deleted: list[sqlite3.Row] = []
+        if sqlite_has_table(conn, "memory_changes"):
+            deleted = conn.execute(
+                "SELECT artifact_id AS id, subject, "
+                "MAX(artifact_version) AS revision, MAX(created_at) AS deleted_at "
+                "FROM memory_changes WHERE tombstone = 1 "
+                "AND artifact_id NOT IN (SELECT id FROM memory_artifacts) "
+                "GROUP BY artifact_id ORDER BY artifact_id ASC"
+            ).fetchall()
+        return [dict(r) for r in live], [dict(r) for r in deleted]
+
+    refs = read_sqlite_readonly(db, read)
+    return refs if refs is not None else ([], [])
 
 
 def _readonly_memory_counts(

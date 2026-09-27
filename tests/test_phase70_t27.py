@@ -109,6 +109,17 @@ _ENGINE_VERSIONS = {
 
 
 def _clean_engine_stdout(name: str, args: list[str]) -> str | None:
+    if name == "ruff" and "--show-files" in args:
+        files = [
+            f
+            for a in args
+            if not a.startswith("-")
+            for f in (sorted(Path(a).rglob("*.py")) if Path(a).is_dir() else [Path(a)])
+            if f.suffix == ".py"
+        ]
+        return "".join(f"{f}\n" for f in files)
+    if name == "ruff" and "--diff" in args:
+        return ""
     if name == "ruff" and args[:1] in (["check"], ["format"]):
         return "[]"
     if name == "radon" and args[:1] == ["cc"]:
@@ -124,28 +135,206 @@ def _clean_engine_stdout(name: str, args: list[str]) -> str | None:
     return None
 
 
-def _clean_engines(exec_argv: list[str], argv: list[str], **_kwargs: Any) -> Any:
-    name, args = Path(argv[0]).name, list(argv[1:])
-    if args == ["--version"] and name in _ENGINE_VERSIONS:
-        stdout: str | None = f"{name} {_ENGINE_VERSIONS[name]}\n"
-    else:
-        stdout = _clean_engine_stdout(name, args)
-    if stdout is None:
-        raise FileNotFoundError(f"phase70-t27: no stub for {name} {args[:2]}")
-    return subprocess.CompletedProcess(argv, 0, stdout, "")
+def _ruff_finding(args: list[str]) -> str:
+    target = next(a for a in reversed(args) if a.endswith(".py"))
+    return json.dumps(
+        [
+            {
+                "code": "F401",
+                "message": "`os` imported but unused",
+                "filename": target,
+                "location": {"row": 1, "column": 8},
+                "end_location": {"row": 1, "column": 10},
+                "fix": None,
+                "noqa_row": 1,
+                "url": "https://docs.astral.sh/ruff/rules/unused-import",
+            }
+        ]
+    )
+
+
+def _engine_stub(findings: bool) -> Any:
+    def run(exec_argv: list[str], argv: list[str], **_kwargs: Any) -> Any:
+        name, args = Path(argv[0]).name, list(argv[1:])
+        if args == ["--version"] and name in _ENGINE_VERSIONS:
+            stdout: str | None = f"{name} {_ENGINE_VERSIONS[name]}\n"
+        elif findings and name == "ruff" and args[:1] == ["check"]:
+            return subprocess.CompletedProcess(argv, 1, _ruff_finding(args), "")
+        else:
+            stdout = _clean_engine_stdout(name, args)
+        if stdout is None:
+            raise FileNotFoundError(f"phase70-t27: no stub for {name} {args[:2]}")
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    return run
+
+
+# Captured before `_no_spawn` replaces them, for rows that need real git.
+_REAL_POPEN = subprocess.Popen
+_REAL_RUN = subprocess.run
+
+
+def _allowlisted_popen(allowed: frozenset[str]) -> type:
+    class _AllowlistedPopen(_REAL_POPEN):  # type: ignore[misc,valid-type]
+        def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
+            argv0 = args[0] if isinstance(args, list | tuple) else str(args).split()[0]
+            name = Path(str(argv0)).name
+            if name not in allowed and not (
+                "python" in allowed and str(argv0) == sys.executable
+            ):
+                raise FileNotFoundError(f"phase70-t27: {argv0} spawn blocked")
+            super().__init__(args, *rest, **kwargs)
+
+    return _AllowlistedPopen
+
+
+def _fake_claude_cli(args: Any, *_rest: Any, **_kwargs: Any) -> Any:
+    """The host CLI's own `mcp add/remove` effect on ~/.claude.json (the
+    external process boundary for agent routes); anything else is blocked."""
+    argv = [str(a) for a in args]
+    if Path(argv[0]).name != "claude" or argv[1:2] != ["mcp"]:
+        raise FileNotFoundError(f"phase70-t27: {argv[0]} spawn blocked")
+    config = Path(os.environ["HOME"]) / ".claude.json"
+    data = json.loads(config.read_text()) if config.is_file() else {}
+    servers = data.setdefault("mcpServers", {})
+    verb, name = argv[2], argv[3]
+    if verb == "add":
+        command = argv[argv.index("--") + 1 :]
+        servers[name] = {"type": "stdio", "command": command[0], "args": command[1:]}
+    elif verb == "remove" and name not in servers:
+        return subprocess.CompletedProcess(argv, 1, "", f"No MCP server found: {name}")
+    elif verb == "remove":
+        del servers[name]
+    config.write_text(json.dumps(data, indent=2))
+    return subprocess.CompletedProcess(argv, 0, "", "")
 
 
 def _process_stub(spec: dict[str, Any]) -> Any:
+    """`clean-engines`: engines answer with their clean output at the process
+    boundary. `git`: real git only (a repository is the route's input)."""
     from contextlib import ExitStack
     from unittest import mock
 
     stack = ExitStack()
-    if spec.get("processes") == "clean-engines":
-        for target in ("_run_subprocess_blocking", "_run_subprocess_cancellable"):
-            stack.enter_context(
-                mock.patch(f"rush.runtime.subprocesses.{target}", _clean_engines)
-            )
+    modes = spec.get("processes") or ()
+    modes = [modes] if isinstance(modes, str) else list(modes)
+    engines = {"clean-engines": False, "finding-engines": True}
+    for mode in modes:
+        if mode in engines:
+            for target in ("_run_subprocess_blocking", "_run_subprocess_cancellable"):
+                stack.enter_context(
+                    mock.patch(
+                        f"rush.runtime.subprocesses.{target}",
+                        _engine_stub(engines[mode]),
+                    )
+                )
+    if "host-cli" in modes:
+        stack.enter_context(mock.patch.object(subprocess, "run", _fake_claude_cli))
+    real = frozenset(m for m in modes if m in ("git", "python"))
+    if real:
+        stack.enter_context(
+            mock.patch.object(subprocess, "Popen", _allowlisted_popen(real))
+        )
+        stack.enter_context(mock.patch.object(subprocess, "run", _REAL_RUN))
     return stack
+
+
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "Seed",
+    "GIT_AUTHOR_EMAIL": "seed@example.invalid",
+    "GIT_COMMITTER_NAME": "Seed",
+    "GIT_COMMITTER_EMAIL": "seed@example.invalid",
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+def _seed_git_repo(cwd: Path) -> dict[str, str]:
+    env = {**os.environ, **_GIT_ENV}
+    with _process_stub({"processes": "git"}):
+        for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "seed"]):
+            _REAL_RUN(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+    return {}
+
+
+def _seed_project(cwd: Path) -> dict[str, str]:
+    from rush.workflows.projects import register_project
+
+    record = register_project(cwd, name="phase70-project")
+    return {
+        "<project-id>": record.project_id,
+        "<project-revision>": str(record.revision),
+    }
+
+
+def _seed_moved_project(cwd: Path) -> dict[str, str]:
+    from rush.workflows.projects import register_project
+
+    old, new = cwd / "old-root", cwd / "new-root"
+    old.mkdir()
+    (old / "example.py").write_text("def example() -> int:\n    return 1\n")
+    record = register_project(old, name="phase70-moved")
+    old.rename(new)
+    return {
+        "<project-id>": record.project_id,
+        "<project-revision>": str(record.revision),
+        "<new-root>": str(new),
+    }
+
+
+def _seed_scanned_project(cwd: Path, *, findings: bool = False) -> dict[str, str]:
+    source = cwd / "example.py"
+    if not source.exists():
+        source.write_text("import os\n" if findings else "VALUE = 1\n")
+    _seed_git_repo(cwd)
+    tokens = _seed_project(cwd)
+    grants = ["--allow-cache-write", "--allow-artifact-write", "--json"]
+    mode = "finding-engines" if findings else "clean-engines"
+    with _process_stub({"processes": ["git", mode]}):
+        result = CliRunner().invoke(
+            cli, ["scan", "--project", str(cwd), "--full", *grants]
+        )
+    run = json.loads(result.stdout)["raw"]["data"]
+    return {**tokens, "<run-id>": run["run_id"]}
+
+
+def _seed_connected_agent(cwd: Path) -> dict[str, str]:
+    grants = ["--allow-cache-write", "--allow-artifact-write", "--json"]
+    shim = _seed_rush_shim(cwd)["<rush-binary>"]
+    argv = ["agent", "connect", "claude-code", "--session", "phase70-session"]
+    with _process_stub({"processes": "host-cli"}):
+        result = CliRunner().invoke(cli, [*argv, "--rush-binary", shim, *grants])
+    assert result.exit_code == 0, result.output
+    return {}
+
+
+def _seed_rush_shim(cwd: Path) -> dict[str, str]:
+    """An installed-looking rush executable outside this checkout and any
+    `.venv` (what `resolve_rush_binary` requires); it is registered, not run."""
+    shim = cwd / "installed-bin" / "rush"
+    shim.parent.mkdir()
+    shim.write_text("#!/bin/sh\nexit 0\n")
+    shim.chmod(0o755)
+    return {"<rush-binary>": str(shim)}
+
+
+_MATRIX_SEEDS: dict[str, Any] = {
+    "rush-shim": _seed_rush_shim,
+    "scanned-project-with-findings": lambda cwd: _seed_scanned_project(
+        cwd, findings=True
+    ),
+    "git-repo": _seed_git_repo,
+    "project": _seed_project,
+    "moved-project": _seed_moved_project,
+    "scanned-project": _seed_scanned_project,
+    "connected-agent": _seed_connected_agent,
+}
+
+
+def _apply_seed(spec: dict[str, Any], cwd: Path, args: list[str]) -> list[str]:
+    tokens: dict[str, str] = {}
+    for name in spec.get("seed", ()):
+        tokens.update(_MATRIX_SEEDS[name](cwd))
+    return [tokens.get(arg, arg) for arg in args]
 
 
 @pytest.fixture(autouse=True)
@@ -474,13 +663,12 @@ def _assert_outcome(
         nonlocal ran
         ran = True
         runner = CliRunner()
-        with (
-            runner.isolated_filesystem(temp_dir=fixture_dir) as cwd,
-            _process_stub(spec),
-        ):
+        with runner.isolated_filesystem(temp_dir=fixture_dir) as cwd:
             for rel, text in spec.get("setup", {}).items():
                 _write(Path(cwd), rel, text)
-            result = runner.invoke(cli, _materialize(args, fixture_dir))
+            seeded = _apply_seed(spec, Path(cwd), _materialize(args, fixture_dir))
+            with _process_stub(spec):
+                result = runner.invoke(cli, seeded)
         _assert_real_exercise(result)
         assert result.exit_code == spec["exit"], (
             f"{route_id} {kind} {args}: exit {result.exit_code} != "
@@ -1279,6 +1467,7 @@ def test_t27_matrix_route_writes_only_its_allowed_paths(
         # The positive case's own input files are arrangement, not effects.
         for rel, text in case["expect"].get("setup", {}).items():
             _write(Path(cwd), rel, text)
+        argv = _apply_seed(case["expect"], Path(cwd), argv)
         before |= set(tmp_path.rglob("*"))
         with _process_stub(case["expect"]):
             result = runner.invoke(cli, argv)
@@ -1288,7 +1477,13 @@ def test_t27_matrix_route_writes_only_its_allowed_paths(
         f"{case_id}: expected exit {case['expect']['exit']}, got "
         f"{result.exit_code}: {result.output}"
     )
-    unexpected = written - set(case["side_effects"]["allowed_paths"])
+    from fnmatch import fnmatchcase
+
+    allowed = case["side_effects"]["allowed_paths"]
+    # A `*` matches a generated id (plan, run, attempt or handoff) in a path.
+    unexpected = {
+        path for path in written if not any(fnmatchcase(path, a) for a in allowed)
+    }
     assert not unexpected, (
         f"{case_id} wrote outside its declared allowed_paths: {sorted(unexpected)}"
     )

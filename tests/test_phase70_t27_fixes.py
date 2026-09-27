@@ -1200,3 +1200,275 @@ def test_scan_run_reports_the_runs_own_aggregate_status(
     )
     assert result["status"] == aggregate_status, result
     assert result["summary"].startswith(f"scan run: {aggregate_status}"), result
+
+
+def test_agent_connect_reports_a_failed_host_registration_as_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T27 R2: when the host registration itself fails (apply.ok false), the
+    connect result is an error with the cause, never `agent connect: ok`."""
+    import subprocess
+
+    def _no_host_cli(*_args: Any, **_kwargs: Any) -> Any:
+        raise FileNotFoundError("claude: host CLI unavailable")
+
+    monkeypatch.setattr(subprocess, "run", _no_host_cli)
+    monkeypatch.setattr(subprocess, "Popen", _no_host_cli)
+    shim = tmp_path / "installed-bin" / "rush"
+    shim.parent.mkdir()
+    shim.write_text("#!/bin/sh\nexit 0\n")
+    shim.chmod(0o755)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "agent",
+            "connect",
+            "claude-code",
+            "--session",
+            "s1",
+            "--rush-binary",
+            str(shim),
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    payload = json.loads(result.stdout)
+    assert payload["raw"]["apply"]["ok"] is False, payload
+    assert payload["status"] == "error", payload
+    assert result.exit_code == 2
+    assert "host CLI unavailable" in payload["summary"]
+
+
+def _finished_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aggregate_status: str
+) -> tuple[Path, str]:
+    """A registered project whose run has one finished attempt manifest."""
+    from rush.workflows import project_run
+    from rush.workflows.projects import register_project
+
+    root = tmp_path / "project"
+    root.mkdir()
+    register_project(root, name="p")
+    attempt = root / ".rush" / "runs" / "r1" / "attempts" / "a1"
+    attempt.mkdir(parents=True)
+    (attempt / "manifest.json").write_text(
+        json.dumps({"run_id": "r1", "attempt_id": "a1", "run_state": "incomplete"})
+    )
+    monkeypatch.setattr(project_run, "latest_attempt_id", lambda *a, **k: "a1")
+    return root, aggregate_status
+
+
+def test_scan_cancel_of_a_finished_run_says_nothing_was_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T27 R2: cancelling a run whose attempt already finished reports that,
+    never `requested` as if in-flight work will stop."""
+    root, _ = _finished_run(tmp_path, monkeypatch, "ok")
+    result = CliRunner().invoke(
+        cli, ["scan", "cancel", "r1", "--project", str(root), "--json"]
+    )
+    payload = json.loads(result.stdout)
+    assert "already finished" in payload["summary"], payload
+    assert "requested" not in payload["summary"]
+    assert payload["raw"]["already_finished"] is True
+    assert payload["raw"]["run_state"] == "incomplete"
+
+
+@pytest.mark.parametrize("aggregate_status", ["error", "warn"])
+def test_scan_resume_reports_the_new_attempts_aggregate_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aggregate_status: str
+) -> None:
+    """T27 R2: a resumed attempt reports its own aggregate, never a bare ok."""
+    from types import SimpleNamespace
+
+    from rush.workflows import project_run
+
+    run = {
+        "run_id": "r1",
+        "attempt_id": "a2",
+        "run_state": "incomplete",
+        "aggregate": {"status": aggregate_status},
+    }
+    monkeypatch.setattr(
+        project_run,
+        "resume_scan_run",
+        lambda *a, **k: SimpleNamespace(
+            attempt_id="a2", run_state="incomplete", to_dict=lambda: dict(run)
+        ),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "scan",
+            "resume",
+            "r1",
+            "--project",
+            str(tmp_path),
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == aggregate_status, payload
+    assert result.exit_code == (2 if aggregate_status == "error" else 1)
+
+
+def test_project_artifacts_empty_reason_names_artifacts_not_projects() -> None:
+    """T27 R2: an empty collection's reason belongs to its operation; empty
+    artifacts of a registered project never read as 'no projects registered'."""
+    import io
+
+    from rich.console import Console
+
+    from rush import theme
+
+    result = {
+        "tool": "project",
+        "status": "ok",
+        "summary": "project artifacts: ok",
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": "artifacts",
+            "data": {
+                "project_id": "p1",
+                "scan_outputs": [],
+                "handoffs": [],
+                "memory": [],
+            },
+        },
+    }
+    console = Console(file=io.StringIO(), width=200, no_color=True)
+    theme._collection(result, console)
+    text = console.file.getvalue()
+    assert "no projects are registered" not in text, text
+    assert "0 records: no artifacts are recorded for this project" in text, text
+
+
+def test_project_select_reports_changed_binding_and_its_readback(
+    tmp_path: Path,
+) -> None:
+    """T27 R2: select is a mutation; it names what it wrote (the session
+    binding) and the binding re-read from disk."""
+    from rush.workflows.projects import register_project
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    record = register_project(root, name="p")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "project",
+            "select",
+            record.project_id,
+            "--session",
+            "s1",
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    raw = json.loads(result.stdout)["raw"]
+    data = raw["data"] if "operation" in raw else raw
+    assert data["changed"] == {"session_id": "s1", "project_id": record.project_id}
+    assert data["readback"] == {
+        "session_id": "s1",
+        "selected_project_id": record.project_id,
+    }
+    human = CliRunner().invoke(
+        cli,
+        [
+            "project",
+            "select",
+            record.project_id,
+            "--session",
+            "s1",
+            "--allow-cache-write",
+            "--allow-artifact-write",
+        ],
+    )
+    assert "not reported by the producer" not in human.output, human.output
+
+
+def test_project_configure_preview_says_nothing_was_written(tmp_path: Path) -> None:
+    """T27 R2: a configure preview is not a mutation; it says so."""
+    from rush.workflows.projects import register_project
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    record = register_project(root, name="p")
+    result = CliRunner().invoke(
+        cli, ["project", "configure", record.project_id, "--json"]
+    )
+    raw = json.loads(result.stdout)["raw"]
+    data = raw["data"] if "operation" in raw else raw
+    assert data["unchanged"] == "preview only; nothing written"
+    assert "changed" not in data
+
+
+def test_scan_plan_never_runs_the_fix_remediation_tool() -> None:
+    """T27 R2: a scan is analysis; `fix` rewrites source (and inside a scan it
+    only saw the staged copy without `.git`, so it failed every full scan).
+    It is a visible not-applicable candidate with its reason."""
+    from rush.workflows.project_run import _classify_tool
+
+    assert _classify_tool("fix", {}) == ("not_applicable", "remediation_operation")
+    assert _classify_tool("lint", {})[0] == "applicable"
+
+
+@pytest.mark.parametrize("aggregate_status", ["error", "warn"])
+def test_scan_rescan_cli_reports_the_rescans_aggregate_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aggregate_status: str
+) -> None:
+    """T27 R2: `scan rescan` reports the re-executed run's own aggregate."""
+    from rush.workflows import project_run
+
+    empty: dict[str, list[str]] = {
+        "resolved": [],
+        "persisting": [],
+        "new": [],
+        "unverified": [],
+    }
+    monkeypatch.setattr(
+        project_run,
+        "rescan_project_run",
+        lambda *a, **k: {
+            "comparison": empty,
+            "run": {"aggregate": {"status": aggregate_status}},
+        },
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "scan",
+            "rescan",
+            "r1",
+            "--project",
+            str(tmp_path),
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    assert json.loads(result.stdout)["status"] == aggregate_status
+    assert result.exit_code == (2 if aggregate_status == "error" else 1)
+
+
+@pytest.mark.parametrize("operation", ["snapshot", "artifacts"])
+def test_project_read_views_create_no_store(tmp_path: Path, operation: str) -> None:
+    """T27 R2: snapshot and artifacts are reads; they never create the memory
+    DB, its cache, or the token telemetry DB."""
+    from rush.workflows.projects import register_project
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    record = register_project(root, name="p")
+    before = sorted(p.relative_to(root) for p in root.rglob("*"))
+    result = CliRunner().invoke(
+        cli, ["project", operation, "--project-id", record.project_id, "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    after = sorted(p.relative_to(root) for p in root.rglob("*"))
+    assert after == before, sorted(set(after) - set(before))
