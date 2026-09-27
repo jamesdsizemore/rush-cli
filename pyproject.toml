@@ -86,6 +86,9 @@ include = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers -m \"not slow\""
+# Delete the tmp_path dirs of passing tests at session end: a live-engine test
+# with an isolated HOME can leave ~384 MB (aislop's npm cache) per test.
+tmp_path_retention_policy = "failed"
 filterwarnings = [
     "ignore::pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning",
 ]
