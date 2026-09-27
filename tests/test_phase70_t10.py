@@ -28,6 +28,7 @@ from click.testing import CliRunner
 from rush.invocation.executor import adapt_signature_at_registration
 from rush.invocation.resolver import resolve_invocation
 from rush.permissions import ExecutionPermissions
+from rush.setup.provision import default_data_root
 from rush.token_economy.ccr_store import CCRStore
 from rush.tools.continuity import SessionContinuityTool
 from rush.tools.flight_recorder import FlightRecorder
@@ -43,6 +44,8 @@ def temp_home(
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("RUSH_DATA_ROOT", raising=False)
+    # Linux's default data root honours XDG_DATA_HOME before HOME.
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     return home
 
 
@@ -262,12 +265,12 @@ class TestT10ProjectStateUsesLogicalRoot:
         project_root.mkdir()
         record = projects_workflow.register_project(project_root)
 
-        data_root_registry = (
-            temp_home / "Library" / "Application Support" / "Rush" / "projects.json"
-        )
-        assert data_root_registry.is_file()
+        data_root = default_data_root()
+        assert data_root.is_relative_to(temp_home)
+        assert (data_root / "projects.json").is_file()
         assert record.root == str(project_root.resolve())
         assert not (project_root / "Library").exists()
+        assert not (project_root / ".local").exists()
 
         result = SessionContinuityTool().run(
             project_root,
@@ -277,9 +280,7 @@ class TestT10ProjectStateUsesLogicalRoot:
         )
         assert result["status"] == "ok", result
         assert (project_root / ".rush" / "sessions" / "n8.json").is_file()
-        assert not (
-            temp_home / "Library" / "Application Support" / "Rush" / ".rush"
-        ).exists()
+        assert not (data_root / ".rush").exists()
 
     def test_denied_save(self, tmp_path: Path) -> None:
         """denied-save (S10.3): without the grant, status is skipped and the

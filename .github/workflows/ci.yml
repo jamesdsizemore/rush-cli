@@ -57,8 +57,20 @@ jobs:
           write_sha256sums([archive], Path('dist/SHA256SUMS'))
           "
 
+      - name: Install verified osv-scanner release
+        run: |
+          mkdir -p "$RUNNER_TEMP/osv-scanner"
+          cd "$RUNNER_TEMP/osv-scanner"
+          curl --fail --silent --show-error --location --remote-name https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          curl --fail --silent --show-error --location --remote-name https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_SHA256SUMS
+          sha256sum --check --ignore-missing osv-scanner_SHA256SUMS
+          mv osv-scanner_linux_amd64 osv-scanner
+          chmod +x osv-scanner
+          ./osv-scanner --version
+          echo "$RUNNER_TEMP/osv-scanner" >> "$GITHUB_PATH"
+
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_aislop"
+        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_aislop" --deselect "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush

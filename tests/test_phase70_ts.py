@@ -661,6 +661,26 @@ def test_r1_hermetic_path_hides_host_engines_and_restores_on_exit(
     assert resolve_binary("rush-ts-fake-engine") == str(fake)
 
 
+def test_r1_hermetic_path_hides_engines_shipped_in_os_base_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runner image ships engines in its base dirs (ubuntu's /usr/bin/mvn
+    ran the pitest candidate); the hermetic PATH hides those, keeps the rest."""
+    import conftest
+
+    base = tmp_path / "usr-bin"
+    base.mkdir()
+    for name in ("mvn", "rush-ts-base-tool"):
+        (base / name).write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (base / name).chmod(0o755)
+    monkeypatch.setattr(conftest, "_POSIX_BASE_DIRS", (str(base),))
+
+    with conftest._hermetic_engine_path(tmp_path / "hermetic-bin"):
+        assert resolve_binary("mvn") is None
+        assert resolve_binary("rush-ts-base-tool") is not None
+        assert resolve_binary("git") is not None
+
+
 # --- R2: a test may not leave an HTTP server serving -------------------------
 
 

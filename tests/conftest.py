@@ -23,6 +23,7 @@ from rush.runtime.binaries import clear_binary_cache
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _HOST_PATH = os.environ.get("PATH", "")
+_POSIX_BASE_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 
 _LEFT_SERVING = (
     "test left an HTTP server serving: call server.shutdown() before "
@@ -55,12 +56,24 @@ def _stop_dashboard_background_threads():
         pytest.fail(_LEFT_SERVING, pytrace=False)
 
 
+def _engine_binaries() -> set[str]:
+    from rush.catalog import ENGINE_SPECS
+    from rush.engines import ENGINES
+
+    return {spec.binary for spec in ENGINE_SPECS.values()} | {
+        engine.binary for engine in ENGINES.values()
+    }
+
+
 @contextmanager
 def _hermetic_engine_path(bin_dir: Path) -> Iterator[None]:
     """PATH reduced to `git` plus the OS base directories, so a scan resolves
     only the engines pinned in this venv (`resolve_binary` checks the
     interpreter's own bin first) instead of whatever the host has installed.
-    PATH and the binary-resolution cache are restored on exit."""
+    On POSIX the base directories are mirrored into `bin_dir` minus every
+    Rush engine binary: a runner image ships engines there too (ubuntu's
+    `/usr/bin/mvn` runs the pitest candidate). PATH and the
+    binary-resolution cache are restored on exit."""
     git = shutil.which("git")
     assert git is not None, "git must be on PATH"
     if os.name == "nt":
@@ -73,7 +86,17 @@ def _hermetic_engine_path(bin_dir: Path) -> Iterator[None]:
     else:
         bin_dir.mkdir(parents=True, exist_ok=True)
         (bin_dir / "git").symlink_to(git)
-        entries = [str(bin_dir), "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        hidden = _engine_binaries()
+        for base in _POSIX_BASE_DIRS:
+            if not os.path.isdir(base):
+                continue
+            for entry in os.scandir(base):
+                link = bin_dir / entry.name
+                if entry.name in hidden or os.path.lexists(link):
+                    continue
+                if os.path.isfile(entry.path) and os.access(entry.path, os.X_OK):
+                    link.symlink_to(entry.path)
+        entries = [str(bin_dir)]
     clear_binary_cache()
     try:
         with pytest.MonkeyPatch.context() as patch:

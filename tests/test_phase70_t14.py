@@ -89,6 +89,9 @@ def test_t14_python_dependency_inventory(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr("rush.engines.osv.run_subprocess", fake_osv_run_subprocess)
     monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
@@ -125,6 +128,9 @@ def test_t14_requirements_dev_via_parser_prefix(monkeypatch, tmp_path: Path) -> 
 
     monkeypatch.setattr("rush.engines.osv.run_subprocess", fake_osv_run_subprocess)
     monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
@@ -169,6 +175,9 @@ def test_t14_multiple_manifests_preserve_input_provenance_including_duplicates(
 
     monkeypatch.setattr("rush.engines.osv.run_subprocess", fake_osv_run_subprocess)
     monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
@@ -359,6 +368,9 @@ def test_t14_offline_db_missing_gives_db_unavailable_zero_network(
 
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
     monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
     monkeypatch.setattr("rush.engines.osv.run_subprocess", fake_osv_run_subprocess)
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
@@ -493,6 +505,9 @@ def test_t14_nested_requirements_include_resolves_relative_to_including_file(
 
     monkeypatch.setattr("rush.engines.osv.run_subprocess", fake_osv_run_subprocess)
     monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
@@ -546,6 +561,9 @@ def test_t14_discovers_nested_requirements_directory_files(
 
     monkeypatch.setattr("rush.engines.osv.run_subprocess", fake_osv_run_subprocess)
     monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
@@ -632,7 +650,14 @@ def test_t14_missing_offline_db_zero_network_at_popen_level(
     monkeypatch.setattr(
         "rush.tools.common.engine_on_path", lambda binary: binary != "medusa"
     )
-    monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    # A real executable file, so neither the scan nor its `--version` probe
+    # (resolved via rush.engines.base) depends on the host PATH; the fake
+    # `subprocess.run` below answers both.
+    osv_binary = tmp_path / "osv-scanner"
+    osv_binary.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    osv_binary.chmod(0o755)
+    monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda _b: str(osv_binary))
+    monkeypatch.setattr("rush.engines.base.resolve_binary", lambda _b: str(osv_binary))
 
     import subprocess as _subprocess
 
