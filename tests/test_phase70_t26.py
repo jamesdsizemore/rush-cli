@@ -1436,7 +1436,9 @@ def test_t17_setup_check_without_consent_previews_and_runs_nothing(
     root = tmp_path / "project dir"
     root.mkdir()
     review = _check_review(root, tmp_path / "data", run_check=path == "declined")
-    command = f"rush check {shlex.quote(str(root.resolve()))} --json"
+    # The check runs on a Rush-owned fixture, never on the user's project.
+    fixture = Path(review["data_root"]) / "probes" / "<nonce>"
+    command = f"rush check {shlex.quote(str(fixture))} --json"
     assert review["check"]["command"] == command
     rendered = render_setup_review(review)
     assert command in rendered
@@ -1470,11 +1472,18 @@ def test_t17_setup_check_without_consent_previews_and_runs_nothing(
     assert asked is (path == "declined")
 
 
+@pytest.mark.needs_aislop
 def test_t17_setup_check_with_consent_runs_rush_check_and_reports_real_result(
-    tmp_path: Path, _isolated_home: Path
+    tmp_path: Path, _isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--run-check plus "y": setup runs the shared six-step check on the root
-    with this setup's grants and reports its real statuses and findings."""
+    """--run-check plus "y": setup runs the shared six-step check on its own
+    fixture (never the user's root) with the check stage's grants, so every
+    step runs, and reports the fixture's real statuses and findings."""
+    import tempfile
+
+    from rush.setup.provision import prefetch_npm_runtime
+    from rush.tools.check import CheckTool
+    from rush.tools.common import clear_binary_cache, resolve_binary
     from rush.tools.setup_wizard import apply_setup_review, render_setup_review
 
     root = tmp_path / "project"
@@ -1485,19 +1494,43 @@ def test_t17_setup_check_with_consent_runs_rush_check_and_reports_real_result(
     assert review["check"]["state"] == "pending"
     assert "10. Check: run `rush check" in render_setup_review(review)
 
+    checked: list[Path] = []
+    real_run = CheckTool.run
+
+    def spy(self: CheckTool, path: Path, **kwargs: Any) -> Any:
+        checked.append(Path(path))
+        return real_run(self, path, **kwargs)
+
+    monkeypatch.setattr(CheckTool, "run", spy)
     consent = _AnswerByPrompt(("Verify the connection",))
-    result = apply_setup_review(
-        {"kind": "setup", "schema_version": 1, "review": review},
-        _FULL_PERMISSIONS,
-        consent,
-        host_runner=_fake_claude_runner(_isolated_home, []),
-    )
+    # HOME is a temp dir, so aislop's npm cache is cold: warm a temp one the
+    # way setup's engine stage does, so the ungranted slop step runs offline.
+    with tempfile.TemporaryDirectory() as cache:
+        monkeypatch.setenv("npm_config_cache", cache)
+        monkeypatch.delenv("npm_config_offline", raising=False)
+        clear_binary_cache()
+        executable = resolve_binary("aislop")
+        assert executable is not None
+        prefetch_npm_runtime("aislop", Path(executable))
+        result = apply_setup_review(
+            {"kind": "setup", "schema_version": 1, "review": review},
+            _FULL_PERMISSIONS,
+            consent,
+            host_runner=_fake_claude_runner(_isolated_home, []),
+        )
+        clear_binary_cache()
 
     check = result.get("raw", result)["check"]
     assert check["state"] == "ran", check
     assert check["status"] == "fail"
     steps = {step["tool"]: step for step in check["steps"]}
     assert list(steps) == ["format", "lint", "typecheck", "dead", "slop", "test"]
+    assert all(step["disposition"] == "executed" for step in steps.values()), steps
     assert steps["lint"]["status"] == "fail"
-    assert steps["test"]["cause"] == "permission_denied"  # no build grant
+    assert "F401" in check["finding_rules"]
     assert check["findings"] > 0
+    probes = Path(review["data_root"]) / "probes"
+    assert [path.parent for path in checked] == [probes]
+    assert all(root.resolve() not in [path, *path.parents] for path in checked)
+    assert check["fixture_removed"] is True
+    assert not checked[0].exists()

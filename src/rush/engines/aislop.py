@@ -21,6 +21,7 @@ _GRANTS: ContextVar[ExecutionPermissions | None] = ContextVar(
     "rush_aislop_grants", default=None
 )
 _REQUIRED = ExecutionPermissions(download=True)
+AISLOP_NO_TELEMETRY_ENV = {"AISLOP_NO_TELEMETRY": "1", "DO_NOT_TRACK": "1"}
 
 
 def _granted() -> ExecutionPermissions:
@@ -43,9 +44,12 @@ class AislopEngine(Engine):
     file_extensions = ("py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "c", "cpp")
 
     def child_env(self) -> dict[str, str] | None:
-        if _granted().download:
-            return None
-        return {**os.environ, "npm_config_offline": "true"}
+        # aislop's npm cli.js honors both telemetry opt-outs; npm runs offline
+        # unless the calling tool holds the download grant.
+        env = {**os.environ, **AISLOP_NO_TELEMETRY_ENV}
+        if not _granted().download:
+            env["npm_config_offline"] = "true"
+        return env
 
     def run(
         self,
@@ -137,6 +141,19 @@ class AislopEngine(Engine):
             isinstance(parsed, dict) and ("diagnostics" in parsed or "issues" in parsed)
         )
         status: ToolStatus
+        if (
+            not reported
+            and raw.get("exit_code") == 127
+            and "requires Node.js" in (raw.get("stderr") or "")
+        ):
+            # aislop's pip shim runs its npm package through npx: without
+            # Node.js on PATH the engine is not installed, not broken.
+            return skipped_result(
+                tool_name,
+                self.name,
+                "npx (Node.js) not on PATH (install: Node.js; aislop runs its "
+                "pinned npm package through npx)",
+            )
         if (
             not reported
             and not _granted().download

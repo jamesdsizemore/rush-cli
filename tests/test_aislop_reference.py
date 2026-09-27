@@ -388,7 +388,11 @@ def test_aislop_offline_env_set_only_without_download_grant(
     offline_env, granted_env = seen
     assert isinstance(offline_env, dict)
     assert offline_env["npm_config_offline"] == "true"
-    assert granted_env is None
+    assert isinstance(granted_env, dict)
+    assert "npm_config_offline" not in granted_env
+    for env in (offline_env, granted_env):
+        assert env["AISLOP_NO_TELEMETRY"] == "1"
+        assert env["DO_NOT_TRACK"] == "1"
 
 
 @pytest.mark.needs_aislop

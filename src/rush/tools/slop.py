@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..permissions import ExecutionPermissions
+from ..runtime.binaries import analysis_scope
+from ..runtime.subprocesses import _engine_analysis_scope
 from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, engine_on_path, now_ms, run_engine
 from .routing import collect_files
@@ -51,9 +53,12 @@ class SlopTool(ToolFn):
                             }
                         )
         if python_files:
-            engine_to_use = (
-                ENGINES["aislop"] if engine_on_path("aislop") else ENGINES["sloppylint"]
-            )
+            aislop = ENGINES["aislop"]
+            # Probe in the same scope run_engine dispatches in, so a verified
+            # setup-provisioned aislop (project manifest) is found like PATH.
+            with analysis_scope(_engine_analysis_scope(aislop, path, None)):
+                has_aislop = engine_on_path(aislop.binary)
+            engine_to_use = aislop if has_aislop else ENGINES["sloppylint"]
             # aislop scans the directory itself (one positional); sloppylint
             # takes the explicit file list.
             files = (

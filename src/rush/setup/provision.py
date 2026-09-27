@@ -984,20 +984,34 @@ def prefetch_npm_runtime(
     """Make `engine_id`'s npm runtime available offline: `already_cached`
     when an offline run already works, else `fetched` after one online run
     that a second offline run then verifies. Raises ProvisionError."""
+    from ..engines.aislop import AISLOP_NO_TELEMETRY_ENV
+
     args = NPM_RUNTIME_FETCH.get(engine_id)
     if args is None:
         return "not_applicable"
     argv = [str(executable), *args]
-    if runner(argv, {"npm_config_offline": "true"}).returncode == 0:
+
+    def run(offline: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return runner(
+                argv, {**AISLOP_NO_TELEMETRY_ENV, "npm_config_offline": offline}
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ProvisionError(
+                "SYSTEM_PREREQUISITE_REQUIRED",
+                f"{engine_id} could not run {argv[0]} to fetch its npm package: {exc}",
+            ) from exc
+
+    if run("true").returncode == 0:
         return "already_cached"
-    fetched = runner(argv, {"npm_config_offline": "false"})
+    fetched = run("false")
     if fetched.returncode != 0:
         raise ProvisionError(
             "SYSTEM_PREREQUISITE_REQUIRED",
             f"{engine_id} could not fetch its npm package: "
             f"{(fetched.stderr or '').strip()[-300:]}",
         )
-    if runner(argv, {"npm_config_offline": "true"}).returncode != 0:
+    if run("true").returncode != 0:
         raise ProvisionError(
             "ENGINE_PROTOCOL_MISMATCH",
             f"{engine_id}'s npm package is still not usable offline after fetching",
@@ -1360,6 +1374,9 @@ def _apply_entry(
                 f"the verified {entry.engine_id} manifest at {dest} no longer "
                 "verifies; review setup again",
             )
+        # A warm npm cache answers `already_cached` at once; a cold one (a new
+        # machine, a cleared cache) is fetched again so slop runs offline.
+        prefetch_npm_runtime(entry.engine_id, Path(reused.executable), ctx.runner)
         result.reused[entry.engine_id] = reused
         return
     if engine.source != "github":

@@ -33,6 +33,8 @@ import platform
 import shlex
 import shutil
 import tempfile
+import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -110,19 +112,76 @@ HOST_STAGE_GRANTS: dict[str, tuple[str, ...]] = {
     "host_registration": ("cache_write",),
     "select": ("cache_write",),
     "guidance": ("cache_write", "artifact_write"),
-    "hooks": ("cache_write",),
+    # The same grants `rush agent connect` needs to write the activation.
+    "hooks": ("cache_write", "artifact_write"),
     "probe": ("network",),
+    # The representative check: `build` lets its test step run pytest;
+    # `cache_write` covers the Rush-owned fixture under the data root.
+    "check": ("build", "cache_write"),
 }
 _PROJECT_ID_PLACEHOLDER = "<project_id>"
+# The check stage's fixture: a known F401 (unused import) plus one passing
+# test, so every step of the six-step check has something real to run.
+_PROBE_MARKER = ".rush-probe-owner.json"
+_PROBE_FILES = {
+    "pyproject.toml": '[project]\nname = "rush-probe"\nversion = "0.0.0"\n',
+    "probe.py": "import os\n",
+    "test_probe.py": "def test_probe() -> None:\n    assert True\n",
+}
+_CHECK_DEADLINE_SECONDS = 300.0
 
 
-def _check_stage(root: str, requested: bool) -> dict[str, Any]:
-    """T17 representative check: `rush check` on the project root, run by
-    setup only on its own consent (--run-check, or "y" to its question)."""
+def _check_stage(data_root: Path, requested: bool) -> dict[str, Any]:
+    """T17/T26 representative check: `rush check` on a Rush-owned fixture
+    under `data_root/probes/<nonce>/`, never the user's project, run by setup
+    only on its own consent (--run-check, or "y" to its question)."""
+    fixture = data_root / "probes" / "<nonce>"
     return {
         "requested": requested,
         "state": "pending" if requested else "not_requested",
-        "command": f"rush check {_quote(root)} --json",
+        "fixture": str(fixture),
+        "command": f"rush check {_quote(str(fixture))} --json",
+    }
+
+
+def _create_probe_fixture(data_root: Path) -> tuple[Path, str]:
+    """A fresh `data_root/probes/<nonce>/` holding the ownership marker and
+    the known-faulty fixture. Raises OSError."""
+    nonce = uuid.uuid4().hex
+    probes = data_root / "probes"
+    probes.mkdir(parents=True, exist_ok=True)
+    fixture = probes / nonce
+    fixture.mkdir()
+    (fixture / _PROBE_MARKER).write_text(
+        json.dumps({"owner": "rush-setup-check", "nonce": nonce}), encoding="utf-8"
+    )
+    for name, text in _PROBE_FILES.items():
+        (fixture / name).write_text(text, encoding="utf-8")
+    return fixture, nonce
+
+
+def _remove_probe_fixture(fixture: Path, nonce: str) -> bool:
+    """Delete the fixture only while its ownership marker still names this
+    run's nonce; anything else there is left untouched."""
+    try:
+        marker = json.loads((fixture / _PROBE_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(marker, dict) or marker.get("nonce") != nonce:
+        return False
+    shutil.rmtree(fixture, ignore_errors=True)
+    return not fixture.exists()
+
+
+def _check_failed(
+    command: str, blocker: str, detail: str, recovery: str
+) -> dict[str, Any]:
+    return {
+        "state": "failed",
+        "blocker": blocker,
+        "detail": detail,
+        "recovery_actions": [recovery],
+        "command": command,
     }
 
 
@@ -131,9 +190,10 @@ def _run_check_stage(
     choices: dict[str, bool],
     permissions: ExecutionPermissions | None,
 ) -> dict[str, Any]:
-    """Run the shared `CheckTool` once on the root with this setup's grants
-    (none beyond them) and report its real result; nothing runs without
-    consent."""
+    """Run the shared `CheckTool` once on a Rush-owned fixture (never the
+    user's project) with the check stage's grants only, bounded by a
+    deadline, and report its real result; nothing runs without consent.
+    Callers run this outside `_setup_lock`."""
     check = review["check"]
     command = check["command"]
     if choices.get("check") is False:
@@ -148,24 +208,49 @@ def _run_check_stage(
         }
     from rush.tools.check import CheckTool
 
-    root = Path(review["project_root"])
+    granted = permissions or ExecutionPermissions()
+    try:
+        fixture, nonce = _create_probe_fixture(Path(review["data_root"]))
+    except OSError as exc:
+        return _check_failed(
+            command,
+            "probe_fixture_unavailable",
+            str(exc),
+            f"{review['resume_command']} --run-check",
+        )
+    deadline = time.monotonic() + _CHECK_DEADLINE_SECONDS
     try:
         result: dict[str, Any] = dict(
             CheckTool().run(
-                root,
-                permissions=permissions or ExecutionPermissions(),
-                invocation_start_cwd=root,
+                fixture,
+                # Only this stage's grants: the test step's build, no more.
+                permissions=ExecutionPermissions(build=granted.build),
+                cancel_check=lambda: time.monotonic() >= deadline,
+                cancel_cause="setup_check_deadline",
+                invocation_start_cwd=fixture,
             )
         )
     except Exception as exc:  # noqa: BLE001 -- a failed check is reported, setup completes
+        removed = _remove_probe_fixture(fixture, nonce)
         return {
-            "state": "failed",
-            "detail": f"{type(exc).__name__}: {exc}",
-            "command": command,
+            **_check_failed(
+                command,
+                "check_crashed",
+                f"{type(exc).__name__}: {exc}",
+                f"{review['resume_command']} --run-check",
+            ),
+            "fixture": str(fixture),
+            "fixture_removed": removed,
         }
+    removed = _remove_probe_fixture(fixture, nonce)
     children = (result.get("metadata") or {}).get("children") or []
     return {
         "state": "ran",
+        "fixture": str(fixture),
+        "fixture_removed": removed,
+        "finding_rules": sorted(
+            {str(f.get("rule")) for f in result.get("findings") or []}
+        ),
         "status": result.get("status"),
         "summary": result.get("summary"),
         "steps": [
@@ -1231,7 +1316,9 @@ def _add_host_stages(
             f"billed to your {display} account"
         ),
     }
-    review["check"] = _check_stage(str(root), choices.get("check", False))
+    review["check"] = _check_stage(
+        Path(review["data_root"]), choices.get("check", False)
+    )
     review["grants"] = {**review["grants"], **HOST_STAGE_GRANTS}
     review["resume_command"] = setup_resume_command(root, host)
 
@@ -1254,7 +1341,9 @@ def _hooks_stage(
     activation = {
         "host": host,
         "canonical_root": str(root.resolve()),
-        "recovery_cache_write": False,
+        # The hooks stage is granted cache_write, so the hook may store its
+        # full redacted result for recovery (T16), as `agent connect` does.
+        "recovery_cache_write": "cache_write" in HOST_STAGE_GRANTS["hooks"],
     }
     stage: dict[str, Any] = {
         "requested": requested,
@@ -1300,6 +1389,8 @@ def _host_needed_grants(
         needed["hooks"] = HOST_STAGE_GRANTS["hooks"]
     if not review["registration"].get("blocker") and wanted("probe"):
         needed["probe"] = HOST_STAGE_GRANTS["probe"]
+    if wanted("check"):
+        needed["check"] = HOST_STAGE_GRANTS["check"]
     return needed
 
 
@@ -1643,7 +1734,9 @@ def _run_guidance_stage(
 
 
 def _run_hooks_stage(
-    review: dict[str, Any], choices: dict[str, bool]
+    review: dict[str, Any],
+    choices: dict[str, bool],
+    permissions: ExecutionPermissions | None = None,
 ) -> dict[str, Any]:
     """T7: write the hook activation only on explicit consent (the flag, or a
     "y" to its own question)."""
@@ -1662,10 +1755,16 @@ def _run_hooks_stage(
             SETUP_HOSTS[review["host"]],
             Path(review["project_root"]),
             enable=True,
+            recovery_cache_write=bool(permissions and permissions.cache_write),
             data_root=Path(review["data_root"]),
         )
     except (AgentConnectionError, ValueError, OSError) as exc:
-        return {"state": "failed", "detail": str(exc)}
+        return {
+            "state": "failed",
+            "blocker": "hook_activation_failed",
+            "detail": str(exc),
+            "recovery_actions": [f"{review['resume_command']} --enable-agent-hooks"],
+        }
     return result
 
 
@@ -1839,7 +1938,7 @@ def _apply_host_stages(
     runner: HostRunner = host_fakes.get("runner") or run_host_command
     registration = _run_registration_stage(review, project_id, choices, host_fakes)
     guidance = _run_guidance_stage(review, choices)
-    hooks = _run_hooks_stage(review, choices)
+    hooks = _run_hooks_stage(review, choices, permissions)
     select = _run_select_stage(session_id, project_id, data_root)
     probe = _run_probe_stage(review, project_id, choices, registration, runner)
     registration = {
@@ -1854,7 +1953,9 @@ def _apply_host_stages(
         "hooks": hooks,
         "select": select,
         "probe": probe,
-        "check": _run_check_stage(review, choices, permissions),
+        # Filled by the caller after `_setup_lock` is released (the check
+        # runs for minutes and never needs the lock).
+        "check": {"state": "pending", "command": review["check"]["command"]},
         "evidence": {"commands": _evidence_commands(review, registration, probe)},
     }
 
@@ -1867,6 +1968,12 @@ def _host_outcome_status(status: str, raw: dict[str, Any]) -> tuple[str, str | N
         return "error", "session_select_failed"
     if outcome in ("blocked", "declined") and status == "ok":
         return "partial", f"host_{outcome}"
+    if status == "ok":
+        # A stage that failed is never an ok setup: its stage result names
+        # the blocker and the one recovery command.
+        for stage in ("hooks", "check"):
+            if (raw.get(stage) or {}).get("state") == "failed":
+                return "partial", f"{stage}_failed"
     return status, None
 
 
@@ -2026,6 +2133,8 @@ def _apply_setup_envelope(
             raw = _apply_host_stages(
                 review, result["project_id"], chosen, host_fakes, permissions
             )
+        if review.get("host") is not None:
+            raw["check"] = _run_check_stage(review, chosen, permissions)
     except _StageConflict as exc:
         return {
             "status": "recovery_required",
