@@ -6078,7 +6078,19 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "artifacts",
+        "--project-id",
+        "no-such-project",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "project artifacts: no registered project matches: no-such-project"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -6131,7 +6143,18 @@
       "exit": 2
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "configure",
+        "00000000-0000-0000-0000-000000000000",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "project configure: malformed UUID (not v4): '00000000-0000-0000-0000-000000000000'"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -6374,7 +6397,22 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "select",
+        "00000000-0000-0000-0000-000000000000",
+        "--session",
+        "phase70-session",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "project select: no registered project: 00000000-0000-0000-0000-000000000000"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -6465,7 +6503,19 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "snapshot",
+        "--project-id",
+        "no-such-project",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "project snapshot: no registered project matches: no-such-project"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -6858,7 +6908,20 @@
       "exit": 2
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "scan",
+        "--project",
+        "no-such-project-phase70",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "scan plan: no registered project matches: no-such-project-phase70"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -6902,7 +6965,23 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "seed": [
+        "project"
+      ],
+      "argv": [
+        "scan",
+        "cancel",
+        "no-such-run",
+        "--project",
+        ".",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "scan cancel: unknown run_id: no-such-run"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -6966,7 +7045,27 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "seed": [
+        "project"
+      ],
+      "argv": [
+        "scan",
+        "handoff",
+        "no-such-run",
+        "--project",
+        ".",
+        "--agent",
+        "claude-code",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "scan-handoff prepare: unknown run_id: no-such-run"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -7032,7 +7131,25 @@
       "exit": 2
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "seed": [
+        "project"
+      ],
+      "argv": [
+        "scan",
+        "rescan",
+        "no-such-run",
+        "--project",
+        ".",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "scan rescan: unknown run_id: no-such-run"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -7096,7 +7213,25 @@
       "exit": 2
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "seed": [
+        "project"
+      ],
+      "argv": [
+        "scan",
+        "resume",
+        "no-such-run",
+        "--project",
+        ".",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "status": "error",
+        "summary": "scan resume: unknown run_id: no-such-run"
+      },
+      "human_contains": [],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
