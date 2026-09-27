@@ -27,6 +27,34 @@ class PatchMemoryStore:
         self.db_path = self.repo_root / ".rush" / "cache.db"
         self._init_db()
 
+    @staticmethod
+    def read_records(repo_root: Path) -> list[PatchMemoryRecord] | str:
+        """Stored records, newest first, read without creating or migrating
+        anything (T27); the reason string when the store is unavailable."""
+        from rush.memory.store import open_sqlite_readonly
+
+        db_path = repo_root.resolve() / ".rush" / "cache.db"
+        opened = open_sqlite_readonly(db_path)
+        if opened.connection is None:
+            return (
+                f"no patch memory store at {db_path}"
+                if not opened.available and opened.state is None
+                else f"patch memory store unreadable ({opened.state})"
+            )
+        with closing(opened.connection) as conn:
+            if (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='patch_memory'"
+                ).fetchone()
+                is None
+            ):
+                return []
+            rows = conn.execute(
+                "SELECT error_signature, target_file, diff_patch, created_at, success_count "
+                "FROM patch_memory ORDER BY created_at DESC"
+            ).fetchall()
+        return [PatchMemoryRecord(*tuple(row)) for row in rows]
+
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.db_path)) as conn, conn:

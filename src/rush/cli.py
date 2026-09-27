@@ -37,8 +37,13 @@ from .cli_support.rendering import (
     _render_session_result,
     _run_tool,
     cli_invocation_context,
+    collection_route,
+    echo,
+    echo_json,
+    echo_rows,
     exit_code_for,
     exit_with_result,
+    secho,
     select_cli_target,
 )
 from .config import RushConfigError, load_config
@@ -53,6 +58,7 @@ from .memory.store import (
     legacy_owner_scope,
 )
 from .permissions import ExecutionPermissions
+from .theme import FINDINGS_CAP
 from .tools import ALL_TOOLS
 
 if TYPE_CHECKING:
@@ -61,6 +67,7 @@ if TYPE_CHECKING:
     from .tools.memory import SourceKind
 
 _MEMORY_SUBJECTS = get_args(MemorySubject)
+_JSON_LIST_HELP = "Print the full, untruncated list as JSON."
 
 __all__ = [
     "_extract_permissions",
@@ -163,10 +170,11 @@ def status_cmd(
         _render_session_result(result, as_json)
     if as_json:
         exit_with_result(result, as_json=True)
-    click.echo(render_status(result), nl=False)
+    echo(render_status(result), nl=False)
     sys.exit(exit_code_for(result))
 
 
+@collection_route("tools")
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -181,12 +189,15 @@ def capabilities(path: Path, as_json: bool) -> None:
     except RushConfigError as error:
         raise click.UsageError(str(error)) from error
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
-    else:
-        for name, capability in result["tools"].items():
-            click.echo(f"{name}: {capability['state']} ({capability['reason']})")
+        echo(json.dumps(result, indent=2, default=str))
+        return
+    echo_rows(
+        list(result["tools"].items()),
+        lambda item: f"{item[0]}: {item[1]['state']} ({item[1]['reason']})",
+    )
 
 
+@collection_route("steps")
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option("--profile", default="default", show_default=True)
@@ -200,10 +211,12 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
     except (RushConfigError, ValueError) as error:
         raise click.UsageError(str(error)) from error
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
-    else:
-        for step in result["steps"]:
-            click.echo(f"{step['tool']}: {step['state']} ({step['reason']})")
+        echo(json.dumps(result, indent=2, default=str))
+        return
+    echo_rows(
+        result["steps"],
+        lambda step: f"{step['tool']}: {step['state']} ({step['reason']})",
+    )
 
 
 def _benchmark_default_root() -> Path:
@@ -318,11 +331,27 @@ def benchmark_run(
         argv=argv,
         output=output,
     )
-    click.echo(
+    echo(
         f"Started {job['job_id']}; durable state: {output.parent / 'jobs' / (job['job_id'] + '.json')}"
     )
 
 
+def _benchmark_json_files(root: Path, pattern: str) -> list[tuple[Path, Any]]:
+    """Parsed `*.json` payloads under `root` (recursive for `**/`), skipping
+    unparseable files; empty when `root` is absent."""
+    if not root.is_dir():
+        return []
+    found = root.rglob(pattern[3:]) if pattern.startswith("**/") else root.glob(pattern)
+    parsed: list[tuple[Path, Any]] = []
+    for path in sorted(found):
+        try:
+            parsed.append((path, json.loads(path.read_text(encoding="utf-8"))))
+        except json.JSONDecodeError:
+            continue
+    return parsed
+
+
+@collection_route("jobs", "results")
 @benchmark.command("status")
 @click.option(
     "--output",
@@ -330,39 +359,36 @@ def benchmark_run(
     default=_benchmark_default_root() / "run",
     show_default=True,
 )
-def benchmark_status(output: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def benchmark_status(output: Path, as_json: bool) -> None:
     """Print durable job and scenario state without attaching to a worker."""
-    jobs_root = output.parent / "jobs"
-    if jobs_root.is_dir():
-        for path in sorted(jobs_root.glob("benchmark-*.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            click.echo(
-                f"{payload.get('job_id', path.stem)}: {payload.get('state', 'unknown')}"
-            )
-    if not output.is_dir():
-        return
-    results: list[dict[str, object]] = []
-    for path in sorted(output.rglob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if (
-            isinstance(payload, dict)
-            and "scenario_id" in payload
-            and "outcome" in payload
-        ):
-            results.append(payload)
-    if not results:
-        click.echo("No benchmark scenario results found.")
-        return
-    for result in results:
-        click.echo(
-            f"{result['scenario_id']}: {result['outcome']} ({result.get('duration_ms', 0)}ms)"
+    jobs = [
+        {
+            "job_id": payload.get("job_id", path.stem),
+            "state": payload.get("state", "unknown"),
+        }
+        for path, payload in _benchmark_json_files(
+            output.parent / "jobs", "benchmark-*.json"
         )
+    ]
+    results = [
+        payload
+        for _path, payload in _benchmark_json_files(output, "**/*.json")
+        if isinstance(payload, dict)
+        and "scenario_id" in payload
+        and "outcome" in payload
+    ]
+    if as_json:
+        echo_json({"jobs": jobs, "results": results})
+        return
+    echo_rows(jobs, lambda job: f"{job['job_id']}: {job['state']}", noun="jobs")
+    if output.is_dir() and not results:
+        echo("No benchmark scenario results found.")
+    echo_rows(
+        results,
+        lambda r: f"{r['scenario_id']}: {r['outcome']} ({r.get('duration_ms', 0)}ms)",
+        noun="scenario results",
+    )
 
 
 @benchmark.command("check")
@@ -733,7 +759,7 @@ def serve(
     try:
         binding = resolve_server_binding(project, session)
     except ServerBindingError as exc:
-        click.echo(f"rush mcp serve: {exc}", err=True)
+        echo(f"rush mcp serve: {exc}", err=True)
         sys.exit(1)
     asyncio.run(run_stdio(memory_session, binding=binding, profile=profile))
 
@@ -772,7 +798,7 @@ def cache_stats() -> None:
         stats_data = ResultCache.stats_readonly(_logical_cache_db())
     except MemoryStoreUnreadableError as exc:
         raise click.ClickException(f"{exc.code}: {exc}") from exc
-    click.echo(json.dumps(stats_data, indent=2))
+    echo(json.dumps(stats_data, indent=2))
 
 
 @cache.command(name="clean")
@@ -787,8 +813,8 @@ def cache_clean() -> None:
     # T16 R16.8/finding 28: only T16 storage objects leave ccr.db; a missing
     # database is never created.
     purged, retained = purge_compact_results(db.parent.parent)
-    click.echo(f"Purged {count} cached result(s).")
-    click.echo(
+    echo(f"Purged {count} cached result(s).")
+    echo(
         json.dumps(
             {
                 "result_cache": count,
@@ -938,13 +964,13 @@ def setup_cmd(
         enable_hooks=enable_agent_hooks,
         verify_host=verify_host,
     )
-    click.echo(
+    echo(
         json.dumps(payload, indent=2, default=str)
         if as_json
         else render_setup_result(payload)
     )
     if code == 130:
-        click.echo("rush setup: interrupted; nothing was changed", err=True)
+        echo("rush setup: interrupted; nothing was changed", err=True)
     sys.exit(code)
 
 
@@ -958,16 +984,14 @@ def init_cmd(path: Path, force: bool) -> None:
     root = path.resolve()
     target_cfg = (root if root.is_dir() else root.parent) / "rush.toml"
     if target_cfg.is_file() and not force:
-        click.echo(
-            f"rush.toml already exists at {target_cfg}. Pass --force to overwrite."
-        )
+        echo(f"rush.toml already exists at {target_cfg}. Pass --force to overwrite.")
         sys.exit(1)
 
     cfg_content = generate_initial_config(root)
     from .safety.redactor import sanitize_value
 
     target_cfg.write_text(sanitize_value(cfg_content).value, encoding="utf-8")
-    click.echo(f"Created rush.toml at {target_cfg}")
+    echo(f"Created rush.toml at {target_cfg}")
 
 
 @cli.group(name="config")
@@ -982,11 +1006,11 @@ def config_check(path: Path) -> None:
     try:
         cfg = load_config(start=path.resolve())
         if cfg.source:
-            click.echo(f"Valid configuration loaded from {cfg.source}")
+            echo(f"Valid configuration loaded from {cfg.source}")
         else:
-            click.echo("No rush.toml found; using default built-in configuration.")
+            echo("No rush.toml found; using default built-in configuration.")
     except Exception as exc:  # noqa: BLE001
-        click.echo(f"Configuration error: {exc}", err=True)
+        echo(f"Configuration error: {exc}", err=True)
         sys.exit(1)
 
 
@@ -1034,10 +1058,20 @@ def _run_suite_cli(
         invocation_start_cwd=Path.cwd(),
     )
     if as_json:
-        click.echo(json.dumps(result, indent=2))
+        echo(json.dumps(result, indent=2))
     else:
         _echo_suite_human(result, suite.name)
     sys.exit(exit_code_for(result["status"]))
+
+
+def _suite_child_line(item: tuple[int, Mapping[str, Any]]) -> str:
+    index, child = item
+    line = (
+        f"  {index}. {child.get('tool')!s:<9} {child.get('status')!s:<7} "
+        f"{child.get('summary') or ''}"
+    )
+    cause = (child.get("execution") or {}).get("cause")
+    return f"{line} ({cause})" if cause else line
 
 
 def _echo_suite_human(result: Mapping[str, Any], suite_name: str) -> None:
@@ -1048,20 +1082,16 @@ def _echo_suite_human(result: Mapping[str, Any], suite_name: str) -> None:
     status_color = (
         "green" if status == "ok" else ("yellow" if status == "warn" else "red")
     )
-    click.secho(f"[{suite_name.upper()}] Status: {status}", fg=status_color, bold=True)
-    click.echo(result.get("summary", ""))
+    secho(f"[{suite_name.upper()}] Status: {status}", fg=status_color, bold=True)
+    echo(result.get("summary", ""))
     children = (result.get("metadata") or {}).get("children") or []
-    for index, child in enumerate(children, start=1):
-        line = (
-            f"  {index}. {child.get('tool')!s:<9} {child.get('status')!s:<7} "
-            f"{child.get('summary') or ''}"
-        )
-        cause = (child.get("execution") or {}).get("cause")
-        click.echo(f"{line} ({cause})" if cause else line)
-    for finding in result.get("findings") or []:
-        click.echo(
-            f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
-        )
+    echo_rows(list(enumerate(children, start=1)), _suite_child_line, noun="steps")
+    echo_rows(
+        result.get("findings") or [],
+        lambda f: f"  - [{f.get('severity', 'info')}] {f.get('message', '')}",
+        cap=FINDINGS_CAP,
+        noun="findings",
+    )
 
 
 def _run_check_cli(
@@ -1108,12 +1138,13 @@ def _run_check_cli(
     )
     clean = sanitize_value(result).value
     if as_json:
-        click.echo(json.dumps(clean, indent=2, default=str))
+        echo(json.dumps(clean, indent=2, default=str))
     else:
         _echo_suite_human(clean, "check")
     sys.exit(exit_code_for(result))
 
 
+@collection_route("metadata.children", "findings")
 @cli.command(name="check")
 @click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
@@ -1157,6 +1188,7 @@ def check_cmd(
     )
 
 
+@collection_route("metadata.children", "findings")
 @cli.command(name="audit")
 @click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
@@ -1192,6 +1224,7 @@ def audit_cmd(
     )
 
 
+@collection_route("metadata.children", "findings")
 @cli.command(name="gate")
 @click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
@@ -1291,11 +1324,11 @@ def watch_cmd(
     try:
         selection = select_cli_target(path, anchor=invocation_start_cwd)
     except InvocationError as exc:
-        click.echo(str(exc), err=True)
+        echo(str(exc), err=True)
         sys.exit(2)
 
     def on_change_handler(changed_paths: list[Path]) -> None:
-        click.echo(
+        echo(
             f"\n[WATCH] Changes detected in {len(changed_paths)} file(s). Triggering evaluation..."
         )
         if tool_name:
@@ -1309,12 +1342,12 @@ def watch_cmd(
                         t.name, selection, original=original, permissions=perms
                     )
                 except RushConfigError as exc:
-                    click.echo(str(exc), err=True)
+                    echo(str(exc), err=True)
                     return
                 executor = InvocationExecutor()
                 executor.register(t.name, t.__call__)
                 res = executor.execute(context)
-                click.echo(res.get("summary", "Done."))
+                echo(res.get("summary", "Done."))
         else:
             suite = suite_map.get(suite_name, CHECK_SUITE)
             res = run_workflow_suite(
@@ -1325,7 +1358,7 @@ def watch_cmd(
                 original_requested_targets=original,
                 invocation_start_cwd=invocation_start_cwd,
             )
-            click.echo(res.get("summary", "Done."))
+            echo(res.get("summary", "Done."))
 
     watcher = FileWatcher(
         root=selection.target, debounce_ms=debounce_ms, on_change=on_change_handler
@@ -1400,7 +1433,7 @@ def ui_cmd(
             selected = select_root("." if typed is None else typed, anchor=anchor)
             assert_contained(selected)
         except InvocationError as exc:
-            click.echo(str(exc), err=True)
+            echo(str(exc), err=True)
             sys.exit(2)
         entries.append((typed, selected))
 
@@ -1424,11 +1457,11 @@ def ui_cmd(
                 }
             )
         if json_output:
-            click.echo(json.dumps(snapshots))
+            echo(json.dumps(snapshots))
         else:
             for snap in snapshots:
                 result = snap["result"] if isinstance(snap["result"], dict) else {}
-                click.echo(f"{snap['project']}: {result.get('summary', 'done')}")
+                echo(f"{snap['project']}: {result.get('summary', 'done')}")
         return
 
     seeds = [
@@ -1595,9 +1628,9 @@ def _reconnect_existing_dashboard(
 
     launch_url = f"{base_url}/#token={new_token}"
     if json_output:
-        click.echo(json.dumps({"ready": True, "url": launch_url}))
+        echo(json.dumps({"ready": True, "url": launch_url}))
     else:
-        click.echo(f"Reconnected: {launch_url}")
+        echo(f"Reconnected: {launch_url}")
     if not no_open:
         try:
             webbrowser.open(launch_url)
@@ -1687,7 +1720,7 @@ def dashboard_cmd(
         selection = select_root(str(path), anchor=anchor)
         assert_contained(selection)
     except InvocationError as exc:
-        click.echo(str(exc), err=True)
+        echo(str(exc), err=True)
         sys.exit(2)
     record = register_project(selection.target)
     registered_root = Path(record.root)
@@ -1712,12 +1745,10 @@ def dashboard_cmd(
     descriptor_path = _write_dashboard_descriptor(ctx)
 
     if json_output:
-        click.echo(
-            json.dumps({"ready": True, "url": launch_url, "server_id": ctx.server_id})
-        )
+        echo(json.dumps({"ready": True, "url": launch_url, "server_id": ctx.server_id}))
     else:
-        click.echo(f"Dashboard running at: {launch_url}")
-        click.echo("Press Ctrl+C to stop.")
+        echo(f"Dashboard running at: {launch_url}")
+        echo("Press Ctrl+C to stop.")
 
     if not no_open:
         try:
@@ -1784,7 +1815,7 @@ def dashboard_cmd(
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        click.echo("\nStopping dashboard.")
+        echo("\nStopping dashboard.")
     finally:
         server.shutdown()
         server.server_close()
@@ -1826,7 +1857,7 @@ def trust_cmd(
     if target == "plugin":
         plugin_name = extra
         if not plugin_name:
-            click.echo(
+            echo(
                 "Error: Plugin name required when using 'rush trust plugin <name>'",
                 err=True,
             )
@@ -1840,16 +1871,14 @@ def trust_cmd(
         if revoke:
             revoked = trust_store.revoke_trust(plugin_name)
             if revoked:
-                click.echo(f"Revoked trust for plugin: {plugin_name}")
+                echo(f"Revoked trust for plugin: {plugin_name}")
             else:
-                click.echo(f"Plugin '{plugin_name}' was not found in trust ledger.")
+                echo(f"Plugin '{plugin_name}' was not found in trust ledger.")
         else:
             plugins = discover_plugins(repo_root)
             matched = next((p for p in plugins if p.name == plugin_name), None)
             if not matched:
-                click.echo(
-                    f"Plugin '{plugin_name}' not found in configuration.", err=True
-                )
+                echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
                 sys.exit(1)
 
             exec_path = (
@@ -1872,17 +1901,17 @@ def trust_cmd(
                 closure=closure, plugin_root=plugin_root
             )
             trust_store.grant_trust(plugin_name, closure.closure_digest, snapshot_dir)
-            click.echo(
+            echo(
                 f"Approved plugin as trusted: {plugin_name} (digest: {closure.closure_digest[:12]}...)"
             )
     else:
         root = repo_path.resolve()
         if revoke:
             revoke_trust(root)
-            click.echo(f"Revoked trust for repository: {root}")
+            echo(f"Revoked trust for repository: {root}")
         else:
             trust_repo(root)
-            click.echo(f"Approved repository as trusted: {root}")
+            echo(f"Approved repository as trusted: {root}")
 
 
 @cli.group(name="plugin")
@@ -1890,21 +1919,28 @@ def plugin_grp() -> None:
     """Manage and execute custom quality plugins."""
 
 
+@collection_route("rows")
 @plugin_grp.command(name="list")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def plugin_list(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def plugin_list(path: Path, as_json: bool) -> None:
     """List all custom plugins configured in rush.toml."""
     from .plugins.loader import discover_plugins
 
     plugins = discover_plugins(path.resolve())
-    if not plugins:
-        click.echo("No custom plugins configured.")
+    if as_json:
+        echo_json({"rows": plugins, "total": len(plugins)})
         return
-    click.echo(f"Discovered {len(plugins)} plugin(s):")
-    for p in plugins:
-        click.echo(f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})")
+    if not plugins:
+        echo("No custom plugins configured.")
+    else:
+        echo(f"Discovered {len(plugins)} plugin(s):")
+    echo_rows(
+        plugins, lambda p: f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})"
+    )
 
 
+@collection_route("findings")
 @plugin_grp.command(name="run")
 @click.argument("plugin_name", type=str)
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
@@ -1923,7 +1959,7 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
     plugins = discover_plugins(repo_root)
     matched = next((p for p in plugins if p.name == plugin_name), None)
     if not matched:
-        click.echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
+        echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
         sys.exit(1)
 
     exec_path = (
@@ -1969,19 +2005,21 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
     result = executor.execute(spec, paths=paths)
 
     if as_json:
-        click.echo(json.dumps(result.to_dict(), indent=2))
+        echo(json.dumps(result.to_dict(), indent=2))
     else:
         status_color = (
             "green"
             if result.status == "ok"
             else ("yellow" if result.status == "warn" else "red")
         )
-        click.secho(
-            f"[{result.tool}] Status: {result.status}", fg=status_color, bold=True
+        secho(f"[{result.tool}] Status: {result.status}", fg=status_color, bold=True)
+        echo(result.summary)
+        echo_rows(
+            result.findings,
+            lambda f: f"  - [{f.severity}] {f.message}",
+            cap=FINDINGS_CAP,
+            noun="findings",
         )
-        click.echo(result.summary)
-        for finding in result.findings:
-            click.echo(f"  - [{finding.severity}] {finding.message}")
 
     adapter = AdminOperationAdapter(
         operation_id="cli.plugin_run",
@@ -2013,22 +2051,30 @@ def workspace_group() -> None:
     """Monorepo workspace discovery, topological execution, and boundary enforcement."""
 
 
+@collection_route("rows")
 @workspace_group.command(name="list")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_list_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_list_cmd(path: Path, as_json: bool) -> None:
     """List discovered monorepo packages."""
     from rush.workspaces.discovery import WorkspaceDiscovery
 
     discovery = WorkspaceDiscovery(path)
     packages = discovery.discover_all()
-    click.echo(f"Discovered {len(packages)} workspace package(s):")
-    for p in packages:
-        click.echo(f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})")
+    if as_json:
+        echo_json({"rows": packages, "total": len(packages)})
+        return
+    echo(f"Discovered {len(packages)} workspace package(s):")
+    echo_rows(
+        packages, lambda p: f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})"
+    )
 
 
+@collection_route("rows")
 @workspace_group.command(name="affected")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_affected_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_affected_cmd(path: Path, as_json: bool) -> None:
     """List affected packages based on current working tree changes."""
     from rush.discovery.git import get_changed_files
     from rush.workspaces.affected import AffectedCalculator
@@ -2041,16 +2087,19 @@ def workspace_affected_cmd(path: Path) -> None:
     graph = DependencyGraphBuilder.build_graph(packages)
     calc = AffectedCalculator(repo_root, graph)
     changed = get_changed_files(repo_root)
-    affected = calc.get_affected_packages(changed)
+    affected = list(calc.get_affected_packages(changed))
+    if as_json:
+        echo_json({"rows": affected, "total": len(affected)})
+        return
+    echo(f"Affected package(s) ({len(affected)}):")
+    echo_rows(affected, lambda name: f"  - {name}")
 
-    click.echo(f"Affected package(s) ({len(affected)}):")
-    for name in affected:
-        click.echo(f"  - {name}")
 
-
+@collection_route("findings")
 @workspace_group.command(name="boundary")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_boundary_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_boundary_cmd(path: Path, as_json: bool) -> None:
     """Check workspace boundaries against illegal cross-package relative imports."""
     from rush.workspaces.boundary import WorkspaceBoundaryGuard
     from rush.workspaces.discovery import WorkspaceDiscovery
@@ -2060,26 +2109,43 @@ def workspace_boundary_cmd(path: Path) -> None:
     packages = discovery.discover_all()
     guard = WorkspaceBoundaryGuard(repo_root)
     result = guard.check_package_boundaries(packages)
-    click.echo(result["summary"])
-    for f in result.get("findings") or []:
-        click.echo(
-            f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} {f.get('message')}"
+    if as_json:
+        echo_json(result)
+    else:
+        echo(result["summary"])
+        echo_rows(
+            result.get("findings") or [],
+            lambda f: (
+                f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} "
+                f"{f.get('message')}"
+            ),
+            cap=FINDINGS_CAP,
+            noun="findings",
         )
     if result["status"] == "fail":
         sys.exit(1)
 
 
+@collection_route("findings")
 @workspace_group.command(name="locks")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_locks_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_locks_cmd(path: Path, as_json: bool) -> None:
     """Validate monorepo lockfile consistency."""
     from rush.workspaces.locks import WorkspaceLockValidator
 
     validator = WorkspaceLockValidator(path.resolve())
     result = validator.validate_lockfiles()
-    click.echo(result["summary"])
-    for f in result.get("findings") or []:
-        click.echo(f"  - [{f.get('severity', 'info')}] {f.get('message')}")
+    if as_json:
+        echo_json(result)
+        return
+    echo(result["summary"])
+    echo_rows(
+        result.get("findings") or [],
+        lambda f: f"  - [{f.get('severity', 'info')}] {f.get('message')}",
+        cap=FINDINGS_CAP,
+        noun="findings",
+    )
 
 
 @cli.group(name="patch")
@@ -2141,36 +2207,62 @@ def patch_apply_cmd(
 @click.argument("patch_file", type=click.Path(exists=True, path_type=Path))
 def patch_test_cmd(patch_file: Path) -> None:
     """Apply and verify a unified diff in an ephemeral worktree sandbox."""
+    from rush.io.physical_paths import ContainmentError
     from rush.patch.applier import PatchApplier
+    from rush.patch.contracts import DirtyWorkspaceError, PatchVerificationError
     from rush.patch.sandbox import PatchSandboxManager
 
     repo_root = Path.cwd()
     diff_content = patch_file.read_text(encoding="utf-8")
     mgr = PatchSandboxManager(repo_root)
-    sandbox = mgr.create_sandbox()
     try:
-        ok, msg = PatchApplier.apply_patch_to_dir(sandbox, diff_content)
-        if ok:
-            click.echo(f"[PASS] {msg}")
-        else:
-            click.echo(f"[FAIL] {msg}", err=True)
-            sys.exit(1)
-    finally:
-        mgr.cleanup_sandbox(sandbox)
+        sandbox = mgr.create_sandbox()
+        try:
+            ok, msg = PatchApplier.apply_patch_to_dir(sandbox, diff_content)
+        finally:
+            mgr.cleanup_sandbox(sandbox)
+    except (DirtyWorkspaceError, PatchVerificationError, ContainmentError) as exc:
+        # T27: an unusable sandbox (no git, dirty workspace, failed
+        # worktree) is an error outcome with its cause, never a traceback.
+        echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+    if ok:
+        echo(f"[PASS] {msg}")
+    else:
+        echo(f"[FAIL] {msg}", err=True)
+        sys.exit(1)
 
 
+@collection_route("rows")
 @patch_group.command(name="memory")
-def patch_memory_list_cmd() -> None:
-    """List historical AI patch memory records."""
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def patch_memory_list_cmd(as_json: bool) -> None:
+    """List historical AI patch memory records (read-only; creates nothing)."""
     from rush.patch.memory import PatchMemoryStore
 
-    store = PatchMemoryStore(Path.cwd())
-    records = store.list_records()
-    click.echo(f"Stored Patch Records ({len(records)}):")
-    for r in records:
-        click.echo(
-            f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})"
+    records = PatchMemoryStore.read_records(Path.cwd())
+    unavailable = records if isinstance(records, str) else None
+    rows = [] if isinstance(records, str) else records
+    if as_json:
+        echo_json(
+            {
+                "status": "skipped" if unavailable else "ok",
+                "reason": unavailable,
+                "rows": rows,
+                "total": len(rows),
+            }
         )
+        return
+    if unavailable:
+        echo(f"Patch memory unavailable: {unavailable}")
+    else:
+        echo(f"Stored Patch Records ({len(rows)}):")
+    echo_rows(
+        rows,
+        lambda r: (
+            f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})"
+        ),
+    )
 
 
 @cli.group(name="release")
@@ -2178,15 +2270,19 @@ def release_group() -> None:
     """Packaging, versioning, and release artifact generation."""
 
 
+@collection_route("rows")
 @release_group.command(name="check")
-def release_check_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def release_check_cmd(as_json: bool) -> None:
     """Check version parity across manifests."""
     from rush.release.semver import SemVerValidator
 
     versions = SemVerValidator.check_manifest_parity(Path.cwd())
-    click.echo("Discovered Manifest Versions:")
-    for manifest, ver in versions.items():
-        click.echo(f"  - {manifest}: {ver}")
+    if as_json:
+        echo_json({"rows": versions, "total": len(versions)})
+        return
+    echo("Discovered Manifest Versions:")
+    echo_rows(list(versions.items()), lambda item: f"  - {item[0]}: {item[1]}")
 
 
 @cli.group(name="ci")
@@ -2200,7 +2296,7 @@ def ci_init_cmd() -> None:
     from rush.release.ci_generator import CIWorkflowGenerator
 
     ci_file = CIWorkflowGenerator.generate_ci_workflow(Path.cwd())
-    click.echo(f"Generated hardened GitHub Actions workflow at {ci_file}")
+    echo(f"Generated hardened GitHub Actions workflow at {ci_file}")
 
 
 @cli.group(name="guard")
@@ -2216,9 +2312,9 @@ def guard_check_cmd(command_str: str) -> None:
 
     safe, reason = DangerousCommandInterceptor.inspect_command(command_str)
     if safe:
-        click.echo("[SAFE] Command authorized for agent execution.")
+        echo("[SAFE] Command authorized for agent execution.")
     else:
-        click.echo(f"[BLOCKED] {reason}", err=True)
+        echo(f"[BLOCKED] {reason}", err=True)
         sys.exit(1)
 
 
@@ -2230,13 +2326,13 @@ def guard_check_path(file_path: str) -> None:
 
     guard = AgentSafetyGuard(Path.cwd())
     if guard.is_file_protected(file_path):
-        click.echo(
+        echo(
             f"[PROTECTED] Target path '{file_path}' is an immutable governance file.",
             err=True,
         )
         sys.exit(1)
     else:
-        click.echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
+        echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
 
 
 @cli.group(name="token")
@@ -2252,13 +2348,13 @@ def token_count_cmd(target_path: Path) -> None:
 
     if target_path.is_file():
         count = FastBPETokenCounter.count_file_tokens(target_path)
-        click.echo(f"{target_path}: {count} tokens")
+        echo(f"{target_path}: {count} tokens")
     else:
         total = 0
         for p in target_path.rglob("*"):
             if p.is_file() and p.suffix in (".py", ".ts", ".js", ".rs", ".go", ".md"):
                 total += FastBPETokenCounter.count_file_tokens(p)
-        click.echo(f"{target_path} (recursive): {total} tokens")
+        echo(f"{target_path} (recursive): {total} tokens")
 
 
 @token_group.command(name="outline")
@@ -2270,9 +2366,9 @@ def token_outline_cmd(file_path: Path) -> None:
     source = file_path.read_text(encoding="utf-8", errors="replace")
     if file_path.suffix == ".py":
         compressed = PythonAstOutlineCompressor.compress_source(source)
-        click.echo(compressed)
+        echo(compressed)
     else:
-        click.echo(source)
+        echo(source)
 
 
 @token_group.command(name="cache-advisor")
@@ -2283,7 +2379,7 @@ def token_cache_advisor_cmd(file_path: Path) -> None:
 
     text = file_path.read_text(encoding="utf-8", errors="replace")
     suggestion = PromptCacheAdvisor.analyze_prefix(text)
-    click.echo(
+    echo(
         f"Cache Advisor Analysis: {suggestion.reason} (Est. Savings: {suggestion.estimated_cache_savings_percent}%)"
     )
 
@@ -2297,9 +2393,9 @@ def outline_cmd(file_path: Path) -> None:
     source = file_path.read_text(encoding="utf-8", errors="replace")
     if file_path.suffix == ".py":
         compressed = PythonAstOutlineCompressor.compress_source(source)
-        click.echo(compressed)
+        echo(compressed)
     else:
-        click.echo(source)
+        echo(source)
 
 
 @cli.group(name="sync")
@@ -2324,28 +2420,33 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
         from .safety.redactor import sanitize_value
 
         output_ts.write_text(sanitize_value(ts_code).value, encoding="utf-8")
-        click.echo(f"Wrote generated TypeScript interfaces to {output_ts}")
+        echo(f"Wrote generated TypeScript interfaces to {output_ts}")
     else:
-        click.echo(ts_code)
+        echo(ts_code)
 
 
+@collection_route("rows")
 @sync_group.command(name="env")
 @click.argument("env_example", default=".env.example", type=click.Path(path_type=Path))
 @click.argument("env_actual", default=".env", type=click.Path(path_type=Path))
-def sync_env_cmd(env_example: Path, env_actual: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def sync_env_cmd(env_example: Path, env_actual: Path, as_json: bool) -> None:
     """Check environment variable synchronization between .env.example and .env."""
     from rush.sync.env_sync import EnvironmentVariableSynchronizer
 
-    missing = EnvironmentVariableSynchronizer.find_missing_keys(env_example, env_actual)
-    if missing:
-        click.echo(f"Missing environment variables in {env_actual} ({len(missing)}):")
-        for k in missing:
-            click.echo(f"  - {k}")
-        sys.exit(1)
+    missing = list(
+        EnvironmentVariableSynchronizer.find_missing_keys(env_example, env_actual)
+    )
+    if as_json:
+        echo_json({"passed": not missing, "rows": missing, "total": len(missing)})
+    elif missing:
+        echo(f"Missing environment variables in {env_actual} ({len(missing)}):")
     else:
-        click.echo(
-            f"All environment variables in {env_example} are present in {env_actual}."
-        )
+        echo(f"All environment variables in {env_example} are present in {env_actual}.")
+    if not as_json:
+        echo_rows(missing, lambda k: f"  - {k}")
+    if missing:
+        sys.exit(1)
 
 
 @cli.group(name="hygiene")
@@ -2353,16 +2454,22 @@ def hygiene_group() -> None:
     """Polyglot codebase hygiene and dead code elimination."""
 
 
+@collection_route("rows")
 @hygiene_group.command(name="dead-code")
-def hygiene_dead_code_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hygiene_dead_code_cmd(as_json: bool) -> None:
     """Scan project for unreferenced symbols and dead exports."""
     from rush.hygiene.dead_code import PolyglotDeadCodeDetector
 
     detector = PolyglotDeadCodeDetector(Path.cwd())
     findings = detector.scan_python()
-    click.echo(f"Dead Code Findings ({len(findings)}):")
-    for f in findings:
-        click.echo(f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}")
+    if as_json:
+        echo_json({"rows": findings, "total": len(findings)})
+        return
+    echo(f"Dead Code Findings ({len(findings)}):")
+    echo_rows(
+        findings, lambda f: f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}"
+    )
 
 
 @hygiene_group.command(name="clean-imports")
@@ -2374,9 +2481,9 @@ def hygiene_clean_imports_cmd(target_file: Path) -> None:
     cleaned, count = UnusedImportCleaner.clean_file(target_file)
     if count > 0:
         target_file.write_text(cleaned, encoding="utf-8")
-        click.echo(f"Cleaned {count} unused import(s) in {target_file}")
+        echo(f"Cleaned {count} unused import(s) in {target_file}")
     else:
-        click.echo(f"No unused imports found in {target_file}")
+        echo(f"No unused imports found in {target_file}")
 
 
 @cli.group(name="conflict")
@@ -2395,9 +2502,9 @@ def conflict_solve_cmd(file_a: Path, file_b: Path) -> None:
     source_b = file_b.read_text(encoding="utf-8")
     ok, result = ASTConflictMerger.merge_source_files("", source_a, source_b)
     if ok:
-        click.echo(result)
+        echo(result)
     else:
-        click.echo(f"[MERGE FAILED] {result}", err=True)
+        echo(f"[MERGE FAILED] {result}", err=True)
         sys.exit(1)
 
 
@@ -2406,35 +2513,71 @@ def codegraph_group() -> None:
     """Polyglot AST code property graph exploration and verbatim slicing."""
 
 
+def _codegraph_store() -> Any:
+    """The existing code graph index opened read-only, or the reason it is
+    unavailable. T27: a read never creates `.codegraph/` or its database."""
+    from rush.codegraph.store import CodeGraphStore
+
+    db = Path.cwd() / ".codegraph" / "graph.db"
+    if not db.is_file():
+        return f"no code graph index at {db}"
+    return CodeGraphStore(db, read_only=True)
+
+
+def _emit_codegraph(
+    title: str, rows: list[Any], unavailable: str | None, as_json: bool, line: Any
+) -> None:
+    if as_json:
+        echo_json(
+            {
+                "status": "skipped" if unavailable else "ok",
+                "reason": unavailable,
+                "rows": rows,
+                "total": len(rows),
+            }
+        )
+        return
+    echo(f"Code graph unavailable: {unavailable}" if unavailable else title)
+    echo_rows(rows, line)
+
+
+@collection_route("rows")
 @codegraph_group.command(name="slice")
 @click.argument("symbol_name")
-def codegraph_slice_cmd(symbol_name: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def codegraph_slice_cmd(symbol_name: str, as_json: bool) -> None:
     """Extract verbatim source code slice for target symbol."""
     from rush.codegraph.slicer import VerbatimAstSlicer
-    from rush.codegraph.store import CodeGraphStore
 
-    store = CodeGraphStore(Path.cwd() / ".codegraph" / "graph.db")
-    slicer = VerbatimAstSlicer(store)
-    slices = slicer.slice_symbol(symbol_name)
-    for s in slices:
-        click.echo(s)
+    store = _codegraph_store()
+    unavailable = store if isinstance(store, str) else None
+    slices = [] if unavailable else VerbatimAstSlicer(store).slice_symbol(symbol_name)
+    _emit_codegraph(
+        f"Slices of '{symbol_name}' ({len(slices)}):", slices, unavailable, as_json, str
+    )
 
 
+@collection_route("rows")
 @codegraph_group.command(name="callers")
 @click.argument("symbol_name")
-def codegraph_callers_cmd(symbol_name: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def codegraph_callers_cmd(symbol_name: str, as_json: bool) -> None:
     """Trace all reverse callers of target symbol."""
-    from rush.codegraph.store import CodeGraphStore
     from rush.codegraph.traverser import CallGraphTraverser
 
-    store = CodeGraphStore(Path.cwd() / ".codegraph" / "graph.db")
-    traverser = CallGraphTraverser(store)
-    steps = traverser.trace_callers(symbol_name)
-    click.echo(f"Callers of '{symbol_name}' ({len(steps)}):")
-    for s in steps:
-        click.echo(
-            f"  - [{s.caller.file_path}:{s.caller.start_line}] {s.caller.symbol_name} -> calls -> {s.callee.symbol_name} (depth: {s.depth})"
-        )
+    store = _codegraph_store()
+    unavailable = store if isinstance(store, str) else None
+    steps = [] if unavailable else CallGraphTraverser(store).trace_callers(symbol_name)
+    _emit_codegraph(
+        f"Callers of '{symbol_name}' ({len(steps)}):",
+        steps,
+        unavailable,
+        as_json,
+        lambda s: (
+            f"  - [{s.caller.file_path}:{s.caller.start_line}] {s.caller.symbol_name} "
+            f"-> calls -> {s.callee.symbol_name} (depth: {s.depth})"
+        ),
+    )
 
 
 @cli.group(name="bundle")
@@ -2442,23 +2585,33 @@ def bundle_group() -> None:
     """Frontend asset and build bundle optimization."""
 
 
+@collection_route("rows")
 @bundle_group.command(name="analyze")
 @click.argument("dist_dir", type=click.Path(exists=True, path_type=Path))
-def bundle_analyze_cmd(dist_dir: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def bundle_analyze_cmd(dist_dir: Path, as_json: bool) -> None:
     """Measure build chunk transfer sizes (raw, gzip, brotli)."""
     from rush.bundle.chunk_calculator import BundleChunkCalculator
 
     reports = BundleChunkCalculator.measure_directory(dist_dir)
-    click.echo(f"Analyzed Build Chunks ({len(reports)}):")
-    for r in reports:
-        click.echo(
-            f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, brotli: ~{r.brotli_est_bytes} B)"
-        )
+    if as_json:
+        echo_json({"rows": reports, "total": len(reports)})
+        return
+    echo(f"Analyzed Build Chunks ({len(reports)}):")
+    echo_rows(
+        reports,
+        lambda r: (
+            f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, "
+            f"brotli: ~{r.brotli_est_bytes} B)"
+        ),
+    )
 
 
+@collection_route("rows")
 @bundle_group.command(name="dead-assets")
 @click.argument("assets_dir", type=click.Path(exists=True, path_type=Path))
-def bundle_dead_assets_cmd(assets_dir: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def bundle_dead_assets_cmd(assets_dir: Path, as_json: bool) -> None:
     """Scan public/assets directories for unreferenced images and media."""
     from rush.bundle.dead_assets import OrphanedAssetScanner
 
@@ -2468,9 +2621,11 @@ def bundle_dead_assets_cmd(assets_dir: Path) -> None:
         for asset in OrphanedAssetScanner(Path.cwd()).find_orphaned_assets()
         if asset.is_relative_to(assets_root)
     ]
-    click.echo(f"Unreferenced Assets ({len(unused)}):")
-    for u in unused:
-        click.echo(f"  - {u}")
+    if as_json:
+        echo_json({"rows": unused, "total": len(unused)})
+        return
+    echo(f"Unreferenced Assets ({len(unused)}):")
+    echo_rows(unused, lambda u: f"  - {u}")
 
 
 @cli.group(name="hotspots")
@@ -2478,32 +2633,47 @@ def hotspots_group() -> None:
     """Git commit churn, defect risk matrix, and developer velocity analytics."""
 
 
+@collection_route("rows")
 @hotspots_group.command(name="analyze")
-def hotspots_analyze_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hotspots_analyze_cmd(as_json: bool) -> None:
     """Compute composite defect risk scores across files."""
     from rush.hotspots.risk_matrix import RiskMatrixCalculator
 
     calculator = RiskMatrixCalculator(Path.cwd())
     scores = calculator.analyze_hotspots()
-    click.echo(f"Analyzed Hotspots ({len(scores)}):")
-    for s in scores[:10]:
-        click.echo(
-            f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} (Churn: {s.churn_score}, Complexity: {s.complexity_score})"
-        )
+    if as_json:
+        echo_json({"rows": scores, "total": len(scores)})
+        return
+    echo(f"Analyzed Hotspots ({len(scores)}):")
+    echo_rows(
+        scores,
+        lambda s: (
+            f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} "
+            f"(Churn: {s.churn_score}, Complexity: {s.complexity_score})"
+        ),
+    )
 
 
+@collection_route("rows")
 @hotspots_group.command(name="bus-factor")
-def hotspots_bus_factor_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hotspots_bus_factor_cmd(as_json: bool) -> None:
     """Calculate module knowledge distribution and bus factor risks."""
     from rush.hotspots.bus_factor import BusFactorAssessor
 
     reports = BusFactorAssessor(Path.cwd()).assess_ownership()
-    click.echo(f"Bus Factor Analysis ({len(reports)} files):")
-    for r in reports[:10]:
-        click.echo(
-            f"  - {r.file_path}: {r.total_authors} authors, ownership entropy {r.author_entropy} "
-            f"(Primary author: {r.primary_owner} {r.ownership_percent}%)"
-        )
+    if as_json:
+        echo_json({"rows": reports, "total": len(reports)})
+        return
+    echo(f"Bus Factor Analysis ({len(reports)} files):")
+    echo_rows(
+        reports,
+        lambda r: (
+            f"  - {r.file_path}: {r.total_authors} authors, ownership entropy "
+            f"{r.author_entropy} (Primary author: {r.primary_owner} {r.ownership_percent}%)"
+        ),
+    )
 
 
 @cli.group(name="governance")
@@ -2511,33 +2681,44 @@ def governance_group() -> None:
     """Agent governance and multi-IDE rule synchronization."""
 
 
+@collection_route("rows")
 @governance_group.command(name="sync")
-def governance_sync_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def governance_sync_cmd(as_json: bool) -> None:
     """Compile canonical AGENTS.md to .cursorrules, .clinerules, etc."""
     from rush.governance.synchronizer import AgentsMdSynchronizer
 
     syncer = AgentsMdSynchronizer(Path.cwd())
     results = syncer.sync_all()
-    click.echo(f"Synchronized Governance Files ({len(results)}):")
-    for r in results:
-        click.echo(f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})")
+    if as_json:
+        echo_json({"rows": results, "total": len(results)})
+        return
+    echo(f"Synchronized Governance Files ({len(results)}):")
+    echo_rows(
+        results, lambda r: f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})"
+    )
 
 
+@collection_route("rows")
 @governance_group.command(name="check")
-def governance_check_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def governance_check_cmd(as_json: bool) -> None:
     """Check that multi-IDE rule files are synchronized with AGENTS.md."""
     from rush.governance.parity_checker import RuleParityChecker
 
     drifted = RuleParityChecker(Path.cwd()).check_parity()
-    if not drifted:
-        click.echo("[OK] All multi-IDE governance rule files match AGENTS.md.")
+    if as_json:
+        echo_json({"passed": not drifted, "rows": drifted, "total": len(drifted)})
+    elif not drifted:
+        echo("[OK] All multi-IDE governance rule files match AGENTS.md.")
     else:
-        click.echo(
+        echo(
             f"[DRIFT DETECTED] Unsynchronized governance files ({len(drifted)}):",
             err=True,
         )
-        for d in drifted:
-            click.echo(f"  - {d.target_path}: {d.reason}", err=True)
+    if not as_json:
+        echo_rows(drifted, lambda d: f"  - {d.target_path}: {d.reason}", err=True)
+    if drifted:
         sys.exit(1)
 
 
@@ -2546,15 +2727,19 @@ def scaffold_group() -> None:
     """Repository governance and configuration scaffolding."""
 
 
+@collection_route("rows")
 @scaffold_group.command(name="init")
-def scaffold_init_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def scaffold_init_cmd(as_json: bool) -> None:
     """Initialize repository with AGENTS.md and rush.toml templates."""
     from rush.governance.scaffolder import RepoScaffolder
 
     created = RepoScaffolder.init_repository(Path.cwd())
-    click.echo(f"Scaffolded Files ({len(created)}):")
-    for c in created:
-        click.echo(f"  - {c.name}")
+    if as_json:
+        echo_json({"rows": created, "total": len(created)})
+        return
+    echo(f"Scaffolded Files ({len(created)}):")
+    echo_rows(created, lambda c: f"  - {c.name}")
 
 
 @cli.group(name="hook")
@@ -2574,17 +2759,17 @@ def hook_run_cmd() -> None:
     guard = BranchProtectionGuard(Path.cwd())
     ok, err = guard.check_current_branch()
     if not ok:
-        click.echo(f"[HOOK BLOCKED] {err}", err=True)
+        echo(f"[HOOK BLOCKED] {err}", err=True)
         sys.exit(1)
 
     scanner = StagedFileScanner(Path.cwd())
     try:
         entries = scanner.get_staged_entries()
     except RuntimeError:
-        click.echo("[INDEX ERROR] Cannot read staged index.", err=True)
+        echo("[INDEX ERROR] Cannot read staged index.", err=True)
         sys.exit(1)
     if not entries:
-        click.echo("No staged files to check.")
+        echo("No staged files to check.")
         return
 
     invalid = [
@@ -2596,7 +2781,7 @@ def hook_run_cmd() -> None:
                 f"stage {stage.stage}: {stage.mode} {stage.object_id}"
                 for stage in entry.stages
             )
-            click.echo(
+            echo(
                 f"[INDEX ERROR] {entry.status}: {entry.relative_path} ({stages})",
                 err=True,
             )
@@ -2606,7 +2791,7 @@ def hook_run_cmd() -> None:
     deleted_count = sum(entry.status == "deleted" for entry in entries)
     ast_errs = FastIncrementalAstLinter.lint_staged_entries(staged)
     if ast_errs:
-        click.echo("\n".join(f"[AST ERROR] {e}" for e in ast_errs), err=True)
+        echo("\n".join(f"[AST ERROR] {e}" for e in ast_errs), err=True)
         sys.exit(1)
 
     for entry in staged:
@@ -2617,10 +2802,10 @@ def hook_run_cmd() -> None:
         ):
             errors = detector.inspect_content(entry.path, entry.content)
             if errors:
-                click.echo("\n".join(f"[{label} ERROR] {e}" for e in errors), err=True)
+                echo("\n".join(f"[{label} ERROR] {e}" for e in errors), err=True)
                 sys.exit(1)
 
-    click.echo(
+    echo(
         f"Pre-commit checks passed across {len(staged)} staged files "
         f"({deleted_count} staged deletions)."
     )
@@ -2672,7 +2857,7 @@ def score_compute_cmd(
         governance=governance,
     )
     report = CompositeScorecardCalculator.compute_scorecard(pillars)
-    click.echo(report.summary)
+    echo(report.summary)
 
     if export_svg:
         svg = SvgBadgeGenerator.generate_badge_svg(
@@ -2681,12 +2866,12 @@ def score_compute_cmd(
         from .safety.redactor import sanitize_value
 
         export_svg.write_text(sanitize_value(svg).value, encoding="utf-8")
-        click.echo(f"Wrote SVG badge to {export_svg}")
+        echo(f"Wrote SVG badge to {export_svg}")
 
     if export_html:
         html = HtmlReportGenerator.generate_html_report(report)
         export_html.write_text(html, encoding="utf-8")
-        click.echo(f"Wrote HTML report to {export_html}")
+        echo(f"Wrote HTML report to {export_html}")
 
 
 @cli.group(name="consensus")
@@ -2694,6 +2879,15 @@ def consensus_group() -> None:
     """Multi-model AI code review reconciliation."""
 
 
+def _consensus_line(c: Any) -> str:
+    return (
+        f"  - [{c.severity.upper()}] {c.file_path}:{c.line_number} {c.rule_id} "
+        f"({c.description}) [Confidence: {int(c.confidence * 100)}%, "
+        f"Models: {', '.join(c.agreeing_models)}]"
+    )
+
+
+@collection_route("rows")
 @consensus_group.command(name="reconcile")
 @click.argument(
     "findings_files", nargs=-1, type=click.Path(exists=True, path_type=Path)
@@ -2701,8 +2895,9 @@ def consensus_group() -> None:
 @click.option(
     "--min-agreement", default=0.5, help="Minimum model agreement ratio (0.0 - 1.0)."
 )
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
 def consensus_reconcile_cmd(
-    findings_files: tuple[Path, ...], min_agreement: float
+    findings_files: tuple[Path, ...], min_agreement: float, as_json: bool
 ) -> None:
     """Reconcile findings from multi-model reviews using weighted consensus."""
     import json
@@ -2731,17 +2926,25 @@ def consensus_reconcile_cmd(
                     )
                 )
         except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError) as e:
-            click.echo(f"Warning: Could not parse '{f_path}': {e}", err=True)
+            echo(f"Warning: Could not parse '{f_path}': {e}", err=True)
 
     total_models = max(len(models), 1)
     consensus = reconciler.reconcile_findings(all_findings, total_models=total_models)
-    click.echo(
-        f"Consensus Findings ({len(consensus)} agreed by >={int(min_agreement * 100)}% of {total_models} models):"
-    )
-    for c in consensus:
-        click.echo(
-            f"  - [{c.severity.upper()}] {c.file_path}:{c.line_number} {c.rule_id} ({c.description}) [Confidence: {int(c.confidence * 100)}%, Models: {', '.join(c.agreeing_models)}]"
+    if as_json:
+        echo_json(
+            {
+                "min_agreement": min_agreement,
+                "total_models": total_models,
+                "rows": consensus,
+                "total": len(consensus),
+            }
         )
+        return
+    echo(
+        f"Consensus Findings ({len(consensus)} agreed by >={int(min_agreement * 100)}% "
+        f"of {total_models} models):"
+    )
+    echo_rows(consensus, _consensus_line)
 
 
 # -----------------------------------------------------------------------------
@@ -2934,7 +3137,7 @@ def _echo_memory_overview(result: dict[str, Any]) -> None:
     raw = result.get("raw") or {}
     data = raw.get("data") or {}
     if raw.get("code") != "OK":
-        click.echo(f"memory: {raw.get('code')}: {data.get('message')}")
+        echo(f"memory: {raw.get('code')}: {data.get('message')}")
         return
     rows = data["rows"]
     label = "record(s)" if data["include_internal"] else "useful record(s)"
@@ -2943,21 +3146,21 @@ def _echo_memory_overview(result: dict[str, Any]) -> None:
         if rows
         else "showing none"
     )
-    click.echo(f"memory: {data['total']} {label} in {data['project_root']} ({shown})")
+    echo(f"memory: {data['total']} {label} in {data['project_root']} ({shown})")
     for row in rows:
         owner = row["owner_scope"]
         created = datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat()
-        click.echo(
+        echo(
             f"{row['id']}  {row['subject']}  {row['source']}  "
             f"owner {owner['kind']}:{owner['id']}  {created}  {row['trust_tier']}"
         )
     if data["next_offset"] is not None:
-        click.echo(
+        echo(
             f"next: rush memory --offset {data['next_offset']} "
             f"--generation {data['generation_token']}"
         )
     if data.get("reason"):
-        click.echo(data["reason"])
+        echo(data["reason"])
 
 
 @cli.group(name="memory", invoke_without_command=True)
@@ -3013,7 +3216,7 @@ def memory_group(
         )
     )
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
+        echo(json.dumps(result, indent=2, default=str))
     else:
         _echo_memory_overview(result)
     raise click.exceptions.Exit(exit_code_for(result))
@@ -4052,7 +4255,8 @@ def scan_rescan_cmd(
 ) -> None:
     """Re-execute RUN_ID's own staged plan against current source and
     compare fixed/persisting/new/unverified findings against RUN_ID."""
-    from .workflows.project_run import ScanError, rescan_project_run
+    from .workflows.project_run import rescan_project_run
+    from .workflows.projects import ProjectError
 
     permissions = _extract_permissions(
         allow_network=allow_network,
@@ -4065,7 +4269,7 @@ def scan_rescan_cmd(
     )
     try:
         data = rescan_project_run(project, run_id, permissions=permissions)
-    except ScanError as exc:
+    except ProjectError as exc:  # T27: ScanError and an unknown project
         _render_session_result(
             {
                 "tool": "scan-rescan",
@@ -4119,11 +4323,12 @@ def scan_cancel_cmd(run_id: str, project: str, as_json: bool) -> None:
     allowed files) -- calls the workflow function directly, exactly like
     `scan rescan` above.
     """
-    from .workflows.project_run import ScanError, cancel_scan_run
+    from .workflows.project_run import cancel_scan_run
+    from .workflows.projects import ProjectError
 
     try:
         data = cancel_scan_run(project, run_id)
-    except ScanError as exc:
+    except ProjectError as exc:  # T27: ScanError and an unknown project
         _render_session_result(
             {
                 "tool": "scan-cancel",
@@ -4181,7 +4386,8 @@ def scan_resume_cmd(
     since the run's last attempt started. Requires --allow-cache-write and
     --allow-artifact-write (same write gate as `scan --full`/`scan rescan`).
     """
-    from .workflows.project_run import ScanError, resume_scan_run
+    from .workflows.project_run import resume_scan_run
+    from .workflows.projects import ProjectError
 
     permissions = _extract_permissions(
         allow_network=allow_network,
@@ -4194,7 +4400,7 @@ def scan_resume_cmd(
     )
     try:
         run = resume_scan_run(project, run_id, permissions=permissions)
-    except ScanError as exc:
+    except ProjectError as exc:  # T27: ScanError and an unknown project
         _render_session_result(
             {
                 "tool": "scan-resume",
@@ -4364,7 +4570,7 @@ def agent_connect_cmd(
         _echo_migration_preview(migration)  # not shown by a consent prompt
     guidance = raw.get("guidance")
     if not as_json and isinstance(guidance, dict):
-        click.echo(f"guidance: {guidance['state']}")
+        echo(f"guidance: {guidance['state']}")
     _render_session_result(dict(result), as_json)
 
 
@@ -4387,14 +4593,14 @@ def _profile_consent(
 
 
 def _echo_migration_preview(preview: dict[str, Any]) -> None:
-    click.echo(f"Rush MCP profile migration for {preview['agent_id']}:")
-    click.echo(f"  config: {preview['config_path']} ({preview['method']})")
-    click.echo(
+    echo(f"Rush MCP profile migration for {preview['agent_id']}:")
+    echo(f"  config: {preview['config_path']} ({preview['method']})")
+    echo(
         f"  current: {preview['current_command']} {preview['current_args']} "
         f"(profile: {preview['current_profile']})"
     )
-    click.echo(f"  new:     {preview['new_command']} {preview['new_args']}")
-    click.echo(f"  current sha256: {preview['current_sha256']}")
+    echo(f"  new:     {preview['new_command']} {preview['new_args']}")
+    echo(f"  current sha256: {preview['current_sha256']}")
 
 
 def _is_terminal(stream: Any) -> bool:
@@ -4411,14 +4617,14 @@ def _confirm_guidance(plan: Any) -> bool:
     TTY check above inspected), so a replaced `sys.stdin` object cannot
     answer for the user. EOF (Ctrl-D) or Ctrl-C declines.
     """
-    click.echo(f"Rush instruction block for {plan.target_path}:")
-    click.echo(plan.diff)
+    echo(f"Rush instruction block for {plan.target_path}:")
+    echo(plan.diff)
     return _ask_yes("Write this Rush instruction block? [y/N]: ")
 
 
 def _ask_yes(question: str) -> bool:
     """Ask `question` on the terminal; only y/yes read from fd 0 is a yes."""
-    click.echo(question, nl=False)
+    echo(question, nl=False)
     answer = b""
     try:
         while not answer.endswith(b"\n"):
@@ -4429,7 +4635,7 @@ def _ask_yes(question: str) -> bool:
     except KeyboardInterrupt:
         answer = b""
     if not answer.endswith(b"\n"):
-        click.echo("")
+        echo("")
         return False  # EOF or Ctrl-C before a complete answer line
     return answer.decode("utf-8", errors="replace").strip().lower() in ("y", "yes")
 
@@ -4477,7 +4683,7 @@ def agent_hook_cmd(host: str) -> None:
     payload = b"" if stdin.isatty() else stdin.read(MAX_PAYLOAD_BYTES + 1)
     output = run_agent_hook(host, payload)
     if output:
-        click.echo(output)
+        echo(output)
 
 
 @agent_group.command(name="doctor")
@@ -4660,7 +4866,7 @@ def install_cmd(
         _render_session_result(dict(outcome["install"]), as_json)
     except click.exceptions.Exit as done:
         if outcome["followup"] and not as_json:
-            click.echo(outcome["followup"])
+            echo(outcome["followup"])
         raise click.exceptions.Exit(done.exit_code or outcome["setup_exit"]) from None
 
 
@@ -4689,55 +4895,65 @@ def ship_clean_cmd(apply: bool, allow_artifact_write: bool) -> None:
     )
     if res["status"] in {"error", "skipped", "warn"}:
         detail = res.get("error") or f"refused {res['refused_count']} artifacts"
-        click.echo(f"Ship Clean: {res['status']}: {detail}", err=True)
+        echo(f"Ship Clean: {res['status']}: {detail}", err=True)
         raise click.exceptions.Exit(1)
     mode = "Removed" if apply else "Would remove"
-    click.echo(
+    echo(
         f"Ship Clean: {mode} "
         f"{res['removed_count'] if apply else res['preview_count']} items "
         f"({res['bytes_freed'] if apply else res['preview_bytes']} bytes)."
     )
 
 
+@collection_route("missing_in_example")
 @ship_group.command(name="env")
-def ship_env_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_env_cmd(as_json: bool) -> None:
     """Lint codebase environment variable usage against .env.example."""
     from rush.tools.ship.env_linter import EnvParityLinter
 
-    linter = EnvParityLinter()
-    res = linter.lint()
-    if res["passed"]:
-        click.echo(
-            "Ship Env: All codebase environment variables declared in .env.example."
-        )
+    res = EnvParityLinter().lint()
+    rows = res.get("missing_in_example") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("Ship Env: All codebase environment variables declared in .env.example.")
     else:
-        click.echo(
+        echo(
             f"Ship Env: FAIL - {len(res['missing_in_example'])} undeclared variables in .env.example:",
             err=True,
         )
-        for var in res["missing_in_example"]:
-            click.echo(f"  - {var}", err=True)
+    if not as_json:
+        echo_rows(rows, lambda item: f"  - {item}", err=True)
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("broken_links")
 @ship_group.command(name="docs")
-def ship_docs_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_docs_cmd(as_json: bool) -> None:
     """Audit documentation links and CLI reference parity."""
     from rush.tools.ship.docs_linter import DocsLinter
 
-    linter = DocsLinter()
-    res = linter.lint()
-    if res["passed"]:
-        click.echo(
+    res = DocsLinter().lint()
+    rows = res.get("broken_links") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo(
             f"Ship Docs: Audited {res['checked_docs']} markdown docs. All links valid."
         )
     else:
-        click.echo(
+        echo(
             f"Ship Docs: FAIL - {res['broken_links_count']} broken relative links found:",
             err=True,
         )
-        for link in res["broken_links"]:
-            click.echo(f"  - {link['file']} -> {link['target']}", err=True)
+    if not as_json:
+        echo_rows(
+            rows, lambda item: f"  - {item['file']} -> {item['target']}", err=True
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -4749,71 +4965,92 @@ def ship_gate_cmd() -> None:
     cockpit = ShipCockpit()
     verdict = cockpit.evaluate_gate()
     status_str = "PASSED" if verdict.all_passed else "FAILED"
-    click.echo(f"Ship Gate Verdict: {status_str} ({verdict.score_pct}% score)")
+    echo(f"Ship Gate Verdict: {status_str} ({verdict.score_pct}% score)")
     for v in verdict.vectors:
         mark = "[OK]" if v.passed else "[FAIL]"
-        click.echo(f"  {mark} {v.name.upper()}: {v.details} ({v.duration_ms}ms)")
+        echo(f"  {mark} {v.name.upper()}: {v.details} ({v.duration_ms}ms)")
     if not verdict.all_passed:
         sys.exit(1)
 
 
+@collection_route("findings")
 @ship_group.command(name="migration")
-def ship_migration_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_migration_cmd(as_json: bool) -> None:
     """Lint database migrations for table-locking hazards."""
     from rush.tools.ship.migration_linter import MigrationLinter
 
-    linter = MigrationLinter()
-    res = linter.lint_migrations()
-    if res["passed"]:
-        click.echo("Ship Migration: No dangerous table locks detected.")
+    res = MigrationLinter().lint_migrations()
+    rows = res.get("findings") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("Ship Migration: No dangerous table locks detected.")
     else:
-        click.echo(
+        echo(
             f"Ship Migration: FAIL - {res['findings_count']} migration hazards:",
             err=True,
         )
-        for item in res["findings"]:
-            click.echo(f"  {item['file']}: {', '.join(item['hazards'])}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['file']}: {', '.join(item['hazards'])}",
+            err=True,
+            cap=FINDINGS_CAP,
+            noun="findings",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("rows")
 @ship_group.command(name="semver")
 @click.argument("old_file", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_file", type=click.Path(exists=True, path_type=Path))
-def ship_semver_cmd(old_file: Path, new_file: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_semver_cmd(old_file: Path, new_file: Path, as_json: bool) -> None:
     """Check for breaking API signature changes between file versions."""
     from rush.tools.ship.semver_linter import SemverLinter
 
     linter = SemverLinter()
     old_code = old_file.read_text(encoding="utf-8", errors="ignore")
     new_code = new_file.read_text(encoding="utf-8", errors="ignore")
-    breaking = linter.diff_apis(old_code, new_code)
-    if not breaking:
-        click.echo(
+    breaking = list(linter.diff_apis(old_code, new_code))
+    if as_json:
+        echo_json({"passed": not breaking, "rows": breaking, "total": len(breaking)})
+    elif not breaking:
+        echo(
             f"Ship SemVer: Public API signatures compatible ({old_file.name} -> {new_file.name})."
         )
     else:
-        click.echo(f"Ship SemVer: FAIL - {len(breaking)} breaking changes:", err=True)
-        for b in breaking:
-            click.echo(f"  - {b}", err=True)
+        echo(f"Ship SemVer: FAIL - {len(breaking)} breaking changes:", err=True)
+    if not as_json:
+        echo_rows(breaking, lambda b: f"  - {b}", err=True)
+    if breaking:
         sys.exit(1)
 
 
+@collection_route("leaks")
 @ship_group.command(name="pack")
-def ship_pack_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_pack_cmd(as_json: bool) -> None:
     """Audit source tree for secret leaks before packaging."""
     from rush.tools.ship.package_linter import PackageLinter
 
-    linter = PackageLinter()
-    res = linter.lint()
-    if res["passed"]:
-        click.echo("Ship Pack: Source package clean of sensitive keys and env files.")
+    res = PackageLinter().lint()
+    rows = res.get("leaks") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("Ship Pack: Source package clean of sensitive keys and env files.")
     else:
-        click.echo(
+        echo(
             f"Ship Pack: FAIL - {res['leaks_count']} sensitive files detected:",
             err=True,
         )
-        for leak in res["leaks"]:
-            click.echo(f"  - {leak}", err=True)
+    if not as_json:
+        echo_rows(rows, lambda item: f"  - {item}", err=True)
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -4879,19 +5116,25 @@ def context_retrieve_cmd(
     )
 
 
+@collection_route("rows")
 @context_group.command(name="mistakes")
-def context_mistakes_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def context_mistakes_cmd(as_json: bool) -> None:
     """List historical Git-revert mistake guardrails."""
     from rush.memory.mistake_miner import MistakeMiner
 
-    miner = MistakeMiner()
-    mistakes = miner.mine_mistakes()
-    if not mistakes:
-        click.echo("No historical mistake patterns found in git revert history.")
+    mistakes = MistakeMiner().mine_mistakes()
+    if as_json:
+        echo_json({"rows": mistakes, "total": len(mistakes)})
         return
-    click.echo(f"Mistake Guardrails ({len(mistakes)}):")
-    for m in mistakes:
-        click.echo(f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}")
+    if not mistakes:
+        echo("No historical mistake patterns found in git revert history.")
+    else:
+        echo(f"Mistake Guardrails ({len(mistakes)}):")
+    echo_rows(
+        mistakes,
+        lambda m: f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}",
+    )
 
 
 @context_group.command(name="pack")
@@ -4931,7 +5174,7 @@ def context_align_prompt_cmd(system: str) -> None:
 
     aligner = CacheAligner()
     aligned = aligner.align_prompt(system)
-    click.echo(
+    echo(
         f"Aligned tokens: {aligned['system']['aligned_tokens']} (Padded: {aligned['system']['padded']})"
     )
 
@@ -4953,6 +5196,11 @@ def _run_gain_live_panel(
     from rush.token_economy.tui_gain import build_gain_panel
 
     console = console or Console()
+    if max_updates is None and not console.is_terminal:
+        # T27: redirected/piped output cannot host a live HUD and nothing
+        # can deliver Ctrl+C to it -- print one read-only snapshot and exit.
+        console.print(build_gain_panel())
+        return
     with Live(build_gain_panel(), console=console, refresh_per_second=4) as live:
         updates = 0
         try:
@@ -4990,13 +5238,20 @@ def context_persona_cmd(set_persona: str | None) -> None:
     """View or configure agent terse response persona style."""
     from rush.memory.preference_store import PreferenceStore
 
-    prefs = PreferenceStore()
     if set_persona:
-        prefs.set("persona_style", set_persona)
-        click.echo(f"Persona style set to: {set_persona}")
-    else:
-        current = prefs.get("persona_style", "terse")
-        click.echo(f"Current persona style: {current}")
+        PreferenceStore().set("persona_style", set_persona)
+        echo(f"Persona style set to: {set_persona}")
+        return
+    rush_dir = Path.cwd().resolve() / ".rush"
+    if (
+        not (rush_dir / "preferences.json").exists()
+        and not (rush_dir / "memory.db").exists()
+    ):
+        # T27: a read never creates the preference or memory store.
+        echo("Current persona style: terse (default; no preference store in .rush/)")
+        return
+    current = PreferenceStore().get("persona_style", "terse")
+    echo(f"Current persona style: {current}")
 
 
 @cli.command(name="blast-radius")
@@ -5008,37 +5263,45 @@ def blast_radius_cmd(path: str, depth: int) -> None:
 
     analyzer = BlastRadiusAnalyzer()
     report = analyzer.analyze([Path(path)], max_depth=depth)
-    click.echo(f"Blast Radius Impact: Risk={report.risk_score}")
-    click.echo(
+    echo(f"Blast Radius Impact: Risk={report.risk_score}")
+    echo(
         f"  Affected Files ({len(report.affected_files)}): {', '.join(report.affected_files) or 'None'}"
     )
-    click.echo(
+    echo(
         f"  Affected Routes ({len(report.affected_routes)}): {', '.join(report.affected_routes) or 'None'}"
     )
-    click.echo(
+    echo(
         f"  Recommended Tests ({len(report.recommended_tests)}): {', '.join(report.recommended_tests) or 'None'}"
     )
 
 
+@collection_route("violations")
 @cli.command(name="arch-guard")
-def arch_guard_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def arch_guard_cmd(as_json: bool) -> None:
     """Evaluate codebase against architectural layer boundary rules."""
     from rush.tools.arch_guard import ArchGuard
 
-    guard = ArchGuard()
-    res = guard.evaluate_boundaries()
-    if res["passed"]:
-        click.echo("ArchGuard: All layer boundaries respected.")
+    res = ArchGuard().evaluate_boundaries()
+    rows = res.get("violations") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("ArchGuard: All layer boundaries respected.")
     else:
-        click.echo(
+        echo(
             f"ArchGuard: FAIL - {res['violations_count']} architectural boundary violations:",
             err=True,
         )
-        for v in res["violations"]:
-            click.echo(
-                f"  {v['source_file']} ({v['source_layer']}) imports illegal layer {v['illegal_target_layer']}",
-                err=True,
-            )
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: (
+                f"  {item['source_file']} ({item['source_layer']}) imports illegal layer {item['illegal_target_layer']}"
+            ),
+            err=True,
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -5094,66 +5357,79 @@ def test_heal_cmd(
         allow_build=allow_build,
     )
     if "error" in res or res.get("status") == "error":
-        click.echo(
+        echo(
             f"Error: {res.get('error', res.get('summary', 'test healing failed'))}",
             err=True,
         )
         sys.exit(1)
     if res.get("status") == "skipped":
-        click.echo(res.get("summary", res.get("diagnosis", "Test healing skipped")))
+        echo(res.get("summary", res.get("diagnosis", "Test healing skipped")))
         return
-    click.echo(f"Test Heal Diagnostic: {res['test_path']}")
-    click.echo(
+    echo(f"Test Heal Diagnostic: {res['test_path']}")
+    echo(
         f"  Runs: {res['runs']} (Passes: {res['passes']}, Failures: {res['failures']})"
     )
-    click.echo(
+    echo(
         f"  Status: {'FLAKY' if res['is_flaky'] else 'DETERMINISTIC'} - {res['diagnosis']}"
     )
     if res["suggested_fix"]:
-        click.echo(f"  Fix:\n{res['suggested_fix']}")
+        echo(f"  Fix:\n{res['suggested_fix']}")
 
 
+@collection_route("breaking_changes")
 @cli.command(name="api-diff")
 @click.option("--base", "-b", default="main", help="Base Git ref to compare against.")
-def api_diff_cmd(base: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def api_diff_cmd(base: str, as_json: bool) -> None:
     """Detect breaking public API signature changes against base Git ref."""
     from rush.tools.api_diff import ApiDiffer
 
-    differ = ApiDiffer()
-    res = differ.diff_public_api(base_ref=base)
-    if res["passed"]:
-        click.echo(
-            f"ApiDiff: No breaking public API changes detected against '{base}'."
-        )
+    res = ApiDiffer().diff_public_api(base_ref=base)
+    rows = res.get("breaking_changes") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo(f"ApiDiff: No breaking public API changes detected against '{base}'.")
     else:
-        click.echo(
+        echo(
             f"ApiDiff: FAIL - {res['breaking_changes_count']} breaking API changes against '{base}':",
             err=True,
         )
-        for b in res["breaking_changes"]:
-            click.echo(f"  {b['file']}: [{b['type']}] {b['details']}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['file']}: [{item['type']}] {item['details']}",
+            err=True,
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("drift_issues")
 @cli.command(name="db-drift")
-def db_drift_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def db_drift_cmd(as_json: bool) -> None:
     """Audit ORM models against SQL migrations to detect unmigrated schema drift."""
     from rush.tools.db_drift import DbDriftAuditor
 
-    auditor = DbDriftAuditor()
-    res = auditor.audit_drift()
-    if res["passed"]:
-        click.echo("DbDrift: All ORM models are synchronized with migrations.")
+    res = DbDriftAuditor().audit_drift()
+    rows = res.get("drift_issues") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("DbDrift: All ORM models are synchronized with migrations.")
     else:
-        click.echo(
+        echo(
             f"DbDrift: FAIL - {res['drift_count']} schema drift hazards found:",
             err=True,
         )
-        for issue in res["drift_issues"]:
-            click.echo(f"  {issue['model']}: {issue['details']}", err=True)
+    if not as_json:
+        echo_rows(rows, lambda item: f"  {item['model']}: {item['details']}", err=True)
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("candidates")
 @cli.command(name="simplify")
 @click.option(
     "--file",
@@ -5169,29 +5445,39 @@ def db_drift_cmd() -> None:
     type=int,
     help="Maximum allowed cognitive complexity score.",
 )
-def simplify_cmd(file_path: str, max_complexity: int) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def simplify_cmd(file_path: str, max_complexity: int, as_json: bool) -> None:
     """Decompose high-complexity functions into clean helper sub-functions."""
     from rush.tools.simplify import ComplexityDecomposer
 
     decomposer = ComplexityDecomposer()
     res = decomposer.decompose_file(Path(file_path), max_complexity=max_complexity)
-    if "error" in res:
-        click.echo(f"Error: {res['error']}", err=True)
-        sys.exit(1)
-    if not res["needs_simplification"]:
-        click.echo(
+    if as_json:
+        echo_json(res)
+    elif "error" in res:
+        echo(f"Error: {res['error']}", err=True)
+    elif not res["needs_simplification"]:
+        echo(
             f"Simplify: File '{file_path}' has clean complexity (<= {max_complexity})."
         )
     else:
-        click.echo(
-            f"Simplify: {res['complex_functions_count']} functions exceed complexity threshold ({max_complexity}):"
+        echo(
+            f"Simplify: {res['complex_functions_count']} functions exceed complexity "
+            f"threshold ({max_complexity}):"
         )
-        for c in res["candidates"]:
-            click.echo(
-                f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): {c['recommendation']}"
-            )
+    if "error" in res:
+        sys.exit(1)
+    if not as_json:
+        echo_rows(
+            res.get("candidates") or [],
+            lambda c: (
+                f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): "
+                f"{c['recommendation']}"
+            ),
+        )
 
 
+@collection_route("untyped_arguments")
 @cli.command(name="strictify")
 @click.option(
     "--file",
@@ -5200,51 +5486,68 @@ def simplify_cmd(file_path: str, max_complexity: int) -> None:
     required=True,
     help="File path to analyze for untyped parameters.",
 )
-def strictify_cmd(file_path: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def strictify_cmd(file_path: str, as_json: bool) -> None:
     """Synthesize runtime type guards for unvalidated function arguments."""
     from rush.tools.strictify import TypeSynthesizer
 
     synth = TypeSynthesizer()
     res = synth.audit_and_synthesize(Path(file_path))
+    if as_json:
+        echo_json(res)
+    elif "error" in res:
+        echo(f"Error: {res['error']}", err=True)
+    else:
+        echo(
+            f"Strictify: Found {res['untyped_count']} untyped parameters in '{file_path}':"
+        )
     if "error" in res:
-        click.echo(f"Error: {res['error']}", err=True)
         sys.exit(1)
-    click.echo(
-        f"Strictify: Found {res['untyped_count']} untyped parameters in '{file_path}':"
-    )
-    for u in res["untyped_arguments"]:
-        click.echo(
-            f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' -> Guard: {u['suggested_guard']}"
+    if not as_json:
+        echo_rows(
+            res["untyped_arguments"],
+            lambda u: (
+                f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' "
+                f"-> Guard: {u['suggested_guard']}"
+            ),
         )
 
 
+@collection_route("matrix")
 @cli.command(name="trace")
-def trace_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def trace_cmd(as_json: bool) -> None:
     """Scan codebase and specs to output requirement-to-test traceability matrix."""
     from rush.tools.trace import TraceScanner
 
-    scanner = TraceScanner()
-    res = scanner.scan_traceability()
-    click.echo(
-        f"Traceability Matrix: {res['total_requirements']} requirements tracked."
+    res = TraceScanner().scan_traceability()
+    if as_json:
+        echo_json(res)
+        return
+    echo(f"Traceability Matrix: {res['total_requirements']} requirements tracked.")
+    echo_rows(
+        res["matrix"],
+        lambda item: (
+            f"  {item['requirement']}: [{item['status']}] "
+            f"Impls={len(item['implementations'])} Tests={len(item['tests'])}"
+        ),
     )
-    for item in res["matrix"]:
-        click.echo(
-            f"  {item['requirement']}: [{item['status']}] Impls={len(item['implementations'])} Tests={len(item['tests'])}"
-        )
 
 
+@collection_route("rows")
 @cli.command(name="flight-recorder")
 @click.option(
     "--replay", "-r", "session_id", default=None, help="Replay a specific session ID."
 )
-def flight_recorder_cmd(session_id: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def flight_recorder_cmd(session_id: str | None, as_json: bool) -> None:
     """Record and replay agent JSON-RPC sessions."""
     from rush.invocation.targets import resolve_logical_root
     from rush.tools.flight_recorder import FlightRecorder
 
     # T10 (S10.5): status and replay are read-only and anchored at the logical root.
     recorder = FlightRecorder(resolve_logical_root(Path.cwd()), create=False)
+    events: list[Any] = []
     if session_id:
         from rush.memory.store import MemoryStoreUnreadableError
 
@@ -5252,23 +5555,41 @@ def flight_recorder_cmd(session_id: str | None) -> None:
             events = recorder.replay_session(session_id)
         except MemoryStoreUnreadableError as exc:
             raise click.ClickException(f"{exc.code}: {exc}") from exc
-        click.echo(
+        title = (
             f"Flight Recorder: Replaying session '{session_id}' ({len(events)} events):"
         )
-        for e in events:
-            click.echo(f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}")
     elif recorder.flights_dir.is_dir():
-        click.echo(f"Flight Recorder: Active (recording to {recorder.flights_dir}).")
+        title = f"Flight Recorder: Active (recording to {recorder.flights_dir})."
     else:
-        click.echo(
-            f"Flight Recorder: No recordings yet ({recorder.flights_dir} does not exist)."
-        )
+        title = f"Flight Recorder: No recordings yet ({recorder.flights_dir} does not exist)."
+    if as_json:
+        echo_json({"session_id": session_id, "rows": events, "total": len(events)})
+        return
+    echo(title)
+    echo_rows(
+        events, lambda e: f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}"
+    )
 
 
 @cli.command(name="swarm-merge")
-@click.option("--base", required=True, help="Path to base file.")
-@click.option("--ours", required=True, help="Path to ours file.")
-@click.option("--theirs", required=True, help="Path to theirs file.")
+@click.option(
+    "--base",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to base file.",
+)
+@click.option(
+    "--ours",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to ours file.",
+)
+@click.option(
+    "--theirs",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to theirs file.",
+)
 def swarm_merge_cmd(base: str, ours: str, theirs: str) -> None:
     """Execute 3-way AST merge conflict resolution across concurrent agent changes."""
     from rush.tools.swarm_merge import SwarmMergeSolver
@@ -5279,11 +5600,11 @@ def swarm_merge_cmd(base: str, ours: str, theirs: str) -> None:
     t_code = Path(theirs).read_text(encoding="utf-8")
     res = solver.merge_3way(b_code, o_code, t_code)
     if res["success"]:
-        click.echo(
+        echo(
             f"SwarmMerge: Success - reconciled {res['functions_merged']} functions cleanly."
         )
     else:
-        click.echo(f"SwarmMerge: FAIL - {res['error']}", err=True)
+        echo(f"SwarmMerge: FAIL - {res['error']}", err=True)
         sys.exit(1)
 
 
@@ -5301,11 +5622,11 @@ def simulate_ci_cmd(workflow: str) -> None:
     sim = SimulateCi()
     res = sim.run_workflow(workflow_name=workflow)
     if res["passed"]:
-        click.echo(
+        echo(
             f"SimulateCI: Workflow '{workflow}' passed ({res['steps_executed']} steps)."
         )
     else:
-        click.echo(
+        echo(
             f"SimulateCI: FAIL at step '{res['failed_step']}': {res['error']}", err=True
         )
         sys.exit(1)
@@ -5507,24 +5828,33 @@ def iam_audit_cmd(
     )
 
 
+@collection_route("findings")
 @cli.command(name="hallu-guard")
-def hallu_guard_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hallu_guard_cmd(as_json: bool) -> None:
     """Audit codebase for hallucinated or phantom package imports."""
     from rush.tools.hallu_guard import HalluGuard
 
-    guard = HalluGuard()
-    res = guard.audit_codebase()
-    if res["passed"]:
-        click.echo(
-            "HalluGuard: All AST imports grounded in installed packages or stdlib."
-        )
+    res = HalluGuard().audit_codebase()
+    rows = res.get("findings") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("HalluGuard: All AST imports grounded in installed packages or stdlib.")
     else:
-        click.echo(
+        echo(
             f"HalluGuard: FAIL - {res['findings_count']} hallucinated import findings:",
             err=True,
         )
-        for f in res["findings"]:
-            click.echo(f"  {f['file']}: {', '.join(f['violations'])}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['file']}: {', '.join(item['violations'])}",
+            err=True,
+            cap=FINDINGS_CAP,
+            noun="findings",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -5545,7 +5875,7 @@ def _resolve_cli_capability(
 
     # 1. Reject argv capability token
     if capability_argv is not None:
-        click.echo(
+        echo(
             "Error: Passing capabilities via argv (--capability) is rejected. "
             "Capabilities must only be supplied via protected channels (stdin or descriptor).",
             err=True,
@@ -5555,7 +5885,7 @@ def _resolve_cli_capability(
     # 2. Reject environment variables
     env_cap = os.environ.get("RUSH_LOCK_CAPABILITY") or os.environ.get("CAPABILITY")
     if env_cap:
-        click.echo(
+        echo(
             "Error: Passing capabilities via environment variables is rejected. "
             "Capabilities must only be supplied via protected channels (stdin or descriptor).",
             err=True,
@@ -5575,7 +5905,7 @@ def _resolve_cli_capability(
                 token,
             )
         except OSError as exc:
-            click.echo(
+            echo(
                 f"Error: Failed to read capability from descriptor {descriptor}: {exc}",
                 err=True,
             )
@@ -5593,7 +5923,7 @@ def _resolve_cli_capability(
                     token,
                 )
         except OSError as exc:
-            click.echo(f"Error: Failed to read capability from stdin: {exc}", err=True)
+            echo(f"Error: Failed to read capability from stdin: {exc}", err=True)
             sys.exit(2)
 
     # 5. If no channel provided, generate new capability
@@ -5611,6 +5941,21 @@ def _resolve_project_root(path: Path) -> Path:
         ):
             return parent
     return curr
+
+
+def _held_lock_manager(path: Path, verb: str) -> Any:
+    """T27: release/renew act only on an existing lock store; with none there
+    is no lock to act on, so fail without creating `.rush/locks`."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    root = _resolve_project_root(path)
+    locks_dir = root / ".rush" / "locks"
+    if not locks_dir.is_dir():
+        echo(
+            f"Failed to {verb} lock for {path}: no lock store at {locks_dir}", err=True
+        )
+        sys.exit(1)
+    return MeshLockManager(project_root=root)
 
 
 @lock_cmd_group.command(name="acquire")
@@ -5669,10 +6014,10 @@ def lock_acquire_cmd(
         path, agent_id=agent_id, capability=cap_input, timeout_s=timeout_s, ttl_s=ttl_s
     )
     if ok:
-        click.echo(f"Lock acquired for {path}")
+        echo(f"Lock acquired for {path}")
         sys.exit(0)
     else:
-        click.echo(f"Failed to acquire lock for {path}", err=True)
+        echo(f"Failed to acquire lock for {path}", err=True)
         sys.exit(1)
 
 
@@ -5705,19 +6050,16 @@ def lock_release_cmd(
     from_stdin: bool,
 ) -> None:
     """Release a coordination lock lease using protected caller capability."""
-    from rush.mcp_mesh.lock_manager import MeshLockManager
-
     cap_input, _raw_token = _resolve_cli_capability(
         agent_id, capability_argv, descriptor, from_stdin
     )
-    root = _resolve_project_root(path)
-    mgr = MeshLockManager(project_root=root)
+    mgr = _held_lock_manager(path, "release")
     ok = mgr.release(path, capability=cap_input, agent_id=agent_id)
     if ok:
-        click.echo(f"Lock released for {path}")
+        echo(f"Lock released for {path}")
         sys.exit(0)
     else:
-        click.echo(f"Failed to release lock for {path}", err=True)
+        echo(f"Failed to release lock for {path}", err=True)
         sys.exit(1)
 
 
@@ -5758,19 +6100,16 @@ def lock_renew_cmd(
     ttl_s: float,
 ) -> None:
     """Renew a coordination lock lease using protected caller capability."""
-    from rush.mcp_mesh.lock_manager import MeshLockManager
-
     cap_input, _raw_token = _resolve_cli_capability(
         agent_id, capability_argv, descriptor, from_stdin
     )
-    root = _resolve_project_root(path)
-    mgr = MeshLockManager(project_root=root)
+    mgr = _held_lock_manager(path, "renew")
     ok = mgr.renew(path, capability=cap_input, ttl_s=ttl_s)
     if ok:
-        click.echo(f"Lock renewed for {path}")
+        echo(f"Lock renewed for {path}")
         sys.exit(0)
     else:
-        click.echo(f"Failed to renew lock for {path}", err=True)
+        echo(f"Failed to renew lock for {path}", err=True)
         sys.exit(1)
 
 
@@ -5782,7 +6121,7 @@ def lock_inspect_cmd(path: Path) -> None:
 
     root = _resolve_project_root(path)
     res = MeshLockManager.inspect(root, path)
-    click.echo(json.dumps(res, indent=2))
+    echo(json.dumps(res, indent=2))
 
 
 if __name__ == "__main__":

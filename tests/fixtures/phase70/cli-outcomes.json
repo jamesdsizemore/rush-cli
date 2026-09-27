@@ -1,0 +1,8382 @@
+[
+  {
+    "id": "<bare-rush>",
+    "argv": [],
+    "canonical": "rush",
+    "family": "status",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "rush status: warn"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "status route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:cli",
+    "blocker": null
+  },
+  {
+    "id": "actions",
+    "argv": [
+      "actions",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush actions",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "actions",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "actions skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "actions",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "actions",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "actions skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "actions",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "actions",
+        "status": "error"
+      },
+      "human_contains": [
+        "actions error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.actions:ActionsTool",
+    "blocker": null
+  },
+  {
+    "id": "agent.connect",
+    "argv": [
+      "agent",
+      "connect",
+      "phase70-agent",
+      "--session",
+      "phase70-session",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush agent connect",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "agent_connection",
+        "status": "error"
+      },
+      "human_contains": [
+        "agent_connection error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "agent",
+        "connect",
+        "phase70-agent",
+        "--session",
+        "phase70-session"
+      ],
+      "json_paths": {
+        "tool": "agent_connection",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "agent_connection skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:agent_connect_cmd",
+    "blocker": null
+  },
+  {
+    "id": "agent.disconnect",
+    "argv": [
+      "agent",
+      "disconnect",
+      "phase70-agent",
+      "--json"
+    ],
+    "canonical": "rush agent disconnect",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "agent_connection",
+        "status": "error"
+      },
+      "human_contains": [
+        "agent_connection error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:agent_disconnect_cmd",
+    "blocker": null
+  },
+  {
+    "id": "agent.doctor",
+    "argv": [
+      "agent",
+      "doctor",
+      "--json"
+    ],
+    "canonical": "rush agent doctor",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "agent_connection",
+        "status": "ok"
+      },
+      "human_contains": [
+        "agent_connection ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:agent_doctor_cmd",
+    "blocker": null
+  },
+  {
+    "id": "agent.hook",
+    "argv": [
+      "agent",
+      "hook",
+      "claude"
+    ],
+    "canonical": "rush agent hook",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:agent_hook_cmd",
+    "blocker": null
+  },
+  {
+    "id": "agent.list",
+    "argv": [
+      "agent",
+      "list",
+      "--json"
+    ],
+    "canonical": "rush agent list",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "agent_connection",
+        "status": "ok"
+      },
+      "human_contains": [
+        "agent_connection ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "agent_connection",
+        "status": "ok"
+      },
+      "human_contains": [
+        "agent_connection ok"
+      ],
+      "exit": 0,
+      "argv": [
+        "agent",
+        "list"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:agent_list_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ai-eval",
+    "argv": [
+      "ai-eval",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush ai-eval",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "ai-eval",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "ai-eval skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "ai-eval",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "ai-eval",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "ai-eval skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "ai-eval",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "ai-eval",
+        "status": "error"
+      },
+      "human_contains": [
+        "ai-eval error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.ai_eval:AiEvalTool",
+    "blocker": null
+  },
+  {
+    "id": "api-diff",
+    "argv": [
+      "api-diff",
+      "--json"
+    ],
+    "canonical": "rush api-diff",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "ApiDiff: No breaking"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:api_diff_cmd",
+    "blocker": null
+  },
+  {
+    "id": "arch-guard",
+    "argv": [
+      "arch-guard",
+      "--json"
+    ],
+    "canonical": "rush arch-guard",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "ArchGuard: All layer"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:arch_guard_cmd",
+    "blocker": null
+  },
+  {
+    "id": "attest",
+    "argv": [
+      "attest",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush attest",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "attest",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "attest skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "attest"
+      ],
+      "json_paths": {
+        "tool": "attest",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "attest skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:attest_cmd",
+    "blocker": null
+  },
+  {
+    "id": "audit",
+    "argv": [
+      "audit",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush audit",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "audit",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "audit skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "audit"
+      ],
+      "json_paths": {
+        "tool": "audit",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "audit skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:audit_cmd",
+    "blocker": null
+  },
+  {
+    "id": "benchmark.check",
+    "argv": [
+      "benchmark",
+      "check",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush benchmark check",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "benchmark",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "benchmark skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "benchmark",
+        "check"
+      ],
+      "json_paths": {
+        "tool": "benchmark",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "benchmark skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:benchmark_check_cmd",
+    "blocker": null
+  },
+  {
+    "id": "benchmark.run",
+    "argv": [
+      "benchmark",
+      "run",
+      "--help"
+    ],
+    "canonical": "rush benchmark run",
+    "family": "analysis",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the network lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the network lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the network lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:benchmark_run",
+    "blocker": {
+      "lane": "network",
+      "reason": "fetches benchmark model caches over the network (X10 network lane)"
+    }
+  },
+  {
+    "id": "benchmark.status",
+    "argv": [
+      "benchmark",
+      "status",
+      "--json"
+    ],
+    "canonical": "rush benchmark status",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "queued"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:benchmark_status",
+    "blocker": null
+  },
+  {
+    "id": "blast-radius",
+    "argv": [
+      "blast-radius",
+      "--path",
+      "<fixture-file>"
+    ],
+    "canonical": "rush blast-radius",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Blast Radius Impact:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "blast-radius",
+        "--path",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Blast Radius Impact:"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:blast_radius_cmd",
+    "blocker": null
+  },
+  {
+    "id": "bundle.analyze",
+    "argv": [
+      "bundle",
+      "analyze",
+      "<fixture-dir>",
+      "--json"
+    ],
+    "canonical": "rush bundle analyze",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Analyzed Build Chunks"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:bundle_analyze_cmd",
+    "blocker": null
+  },
+  {
+    "id": "bundle.dead-assets",
+    "argv": [
+      "bundle",
+      "dead-assets",
+      "<fixture-dir>",
+      "--json"
+    ],
+    "canonical": "rush bundle dead-assets",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Unreferenced Assets (0):"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:bundle_dead_assets_cmd",
+    "blocker": null
+  },
+  {
+    "id": "cache.clean",
+    "argv": [
+      "cache",
+      "clean"
+    ],
+    "canonical": "rush cache clean",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Purged 0 cached"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:cache_clean",
+    "blocker": null
+  },
+  {
+    "id": "cache.stats",
+    "argv": [
+      "cache",
+      "stats"
+    ],
+    "canonical": "rush cache stats",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "{"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:cache_stats",
+    "blocker": null
+  },
+  {
+    "id": "capabilities",
+    "argv": [
+      "capabilities",
+      "<fixture-file>",
+      "--json"
+    ],
+    "canonical": "rush capabilities",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "continuity: applicable (contained"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "capabilities",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli capabilities"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:capabilities",
+    "blocker": null
+  },
+  {
+    "id": "check",
+    "argv": [
+      "check",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush check",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "check",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "check skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "check"
+      ],
+      "json_paths": {
+        "tool": "check",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "check skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:check_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ci.init",
+    "argv": [
+      "ci",
+      "init"
+    ],
+    "canonical": "rush ci init",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Generated hardened GitHub"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.github/workflows/ci.yml"
+      ]
+    },
+    "producer": "rush.cli:ci_init_cmd",
+    "blocker": null
+  },
+  {
+    "id": "codegraph.callers",
+    "argv": [
+      "codegraph",
+      "callers",
+      "main",
+      "--json"
+    ],
+    "canonical": "rush codegraph callers",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Code graph unavailable:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:codegraph_callers_cmd",
+    "blocker": null
+  },
+  {
+    "id": "codegraph.slice",
+    "argv": [
+      "codegraph",
+      "slice",
+      "main",
+      "--json"
+    ],
+    "canonical": "rush codegraph slice",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Code graph unavailable:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:codegraph_slice_cmd",
+    "blocker": null
+  },
+  {
+    "id": "codeql",
+    "argv": [
+      "codeql",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush codeql",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "codeql",
+        "status": "error"
+      },
+      "human_contains": [
+        "codeql error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "codeql",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "codeql",
+        "status": "error"
+      },
+      "human_contains": [
+        "codeql error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "codeql",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "codeql",
+        "status": "error"
+      },
+      "human_contains": [
+        "codeql error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.codeql:CodeqlTool",
+    "blocker": null
+  },
+  {
+    "id": "cold-start",
+    "argv": [
+      "cold-start",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush cold-start",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "cold-start",
+        "status": "ok"
+      },
+      "human_contains": [
+        "cold-start ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "cold-start",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "cold-start",
+        "status": "ok"
+      },
+      "human_contains": [
+        "cold-start ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "cold-start",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "cold-start",
+        "status": "error"
+      },
+      "human_contains": [
+        "cold-start error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.cold_start:ColdStartTool",
+    "blocker": null
+  },
+  {
+    "id": "commit-msg",
+    "argv": [
+      "commit-msg",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush commit-msg",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "commit-msg",
+        "status": "fail"
+      },
+      "human_contains": [
+        "commit-msg fail"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "commit-msg"
+      ],
+      "json_paths": {
+        "tool": "commit-msg",
+        "status": "fail"
+      },
+      "human_contains": [
+        "commit-msg fail"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:commit_msg_cmd",
+    "blocker": null
+  },
+  {
+    "id": "complexity",
+    "argv": [
+      "complexity",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush complexity",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "complexity",
+        "status": "error"
+      },
+      "human_contains": [
+        "complexity error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "complexity",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "complexity",
+        "status": "error"
+      },
+      "human_contains": [
+        "complexity error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "complexity",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "complexity",
+        "status": "error"
+      },
+      "human_contains": [
+        "complexity error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.complexity:ComplexityTool",
+    "blocker": null
+  },
+  {
+    "id": "config.check",
+    "argv": [
+      "config",
+      "check"
+    ],
+    "canonical": "rush config check",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "No rush.toml found;"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:config_check",
+    "blocker": null
+  },
+  {
+    "id": "conflict.solve",
+    "argv": [
+      "conflict",
+      "solve",
+      "<fixture-file>",
+      "<fixture-file>"
+    ],
+    "canonical": "rush conflict solve",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "def example() ->"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "conflict",
+        "solve",
+        "<missing-target>",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli conflict"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:conflict_solve_cmd",
+    "blocker": null
+  },
+  {
+    "id": "consensus.reconcile",
+    "argv": [
+      "consensus",
+      "reconcile",
+      "--json"
+    ],
+    "canonical": "rush consensus reconcile",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Consensus Findings (0"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:consensus_reconcile_cmd",
+    "blocker": null
+  },
+  {
+    "id": "containerfile",
+    "argv": [
+      "containerfile",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush containerfile",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "containerfile",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "containerfile skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "containerfile",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "containerfile",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "containerfile skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "containerfile",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "containerfile",
+        "status": "error"
+      },
+      "human_contains": [
+        "containerfile error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.containerfile:ContainerfileTool",
+    "blocker": null
+  },
+  {
+    "id": "context.align-prompt",
+    "argv": [
+      "context",
+      "align-prompt",
+      "--system",
+      "phase70 fixture system prompt"
+    ],
+    "canonical": "rush context align-prompt",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Aligned tokens: (Padded:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:context_align_prompt_cmd",
+    "blocker": null
+  },
+  {
+    "id": "context.gain",
+    "argv": [
+      "context",
+      "gain",
+      "--help"
+    ],
+    "canonical": "rush gain",
+    "family": "status",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:context_gain_cmd",
+    "blocker": {
+      "lane": "real-terminal",
+      "reason": "alias of `rush gain`: the live HUD needs a TTY and Ctrl+C (G8)"
+    }
+  },
+  {
+    "id": "context.mistakes",
+    "argv": [
+      "context",
+      "mistakes",
+      "--json"
+    ],
+    "canonical": "rush context mistakes",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "No historical mistake"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:context_mistakes_cmd",
+    "blocker": null
+  },
+  {
+    "id": "context.pack",
+    "argv": [
+      "context",
+      "pack",
+      "--path",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--json"
+    ],
+    "canonical": "rush context pack",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "context",
+        "pack",
+        "--path",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "context",
+        "pack",
+        "--path",
+        "<missing-target>",
+        "--allow-cache-write"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:context_pack_cmd",
+    "blocker": null
+  },
+  {
+    "id": "context.persona",
+    "argv": [
+      "context",
+      "persona"
+    ],
+    "canonical": "rush context persona",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Current persona style:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:context_persona_cmd",
+    "blocker": null
+  },
+  {
+    "id": "context.retrieve",
+    "argv": [
+      "context",
+      "retrieve",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "--json"
+    ],
+    "canonical": "rush context retrieve",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:context_retrieve_cmd",
+    "blocker": null
+  },
+  {
+    "id": "continuity",
+    "argv": [
+      "continuity",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush continuity",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "ok"
+      },
+      "human_contains": [
+        "continuity ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "continuity",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "ok"
+      },
+      "human_contains": [
+        "continuity ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "continuity",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "ok"
+      },
+      "human_contains": [
+        "continuity ok"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.continuity:SessionContinuityTool",
+    "blocker": null
+  },
+  {
+    "id": "contract",
+    "argv": [
+      "contract",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush contract",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "contract",
+        "status": "error"
+      },
+      "human_contains": [
+        "contract error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "contract",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "contract",
+        "status": "error"
+      },
+      "human_contains": [
+        "contract error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "contract",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "contract",
+        "status": "error"
+      },
+      "human_contains": [
+        "contract error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.contract:ContractTool",
+    "blocker": null
+  },
+  {
+    "id": "coverage",
+    "argv": [
+      "coverage",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush coverage",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "coverage",
+        "status": "error"
+      },
+      "human_contains": [
+        "coverage error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "coverage",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "coverage",
+        "status": "error"
+      },
+      "human_contains": [
+        "coverage error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "coverage",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "coverage",
+        "status": "error"
+      },
+      "human_contains": [
+        "coverage error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.coverage:CoverageTool",
+    "blocker": null
+  },
+  {
+    "id": "dashboard",
+    "argv": [
+      "dashboard",
+      "--help"
+    ],
+    "canonical": "rush dashboard",
+    "family": "service",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the real-service lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the real-service lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the real-service lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:dashboard_cmd",
+    "blocker": {
+      "lane": "real-service",
+      "reason": "binds a real threaded HTTP server on 127.0.0.1 and serves until stopped"
+    }
+  },
+  {
+    "id": "db-drift",
+    "argv": [
+      "db-drift",
+      "--json"
+    ],
+    "canonical": "rush db-drift",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "DbDrift: All ORM"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:db_drift_cmd",
+    "blocker": null
+  },
+  {
+    "id": "dead",
+    "argv": [
+      "dead",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush dead",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "dead",
+        "status": "ok"
+      },
+      "human_contains": [
+        "dead ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "dead",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "dead",
+        "status": "ok"
+      },
+      "human_contains": [
+        "dead ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "dead",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "dead",
+        "status": "error"
+      },
+      "human_contains": [
+        "dead error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.dead:DeadTool",
+    "blocker": null
+  },
+  {
+    "id": "dead-asset",
+    "argv": [
+      "dead-asset",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush dead-asset",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "dead-asset",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "dead-asset skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "dead-asset",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "dead-asset",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "dead-asset skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "dead-asset",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "dead-asset",
+        "status": "error"
+      },
+      "human_contains": [
+        "dead-asset error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.dead_asset:DeadAssetTool",
+    "blocker": null
+  },
+  {
+    "id": "doctor",
+    "argv": [
+      "doctor",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush doctor",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "doctor",
+        "status": "ok"
+      },
+      "human_contains": [
+        "doctor ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "doctor",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "doctor",
+        "status": "ok"
+      },
+      "human_contains": [
+        "doctor ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "doctor",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "doctor",
+        "status": "ok"
+      },
+      "human_contains": [
+        "doctor ok"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.doctor:DoctorTool",
+    "blocker": null
+  },
+  {
+    "id": "e2e",
+    "argv": [
+      "e2e",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush e2e",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "e2e",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "e2e skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "e2e",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "e2e",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "e2e skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "e2e",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "e2e",
+        "status": "error"
+      },
+      "human_contains": [
+        "e2e error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.e2e:E2eTool",
+    "blocker": null
+  },
+  {
+    "id": "error-catalog",
+    "argv": [
+      "error-catalog",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush error-catalog",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "error-catalog",
+        "status": "ok"
+      },
+      "human_contains": [
+        "error-catalog ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "error-catalog",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "error-catalog",
+        "status": "ok"
+      },
+      "human_contains": [
+        "error-catalog ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "error-catalog",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "error-catalog",
+        "status": "error"
+      },
+      "human_contains": [
+        "error-catalog error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.error_catalog:ErrorCatalogTool",
+    "blocker": null
+  },
+  {
+    "id": "fix",
+    "argv": [
+      "fix",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush fix",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "fix",
+        "status": "error"
+      },
+      "human_contains": [
+        "fix error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "fix"
+      ],
+      "json_paths": {
+        "tool": "fix",
+        "status": "error"
+      },
+      "human_contains": [
+        "fix error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:fix",
+    "blocker": null
+  },
+  {
+    "id": "flaky",
+    "argv": [
+      "flaky",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush flaky",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "flaky",
+        "status": "error"
+      },
+      "human_contains": [
+        "flaky error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "flaky",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "flaky",
+        "status": "error"
+      },
+      "human_contains": [
+        "flaky error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "flaky",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "flaky",
+        "status": "error"
+      },
+      "human_contains": [
+        "flaky error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.flaky:FlakyTool",
+    "blocker": null
+  },
+  {
+    "id": "flight-recorder",
+    "argv": [
+      "flight-recorder",
+      "--json"
+    ],
+    "canonical": "rush flight-recorder",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Flight Recorder: No"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:flight_recorder_cmd",
+    "blocker": null
+  },
+  {
+    "id": "format",
+    "argv": [
+      "format",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush format",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "format",
+        "status": "error"
+      },
+      "human_contains": [
+        "format error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "format",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "format",
+        "status": "error"
+      },
+      "human_contains": [
+        "format error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "format",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "format",
+        "status": "error"
+      },
+      "human_contains": [
+        "format error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:format",
+    "blocker": null
+  },
+  {
+    "id": "fuzz",
+    "argv": [
+      "fuzz",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush fuzz",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "fuzz",
+        "status": "error"
+      },
+      "human_contains": [
+        "fuzz error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "fuzz",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "fuzz",
+        "status": "error"
+      },
+      "human_contains": [
+        "fuzz error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "fuzz",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "fuzz",
+        "status": "error"
+      },
+      "human_contains": [
+        "fuzz error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.fuzz:FuzzTool",
+    "blocker": null
+  },
+  {
+    "id": "gain",
+    "argv": [
+      "gain",
+      "--help"
+    ],
+    "canonical": "rush gain",
+    "family": "status",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:gain_cmd",
+    "blocker": {
+      "lane": "real-terminal",
+      "reason": "the live HUD needs a TTY and Ctrl+C (G8); the non-TTY one-snapshot path is proven by test_t27_gain_terminates_within_10s_under_non_tty_stdout"
+    }
+  },
+  {
+    "id": "gate",
+    "argv": [
+      "gate",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush gate",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "gate",
+        "status": "fail"
+      },
+      "human_contains": [
+        "gate fail"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "gate"
+      ],
+      "json_paths": {
+        "tool": "gate",
+        "status": "fail"
+      },
+      "human_contains": [
+        "gate fail"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:gate_cmd",
+    "blocker": null
+  },
+  {
+    "id": "governance.check",
+    "argv": [
+      "governance",
+      "check",
+      "--json"
+    ],
+    "canonical": "rush governance check",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "[DRIFT DETECTED] Unsynchronized"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:governance_check_cmd",
+    "blocker": null
+  },
+  {
+    "id": "governance.sync",
+    "argv": [
+      "governance",
+      "sync",
+      "--json"
+    ],
+    "canonical": "rush governance sync",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Synchronized Governance Files"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:governance_sync_cmd",
+    "blocker": null
+  },
+  {
+    "id": "guard.check-cmd",
+    "argv": [
+      "guard",
+      "check-cmd",
+      "echo phase70"
+    ],
+    "canonical": "rush guard check-cmd",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "[SAFE] Command authorized"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:guard_check_cmd",
+    "blocker": null
+  },
+  {
+    "id": "guard.check-path",
+    "argv": [
+      "guard",
+      "check-path",
+      "<fixture-file>"
+    ],
+    "canonical": "rush guard check-path",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "[ALLOWED] Target path"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "guard",
+        "check-path",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "[ALLOWED] Target path"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:guard_check_path",
+    "blocker": null
+  },
+  {
+    "id": "hallu-guard",
+    "argv": [
+      "hallu-guard",
+      "--json"
+    ],
+    "canonical": "rush hallu-guard",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "HalluGuard: All AST"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:hallu_guard_cmd",
+    "blocker": null
+  },
+  {
+    "id": "hook.run",
+    "argv": [
+      "hook",
+      "run"
+    ],
+    "canonical": "rush hook run",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "[INDEX ERROR] Cannot"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:hook_run_cmd",
+    "blocker": null
+  },
+  {
+    "id": "hotspots.analyze",
+    "argv": [
+      "hotspots",
+      "analyze",
+      "--json"
+    ],
+    "canonical": "rush hotspots analyze",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Analyzed Hotspots (0):"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:hotspots_analyze_cmd",
+    "blocker": null
+  },
+  {
+    "id": "hotspots.bus-factor",
+    "argv": [
+      "hotspots",
+      "bus-factor",
+      "--json"
+    ],
+    "canonical": "rush hotspots bus-factor",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Bus Factor Analysis"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:hotspots_bus_factor_cmd",
+    "blocker": null
+  },
+  {
+    "id": "hygiene.clean-imports",
+    "argv": [
+      "hygiene",
+      "clean-imports",
+      "<fixture-file>"
+    ],
+    "canonical": "rush hygiene clean-imports",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "No unused imports"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "hygiene",
+        "clean-imports",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli hygiene"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:hygiene_clean_imports_cmd",
+    "blocker": null
+  },
+  {
+    "id": "hygiene.dead-code",
+    "argv": [
+      "hygiene",
+      "dead-code",
+      "--json"
+    ],
+    "canonical": "rush hygiene dead-code",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Dead Code Findings"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:hygiene_dead_code_cmd",
+    "blocker": null
+  },
+  {
+    "id": "iac",
+    "argv": [
+      "iac",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush iac",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "iac",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "iac skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "iac",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "iac",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "iac skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "iac",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "iac",
+        "status": "error"
+      },
+      "human_contains": [
+        "iac error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.iac:IacTool",
+    "blocker": null
+  },
+  {
+    "id": "iam-audit",
+    "argv": [
+      "iam-audit",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush iam-audit",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "iam-audit",
+        "status": "ok"
+      },
+      "human_contains": [
+        "iam-audit ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "iam-audit"
+      ],
+      "json_paths": {
+        "tool": "iam-audit",
+        "status": "ok"
+      },
+      "human_contains": [
+        "iam-audit ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:iam_audit_cmd",
+    "blocker": null
+  },
+  {
+    "id": "init",
+    "argv": [
+      "init"
+    ],
+    "canonical": "rush init",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Created rush.toml at"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/rush.toml"
+      ]
+    },
+    "producer": "rush.cli:init_cmd",
+    "blocker": null
+  },
+  {
+    "id": "install",
+    "argv": [
+      "install",
+      "--help"
+    ],
+    "canonical": "rush install",
+    "family": "service",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the network lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the network lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the network lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:install_cmd",
+    "blocker": {
+      "lane": "network",
+      "reason": "bootstrap/engine installs download from PyPI/npm/GitHub (X10 network lane)"
+    }
+  },
+  {
+    "id": "license-matrix",
+    "argv": [
+      "license-matrix",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush license-matrix",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "license-matrix",
+        "status": "ok"
+      },
+      "human_contains": [
+        "license-matrix ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "license-matrix"
+      ],
+      "json_paths": {
+        "tool": "license-matrix",
+        "status": "ok"
+      },
+      "human_contains": [
+        "license-matrix ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:license_matrix_cmd",
+    "blocker": null
+  },
+  {
+    "id": "lint",
+    "argv": [
+      "lint",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush lint",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "lint",
+        "status": "error"
+      },
+      "human_contains": [
+        "lint error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "lint",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "lint",
+        "status": "error"
+      },
+      "human_contains": [
+        "lint error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "lint",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "lint",
+        "status": "error"
+      },
+      "human_contains": [
+        "lint error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.lint:LintTool",
+    "blocker": null
+  },
+  {
+    "id": "load",
+    "argv": [
+      "load",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush load",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "load",
+        "status": "error"
+      },
+      "human_contains": [
+        "load error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "load",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "load",
+        "status": "error"
+      },
+      "human_contains": [
+        "load error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "load",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "load",
+        "status": "error"
+      },
+      "human_contains": [
+        "load error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.load:LoadTool",
+    "blocker": null
+  },
+  {
+    "id": "lock.acquire",
+    "argv": [
+      "lock",
+      "acquire",
+      "<fixture-file>",
+      "--agent-id",
+      "phase70-agent"
+    ],
+    "canonical": "rush lock acquire",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Lock acquired for"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "lock",
+        "acquire",
+        "<missing-target>",
+        "--agent-id",
+        "phase70-agent"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Lock acquired for"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<fixture>/.rush/locks/_<fixture-flat>_example.py.lock"
+      ]
+    },
+    "producer": "rush.cli:lock_acquire_cmd",
+    "blocker": null
+  },
+  {
+    "id": "lock.inspect",
+    "argv": [
+      "lock",
+      "inspect",
+      "<fixture-file>"
+    ],
+    "canonical": "rush lock inspect",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "{"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "lock",
+        "inspect",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "{"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:lock_inspect_cmd",
+    "blocker": null
+  },
+  {
+    "id": "lock.release",
+    "argv": [
+      "lock",
+      "release",
+      "<fixture-file>",
+      "--agent-id",
+      "phase70-agent"
+    ],
+    "canonical": "rush lock release",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Failed to release"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "lock",
+        "release",
+        "<missing-target>",
+        "--agent-id",
+        "phase70-agent"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Failed to release"
+      ],
+      "exit": 1
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:lock_release_cmd",
+    "blocker": null
+  },
+  {
+    "id": "lock.renew",
+    "argv": [
+      "lock",
+      "renew",
+      "<fixture-file>",
+      "--agent-id",
+      "phase70-agent"
+    ],
+    "canonical": "rush lock renew",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Failed to renew"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "lock",
+        "renew",
+        "<missing-target>",
+        "--agent-id",
+        "phase70-agent"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Failed to renew"
+      ],
+      "exit": 1
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:lock_renew_cmd",
+    "blocker": null
+  },
+  {
+    "id": "markdown",
+    "argv": [
+      "markdown",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush markdown",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "markdown",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "markdown skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "markdown",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "markdown",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "markdown skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "markdown",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "markdown",
+        "status": "error"
+      },
+      "human_contains": [
+        "markdown error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.markdown:MarkdownTool",
+    "blocker": null
+  },
+  {
+    "id": "mcp.serve",
+    "argv": [
+      "mcp",
+      "serve",
+      "--help"
+    ],
+    "canonical": "rush mcp serve",
+    "family": "service",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the real-host lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the real-host lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the real-host lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:serve",
+    "blocker": {
+      "lane": "real-host",
+      "reason": "stdio MCP server runs asyncio.run(run_stdio(...)) until the host closes stdin; needs a real MCP host (G6/G8: Claude Code, Codex CLI)"
+    }
+  },
+  {
+    "id": "media-opt",
+    "argv": [
+      "media-opt",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush media-opt",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "media-opt",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "media-opt skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "media-opt",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "media-opt",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "media-opt skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "media-opt",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "media-opt",
+        "status": "error"
+      },
+      "human_contains": [
+        "media-opt error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.media_opt:MediaOptTool",
+    "blocker": null
+  },
+  {
+    "id": "mem-profile",
+    "argv": [
+      "mem-profile",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush mem-profile",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "mem-profile",
+        "status": "ok"
+      },
+      "human_contains": [
+        "mem-profile ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "mem-profile",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "mem-profile",
+        "status": "ok"
+      },
+      "human_contains": [
+        "mem-profile ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "mem-profile",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "mem-profile",
+        "status": "error"
+      },
+      "human_contains": [
+        "mem-profile error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.mem_profile:MemProfileTool",
+    "blocker": null
+  },
+  {
+    "id": "memory",
+    "argv": [
+      "memory",
+      "--json"
+    ],
+    "canonical": "rush memory",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok",
+        "raw.operation": "overview"
+      },
+      "human_contains": [
+        "memory ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok",
+        "raw.operation": "overview"
+      },
+      "human_contains": [
+        "memory ok"
+      ],
+      "exit": 0,
+      "argv": [
+        "memory"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_group",
+    "blocker": null
+  },
+  {
+    "id": "memory.archive",
+    "argv": [
+      "memory",
+      "archive",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory archive",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "archive",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "archive",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.ask",
+    "argv": [
+      "memory",
+      "ask",
+      "active_context",
+      "phase70 fixture query",
+      "--json"
+    ],
+    "canonical": "rush memory ask",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0,
+      "argv": [
+        "memory",
+        "ask",
+        "active_context",
+        "phase70 fixture query"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_ask_cmd",
+    "blocker": null
+  },
+  {
+    "id": "memory.consolidate",
+    "argv": [
+      "memory",
+      "consolidate",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory consolidate",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "consolidate",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "consolidate",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.delete",
+    "argv": [
+      "memory",
+      "delete",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory delete",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "delete",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "delete",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.edit",
+    "argv": [
+      "memory",
+      "edit",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory edit",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "edit",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "edit",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.expand",
+    "argv": [
+      "memory",
+      "expand",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory expand",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "expand",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "expand",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.handoff",
+    "argv": [
+      "memory",
+      "handoff",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory handoff",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "handoff",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "handoff",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.intent",
+    "argv": [
+      "memory",
+      "intent",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory intent",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "intent",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "intent",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.last-success-diagnose",
+    "argv": [
+      "memory",
+      "last-success-diagnose",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory last-success-diagnose",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "last-success-diagnose",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "last-success-diagnose",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.link",
+    "argv": [
+      "memory",
+      "link",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory link",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "link",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "link",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.list",
+    "argv": [
+      "memory",
+      "list",
+      "active_context",
+      "phase70 fixture query",
+      "--json"
+    ],
+    "canonical": "rush memory list",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0,
+      "argv": [
+        "memory",
+        "list",
+        "active_context",
+        "phase70 fixture query"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_list_cmd",
+    "blocker": null
+  },
+  {
+    "id": "memory.maintain",
+    "argv": [
+      "memory",
+      "maintain",
+      "--task",
+      "promotion_sweep",
+      "--allow-cache-write",
+      "--json"
+    ],
+    "canonical": "rush memory maintain",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok"
+      },
+      "human_contains": [
+        "memory ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "maintain",
+        "--task",
+        "promotion_sweep"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.rush/cache",
+        "<cwd>/.rush/locks",
+        "<cwd>/.rush/memory.db"
+      ]
+    },
+    "producer": "rush.cli:memory_maintain_cmd",
+    "blocker": null
+  },
+  {
+    "id": "memory.plan-checks",
+    "argv": [
+      "memory",
+      "plan-checks",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory plan-checks",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "plan-checks",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "plan-checks",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.prepare",
+    "argv": [
+      "memory",
+      "prepare",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory prepare",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "prepare",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "prepare",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.promote",
+    "argv": [
+      "memory",
+      "promote",
+      "active_context",
+      "phase70-source",
+      "--content",
+      "{}",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory promote",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok"
+      },
+      "human_contains": [
+        "memory ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "promote",
+        "active_context",
+        "phase70-source",
+        "--content",
+        "{}"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.rush/cache",
+        "<cwd>/.rush/memory.db"
+      ]
+    },
+    "producer": "rush.cli:memory_promote_cmd",
+    "blocker": null
+  },
+  {
+    "id": "memory.recall",
+    "argv": [
+      "memory",
+      "recall",
+      "active_context",
+      "phase70 fixture query",
+      "--json"
+    ],
+    "canonical": "rush memory recall",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0,
+      "argv": [
+        "memory",
+        "recall",
+        "active_context",
+        "phase70 fixture query"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_recall_cmd",
+    "blocker": null
+  },
+  {
+    "id": "memory.receive",
+    "argv": [
+      "memory",
+      "receive",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory receive",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "receive",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "receive",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.recipe",
+    "argv": [
+      "memory",
+      "recipe",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory recipe",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "recipe",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "recipe",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.related",
+    "argv": [
+      "memory",
+      "related",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory related",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "related",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "related",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.resume",
+    "argv": [
+      "memory",
+      "resume",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory resume",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "resume",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "resume",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.verify-attempt",
+    "argv": [
+      "memory",
+      "verify-attempt",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory verify-attempt",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "verify-attempt",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "verify-attempt",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.write",
+    "argv": [
+      "memory",
+      "write",
+      "active_context",
+      "phase70-source",
+      "--content",
+      "{}",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory write",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok"
+      },
+      "human_contains": [
+        "memory ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "write",
+        "active_context",
+        "phase70-source",
+        "--content",
+        "{}"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.rush/cache",
+        "<cwd>/.rush/memory.db"
+      ]
+    },
+    "producer": "rush.cli:memory_write_cmd",
+    "blocker": null
+  },
+  {
+    "id": "mutation",
+    "argv": [
+      "mutation",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush mutation",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "mutation",
+        "status": "error"
+      },
+      "human_contains": [
+        "mutation error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "mutation",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "mutation",
+        "status": "error"
+      },
+      "human_contains": [
+        "mutation error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "mutation",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "mutation",
+        "status": "error"
+      },
+      "human_contains": [
+        "mutation error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.mutation:MutationTool",
+    "blocker": null
+  },
+  {
+    "id": "offline-review",
+    "argv": [
+      "offline-review",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush offline-review",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "offline-review",
+        "status": "error"
+      },
+      "human_contains": [
+        "offline-review error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "offline-review",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "offline-review",
+        "status": "error"
+      },
+      "human_contains": [
+        "offline-review error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "offline-review",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "offline-review",
+        "status": "error"
+      },
+      "human_contains": [
+        "offline-review error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.offline_runner:OfflineReviewTool",
+    "blocker": null
+  },
+  {
+    "id": "outline",
+    "argv": [
+      "outline",
+      "<fixture-file>"
+    ],
+    "canonical": "rush outline",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "def example() ->"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "outline",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli outline"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:outline_cmd",
+    "blocker": null
+  },
+  {
+    "id": "patch.apply",
+    "argv": [
+      "patch",
+      "apply",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush patch apply",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "patch-apply",
+        "status": "error"
+      },
+      "human_contains": [
+        "patch-apply error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "patch",
+        "apply",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "patch-apply",
+        "status": "error"
+      },
+      "human_contains": [
+        "patch-apply error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "patch",
+        "apply",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli patch"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:patch_apply_cmd",
+    "blocker": null
+  },
+  {
+    "id": "patch.memory",
+    "argv": [
+      "patch",
+      "memory",
+      "--json"
+    ],
+    "canonical": "rush patch memory",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Patch memory unavailable:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:patch_memory_list_cmd",
+    "blocker": null
+  },
+  {
+    "id": "patch.test",
+    "argv": [
+      "patch",
+      "test",
+      "<fixture-file>"
+    ],
+    "canonical": "rush patch test",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "[ERROR] Failed to"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "patch",
+        "test",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli patch"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:patch_test_cmd",
+    "blocker": null
+  },
+  {
+    "id": "pbt",
+    "argv": [
+      "pbt",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush pbt",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "pbt",
+        "status": "error"
+      },
+      "human_contains": [
+        "pbt error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "pbt",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "pbt",
+        "status": "error"
+      },
+      "human_contains": [
+        "pbt error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "pbt",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "pbt",
+        "status": "error"
+      },
+      "human_contains": [
+        "pbt error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.pbt:PbtTool",
+    "blocker": null
+  },
+  {
+    "id": "plan",
+    "argv": [
+      "plan",
+      "<fixture-file>",
+      "--json"
+    ],
+    "canonical": "rush plan",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "review: applicable (contained"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "plan",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli plan"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:plan",
+    "blocker": null
+  },
+  {
+    "id": "plugin.list",
+    "argv": [
+      "plugin",
+      "list",
+      "--json"
+    ],
+    "canonical": "rush plugin list",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "No custom plugins"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:plugin_list",
+    "blocker": null
+  },
+  {
+    "id": "plugin.run",
+    "argv": [
+      "plugin",
+      "run",
+      "phase70-nonexistent-plugin",
+      "--json"
+    ],
+    "canonical": "rush plugin run",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Plugin 'phase70-nonexistent-plugin' not"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:plugin_run",
+    "blocker": null
+  },
+  {
+    "id": "pr-synthesize",
+    "argv": [
+      "pr-synthesize",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush pr-synthesize",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "pr-synthesize",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "pr-synthesize skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "pr-synthesize",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "pr-synthesize",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "pr-synthesize skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "pr-synthesize",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "pr-synthesize",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "pr-synthesize skipped"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.pr_synthesize:PrSynthesizeTool",
+    "blocker": null
+  },
+  {
+    "id": "project.add",
+    "argv": [
+      "project",
+      "add",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush project add",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "ok"
+      },
+      "human_contains": [
+        "project ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "project",
+        "add"
+      ],
+      "json_paths": {
+        "tool": "project",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "project skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.rush/project.json",
+        "<data-root>/projects.json"
+      ]
+    },
+    "producer": "rush.cli:project_add_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.artifacts",
+    "argv": [
+      "project",
+      "artifacts",
+      "--json"
+    ],
+    "canonical": "rush project artifacts",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "error",
+        "raw.operation": "artifacts"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "project",
+        "status": "error",
+        "raw.operation": "artifacts"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2,
+      "argv": [
+        "project",
+        "artifacts"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_artifacts_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.configure",
+    "argv": [
+      "project",
+      "configure",
+      "phase70-project",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush project configure",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "error",
+        "raw.operation": "configure"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "project",
+        "configure",
+        "phase70-project"
+      ],
+      "json_paths": {
+        "tool": "project",
+        "status": "error",
+        "raw.operation": "configure"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_configure_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.create",
+    "argv": [
+      "project",
+      "create",
+      "phase70-fixture",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush project create",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "ok"
+      },
+      "human_contains": [
+        "project ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "project",
+        "create",
+        "phase70-fixture"
+      ],
+      "json_paths": {
+        "tool": "project",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "project skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/phase70-fixture/.rush/project.json",
+        "<data-root>/projects.json"
+      ]
+    },
+    "producer": "rush.cli:project_create_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.list",
+    "argv": [
+      "project",
+      "list",
+      "--json"
+    ],
+    "canonical": "rush project list",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "ok"
+      },
+      "human_contains": [
+        "project ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "project",
+        "status": "ok"
+      },
+      "human_contains": [
+        "project ok"
+      ],
+      "exit": 0,
+      "argv": [
+        "project",
+        "list"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_list_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.relink",
+    "argv": [
+      "project",
+      "relink",
+      "phase70-project",
+      "<fixture-file>",
+      "--expected-revision",
+      "0",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush project relink",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli project"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "project",
+        "relink",
+        "phase70-project",
+        "<fixture-file>",
+        "--expected-revision",
+        "0"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli project"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "project",
+        "relink",
+        "phase70-project",
+        "<missing-target>",
+        "--expected-revision",
+        "0",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli project"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_relink_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.select",
+    "argv": [
+      "project",
+      "select",
+      "phase70-project",
+      "--session",
+      "phase70-session",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush project select",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "error"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "project",
+        "select",
+        "phase70-project",
+        "--session",
+        "phase70-session"
+      ],
+      "json_paths": {
+        "tool": "project",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "project skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_select_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.show",
+    "argv": [
+      "project",
+      "show",
+      "--json"
+    ],
+    "canonical": "rush project show",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "error"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_show_cmd",
+    "blocker": null
+  },
+  {
+    "id": "project.snapshot",
+    "argv": [
+      "project",
+      "snapshot",
+      "--json"
+    ],
+    "canonical": "rush project snapshot",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "project",
+        "status": "error",
+        "raw.operation": "snapshot"
+      },
+      "human_contains": [
+        "project error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:project_snapshot_cmd",
+    "blocker": null
+  },
+  {
+    "id": "prompt-eval",
+    "argv": [
+      "prompt-eval",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush prompt-eval",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "prompt-eval",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "prompt-eval skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "prompt-eval",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "prompt-eval",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "prompt-eval skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "prompt-eval",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "prompt-eval",
+        "status": "error"
+      },
+      "human_contains": [
+        "prompt-eval error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.prompt_eval:PromptEvalTool",
+    "blocker": null
+  },
+  {
+    "id": "provenance-ai",
+    "argv": [
+      "provenance-ai",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush provenance-ai",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "provenance-ai",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "provenance-ai skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "provenance-ai",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "provenance-ai",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "provenance-ai skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "provenance-ai",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "provenance-ai",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "provenance-ai skipped"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.provenance_ai:ProvenanceAiTool",
+    "blocker": null
+  },
+  {
+    "id": "release.check",
+    "argv": [
+      "release",
+      "check",
+      "--json"
+    ],
+    "canonical": "rush release check",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Discovered Manifest Versions:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:release_check_cmd",
+    "blocker": null
+  },
+  {
+    "id": "review",
+    "argv": [
+      "review",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush review",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "review",
+        "status": "ok"
+      },
+      "human_contains": [
+        "review ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "review",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "review",
+        "status": "ok"
+      },
+      "human_contains": [
+        "review ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "review",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "review",
+        "status": "error"
+      },
+      "human_contains": [
+        "review error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:review",
+    "blocker": null
+  },
+  {
+    "id": "sbom",
+    "argv": [
+      "sbom",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush sbom",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "sbom",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "sbom skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "sbom",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "sbom",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "sbom skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "sbom",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "sbom",
+        "status": "error"
+      },
+      "human_contains": [
+        "sbom error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:sbom_cmd",
+    "blocker": null
+  },
+  {
+    "id": "scaffold.init",
+    "argv": [
+      "scaffold",
+      "init",
+      "--json"
+    ],
+    "canonical": "rush scaffold init",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Scaffolded Files (2):"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/AGENTS.md",
+        "<cwd>/rush.toml"
+      ]
+    },
+    "producer": "rush.cli:scaffold_init_cmd",
+    "blocker": null
+  },
+  {
+    "id": "scan",
+    "argv": [
+      "scan",
+      "--project",
+      "<fixture-dir>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush scan",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "scan",
+        "status": "error",
+        "raw.operation": "plan"
+      },
+      "human_contains": [
+        "scan error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "scan",
+        "--project",
+        "<fixture-dir>"
+      ],
+      "json_paths": {
+        "tool": "scan",
+        "status": "error",
+        "raw.operation": "plan"
+      },
+      "human_contains": [
+        "scan error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:scan_group",
+    "blocker": null
+  },
+  {
+    "id": "scan.cancel",
+    "argv": [
+      "scan",
+      "cancel",
+      "phase70-missing-run",
+      "--project",
+      "<fixture-dir>",
+      "--json"
+    ],
+    "canonical": "rush scan cancel",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "scan-cancel",
+        "status": "error"
+      },
+      "human_contains": [
+        "scan-cancel error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:scan_cancel_cmd",
+    "blocker": null
+  },
+  {
+    "id": "scan.handoff",
+    "argv": [
+      "scan",
+      "handoff",
+      "phase70-missing-run",
+      "--project",
+      "<fixture-dir>",
+      "--agent",
+      "phase70-agent",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush scan handoff",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "scan-handoff",
+        "status": "error"
+      },
+      "human_contains": [
+        "scan-handoff error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "scan",
+        "handoff",
+        "phase70-missing-run",
+        "--project",
+        "<fixture-dir>",
+        "--agent",
+        "phase70-agent"
+      ],
+      "json_paths": {
+        "tool": "scan-handoff",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "scan-handoff skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:scan_handoff_cmd",
+    "blocker": null
+  },
+  {
+    "id": "scan.rescan",
+    "argv": [
+      "scan",
+      "rescan",
+      "phase70-missing-run",
+      "--project",
+      "<fixture-dir>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush scan rescan",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "scan-rescan",
+        "status": "error"
+      },
+      "human_contains": [
+        "scan-rescan error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "scan",
+        "rescan",
+        "phase70-missing-run",
+        "--project",
+        "<fixture-dir>"
+      ],
+      "json_paths": {
+        "tool": "scan-rescan",
+        "status": "error"
+      },
+      "human_contains": [
+        "scan-rescan error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:scan_rescan_cmd",
+    "blocker": null
+  },
+  {
+    "id": "scan.resume",
+    "argv": [
+      "scan",
+      "resume",
+      "phase70-missing-run",
+      "--project",
+      "<fixture-dir>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush scan resume",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "scan-resume",
+        "status": "error"
+      },
+      "human_contains": [
+        "scan-resume error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "scan",
+        "resume",
+        "phase70-missing-run",
+        "--project",
+        "<fixture-dir>"
+      ],
+      "json_paths": {
+        "tool": "scan-resume",
+        "status": "error"
+      },
+      "human_contains": [
+        "scan-resume error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:scan_resume_cmd",
+    "blocker": null
+  },
+  {
+    "id": "score.compute",
+    "argv": [
+      "score",
+      "compute"
+    ],
+    "canonical": "rush score compute",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Composite Quality Score:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:score_compute_cmd",
+    "blocker": null
+  },
+  {
+    "id": "secrets",
+    "argv": [
+      "secrets",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush secrets",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "secrets",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "secrets skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "secrets",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "secrets",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "secrets skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "secrets",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "secrets",
+        "status": "error"
+      },
+      "human_contains": [
+        "secrets error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.secrets:SecretsTool",
+    "blocker": null
+  },
+  {
+    "id": "security",
+    "argv": [
+      "security",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush security",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "security",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "security skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "security",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "security",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "security skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "security",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "security",
+        "status": "error"
+      },
+      "human_contains": [
+        "security error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.security:SecurityTool",
+    "blocker": null
+  },
+  {
+    "id": "semantic-drift",
+    "argv": [
+      "semantic-drift",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush semantic-drift",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "semantic-drift",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "semantic-drift skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "semantic-drift",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "semantic-drift",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "semantic-drift skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "semantic-drift",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "semantic-drift",
+        "status": "error"
+      },
+      "human_contains": [
+        "semantic-drift error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.semantic_drift:SemanticDriftTool",
+    "blocker": null
+  },
+  {
+    "id": "session.list",
+    "argv": [
+      "session",
+      "list",
+      "--json"
+    ],
+    "canonical": "rush session list",
+    "family": "collection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "ok"
+      },
+      "human_contains": [
+        "continuity ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "ok"
+      },
+      "human_contains": [
+        "continuity ok"
+      ],
+      "exit": 0,
+      "argv": [
+        "session",
+        "list"
+      ]
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:session_list_cmd",
+    "blocker": null
+  },
+  {
+    "id": "session.restore",
+    "argv": [
+      "session",
+      "restore",
+      "phase70-fixture",
+      "--json"
+    ],
+    "canonical": "rush session restore",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:session_restore_cmd",
+    "blocker": null
+  },
+  {
+    "id": "session.resume",
+    "argv": [
+      "session",
+      "resume",
+      "phase70-fixture",
+      "--provider",
+      "claude_code",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush session resume",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "session",
+        "resume",
+        "phase70-fixture",
+        "--provider",
+        "claude_code"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:session_resume_cmd",
+    "blocker": null
+  },
+  {
+    "id": "session.save",
+    "argv": [
+      "session",
+      "save",
+      "phase70-fixture",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush session save",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "continuity",
+        "status": "ok"
+      },
+      "human_contains": [
+        "continuity ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "session",
+        "save",
+        "phase70-fixture"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "continuity skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.rush/cache",
+        "<cwd>/.rush/memory.db",
+        "<cwd>/.rush/sessions/phase70-fixture.json"
+      ]
+    },
+    "producer": "rush.cli:session_save_cmd",
+    "blocker": null
+  },
+  {
+    "id": "setup",
+    "argv": [
+      "setup",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush setup",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Rush setup review"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "setup"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Rush setup review"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:setup_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.clean",
+    "argv": [
+      "ship",
+      "clean",
+      "--allow-artifact-write"
+    ],
+    "canonical": "rush ship clean",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship Clean: Would"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "ship",
+        "clean"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Ship Clean: Would"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_clean_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.docs",
+    "argv": [
+      "ship",
+      "docs",
+      "--json"
+    ],
+    "canonical": "rush ship docs",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship Docs: Audited"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_docs_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.env",
+    "argv": [
+      "ship",
+      "env",
+      "--json"
+    ],
+    "canonical": "rush ship env",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship Env: All"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_env_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.gate",
+    "argv": [
+      "ship",
+      "gate"
+    ],
+    "canonical": "rush ship gate",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship Gate Verdict:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_gate_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.migration",
+    "argv": [
+      "ship",
+      "migration",
+      "--json"
+    ],
+    "canonical": "rush ship migration",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship Migration: No"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_migration_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.pack",
+    "argv": [
+      "ship",
+      "pack",
+      "--json"
+    ],
+    "canonical": "rush ship pack",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship Pack: Source"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_pack_cmd",
+    "blocker": null
+  },
+  {
+    "id": "ship.semver",
+    "argv": [
+      "ship",
+      "semver",
+      "<fixture-file>",
+      "<fixture-file>",
+      "--json"
+    ],
+    "canonical": "rush ship semver",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Ship SemVer: Public"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "ship",
+        "semver",
+        "<missing-target>",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli ship"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ship_semver_cmd",
+    "blocker": null
+  },
+  {
+    "id": "simplify",
+    "argv": [
+      "simplify",
+      "--file",
+      "<fixture-file>",
+      "--json"
+    ],
+    "canonical": "rush simplify",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Simplify: File has"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "simplify",
+        "--file",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: File not"
+      ],
+      "exit": 1
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:simplify_cmd",
+    "blocker": null
+  },
+  {
+    "id": "simulate-ci",
+    "argv": [
+      "simulate-ci"
+    ],
+    "canonical": "rush simulate-ci",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "SimulateCI: Workflow 'ci.yml'"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:simulate_ci_cmd",
+    "blocker": null
+  },
+  {
+    "id": "slop",
+    "argv": [
+      "slop",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush slop",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "slop",
+        "status": "error"
+      },
+      "human_contains": [
+        "slop error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "slop",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "slop",
+        "status": "error"
+      },
+      "human_contains": [
+        "slop error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "slop",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "slop",
+        "status": "error"
+      },
+      "human_contains": [
+        "slop error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.slop:SlopTool",
+    "blocker": null
+  },
+  {
+    "id": "snapshot",
+    "argv": [
+      "snapshot",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush snapshot",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "snapshot",
+        "status": "error"
+      },
+      "human_contains": [
+        "snapshot error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "snapshot",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "snapshot",
+        "status": "error"
+      },
+      "human_contains": [
+        "snapshot error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "snapshot",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "snapshot",
+        "status": "error"
+      },
+      "human_contains": [
+        "snapshot error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.snapshot:SnapshotTool",
+    "blocker": null
+  },
+  {
+    "id": "sql",
+    "argv": [
+      "sql",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush sql",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "sql",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "sql skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "sql",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "sql",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "sql skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "sql",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "sql",
+        "status": "error"
+      },
+      "human_contains": [
+        "sql error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.sql:SqlTool",
+    "blocker": null
+  },
+  {
+    "id": "status",
+    "argv": [
+      "status",
+      "--json"
+    ],
+    "canonical": "rush status",
+    "family": "status",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "status",
+        "status": "warn",
+        "raw.operation": "status"
+      },
+      "human_contains": [
+        "status warn"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "status route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:status_cmd",
+    "blocker": null
+  },
+  {
+    "id": "strictify",
+    "argv": [
+      "strictify",
+      "--file",
+      "<fixture-file>",
+      "--json"
+    ],
+    "canonical": "rush strictify",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Strictify: Found 0"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "strictify",
+        "--file",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: File not"
+      ],
+      "exit": 1
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:strictify_cmd",
+    "blocker": null
+  },
+  {
+    "id": "swarm-merge",
+    "argv": [
+      "swarm-merge",
+      "--base",
+      "<fixture-file>",
+      "--ours",
+      "<fixture-file>",
+      "--theirs",
+      "<fixture-file>"
+    ],
+    "canonical": "rush swarm-merge",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "SwarmMerge: Success -"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "swarm-merge",
+        "--base",
+        "<missing-target>",
+        "--ours",
+        "<missing-target>",
+        "--theirs",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli swarm-merge"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:swarm_merge_cmd",
+    "blocker": null
+  },
+  {
+    "id": "sync.env",
+    "argv": [
+      "sync",
+      "env",
+      "--json"
+    ],
+    "canonical": "rush sync env",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "All environment variables"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:sync_env_cmd",
+    "blocker": null
+  },
+  {
+    "id": "sync.openapi",
+    "argv": [
+      "sync",
+      "openapi",
+      "<fixture-json>"
+    ],
+    "canonical": "rush sync openapi",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Auto-generated by Rush"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:sync_openapi_cmd",
+    "blocker": null
+  },
+  {
+    "id": "tdd",
+    "argv": [
+      "tdd",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush tdd",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "tdd",
+        "status": "fail"
+      },
+      "human_contains": [
+        "tdd fail"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "tdd",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "tdd",
+        "status": "fail"
+      },
+      "human_contains": [
+        "tdd fail"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "tdd",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "tdd",
+        "status": "error"
+      },
+      "human_contains": [
+        "tdd error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.tdd_guard:TddGuardTool",
+    "blocker": null
+  },
+  {
+    "id": "templates",
+    "argv": [
+      "templates",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush templates",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "templates",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "templates skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "templates",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "templates",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "templates skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "templates",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "templates",
+        "status": "error"
+      },
+      "human_contains": [
+        "templates error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.templates:TemplatesTool",
+    "blocker": null
+  },
+  {
+    "id": "test",
+    "argv": [
+      "test",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush test",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "test",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "test skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "test",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "test",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "test skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "test",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "test",
+        "status": "error"
+      },
+      "human_contains": [
+        "test error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.test:TestTool",
+    "blocker": null
+  },
+  {
+    "id": "test-heal",
+    "argv": [
+      "test-heal",
+      "--target",
+      "phase70-fixture",
+      "--allow-artifact-write"
+    ],
+    "canonical": "rush test-heal",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "test-heal requires --allow-slow"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "test-heal",
+        "--target",
+        "phase70-fixture"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "test-heal requires --allow-slow,"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:test_heal_cmd",
+    "blocker": null
+  },
+  {
+    "id": "token.cache-advisor",
+    "argv": [
+      "token",
+      "cache-advisor",
+      "<fixture-file>"
+    ],
+    "canonical": "rush token cache-advisor",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Cache Advisor Analysis:"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "token",
+        "cache-advisor",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli token"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:token_cache_advisor_cmd",
+    "blocker": null
+  },
+  {
+    "id": "token.count",
+    "argv": [
+      "token",
+      "count",
+      "<fixture-file>"
+    ],
+    "canonical": "rush token count",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "12 tokens"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "token",
+        "count",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli token"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:token_count_cmd",
+    "blocker": null
+  },
+  {
+    "id": "token.outline",
+    "argv": [
+      "token",
+      "outline",
+      "<fixture-file>"
+    ],
+    "canonical": "rush token outline",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "def example() ->"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "token",
+        "outline",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli token"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:token_outline_cmd",
+    "blocker": null
+  },
+  {
+    "id": "trace",
+    "argv": [
+      "trace",
+      "--json"
+    ],
+    "canonical": "rush trace",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Traceability Matrix: 0"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:trace_cmd",
+    "blocker": null
+  },
+  {
+    "id": "trust",
+    "argv": [
+      "trust"
+    ],
+    "canonical": "rush trust",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Approved repository as"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:trust_cmd",
+    "blocker": null
+  },
+  {
+    "id": "tui-diff",
+    "argv": [
+      "tui-diff",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush tui-diff",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "tui-diff",
+        "status": "ok"
+      },
+      "human_contains": [
+        "tui-diff ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "tui-diff",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "tui-diff",
+        "status": "ok"
+      },
+      "human_contains": [
+        "tui-diff ok"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "tui-diff",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "tui-diff",
+        "status": "ok"
+      },
+      "human_contains": [
+        "tui-diff ok"
+      ],
+      "exit": 0
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.tui_diff:TuiDiffTool",
+    "blocker": null
+  },
+  {
+    "id": "typecheck",
+    "argv": [
+      "typecheck",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush typecheck",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "typecheck",
+        "status": "error"
+      },
+      "human_contains": [
+        "typecheck error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "typecheck",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "typecheck",
+        "status": "error"
+      },
+      "human_contains": [
+        "typecheck error"
+      ],
+      "exit": 2
+    },
+    "failure": {
+      "argv": [
+        "typecheck",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "typecheck",
+        "status": "error"
+      },
+      "human_contains": [
+        "typecheck error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.typecheck:TypecheckTool",
+    "blocker": null
+  },
+  {
+    "id": "ui",
+    "argv": [
+      "ui",
+      "--help"
+    ],
+    "canonical": "rush ui",
+    "family": "status",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:ui_cmd",
+    "blocker": {
+      "lane": "real-terminal",
+      "reason": "takes over the real terminal for its interactive loop (G8 PTY lane)"
+    }
+  },
+  {
+    "id": "visual",
+    "argv": [
+      "visual",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush visual",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "visual",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "visual skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "visual",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "visual",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "visual skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "visual",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "visual",
+        "status": "error"
+      },
+      "human_contains": [
+        "visual error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.visual:VisualTool",
+    "blocker": null
+  },
+  {
+    "id": "watch",
+    "argv": [
+      "watch",
+      "--help"
+    ],
+    "canonical": "rush watch",
+    "family": "service",
+    "fixture": "help-only",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Usage"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "denied": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "failure": {
+      "not_applicable": "blocked on the real-terminal lane"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:watch_cmd",
+    "blocker": {
+      "lane": "real-terminal",
+      "reason": "drives a real FileWatcher loop that only ends on Ctrl+C (G8 PTY lane)"
+    }
+  },
+  {
+    "id": "workspace.affected",
+    "argv": [
+      "workspace",
+      "affected",
+      "--json"
+    ],
+    "canonical": "rush workspace affected",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "{\"ts\": \"level\": \"WARNING\","
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:workspace_affected_cmd",
+    "blocker": null
+  },
+  {
+    "id": "workspace.boundary",
+    "argv": [
+      "workspace",
+      "boundary",
+      "--json"
+    ],
+    "canonical": "rush workspace boundary",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "workspace",
+        "status": "ok"
+      },
+      "human_contains": [
+        "workspace ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:workspace_boundary_cmd",
+    "blocker": null
+  },
+  {
+    "id": "workspace.list",
+    "argv": [
+      "workspace",
+      "list",
+      "--json"
+    ],
+    "canonical": "rush workspace list",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Discovered 0 workspace"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:workspace_list_cmd",
+    "blocker": null
+  },
+  {
+    "id": "workspace.locks",
+    "argv": [
+      "workspace",
+      "locks",
+      "--json"
+    ],
+    "canonical": "rush workspace locks",
+    "family": "inspection",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "workspace",
+        "status": "ok"
+      },
+      "human_contains": [
+        "workspace ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "inspection route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "not_applicable": "route takes no filesystem target to make missing"
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:workspace_locks_cmd",
+    "blocker": null
+  },
+  {
+    "id": "yaml",
+    "argv": [
+      "yaml",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush yaml",
+    "family": "analysis",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "yaml",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "yaml skipped"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "analysis route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "yaml",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "yaml",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "yaml skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "yaml",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {
+        "tool": "yaml",
+        "status": "error"
+      },
+      "human_contains": [
+        "yaml error"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.yaml:YamlTool",
+    "blocker": null
+  }
+]

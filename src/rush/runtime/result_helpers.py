@@ -180,7 +180,9 @@ def normalize_findings(
 
 
 def exit_code_for(result: object) -> int:
-    """Map canonical statuses to CLI process exit codes."""
+    """Map canonical statuses to CLI process exit codes.
+
+    T27: a missing or unknown status is INVALID_RESULT (exit 2), never 0."""
     status: object
     if isinstance(result, str):
         status = result
@@ -195,9 +197,7 @@ def exit_code_for(result: object) -> int:
         return 0
     if status in ("warn", "fail"):
         return 1
-    if status == "error":
-        return 2
-    return 0
+    return 2
 
 
 def now_ms() -> int:

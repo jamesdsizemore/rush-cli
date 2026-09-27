@@ -205,7 +205,7 @@ class ScanHandoffTool(ToolFn):
                 artifact_ids=artifact_ids,
                 data_root=data_root,
             )
-        except ScanError as exc:
+        except ProjectError as exc:  # T27: ScanError and an unknown project
             return self._result(started, "error", f"scan-handoff {action}: {exc}")
         except ValueError as exc:
             return self._result(started, "error", f"scan-handoff {action}: {exc}")

@@ -84,7 +84,9 @@ def test_benchmark_status_reads_durable_result_artifacts(tmp_path: Path) -> None
     result = CliRunner().invoke(cli, ["benchmark", "status", "--output", str(tmp_path)])
 
     assert result.exit_code == 0
-    assert result.output == "local-granite-278m-c0: pass (42ms)\n"
+    assert result.output == (
+        "0/0 jobs\nlocal-granite-278m-c0: pass (42ms)\n1/1 scenario results\n"
+    )
 
 
 def test_installed_rush_launcher_runs_benchmark_outside_repository(

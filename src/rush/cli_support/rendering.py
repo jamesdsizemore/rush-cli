@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,12 @@ from rush.invocation.targets import (
     select_root,
 )
 from rush.permissions import ExecutionPermissions
-from rush.theme import render_result
+from rush.theme import (
+    ROW_CAP,
+    copyable_json_command,
+    render_result,
+    safe_terminal_text,
+)
 from rush.tools import ALL_TOOLS
 
 
@@ -43,26 +49,112 @@ class TargetPath(click.Path):
             return self.coerce_path_result(value)
 
 
+_STATUS_EXIT_CODES = {
+    "ok": 0,
+    "skipped": 0,
+    "warn": 1,
+    "fail": 1,
+    "error": 2,
+    "fatal": 2,
+}
+
+
+def _status_of(result: Any) -> Any:
+    if hasattr(result, "status"):
+        return result.status
+    if isinstance(result, dict):
+        return result.get("status")
+    return result if isinstance(result, str) else None
+
+
 def exit_code_for(result: Any) -> int:
-    """Map canonical statuses or admin return values to CLI process exit codes."""
+    """Map canonical statuses or admin return values to CLI process exit codes.
+
+    T27: a missing or unknown status is INVALID_RESULT (exit 2), never 0."""
     if isinstance(result, int) and not isinstance(result, bool):
         return result
-    if hasattr(result, "status"):
-        status = result.status
-    elif isinstance(result, dict) and "status" in result:
-        status = result.get("status")
-    elif isinstance(result, str):
-        status = result
-    else:
-        status = None
+    status = _status_of(result)
+    return _STATUS_EXIT_CODES.get(status, 2) if isinstance(status, str) else 2
 
-    if status in ("ok", "skipped"):
-        return 0
-    if status in ("warn", "fail"):
-        return 1
-    if status in ("error", "fatal"):
-        return 2
-    return 0
+
+def report_invalid_result(result: Any) -> None:
+    """T27: print INVALID_RESULT on stderr for a result with no valid status."""
+    if isinstance(result, int) and not isinstance(result, bool):
+        return
+    status = _status_of(result)
+    if not isinstance(status, str) or status not in _STATUS_EXIT_CODES:
+        echo(f"INVALID_RESULT: result has no valid ToolStatus ({status!r})", err=True)
+
+
+def echo(message: Any = None, **kwargs: Any) -> None:
+    """`click.echo` with X3 terminal safety for every dynamic string."""
+    if message is not None and not isinstance(message, bytes | bytearray):
+        message = safe_terminal_text(str(message))
+    click.echo(message, **kwargs)
+
+
+def secho(message: Any = None, **kwargs: Any) -> None:
+    """`click.secho` with X3 terminal safety; styling is applied afterwards."""
+    if message is not None and not isinstance(message, bytes | bytearray):
+        message = safe_terminal_text(str(message))
+    click.secho(message, **kwargs)
+
+
+COLLECTION_ROUTES: dict[click.Command, tuple[str, ...]] = {}
+
+
+def collection_route(
+    *json_rows: str,
+) -> Callable[[click.Command], click.Command]:
+    """T27: register an admin command whose human view is capped row lists.
+
+    `json_rows` are the dotted `--json` paths holding each full list, in the
+    order the command calls `echo_rows`."""
+
+    def mark(command: click.Command) -> click.Command:
+        COLLECTION_ROUTES[command] = json_rows
+        return command
+
+    return mark
+
+
+def echo_rows(
+    rows: Sequence[Any],
+    line: Callable[[Any], str],
+    *,
+    cap: int = ROW_CAP,
+    noun: str = "records",
+    err: bool = False,
+) -> None:
+    """T27 §1: at most `cap` rows, then always the exact shown/total; when
+    truncated, also the copyable `rush ... --json` that prints every row."""
+    total = len(rows)
+    for row in rows[:cap]:
+        echo(line(row), err=err)
+    shown = min(total, cap)
+    if shown < total:
+        command = copyable_json_command("rush")
+        echo(f"shown {shown}/{total} {noun}; full list: {command}", err=err)
+    else:
+        echo(f"{shown}/{total} {noun}", err=err)
+
+
+def _jsonable(value: Any) -> Any:
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, Mapping):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list | tuple | set | frozenset):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def echo_json(data: Any) -> None:
+    """The untruncated, redacted `--json` view of an admin command's data."""
+    from rush.safety.redactor import sanitize_value
+
+    clean = sanitize_value(_jsonable(data)).value
+    echo(json.dumps(clean, indent=2, default=str))
 
 
 def export_reports(
@@ -101,7 +193,7 @@ def exit_with_result(
 
     clean_result = sanitize_value(result).value
     if as_json:
-        click.echo(json.dumps(clean_result, indent=2, default=str))
+        echo(json.dumps(clean_result, indent=2, default=str))
     elif (
         isinstance(clean_result, dict)
         and "tool" in clean_result
@@ -109,8 +201,9 @@ def exit_with_result(
     ):
         render_result(clean_result)
     elif clean_result is not None and not isinstance(clean_result, int):
-        click.echo(str(clean_result))
+        echo(str(clean_result))
 
+    report_invalid_result(result)
     sys.exit(exit_code_for(result))
 
 
@@ -290,9 +383,10 @@ def _render_session_result(
 ) -> None:
     rendered = result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
     if as_json:
-        click.echo(json.dumps(rendered, indent=2, default=str))
+        echo(json.dumps(rendered, indent=2, default=str))
     else:
         render_result(rendered)
     from rush.tools.common import exit_code_for as session_exit_code_for
 
+    report_invalid_result(rendered)
     raise click.exceptions.Exit(session_exit_code_for(rendered))

@@ -24,7 +24,9 @@ def test_dead_assets_command_respects_requested_directory(tmp_path, monkeypatch)
     result = CliRunner().invoke(cli, ["bundle", "dead-assets", "public"])
 
     assert result.exit_code == 0, result.exception
-    assert result.output == f"Unreferenced Assets (1):\n  - {assets / 'unused.svg'}\n"
+    assert result.output == (
+        f"Unreferenced Assets (1):\n  - {assets / 'unused.svg'}\n1/1 records\n"
+    )
 
 
 def test_governance_check_reports_real_parity_results(tmp_path, monkeypatch):
@@ -35,7 +37,9 @@ def test_governance_check_reports_real_parity_results(tmp_path, monkeypatch):
 
     clean = runner.invoke(cli, ["governance", "check"])
     assert clean.exit_code == 0, clean.exception
-    assert clean.output == "[OK] All multi-IDE governance rule files match AGENTS.md.\n"
+    assert clean.output == (
+        "[OK] All multi-IDE governance rule files match AGENTS.md.\n0/0 records\n"
+    )
 
     (tmp_path / ".cursorrules").write_text("stale rules\n")
     drift = runner.invoke(cli, ["governance", "check"])
