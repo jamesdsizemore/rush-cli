@@ -8,7 +8,7 @@
 
 Use `operation: "save" | "list" | "restore"` with the project `path`. `save` additionally accepts `name`, `files`, `allow_cache_write: true`, `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, and `dependencies`; all responses are canonical `ToolResult` objects. A missing checkpoint or ungranted save is a structured `skipped` result, never prose on stdio. CLI and MCP expose identical redacted `metadata.handoff` receipt semantics.
 
-`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Registered names use underscores, for example `rush_semantic_drift` and `rush_ai_eval`. CLI groups are not automatically MCP tools.
+`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Registered names use underscores, for example `rush_semantic_drift` and `rush_ai_eval`. CLI groups are not automatically MCP tools. `rush mcp serve --profile core|full` (Phase 70) narrows that registration: `core` registers exactly `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory`; `full` (the default) registers every tool below. A call naming a tool the running profile did not register returns "Unknown tool".
 
 Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the continuity implementation and return the same `ToolResult` envelope as their CLI equivalents.
 
@@ -43,6 +43,8 @@ Single-`dict` envelope over `ScanHandoffTool` (plan §6.1), matching `rush_scan`
 ## `rush_agent_connection` (Phase 65 P65-05)
 
 Single-`dict` envelope over `AgentConnectionTool` (`src/rush/tools/agent_connection.py`), the MCP-exposed equivalent of `rush agent list/connect/doctor`. Discovers `claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, and `codex`, registers Rush into a selected client's own config file (format-preserving, backed up first, never touching an unrelated setting), and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. A config failure on one client is reported against that client alone and never marks a different client as failed or connected. `consent` gates whether real tool-observation payloads are ever recorded for that scope; `connected: true` is only reported after explicit acknowledgment, never from a config write alone.
+
+On `operation: "connect"` only, strict `profile` (`null`, `"core"`, or `"full"`) and `confirm_profile_migration` (boolean, default `false`) fields migrate an existing agent's Rush MCP entry to a server profile; either field on any other operation, or `confirm_profile_migration: true` without `profile`, is rejected as `INVALID_REQUEST`. A new registration always launches `mcp serve --profile core`. With `profile` set, the migration is previewed first (`migration.state: "pending"`, with `config_path`, `current_command`/`current_args`/`current_profile`, `new_command`/`new_args`, and `current_sha256`) and applied only when `confirm_profile_migration: true` re-checks that same digest. The result's `status` is `"ok"` for `migration.state: "applied"`; `"skipped"` for `"pending"` (preview only), `"declined"`, `"conflict"` (the config changed since the preview), or `"failed"` (the write failed and the prior entry was restored); and `"error"` for `"recovery_required"` (the write failed and restoring the prior entry failed too).
 
 ## `rush_project` (Phase 65)
 

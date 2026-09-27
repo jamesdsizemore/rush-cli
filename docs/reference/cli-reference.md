@@ -181,7 +181,7 @@ These flags exist on selected commands only. `uv run rush COMMAND --help` is aut
 
 ## MCP
 
-`uv run rush mcp serve [--project ID_OR_PATH] [--session SOURCE] [--memory-session SESSION]` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. `--project` anchors every relative path to that one registered project (an unknown project fails at startup); `--session` supplies the default `session_id` for project/scan tools when a caller omits it. See [MCP overview](../integrations/mcp-overview.md).
+`uv run rush mcp serve [--project ID_OR_PATH] [--session SOURCE] [--memory-session SESSION] [--profile core|full]` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. `--project` anchors every relative path to that one registered project (an unknown project fails at startup); `--session` supplies the default `session_id` for project/scan tools when a caller omits it. `--profile core` registers exactly seven agent tools (`rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, `rush_memory`); `--profile full` (the default) registers every tool, and a call outside the running profile's registered set returns "Unknown tool". `--profile` is ignored with `--memory-session`. See [MCP overview](../integrations/mcp-overview.md).
 
 ## Result and exit behavior
 

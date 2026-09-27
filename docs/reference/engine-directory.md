@@ -185,7 +185,7 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 
 | Engine | What / who | Command | Catalog install hint | Applicability and recovery |
 |---|---|---|---|---|
-| aislop (`aislop`) | AST AI anti-pattern scanner | `slop` | `pip install aislop` | 50+ deterministic AST anti-slop rules across 10 languages. |
+| aislop (`aislop`) | AST AI anti-pattern scanner | `slop` | `pip install aislop` | 50+ deterministic AST anti-slop rules across 10 languages. Scans the target directory (a file target becomes its parent directory plus `--include`); findings report as `aislop/<engine>/<rule>`; the tool result is `error` only when aislop produces no JSON report. |
 | Tach (`tach`) | Modular boundary & cycle enforcer | `complexity` | `pip install tach` | Python modular architecture and dependency boundary enforcement. |
 | Undercover (`undercover`) | Diff-based structural code coverage | `coverage` | `gem install undercover` | Identifies methods and code blocks modified in diff lacking test coverage. |
 | Medusa (`medusa`) | Agent hook & prompt injection auditor | `security` | `pip install medusa` | Scans `.claude/`, `.cursor/`, and agent hooks for security risks. |
