@@ -461,6 +461,16 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush agent doctor --help",
             "tool",
         ),
+        # Phase 70 T2: the stdin entrypoint the native Claude Code/Codex plugin
+        # hooks run after each edit. Inert until T7 adds opt-in activation, so
+        # it only reads (the activation record) and writes nothing.
+        "agent hook": (
+            None,
+            "rush.integrations.agent_hooks:run_agent_hook",
+            "read-only",
+            "rush agent hook --help",
+            "admin",
+        ),
         # T024 (Phase 65 §6.1): InstallTool is administrative CLI composition,
         # not a remotely callable installer MCP tool -- mcp_tool stays None.
         # It mutates the local filesystem, agent configs, and installs a
