@@ -596,13 +596,14 @@ def run_project_journey(tmp_root: Path) -> dict[str, Any]:
     project_b_id = register_project(project_b_root, data_root=data_root).project_id
 
     provision_plan = build_provision_plan(
-        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS)
+        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS), data_root=data_root
     )
     provision_result = apply_provision_plan(
         provision_plan,
         full_permissions,
         project_id=project_a_id,
         data_root=data_root,
+        reviewed_plan_id=provision_plan.plan_id,
         which=lambda _name: None,
     )
 

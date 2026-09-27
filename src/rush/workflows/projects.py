@@ -150,6 +150,19 @@ class ProjectInvalidRequestError(ProjectError):
     code = "INVALID_REQUEST"
 
 
+class ProjectRegistryCorruptError(ProjectError):
+    """Raised when a mutation would have to overwrite a corrupt or unreadable
+    registry file. Carries the path and the SHA-256 of the bytes on disk; the
+    file is never rewritten."""
+
+    code = "REGISTRY_CORRUPT"
+
+    def __init__(self, message: str, *, path: str, sha256: str | None) -> None:
+        super().__init__(message)
+        self.path = path
+        self.sha256 = sha256
+
+
 @dataclass(frozen=True)
 class ProjectRecord:
     project_id: str
@@ -225,6 +238,86 @@ def _load_registry(data_root: Path) -> dict[str, Any]:
     return payload
 
 
+def _read_json_state(path: Path, valid: Any) -> tuple[str, Any, str | None, str | None]:
+    """Read-only JSON load reporting `(state, payload, error, sha256)`.
+
+    `state` is `missing` (no file), `unreadable` (the file exists but cannot
+    be read), `corrupt` (not JSON, or not the shape `valid` accepts), or
+    `ok`. Never creates a directory or file.
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return "missing", None, None, None
+    except OSError as exc:
+        return "unreadable", None, str(exc), None
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        return "corrupt", None, str(exc), digest
+    if not valid(payload):
+        return "corrupt", None, "unexpected JSON shape", digest
+    return "ok", payload, None, digest
+
+
+def _strict_result(
+    key: str, path: Path, state: tuple[str, Any, str | None, str | None]
+) -> dict[str, Any]:
+    status, payload, error, digest = state
+    return {
+        "state": status,
+        key: payload,
+        "path": str(path),
+        "error": error,
+        "sha256": digest,
+    }
+
+
+def read_registry_strict(data_root: Path) -> dict[str, Any]:
+    """Read-only registry load that tells missing, ok, corrupt and unreadable
+    apart (the tolerant `_load_registry` maps all failures to empty)."""
+    path = _registry_path(data_root)
+    state = _read_json_state(
+        path,
+        lambda p: isinstance(p, dict) and isinstance(p.get("projects"), dict),
+    )
+    return _strict_result("registry", path, state)
+
+
+def read_session_selections_strict(data_root: Path) -> dict[str, Any]:
+    """Read-only session-selection load with the same four states."""
+    path = _session_selection_path(data_root)
+    state = _read_json_state(path, lambda p: isinstance(p, dict))
+    return _strict_result("selections", path, state)
+
+
+def read_descriptor_strict(root: Path) -> dict[str, Any]:
+    """Read-only `.rush/project.json` load with the same four states."""
+    path = root / DESCRIPTOR_RELATIVE_PATH
+    state = _read_json_state(path, lambda p: isinstance(p, dict))
+    return _strict_result("descriptor", path, state)
+
+
+def _raise_if_unusable(result: dict[str, Any], what: str) -> None:
+    if result["state"] in ("corrupt", "unreadable"):
+        raise ProjectRegistryCorruptError(
+            f"{what} at {result['path']} is {result['state']} "
+            f"({result['error']}); refusing to overwrite it",
+            path=result["path"],
+            sha256=result["sha256"],
+        )
+
+
+def _load_registry_for_mutation(data_root: Path) -> dict[str, Any]:
+    """Strict load used by mutations: a corrupt or unreadable registry raises
+    `ProjectRegistryCorruptError` instead of being replaced by an empty one."""
+    result = read_registry_strict(data_root)
+    _raise_if_unusable(result, "project registry")
+    registry: dict[str, Any] = result["registry"] or {"version": 1, "projects": {}}
+    return registry
+
+
 def _save_registry(data_root: Path, registry: dict[str, Any]) -> None:
     payload = json.dumps(registry, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     atomic_write_bytes(data_root, REGISTRY_FILE, payload)
@@ -244,10 +337,7 @@ def _read_descriptor(root: Path) -> dict[str, Any] | None:
 def _write_project_descriptor(root: Path, record: ProjectRecord) -> None:
     """Store the project descriptor under `.rush/`. Only called from an
     explicit add/create/relink -- read-only discovery never calls this."""
-    payload = (
-        json.dumps(record.to_dict(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
-    )
-    atomic_write_bytes(root, DESCRIPTOR_RELATIVE_PATH, payload)
+    atomic_write_bytes(root, DESCRIPTOR_RELATIVE_PATH, _descriptor_bytes(record))
 
 
 def _project_view(project_id: str, entry: dict[str, Any]) -> dict[str, Any]:
@@ -263,6 +353,7 @@ def _project_view(project_id: str, entry: dict[str, Any]) -> dict[str, Any]:
         "name": entry.get("name", root.name),
         "created_at": entry.get("created_at"),
         "revision": int(entry.get("revision", 1)),
+        "configured": configured,
         "exists": exists,
         "languages": languages,
         "settings": entry.get("settings", {}),
@@ -280,12 +371,18 @@ def register_project(
     name: str | None = None,
     data_root: Path | None = None,
     lock_timeout: float = 5.0,
+    expect_new: bool = False,
 ) -> ProjectRecord:
     """Register an existing folder as a Rush project.
 
     Idempotent by canonical physical root: registering the same root twice
     (directly or through a symlink alias) returns the same project_id and
-    never writes a duplicate registry entry.
+    never writes a duplicate registry entry. With `expect_new=True` (a
+    reviewed setup that previewed "new"), an existing entry for the root
+    raises `ProjectRevisionConflictError` instead. A corrupt or unreadable
+    registry raises `ProjectRegistryCorruptError` and is never overwritten.
+    If the descriptor write fails after the registry save, the new entry is
+    removed again under the same lock before the error propagates.
     """
     data_root = data_root or default_data_root()
     root = _canonical_root(path)
@@ -293,12 +390,16 @@ def register_project(
         raise ProjectRootMissingError(f"not a directory: {root}")
 
     with _registry_lock(data_root, timeout=lock_timeout):
-        registry = _load_registry(data_root)
+        registry = _load_registry_for_mutation(data_root)
         projects: dict[str, Any] = registry["projects"]
         root_str = str(root)
 
         for project_id, entry in projects.items():
             if entry.get("root") == root_str:
+                if expect_new:
+                    raise ProjectRevisionConflictError(
+                        f"root already registered as {project_id}"
+                    )
                 return ProjectRecord(
                     project_id=project_id,
                     root=entry["root"],
@@ -324,8 +425,56 @@ def register_project(
         )
         projects[project_id] = record.to_dict()
         _save_registry(data_root, registry)
-        _write_project_descriptor(root, record)
+        try:
+            _write_project_descriptor(root, record)
+        except Exception:
+            del projects[project_id]
+            _save_registry(data_root, registry)
+            raise
         return record
+
+
+def _descriptor_bytes(record: ProjectRecord) -> bytes:
+    return (
+        json.dumps(record.to_dict(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    )
+
+
+def unregister_project(
+    project_id: str,
+    *,
+    expected_revision: int,
+    data_root: Path | None = None,
+    lock_timeout: float = 5.0,
+) -> None:
+    """Compensation for a failed setup: remove one registry entry only while
+    its revision still equals `expected_revision` (else
+    `ProjectRevisionConflictError`, entry kept). The root's descriptor is
+    removed only when its bytes still equal the descriptor that the original
+    registration wrote."""
+    data_root = data_root or default_data_root()
+    with _registry_lock(data_root, timeout=lock_timeout):
+        registry = _load_registry_for_mutation(data_root)
+        entry = registry["projects"].get(project_id)
+        if entry is None:
+            return
+        current = int(entry.get("revision", 1))
+        if current != expected_revision:
+            raise ProjectRevisionConflictError(
+                f"expected revision {expected_revision}, registry is at {current}"
+            )
+        del registry["projects"][project_id]
+        _save_registry(data_root, registry)
+    original = ProjectRecord(
+        project_id=project_id,
+        root=entry["root"],
+        name=entry.get("name", Path(entry["root"]).name),
+        created_at=entry.get("created_at", ""),
+    )
+    descriptor = Path(entry["root"]) / DESCRIPTOR_RELATIVE_PATH
+    with suppress(OSError):
+        if descriptor.read_bytes() == _descriptor_bytes(original):
+            descriptor.unlink()
 
 
 def list_projects(*, data_root: Path | None = None) -> list[dict[str, Any]]:
@@ -580,12 +729,18 @@ def select_project(
 ) -> dict[str, Any]:
     """Bind a project to one interface/session, never a global cwd."""
     data_root = data_root or default_data_root()
-    registry = _load_registry(data_root)
+    registry = _load_registry_for_mutation(data_root)
     projects = registry["projects"]
     if project_id not in projects:
         raise ProjectNotFoundError(f"no registered project: {project_id}")
 
-    selections = _load_session_selections(data_root)
+    selection_state = read_session_selections_strict(data_root)
+    _raise_if_unusable(selection_state, "session selection file")
+    selections = {
+        k: v
+        for k, v in (selection_state["selections"] or {}).items()
+        if isinstance(v, str)
+    }
     selections[session_id] = project_id
     atomic_write_bytes(
         data_root,
@@ -657,7 +812,7 @@ def configure_project(
     validated = _validate_settings(settings)
 
     if not apply:
-        registry = _load_registry(data_root)
+        registry = _load_registry_for_mutation(data_root)
         if project_id not in registry["projects"]:
             raise ProjectNotFoundError(f"no registered project: {project_id}")
         return {
@@ -670,7 +825,7 @@ def configure_project(
         raise ProjectInvalidRequestError("apply requires plan_id and expected_revision")
 
     with _registry_lock(data_root, timeout=lock_timeout):
-        registry = _load_registry(data_root)
+        registry = _load_registry_for_mutation(data_root)
         projects = registry["projects"]
         if project_id not in projects:
             raise ProjectNotFoundError(f"no registered project: {project_id}")

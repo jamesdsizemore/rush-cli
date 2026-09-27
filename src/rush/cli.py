@@ -626,28 +626,49 @@ def cache_clean() -> None:
 @click.option(
     "--non-interactive/--interactive",
     "non_interactive",
-    default=True,
-    help="Select prompting behavior; does not by itself suppress an explicitly granted --install.",
+    default=None,
+    help=(
+        "--non-interactive previews only; --interactive forces the review-and-confirm "
+        "flow (needs a terminal on stdin). Default: interactive when stdin and stdout "
+        "are terminals, otherwise preview only."
+    ),
 )
 @click.option(
     "--install",
     is_flag=True,
     help=(
-        "Build and apply the engine provision plan for recommended toolchains. "
-        "Requires the relevant --allow-* grants; without them the plan is previewed only."
+        "Accepted for compatibility: engine provisioning is always part of the "
+        "reviewed setup plan."
     ),
 )
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    help="Apply a saved setup review without prompting (with --yes, --plan-file, --plan-id).",
+)
+@click.option("--yes", is_flag=True, help="Confirm a non-interactive --apply.")
+@click.option(
+    "--plan-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Saved JSON output of `rush setup PATH --json`.",
+)
+@click.option("--plan-id", help="The review_id of that saved review.")
 @permission_options
 @click.option(
     "--json",
     "as_json",
     is_flag=True,
-    help="Print detected stacks and installation summary as JSON.",
+    help="Print the setup preview or result as JSON; JSON output never prompts.",
 )
 def setup_cmd(
     path: Path,
-    non_interactive: bool,
+    non_interactive: bool | None,
     install: bool,
+    apply_: bool,
+    yes: bool,
+    plan_file: Path | None,
+    plan_id: str | None,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -657,50 +678,39 @@ def setup_cmd(
     allow_browser: bool,
     as_json: bool,
 ) -> None:
-    """Inspect repository stacks and set up recommended quality toolchains."""
-    from .tools.setup_wizard import run_setup_wizard
+    """Preview project setup (config, registration, engines) and apply it after consent."""
+    from .tools.setup_wizard import render_setup_result, run_setup_command
 
-    permissions = (
-        _extract_permissions(
-            allow_network=allow_network,
-            allow_download=allow_download,
-            allow_cache_write=allow_cache_write,
-            allow_build=allow_build,
-            allow_slow=allow_slow,
-            allow_artifact_write=allow_artifact_write,
-            allow_browser=allow_browser,
-        )
-        if install
-        else None
+    del install  # compatibility flag; provisioning is always reviewed
+    permissions = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
     )
-    res = run_setup_wizard(
+    payload, code = run_setup_command(
         path.resolve(),
         non_interactive=non_interactive,
-        install=install,
+        apply=apply_,
+        yes=yes,
+        plan_file=plan_file,
+        plan_id=plan_id,
         permissions=permissions,
+        as_json=as_json,
+        stdin_tty=sys.stdin.isatty(),
+        stdout_tty=sys.stdout.isatty(),
     )
-    if as_json:
-        click.echo(json.dumps(res, indent=2, default=str))
-    else:
-        click.echo(f"Detected stacks: {', '.join(res['stacks']) or 'none'}")
-        if res["skipped"]:
-            click.echo(f"Recommended engines: {', '.join(res['skipped'])}")
-        provision = res.get("provision")
-        if provision and provision.get("plan_only"):
-            click.echo(
-                f"Provision plan {res['plan_id'][:12]} built (preview only); "
-                "pass --allow-network --allow-download --allow-cache-write (and --allow-build "
-                "where required) to apply it."
-            )
-        elif provision:
-            if provision["applied"]:
-                click.echo(f"Installed: {', '.join(provision['applied'])}")
-            if provision["failed"]:
-                click.echo(f"Failed: {', '.join(sorted(provision['failed']))}")
-            if provision["permission_blocked"]:
-                click.echo(
-                    f"Permission blocked: {', '.join(sorted(provision['permission_blocked']))}"
-                )
+    click.echo(
+        json.dumps(payload, indent=2, default=str)
+        if as_json
+        else render_setup_result(payload)
+    )
+    if code == 130:
+        click.echo("rush setup: interrupted; nothing was changed", err=True)
+    sys.exit(code)
 
 
 @cli.command(name="init")
