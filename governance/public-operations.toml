@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 191
+total_operations = 192
 
 [[operations]]
 id = "admin.agent_connect"
