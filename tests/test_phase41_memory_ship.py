@@ -128,6 +128,7 @@ def test_checkpoint_restore_rejects_traversal(tmp_path: Path) -> None:
 def test_checkpoint_restore_rejects_symlinked_fallback_store(tmp_path: Path) -> None:
     secret = "sk-test-checkpoint-fallback-synthetic-secret"
     CheckpointJournal(project_root=tmp_path)
+    (tmp_path / ".rush").mkdir()
     outside = tmp_path / "outside.db"
     outside.write_text(secret, encoding="utf-8")
     (tmp_path / ".rush" / "memory.db").symlink_to(outside)

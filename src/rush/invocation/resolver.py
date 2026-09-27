@@ -190,6 +190,21 @@ def _raw_targets(request: dict[str, Any]) -> list[Any]:
     return raw_paths
 
 
+def _file_targets(
+    request: dict[str, Any], targets: tuple[PhysicalTarget, ...]
+) -> tuple[PhysicalTarget, ...] | None:
+    """T10 (R10.5): the slice of `targets` `_resolve_targets` built from `files`
+    (in order, right after an optional `path`). `None` when there are no `files`
+    or explicit `targets` replaced them."""
+    files = request.get("files")
+    if not isinstance(files, (list, tuple)) or (
+        "targets" in request and isinstance(request["targets"], (list, tuple))
+    ):
+        return None
+    start = 1 if request.get("path") else 0
+    return targets[start : start + len(files)]
+
+
 def _is_typed_argument_name(name: str, request: dict[str, Any]) -> bool:
     """Match canonical request argument namespace for persisted records."""
     return (
@@ -384,6 +399,7 @@ def resolve_invocation(
         original_requested_targets=originals,
         invocation_start_cwd=start_cwd,
         declared_root=declared_root,
+        file_targets=_file_targets(req, targets_tuple),
     )
 
 

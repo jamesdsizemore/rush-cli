@@ -6,16 +6,22 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .telemetry import TelemetryStore
+from .telemetry import read_summary_readonly
 
 
 def build_gain_panel(project_root: Path | None = None) -> Panel:
     """Builds the Rich HUD panel from live `TelemetryStore` data. Reused by
     both the one-shot `render_gain_dashboard` CLI print and the persistent
     TUI's memory/gain toggle (P66-03) so both surfaces read the exact same
-    real numbers -- never a duplicated, possibly-drifting copy."""
-    store = TelemetryStore(project_root)
-    stats = store.get_summary()
+    real numbers -- never a duplicated, possibly-drifting copy.
+
+    T10: read-only (no telemetry DB is ever created to render the HUD), and a
+    missing `project_root` means the logical root of the cwd, never the cwd."""
+    if project_root is None:
+        from rush.invocation.targets import resolve_logical_root
+
+        project_root = resolve_logical_root(Path.cwd())
+    stats = read_summary_readonly(project_root)
 
     table = Table(title="Rush Context Intelligence Gain HUD", expand=True)
     table.add_column("Metric", style="cyan", justify="left")

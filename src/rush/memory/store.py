@@ -7,13 +7,14 @@ enforces the no-STATED-on-entry, redact-before-store, recall-rescan, and stalene
 from __future__ import annotations
 
 import dataclasses
+import gc
 import hashlib
 import json
 import secrets
 import sqlite3
 import time
 import urllib.parse
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -754,6 +755,84 @@ def store_generation(conn: sqlite3.Connection) -> int:
         "SELECT COALESCE(MAX(sequence), 0) FROM memory_changes"
     ).fetchone()
     return int(row[0])
+
+
+def _sqlite_fingerprint(db: Path) -> tuple[int, int, int] | None:
+    try:
+        st = db.stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _unchanged_since(db: Path, fingerprint: tuple[int, int, int]) -> bool:
+    return not Path(f"{db}-wal").exists() and _sqlite_fingerprint(db) == fingerprint
+
+
+def read_sqlite_readonly[T](
+    db: Path,
+    read: Callable[[sqlite3.Connection], T],
+    *,
+    attempts: int = 3,
+) -> T | None:
+    """X1 (T10): run `read` over one `open_sqlite_readonly` connection, leaving no
+    `-wal`/`-shm` and no byte change behind. `None` when `db` is missing.
+
+    An immutable open (no `-wal` present) records `(st_ino, st_size, st_mtime_ns)`
+    before the read and re-checks it, and that no `-wal` appeared, after the read; a
+    change retries, up to `attempts` in total, then raises `E_STORE_BUSY`. An unusable
+    open (`wal_index_missing`, or a `read_conflict` on an unchanged file) raises
+    `MemoryStoreUnreadableError` with `readonly_state_code`. Nothing is ever migrated.
+    """
+    if Path(f"{db}-wal").exists():
+        # ponytail: this process's own leaked writers (`with self._connect()` commits
+        # but never closes) are collected first, so they checkpoint and remove their
+        # WAL now, not mid-read -- a read-only connection that closes last cannot
+        # checkpoint and would strand committed pages in the `-wal`. Ceiling: a
+        # writer in another process can still close first; closing every writer
+        # connection deterministically is the upgrade.
+        gc.collect()
+    for _ in range(attempts):
+        before = _sqlite_fingerprint(db)
+        if before is None:
+            return None
+        opened = open_sqlite_readonly(db)
+        conn = opened.connection
+        immutable = opened.mode == "ro&immutable=1"
+        if conn is None:
+            if opened.state is None:
+                return None
+            if immutable and not _unchanged_since(db, before):
+                continue
+            raise MemoryStoreUnreadableError(
+                f"{db} cannot be read without writing ({opened.state}); retry",
+                code=readonly_state_code(opened.state, db),
+            )
+        try:
+            value = read(conn)
+        except sqlite3.DatabaseError as exc:
+            if immutable and not _unchanged_since(db, before):
+                continue
+            raise MemoryStoreUnreadableError(
+                f"{db} could not be read: {exc}",
+                code=readonly_state_code("read_conflict", db),
+            ) from exc
+        finally:
+            conn.close()
+        if not immutable or _unchanged_since(db, before):
+            return value
+    raise MemoryStoreUnreadableError(
+        f"{db} kept changing during a read-only read; retry", code="E_STORE_BUSY"
+    )
+
+
+def sqlite_has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 class TypedArtifactStore:

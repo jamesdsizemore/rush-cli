@@ -9,6 +9,7 @@ from typing import Any
 
 from ..mcp_mesh.lock_manager import MeshLockManager
 from ..memory.failure_ledger import FailureLedger
+from ..memory.store import MemoryStoreUnreadableError
 from ..permissions import ExecutionPermissions
 from ..safety.redactor import SecretRedactor
 from .results import ContinuityOutput, build_continuity_result, valid_name
@@ -152,7 +153,7 @@ def _fetch_replay_events(
 
         events = FlightRecorder(root, create=False).replay_session(session_id)
         return ("recorded" if events else "not_found"), events
-    except (OSError, ValueError):
+    except (OSError, ValueError, MemoryStoreUnreadableError):
         return "unavailable", []
 
 
@@ -162,8 +163,8 @@ def _fetch_failure_receipt(
     if not isinstance(failure_fingerprint, str):
         return None, False
     try:
-        return FailureLedger(root).get_receipt(failure_fingerprint), False
-    except (OSError, sqlite3.DatabaseError):
+        return FailureLedger.read_receipt(root, failure_fingerprint), False
+    except (OSError, sqlite3.DatabaseError, MemoryStoreUnreadableError):
         return None, True
 
 

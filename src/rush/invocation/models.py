@@ -63,6 +63,9 @@ class InvocationContext:
     # T8: the registered root the caller declared (MCP `project`/`project_id`),
     # `None` when none was declared.
     declared_root: Path | None = None
+    # T10 (R10.5): the contained targets built from the request's `files` list
+    # (a subset of `targets`), `None` when the request carried no `files`.
+    file_targets: tuple[PhysicalTarget, ...] | None = None
 
 
 @dataclass(frozen=True)

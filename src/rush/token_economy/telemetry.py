@@ -260,37 +260,85 @@ class TelemetryStore:
         """M10: optionally scoped to one `project_id`/`run_id`/`agent_id`/`session_id`,
         the same clause shape `get_memory_event_total()` already uses -- omitted (the
         default) sums every row, unchanged from before this filter existed."""
-        clauses: list[str] = []
-        params: list[str] = []
-        for column, value in (
-            ("project_id", project_id),
-            ("run_id", run_id),
-            ("agent_id", agent_id),
-            ("session_id", session_id),
-        ):
-            if value is not None:
-                clauses.append(f"{column} = ?")
-                params.append(value)
-        sql = (
-            "SELECT COUNT(*), COALESCE(SUM(raw_tokens), 0), "
-            "COALESCE(SUM(compressed_tokens), 0) FROM token_events"
-        )
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
+        sql, params = _summary_query(project_id, run_id, agent_id, session_id)
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute(sql, params)
             count, total_raw, total_comp = cur.fetchone()
+        return _summary_payload(count, total_raw, total_comp)
 
-        net_saved = max(0, total_raw - total_comp)
-        ratio = (net_saved / total_raw) if total_raw > 0 else 0.0
-        # Estimated cost savings using blended $3.00 per 1M tokens ($0.000003/token)
-        est_dollars = round(net_saved * 0.000003, 4)
 
+def _summary_query(
+    project_id: str | None,
+    run_id: str | None,
+    agent_id: str | None,
+    session_id: str | None,
+) -> tuple[str, list[str]]:
+    clauses: list[str] = []
+    params: list[str] = []
+    for column, value in (
+        ("project_id", project_id),
+        ("run_id", run_id),
+        ("agent_id", agent_id),
+        ("session_id", session_id),
+    ):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    sql = (
+        "SELECT COUNT(*), COALESCE(SUM(raw_tokens), 0), "
+        "COALESCE(SUM(compressed_tokens), 0) FROM token_events"
+    )
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return sql, params
+
+
+def _summary_payload(count: int, total_raw: int, total_comp: int) -> dict[str, Any]:
+    net_saved = max(0, total_raw - total_comp)
+    ratio = (net_saved / total_raw) if total_raw > 0 else 0.0
+    # Estimated cost savings using blended $3.00 per 1M tokens ($0.000003/token)
+    est_dollars = round(net_saved * 0.000003, 4)
+
+    return {
+        "events_count": count,
+        "total_raw_tokens": total_raw,
+        "total_compressed_tokens": total_comp,
+        "net_tokens_saved": net_saved,
+        "compression_ratio": round(ratio, 4),
+        "dollar_savings_est": est_dollars,
+    }
+
+
+def read_summary_readonly(
+    project_root: Path,
+    *,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """T10 (finding 15): `TelemetryStore.get_summary()` without constructing a store.
+    Reads `<project_root>/.rush/telemetry/tokens.db` through the X1 read-only opener,
+    so nothing (no directory, DB, `-wal`/`-shm` or migration) is ever created. A
+    missing DB or table gives the empty summary with `available: false`, a reason,
+    and the path."""
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+    sql, params = _summary_query(project_id, run_id, agent_id, session_id)
+
+    def read(conn: sqlite3.Connection) -> tuple[int, int, int] | None:
+        if not sqlite_has_table(conn, "token_events"):
+            return None
+        count, total_raw, total_comp = conn.execute(sql, params).fetchone()
+        return int(count), int(total_raw), int(total_comp)
+
+    row = read_sqlite_readonly(db_path, read)
+    if row is None:
         return {
-            "events_count": count,
-            "total_raw_tokens": total_raw,
-            "total_compressed_tokens": total_comp,
-            "net_tokens_saved": net_saved,
-            "compression_ratio": round(ratio, 4),
-            "dollar_savings_est": est_dollars,
+            **_summary_payload(0, 0, 0),
+            "available": False,
+            "reason": "no token telemetry has been recorded for this project",
+            "path": str(db_path),
         }
+    return {**_summary_payload(*row), "available": True, "path": str(db_path)}

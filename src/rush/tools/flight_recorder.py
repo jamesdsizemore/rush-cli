@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from rush.memory.migration import read_origin_kind_by_symbol
+from rush.memory.migration import read_origin_kind_by_symbol_readonly
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.memory.trust import default_entry_tier
 
@@ -57,8 +57,9 @@ class FlightRecorder:
         flight_file = self.flights_dir / f"{session_id}.jsonl"
         if not flight_file.exists():
             # Already renamed `.migrated` by migration.migrate_flight_recorder(); fall back to
-            # the TypedArtifactStore rows sharing this session's symbol_ref.
-            return read_origin_kind_by_symbol(
+            # the TypedArtifactStore rows sharing this session's symbol_ref. T10: read-only
+            # (no `.rush`, DB, `-wal`/`-shm` or migration is created); no DB gives [].
+            return read_origin_kind_by_symbol_readonly(
                 self.project_root, "flight_event", session_id
             )
         events = []

@@ -9,8 +9,11 @@ from __future__ import annotations
 import copy
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from rush.contracts.results import ToolResultV1
@@ -24,6 +27,53 @@ from rush.safety.redactor import sanitize_value
 
 _SENTINEL = object()
 
+# T10 (R10.1, finding 4): ambient roots of the executing invocation, set by
+# `InvocationExecutor.execute` around the handler call -- never a handler
+# parameter, so nothing new is published into any MCP schema.
+_INVOCATION_ROOT: ContextVar[Path | None] = ContextVar(
+    "rush_invocation_root", default=None
+)
+_EXECUTION_ROOT: ContextVar[Path | None] = ContextVar(
+    "rush_execution_root", default=None
+)
+
+
+def current_invocation_root() -> Path | None:
+    """The executing invocation's logical project root (the original root inside a
+    staged scan), or `None` outside `InvocationExecutor.execute`."""
+    return _INVOCATION_ROOT.get()
+
+
+def current_execution_root() -> Path | None:
+    """The tree the executing invocation actually analyzes (the staged root inside a
+    staged scan), or `None` outside `InvocationExecutor.execute`."""
+    return _EXECUTION_ROOT.get()
+
+
+def _invocation_roots(context: InvocationContext) -> tuple[Path, Path]:
+    """(logical, execution) roots: a workspace root inside the active staging
+    copy maps its logical root back to `staging.original_root`."""
+    from rush.engines.staging import active_staging
+
+    execution = context.workspace_root
+    staging = active_staging()
+    if staging is not None and execution.is_relative_to(staging.staged_root):
+        return staging.original_root, execution
+    return execution, execution
+
+
+@contextmanager
+def _invocation_root_scope(context: InvocationContext) -> Iterator[None]:
+    logical, execution = _invocation_roots(context)
+    logical_token = _INVOCATION_ROOT.set(logical)
+    execution_token = _EXECUTION_ROOT.set(execution)
+    try:
+        yield
+    finally:
+        _EXECUTION_ROOT.reset(execution_token)
+        _INVOCATION_ROOT.reset(logical_token)
+
+
 RECOGNIZED_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
     {
         "context",
@@ -34,6 +84,8 @@ RECOGNIZED_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
         "paths",
         "target_paths",
         "targets",
+        # T10 (R10.5): the contained targets built from the request's `files`.
+        "files",
         "workspace_root",
         "root",
         "transport",
@@ -187,6 +239,14 @@ def _resolve_context_val(
 
     if name == "targets":
         return context.targets
+
+    if name == "files":
+        # T10 (R10.5): `files` is a reserved request key, so it never reaches the
+        # typed arguments; bind the contained targets built from it instead, as
+        # root-relative POSIX strings (what CLI `--file` from the root carries).
+        if context.file_targets is None:
+            return _SENTINEL
+        return [t.relative_path.as_posix() for t in context.file_targets]
 
     if name in ("workspace_root", "root"):
         return context.workspace_root
@@ -538,7 +598,10 @@ class InvocationExecutor:
         from rush.runtime.subprocesses import owned_execution_scope
 
         # Invokes handler(*args, **kwargs) exactly once. Zero retry on TypeError.
-        with owned_execution_scope(owner_instance_id, run_id):
+        with (
+            owned_execution_scope(owner_instance_id, run_id),
+            _invocation_root_scope(context),
+        ):
             result = operation.handler(*args, **kwargs)
 
         # MC05 §6.4: capture one real observation after execution, before the
@@ -593,6 +656,8 @@ __all__ = [
     "RegisteredOperation",
     "ToolResultV1",
     "adapt_signature_at_registration",
+    "current_execution_root",
+    "current_invocation_root",
     "format_signature_error_diagnostic",
     "invalid_target_result",
     "invocation_arguments",

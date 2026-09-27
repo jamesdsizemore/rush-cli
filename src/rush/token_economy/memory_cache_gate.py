@@ -80,13 +80,21 @@ def check_memory_before_pack(
     starts varying packed content by view.
     """
     cache_key = _cache_key(context_path, target_symbol)
-    store = TypedArtifactStore(project_root)
+    # T10: a read-only view (T20 `open_readonly_view`), so a lookup never creates
+    # `.rush`, `memory.db`, a sidecar or a migrated schema. No usable store (absent,
+    # legacy, busy or corrupt) is a miss, like any failed defended read.
+    store, _state = TypedArtifactStore.open_readonly_view(project_root or Path.cwd())
+    if store is None:
+        return CacheGateResult(hit=False, artifact_id=None, content=None)
     artifacts: list[MemoryArtifact] = []
     # Failed defended reads are cache misses; never reuse unverified content.
-    with suppress(Exception):
-        artifacts = defended_recall(
-            store, subject, cache_key, [_CACHE_SOURCE], memo=memo
-        )
+    try:
+        with suppress(Exception):
+            artifacts = defended_recall(
+                store, subject, cache_key, [_CACHE_SOURCE], memo=memo
+            )
+    finally:
+        store.close()
     for artifact in artifacts:
         if artifact.stale or not artifact.content_hash or not artifact.symbol_ref:
             continue
