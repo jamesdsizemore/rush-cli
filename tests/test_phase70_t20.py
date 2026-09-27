@@ -815,20 +815,32 @@ class TestDashboardTuiReadNoCreate:
 
 def test_full_mcp_server_schema_rejects_overview_operation(tmp_path: Path) -> None:
     import asyncio
+    import json as _json
 
-    from mcp.server.fastmcp.exceptions import ToolError
+    from mcp.types import CallToolResult, TextContent
 
     from rush.mcp import build_server
 
     server = build_server()
 
-    async def _call() -> None:
-        await server.call_tool(
+    async def _call() -> object:
+        return await server.call_tool(
             "rush_memory", {"path": str(tmp_path), "operation": "overview"}
         )
 
-    with pytest.raises(ToolError):
-        asyncio.run(_call())
+    # Since T6 the full server validates the request against the published
+    # schema before dispatch: `overview` is not a MemoryTool operation, so the
+    # call is rejected as a structured E_INPUT error with zero effects.
+    result = asyncio.run(_call())
+    assert isinstance(result, CallToolResult)
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    payload = _json.loads(block.text)
+    assert payload["status"] == "error"
+    assert payload["raw"]["code"] == "E_INPUT"
+    assert "operation must be one of" in payload["raw"]["data"]["message"]
+    assert "overview" not in payload["raw"]["data"]["message"].split(":")[-1]
+    assert not (tmp_path / ".rush").exists()
 
 
 def test_restricted_memory_session_server_rejects_overview(tmp_path: Path) -> None:
