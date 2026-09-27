@@ -36,6 +36,9 @@ class PublicOperation:
     safe_probe: str
 
 
+_CLI_ONLY_GROUP_LEAVES = frozenset({"memory"})
+
+
 def build_operations_inventory() -> list[PublicOperation]:
     """Reconcile Click leaf commands and FastMCP tools into an exhaustive inventory."""
     inventory: list[PublicOperation] = []
@@ -467,13 +470,16 @@ def build_operations_inventory() -> list[PublicOperation]:
         ),
     }
 
-    # 3. Pair canonical tool specs first
+    # 3. Pair canonical tool specs first. T20: bare `rush memory` is the local-admin
+    # overview, not the `rush_memory` MCP tool (which never exposes it), so it stays a
+    # CLI-only admin leaf (step 6) and `rush_memory` keeps its per-subcommand pairings.
     for name, spec in sorted(TOOL_SPECS.items()):
         mcp_name = f"rush_{name.replace('-', '_')}"
         if (
             name in click_leaves
             and mcp_name in mcp_tools
             and name not in explicit_pairs
+            and name not in _CLI_ONLY_GROUP_LEAVES
         ):
             canonical = tool_impl_map.get(
                 name, f"rush.tools.{name.replace('-', '_')}:Tool"

@@ -2531,9 +2531,142 @@ def session_resume_cmd(
 # -----------------------------------------------------------------------------
 
 
-@cli.group(name="memory")
-def memory_group() -> None:
-    """Query, write, and promote cross-tool memory artifacts."""
+def _is_project_marked(directory: Path) -> bool:
+    """T8 marker rule, lstat only: a regular `rush.toml`, a real `.rush/` holding a
+    regular `project.json`, or a non-link `.git` directory/file (worktree)."""
+    import stat
+
+    def _lstat(path: Path) -> os.stat_result | None:
+        try:
+            return path.lstat()
+        except OSError:
+            return None
+
+    toml = _lstat(directory / "rush.toml")
+    if toml is not None and stat.S_ISREG(toml.st_mode):
+        return True
+    rush_dir = _lstat(directory / ".rush")
+    if rush_dir is not None and stat.S_ISDIR(rush_dir.st_mode):
+        descriptor = _lstat(directory / ".rush" / "project.json")
+        if descriptor is not None and stat.S_ISREG(descriptor.st_mode):
+            return True
+    git = _lstat(directory / ".git")
+    return git is not None and (stat.S_ISDIR(git.st_mode) or stat.S_ISREG(git.st_mode))
+
+
+def _memory_logical_root() -> Path:
+    """R20.2: the one project root every `rush memory` command (overview and
+    subcommands) reads and writes -- the nearest marked or registered ancestor of the
+    cwd, else the cwd itself -- so a write from a subdirectory lands in the store the
+    project-root overview shows.
+
+    ponytail: marker walk only; T8's `select_root` (symlink classes, declared roots)
+    replaces this helper when it merges."""
+    # TODO(T8-merge): replace this helper with T8's `select_root` from
+    # `invocation/targets.py` once the phase branch is merged in.
+    from .workflows.projects import list_projects
+
+    cwd = Path(os.path.abspath(Path.cwd()))
+    registered = {str(project["root"]) for project in list_projects()}
+    for directory in (cwd, *cwd.parents):
+        if _is_project_marked(directory) or str(directory.resolve()) in registered:
+            return directory.resolve()
+    return cwd.resolve()
+
+
+_MEMORY_OVERVIEW_OPTIONS = ("offset", "generation", "include_internal", "as_json")
+
+
+def _echo_memory_overview(result: dict[str, Any]) -> None:
+    """T20 plain-line rendering (not `render_result`, which drops `raw.data` rows)."""
+    from datetime import UTC, datetime
+
+    raw = result.get("raw") or {}
+    data = raw.get("data") or {}
+    if raw.get("code") != "OK":
+        click.echo(f"memory: {raw.get('code')}: {data.get('message')}")
+        return
+    rows = data["rows"]
+    label = "record(s)" if data["include_internal"] else "useful record(s)"
+    shown = (
+        f"showing {data['offset'] + 1}-{data['offset'] + len(rows)}"
+        if rows
+        else "showing none"
+    )
+    click.echo(f"memory: {data['total']} {label} in {data['project_root']} ({shown})")
+    for row in rows:
+        owner = row["owner_scope"]
+        created = datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat()
+        click.echo(
+            f"{row['id']}  {row['subject']}  {row['source']}  "
+            f"owner {owner['kind']}:{owner['id']}  {created}  {row['trust_tier']}"
+        )
+    if data["next_offset"] is not None:
+        click.echo(
+            f"next: rush memory --offset {data['next_offset']} "
+            f"--generation {data['generation_token']}"
+        )
+    if data.get("reason"):
+        click.echo(data["reason"])
+
+
+@cli.group(name="memory", invoke_without_command=True)
+@click.option(
+    "--offset",
+    type=click.IntRange(min=0),
+    default=0,
+    help="Overview only: skip this many rows (requires --generation when > 0).",
+)
+@click.option(
+    "--generation",
+    default=None,
+    help="Overview only: the continuation token the previous page printed.",
+)
+@click.option(
+    "--include-internal",
+    is_flag=True,
+    help="Overview only: also show internal bookkeeping rows.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Overview only: print raw JSON.")
+@click.pass_context
+def memory_group(
+    ctx: click.Context,
+    offset: int,
+    generation: str | None,
+    include_internal: bool,
+    as_json: bool,
+) -> None:
+    """Query, write, and promote cross-tool memory artifacts.
+
+    With no subcommand, shows this project's 20 most recent useful memory records
+    (newest first, read-only; archived, expired and internal rows hidden)."""
+    if ctx.invoked_subcommand is not None:
+        given = [
+            name
+            for name in _MEMORY_OVERVIEW_OPTIONS
+            if ctx.get_parameter_source(name) != click.core.ParameterSource.DEFAULT
+        ]
+        if given:
+            raise click.UsageError(
+                "--offset/--generation/--include-internal/--json before a memory "
+                "subcommand apply only to the bare `rush memory` overview"
+            )
+        return
+    from .tools.memory import memory_overview
+
+    result = dict(
+        memory_overview(
+            _memory_logical_root(),
+            offset=offset,
+            generation=generation,
+            include_internal=include_internal,
+        )
+    )
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        _echo_memory_overview(result)
+    raise click.exceptions.Exit(exit_code_for(result))
 
 
 @memory_group.command(name="ask")
@@ -2556,7 +2689,7 @@ def memory_ask_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="ask",
         subject=subject,
         query=query,
@@ -2585,7 +2718,7 @@ def memory_recall_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="recall",
         subject=subject,
         query=query,
@@ -2620,7 +2753,7 @@ def memory_list_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="list",
         subject=subject,
         query=query,
@@ -2666,7 +2799,7 @@ def memory_write_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="write",
         subject=subject,
         content=_json.loads(content),
@@ -2734,7 +2867,7 @@ def memory_promote_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="promote",
         subject=subject,
         content=_json.loads(content),
@@ -2800,7 +2933,7 @@ def memory_maintain_cmd(
     from .tools.memory import MemoryTool
     from .workflows.projects import ProjectNotFoundError, resolve_project
 
-    root = Path.cwd()
+    root = _memory_logical_root()
     if owner_kind is not None:
         if not owner_id:
             raise click.UsageError("--owner-kind requires --owner-id")
@@ -2909,7 +3042,7 @@ def _build_memory_operation_command(operation: str):
         request = _memory_input_request(input_file)
         _run_tool(
             "memory",
-            Path.cwd(),
+            _memory_logical_root(),
             as_json=as_json,
             permissions=_extract_permissions(
                 allow_network=allow_network,

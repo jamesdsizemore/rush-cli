@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import json
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -35,6 +38,7 @@ from ..memory.store import (
     MemoryFamily,
     MemoryMigrationRequiredError,
     MemoryScopeError,
+    MemoryStoreUnreadableError,
     MemorySubject,
     OwnerScope,
     OwnerScopeError,
@@ -42,6 +46,11 @@ from ..memory.store import (
     TrojanSourceFoundError,
     TypedArtifactStore,
     VersionConflictError,
+    internal_source_exclusion_sql,
+    owner_scope_for_row,
+    readonly_state_code,
+    readonly_view_reason,
+    store_generation,
 )
 from ..memory.trust import default_entry_tier
 from ..permissions import ExecutionPermissions, check_permissions
@@ -131,6 +140,10 @@ _CODE_STATUS: dict[str, str] = {
     # P69-07 ownership contract: an owner mismatch is a rejected mutation, exactly
     # like E_VERSION -- deliberately distinct from E_SCOPE, which means wrong `subject`.
     "E_OWNER": "fail",
+    # T20 read-only overview: an unreadable store is an error (exit 2), never a warn.
+    "E_STORE_CORRUPT": "error",
+    "E_SCHEMA_UNSUPPORTED": "error",
+    "E_STORE_BUSY": "error",
 }
 _COMPACT_REQUEST_KEYS = {
     "view",
@@ -272,6 +285,12 @@ class MemoryTool(ToolFn):
     """Query, write, and promote cross-LLM memory artifacts through one result contract."""
 
     name = "memory"
+
+    def __init__(self, readonly_store: TypedArtifactStore | None = None) -> None:
+        # R20.G8: a local read surface (dashboard GET) passes an
+        # `open_readonly_view()` store; `expand`/`related` then read through it
+        # instead of constructing a writable `TypedArtifactStore(root)`.
+        self._readonly_store = readonly_store
 
     @property
     def mcp_description(self) -> str:
@@ -816,7 +835,11 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = TypedArtifactStore(root)
+        store = (
+            self._readonly_store
+            if self._readonly_store is not None
+            else TypedArtifactStore(root)
+        )
         telemetry = TelemetryStore(root) if granted.cache_write else None
         result = expand_artifact(
             store,
@@ -969,7 +992,11 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = TypedArtifactStore(root)
+        store = (
+            self._readonly_store
+            if self._readonly_store is not None
+            else TypedArtifactStore(root)
+        )
         result = related_artifacts(
             store,
             artifact_id=artifact_id,
@@ -2397,6 +2424,10 @@ class MemoryTool(ToolFn):
             return self._envelope_result(
                 started, operation, "E_MIGRATION", {"message": str(exc)}
             )
+        except MemoryStoreUnreadableError as exc:
+            return self._envelope_result(
+                started, operation, exc.code, {"message": str(exc)}
+            )
         except OwnerScopeError as exc:
             return self._envelope_result(
                 started, operation, "E_OWNER", {"message": str(exc)}
@@ -2457,3 +2488,244 @@ class MemoryTool(ToolFn):
             raw=raw,
             metadata={"operation": operation},
         )
+
+
+# --- T20: bare `rush memory` read-only overview --------------------------------------
+#
+# A module function, deliberately not a `MemoryOperation`: the overview is a local-admin
+# terminal browse, never an agent retrieval channel, so no MCP schema or restricted
+# memory-session server can reach it (R20.1).
+
+OVERVIEW_LIMIT = 20
+_OVERVIEW_TOKEN_KEYS = {"v", "root", "generation", "filters", "limit"}
+
+
+def _overview_token(root: str, generation: int, include_internal: bool) -> str:
+    payload = {
+        "v": 1,
+        "root": root,
+        "generation": generation,
+        "filters": {"include_internal": include_internal},
+        "limit": OVERVIEW_LIMIT,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _overview_token_error(
+    token: str, root: str, include_internal: bool
+) -> tuple[str, int | None]:
+    """Validate a continuation token before any DB open. Returns `(reason, None)` on
+    rejection, `("", generation)` when valid."""
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+    except ValueError:
+        return "malformed_token", None
+    if not isinstance(payload, dict) or set(payload) != _OVERVIEW_TOKEN_KEYS:
+        return "malformed_token", None
+    filters = payload["filters"]
+    generation = payload["generation"]
+    if (
+        type(payload["v"]) is not int
+        or payload["v"] != 1
+        or not isinstance(payload["root"], str)
+        or type(generation) is not int
+        or generation < 0
+        or type(payload["limit"]) is not int
+        or not isinstance(filters, dict)
+        or set(filters) != {"include_internal"}
+        or type(filters["include_internal"]) is not bool
+    ):
+        return "malformed_token", None
+    if payload["root"] != root:
+        return "project_mismatch", None
+    if (
+        filters["include_internal"] != include_internal
+        or payload["limit"] != OVERVIEW_LIMIT
+    ):
+        return "filter_mismatch", None
+    return "", generation
+
+
+_OVERVIEW_REJECTIONS = {
+    "token_required": "--offset greater than 0 requires --generation from a previous page",
+    "malformed_token": "--generation is not a valid overview token",
+    "project_mismatch": "--generation belongs to a different project",
+    "filter_mismatch": "--generation was issued for different filters",
+    "stale_generation": "memory changed since --generation was issued",
+}
+
+
+def memory_overview(
+    root: Path,
+    *,
+    offset: int = 0,
+    generation: str | None = None,
+    include_internal: bool = False,
+) -> ToolResult:
+    """T20: the project's most recent useful memory rows, newest first, read-only.
+
+    Excludes archived, expired and (unless `include_internal`) bookkeeping rows. Rows
+    carry metadata only (no content, no author), with `source`/owner redacted. Paging is
+    `offset` plus the `generation` token the previous page returned; a token for another
+    project, other filters, or an older store generation is rejected with `E_INPUT` and
+    a restart-at-offset-0 hint. Never creates or modifies any file."""
+    from ..safety.redactor import sanitize_value
+    from ..workflows.projects import ProjectNotFoundError, resolve_project
+
+    started = time.monotonic()
+    tool = MemoryTool()
+    try:
+        canonical = Path(resolve_project(root)["root"])
+    except ProjectNotFoundError:
+        canonical = Path(root).resolve()
+    canonical_str = str(canonical)
+    db = canonical / ".rush" / "memory.db"
+
+    def _reject(reason: str) -> ToolResult:
+        message = (
+            f"{_OVERVIEW_REJECTIONS[reason]}; restart with `rush memory` at offset 0."
+        )
+        return tool._envelope_result(
+            started,
+            "overview",
+            "E_INPUT",
+            {"message": message, "reason": reason, "restart": {"offset": 0}},
+        )
+
+    def _fail(code: str, reason: str, message: str) -> ToolResult:
+        return tool._envelope_result(
+            started,
+            "overview",
+            code,
+            sanitize_value(
+                {"message": message, "reason": reason, "restart": {"offset": 0}}
+            ).value,
+        )
+
+    token_generation: int | None = None
+    if generation is not None:
+        reason, token_generation = _overview_token_error(
+            generation, canonical_str, include_internal
+        )
+        if reason:
+            return _reject(reason)
+    elif offset > 0:
+        return _reject("token_required")
+
+    opened = TypedArtifactStore.open_readonly(canonical)
+    if opened.state is not None:
+        code = readonly_state_code(opened.state, db)
+        state = "corrupt" if code == "E_STORE_CORRUPT" else "busy"
+        return _fail(code, f"store_{state}", readonly_view_reason(state))
+    if opened.migration_required:
+        return _fail(
+            "E_SCHEMA_UNSUPPORTED",
+            "migration_required",
+            readonly_view_reason("migration_required"),
+        )
+
+    rows: list[dict[str, Any]] = []
+    total = hidden_internal = current_generation = 0
+    reason_text: str | None = None
+    conn = opened.connection
+    if conn is None:
+        if token_generation not in (None, 0):
+            return _reject("stale_generation")
+        reason_text = f"no memory store at {db}"
+    else:
+        try:
+            conn.execute("BEGIN")
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+            }
+            current_generation = store_generation(conn)
+            if token_generation is not None and token_generation != current_generation:
+                conn.rollback()
+                return _reject("stale_generation")
+            live = [
+                f"{c} IS NULL" for c in ("archived_at", "expired_at") if c in columns
+            ]
+            internal_sql, internal_params = internal_source_exclusion_sql()
+            where = live if include_internal else [*live, internal_sql]
+            params: tuple[str, ...] = () if include_internal else internal_params
+            where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM memory_artifacts {where_sql}", params
+                ).fetchone()[0]
+            )
+            owner_columns = [
+                c for c in ("owner_scope_kind", "owner_scope_id") if c in columns
+            ]
+            selected = ", ".join(
+                ["id", "subject", "source", "created_at", "trust_tier", *owner_columns]
+            )
+            page = conn.execute(
+                f"SELECT {selected} FROM memory_artifacts {where_sql} "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, OVERVIEW_LIMIT, offset),
+            ).fetchall()
+            if not include_internal:
+                hidden_where = " AND ".join([*live, f"NOT ({internal_sql})"])
+                hidden_internal = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM memory_artifacts WHERE {hidden_where}",
+                        internal_params,
+                    ).fetchone()[0]
+                )
+            conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc) or "busy" in str(exc):
+                return _fail(
+                    "E_STORE_BUSY", "store_busy", f"{db} is busy: {exc}; retry."
+                )
+            return _fail(
+                "E_STORE_CORRUPT", "store_corrupt", f"{db} is unreadable: {exc}"
+            )
+        except sqlite3.DatabaseError as exc:
+            return _fail(
+                "E_STORE_CORRUPT", "store_corrupt", f"{db} is unreadable: {exc}"
+            )
+        finally:
+            conn.close()
+        rows = [
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "source": row["source"],
+                "owner_scope": owner_scope_for_row(row, canonical).as_dict(),
+                "created_at": row["created_at"],
+                "trust_tier": row["trust_tier"],
+            }
+            for row in page
+        ]
+        if total == 0:
+            reason_text = (
+                "no memory records"
+                if include_internal
+                else f"no useful memory records; {hidden_internal} internal record(s) "
+                "hidden (use --include-internal to show them)"
+            )
+
+    end = offset + len(rows)
+    data: dict[str, Any] = {
+        "project_root": canonical_str,
+        "total": total,
+        "offset": offset,
+        "limit": OVERVIEW_LIMIT,
+        "include_internal": include_internal,
+        "rows": rows,
+        "next_offset": end if rows and end < total else None,
+    }
+    if not include_internal:
+        data["hidden_internal"] = hidden_internal
+    if reason_text is not None:
+        data["reason"] = reason_text
+    data = sanitize_value(data).value
+    # Added after redaction: the token is opaque base64 and must round-trip byte-exact.
+    data["generation_token"] = _overview_token(
+        canonical_str, current_generation, include_internal
+    )
+    return tool._envelope_result(started, "overview", "OK", data)

@@ -1305,6 +1305,11 @@ def _execute_grant(
 
 
 def _memory_known_sources(project: ProjectState) -> list[str]:
+    """Known useful sources only; see `_memory_sources_and_state`."""
+    return _memory_sources_and_state(project)[0]
+
+
+def _memory_sources_and_state(project: ProjectState) -> tuple[list[str], str | None]:
     """Every distinct `source` this project's memory store has ever recorded
     -- an admin session sees the whole project (mirrors the dashboard's own
     `_all_known_sources` in `server.py`), never a narrower cross-tool
@@ -1312,14 +1317,22 @@ def _memory_known_sources(project: ProjectState) -> list[str]:
     public read method, never a raw SQLite write."""
     from rush.memory.store import TypedArtifactStore, is_internal_memory_source
 
-    store = TypedArtifactStore(project.root)
-    return sorted(
-        {
-            row["source"]
-            for row in store.list_artifact_refs()
-            if not is_internal_memory_source(row["source"])
-        }
-    )
+    # R20.G8: a read-only view -- never creates or migrates `.rush/memory.db`.
+    # An unreadable store returns its state (e.g. `migration_required`) so the
+    # caller shows it instead of an empty list.
+    store, state = TypedArtifactStore.open_readonly_view(project.root)
+    if store is None:
+        return [], state
+    try:
+        return sorted(
+            {
+                row["source"]
+                for row in store.list_artifact_refs()
+                if not is_internal_memory_source(row["source"])
+            }
+        ), None
+    finally:
+        store.close()
 
 
 def _memory_refresh(
@@ -1341,7 +1354,13 @@ def _memory_refresh(
     if not query:
         state.memory_message = "type a query, then Enter"
         return
-    sources = _memory_known_sources(project)
+    sources, store_state = _memory_sources_and_state(project)
+    if store_state is not None:
+        from rush.memory.store import readonly_view_reason
+
+        state.memory_items = []
+        state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
+        return
     if not sources:
         state.memory_items = []
         state.memory_message = "no memory recorded for this project yet"
