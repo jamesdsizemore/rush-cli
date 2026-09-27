@@ -156,6 +156,19 @@ def status_cmd(
     """Show the project's status without changing anything."""
     from rush.tools.status import render_status, run_status_cli
 
+    if path is not None and result_handle is None and not path.exists():
+        from .invocation.executor import target_error_result
+
+        exit_with_result(
+            target_error_result(
+                "status",
+                "TARGET_NOT_FOUND",
+                f"target not found: {path}",
+                target=str(path),
+                reason="target_not_found",
+            ),
+            as_json=as_json,
+        )
     result = run_status_cli(
         path,
         session_id=session_id,
@@ -194,6 +207,7 @@ def capabilities(path: Path, as_json: bool) -> None:
     echo_rows(
         list(result["tools"].items()),
         lambda item: f"{item[0]}: {item[1]['state']} ({item[1]['reason']})",
+        empty="no tools are declared in the catalog",
     )
 
 
@@ -216,25 +230,27 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
     echo_rows(
         result["steps"],
         lambda step: f"{step['tool']}: {step['state']} ({step['reason']})",
+        empty="the selected profile plans no steps",
     )
 
 
 def _benchmark_default_root() -> Path:
-    """Return the durable user-local benchmark root, never a repository path."""
-    return (
-        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        / "Rush"
-        / "benchmarks"
-    )
+    """Return the durable user-local benchmark root, never a repository path.
+    Resolved at call time (a Click callable default), never at import."""
+    from .setup.provision import default_data_root
+
+    return default_data_root() / "benchmarks"
+
+
+def _benchmark_default_output() -> Path:
+    return _benchmark_default_root() / "run"
 
 
 def _benchmark_default_model_cache() -> Path:
     """Return the durable user-local model cache, never a repository path."""
-    return (
-        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        / "Rush"
-        / "benchmark-model-cache"
-    )
+    from .setup.provision import default_data_root
+
+    return default_data_root() / "benchmark-model-cache"
 
 
 @cli.group()
@@ -248,14 +264,14 @@ def benchmark() -> None:
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
-    default=_benchmark_default_root() / "run",
-    show_default=True,
+    default=_benchmark_default_output,
+    show_default="<data root>/benchmarks/run",
 )
 @click.option(
     "--model-cache",
     type=click.Path(path_type=Path),
-    default=_benchmark_default_model_cache(),
-    show_default=True,
+    default=_benchmark_default_model_cache,
+    show_default="<data root>/benchmark-model-cache",
 )
 @click.option(
     "--allow-model-download",
@@ -356,12 +372,22 @@ def _benchmark_json_files(root: Path, pattern: str) -> list[tuple[Path, Any]]:
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
-    default=_benchmark_default_root() / "run",
-    show_default=True,
+    default=_benchmark_default_output,
+    show_default="<data root>/benchmarks/run",
 )
 @click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
 def benchmark_status(output: Path, as_json: bool) -> None:
     """Print durable job and scenario state without attaching to a worker."""
+    ctx = click.get_current_context()
+    explicit = (
+        ctx.get_parameter_source("output") is not click.core.ParameterSource.DEFAULT
+    )
+    if explicit and not output.exists():
+        # A typed output that does not exist is an invalid target, not an
+        # empty history; the default output is absent until the first run.
+        raise click.BadParameter(
+            f"Path '{output}' does not exist.", param_hint="'--output'"
+        )
     jobs = [
         {
             "job_id": payload.get("job_id", path.stem),
@@ -381,13 +407,19 @@ def benchmark_status(output: Path, as_json: bool) -> None:
     if as_json:
         echo_json({"jobs": jobs, "results": results})
         return
-    echo_rows(jobs, lambda job: f"{job['job_id']}: {job['state']}", noun="jobs")
+    echo_rows(
+        jobs,
+        lambda job: f"{job['job_id']}: {job['state']}",
+        noun="jobs",
+        empty="no benchmark jobs are recorded",
+    )
     if output.is_dir() and not results:
         echo("No benchmark scenario results found.")
     echo_rows(
         results,
         lambda r: f"{r['scenario_id']}: {r['outcome']} ({r.get('duration_ms', 0)}ms)",
         noun="scenario results",
+        empty="no benchmark scenario results are recorded",
     )
 
 
@@ -1085,12 +1117,18 @@ def _echo_suite_human(result: Mapping[str, Any], suite_name: str) -> None:
     secho(f"[{suite_name.upper()}] Status: {status}", fg=status_color, bold=True)
     echo(result.get("summary", ""))
     children = (result.get("metadata") or {}).get("children") or []
-    echo_rows(list(enumerate(children, start=1)), _suite_child_line, noun="steps")
+    echo_rows(
+        list(enumerate(children, start=1)),
+        _suite_child_line,
+        noun="steps",
+        empty="the suite ran no steps",
+    )
     echo_rows(
         result.get("findings") or [],
         lambda f: f"  - [{f.get('severity', 'info')}] {f.get('message', '')}",
         cap=FINDINGS_CAP,
         noun="findings",
+        empty="no step reported a finding",
     )
 
 
@@ -1936,7 +1974,9 @@ def plugin_list(path: Path, as_json: bool) -> None:
     else:
         echo(f"Discovered {len(plugins)} plugin(s):")
     echo_rows(
-        plugins, lambda p: f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})"
+        plugins,
+        lambda p: f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})",
+        empty="no plugins are configured",
     )
 
 
@@ -2019,6 +2059,7 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
             lambda f: f"  - [{f.severity}] {f.message}",
             cap=FINDINGS_CAP,
             noun="findings",
+            empty="the plugin reported no findings",
         )
 
     adapter = AdminOperationAdapter(
@@ -2066,7 +2107,9 @@ def workspace_list_cmd(path: Path, as_json: bool) -> None:
         return
     echo(f"Discovered {len(packages)} workspace package(s):")
     echo_rows(
-        packages, lambda p: f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})"
+        packages,
+        lambda p: f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})",
+        empty="no workspace packages were found",
     )
 
 
@@ -2092,7 +2135,11 @@ def workspace_affected_cmd(path: Path, as_json: bool) -> None:
         echo_json({"rows": affected, "total": len(affected)})
         return
     echo(f"Affected package(s) ({len(affected)}):")
-    echo_rows(affected, lambda name: f"  - {name}")
+    echo_rows(
+        affected,
+        lambda name: f"  - {name}",
+        empty="no workspace package is affected by the changed files",
+    )
 
 
 @collection_route("findings")
@@ -2121,6 +2168,7 @@ def workspace_boundary_cmd(path: Path, as_json: bool) -> None:
             ),
             cap=FINDINGS_CAP,
             noun="findings",
+            empty="no package boundary violations were found",
         )
     if result["status"] == "fail":
         sys.exit(1)
@@ -2145,6 +2193,7 @@ def workspace_locks_cmd(path: Path, as_json: bool) -> None:
         lambda f: f"  - [{f.get('severity', 'info')}] {f.get('message')}",
         cap=FINDINGS_CAP,
         noun="findings",
+        empty="no lockfile issues were found",
     )
 
 
@@ -2262,6 +2311,7 @@ def patch_memory_list_cmd(as_json: bool) -> None:
         lambda r: (
             f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})"
         ),
+        empty="no successful patches are remembered",
     )
 
 
@@ -2283,7 +2333,11 @@ def release_check_cmd(as_json: bool) -> None:
         echo_json({"rows": rows, "total": len(rows)})
         return
     echo("Discovered Manifest Versions:")
-    echo_rows(rows, lambda row: f"  - {row['manifest']}: {row['version']}")
+    echo_rows(
+        rows,
+        lambda row: f"  - {row['manifest']}: {row['version']}",
+        empty="no version manifests were found",
+    )
 
 
 @cli.group(name="ci")
@@ -2428,8 +2482,16 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
 
 @collection_route("rows")
 @sync_group.command(name="env")
-@click.argument("env_example", default=".env.example", type=click.Path(path_type=Path))
-@click.argument("env_actual", default=".env", type=click.Path(path_type=Path))
+@click.argument(
+    "env_example",
+    default=".env.example",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.argument(
+    "env_actual",
+    default=".env",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
 @click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
 def sync_env_cmd(env_example: Path, env_actual: Path, as_json: bool) -> None:
     """Check environment variable synchronization between .env.example and .env."""
@@ -2445,7 +2507,7 @@ def sync_env_cmd(env_example: Path, env_actual: Path, as_json: bool) -> None:
     else:
         echo(f"All environment variables in {env_example} are present in {env_actual}.")
     if not as_json:
-        echo_rows(missing, lambda k: f"  - {k}")
+        echo_rows(missing, lambda k: f"  - {k}", empty="no keys are missing")
     if missing:
         sys.exit(1)
 
@@ -2469,7 +2531,9 @@ def hygiene_dead_code_cmd(as_json: bool) -> None:
         return
     echo(f"Dead Code Findings ({len(findings)}):")
     echo_rows(
-        findings, lambda f: f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}"
+        findings,
+        lambda f: f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}",
+        empty="no unreferenced symbols were found",
     )
 
 
@@ -2526,7 +2590,12 @@ def _codegraph_store() -> Any:
 
 
 def _emit_codegraph(
-    title: str, rows: list[Any], unavailable: str | None, as_json: bool, line: Any
+    title: str,
+    rows: list[Any],
+    unavailable: str | None,
+    as_json: bool,
+    line: Any,
+    empty: str,
 ) -> None:
     if as_json:
         echo_json(
@@ -2539,7 +2608,7 @@ def _emit_codegraph(
         )
         return
     echo(f"Code graph unavailable: {unavailable}" if unavailable else title)
-    echo_rows(rows, line)
+    echo_rows(rows, line, empty=unavailable or empty)
 
 
 @collection_route("rows")
@@ -2554,7 +2623,12 @@ def codegraph_slice_cmd(symbol_name: str, as_json: bool) -> None:
     unavailable = store if isinstance(store, str) else None
     slices = [] if unavailable else VerbatimAstSlicer(store).slice_symbol(symbol_name)
     _emit_codegraph(
-        f"Slices of '{symbol_name}' ({len(slices)}):", slices, unavailable, as_json, str
+        f"Slices of '{symbol_name}' ({len(slices)}):",
+        slices,
+        unavailable,
+        as_json,
+        str,
+        f"no symbol named '{symbol_name}' is in the code graph",
     )
 
 
@@ -2578,6 +2652,7 @@ def codegraph_callers_cmd(symbol_name: str, as_json: bool) -> None:
             f"  - [{s.caller.file_path}:{s.caller.start_line}] {s.caller.symbol_name} "
             f"-> calls -> {s.callee.symbol_name} (depth: {s.depth})"
         ),
+        f"no callers of '{symbol_name}' are in the code graph",
     )
 
 
@@ -2605,6 +2680,7 @@ def bundle_analyze_cmd(dist_dir: Path, as_json: bool) -> None:
             f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, "
             f"brotli: ~{r.brotli_est_bytes} B)"
         ),
+        empty="no bundle files were found",
     )
 
 
@@ -2626,7 +2702,7 @@ def bundle_dead_assets_cmd(assets_dir: Path, as_json: bool) -> None:
         echo_json({"rows": unused, "total": len(unused)})
         return
     echo(f"Unreferenced Assets ({len(unused)}):")
-    echo_rows(unused, lambda u: f"  - {u}")
+    echo_rows(unused, lambda u: f"  - {u}", empty="no unused assets were found")
 
 
 @cli.group(name="hotspots")
@@ -2653,6 +2729,7 @@ def hotspots_analyze_cmd(as_json: bool) -> None:
             f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} "
             f"(Churn: {s.churn_score}, Complexity: {s.complexity_score})"
         ),
+        empty="no files have git churn to score",
     )
 
 
@@ -2674,6 +2751,7 @@ def hotspots_bus_factor_cmd(as_json: bool) -> None:
             f"  - {r.file_path}: {r.total_authors} authors, ownership entropy "
             f"{r.author_entropy} (Primary author: {r.primary_owner} {r.ownership_percent}%)"
         ),
+        empty="no files have git authorship to report",
     )
 
 
@@ -2696,7 +2774,9 @@ def governance_sync_cmd(as_json: bool) -> None:
         return
     echo(f"Synchronized Governance Files ({len(results)}):")
     echo_rows(
-        results, lambda r: f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})"
+        results,
+        lambda r: f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})",
+        empty="no IDE rule files needed syncing",
     )
 
 
@@ -2718,7 +2798,12 @@ def governance_check_cmd(as_json: bool) -> None:
             err=True,
         )
     if not as_json:
-        echo_rows(drifted, lambda d: f"  - {d.target_path}: {d.reason}", err=True)
+        echo_rows(
+            drifted,
+            lambda d: f"  - {d.target_path}: {d.reason}",
+            err=True,
+            empty="no IDE rule files have drifted",
+        )
     if drifted:
         sys.exit(1)
 
@@ -2740,7 +2825,9 @@ def scaffold_init_cmd(as_json: bool) -> None:
         echo_json({"rows": created, "total": len(created)})
         return
     echo(f"Scaffolded Files ({len(created)}):")
-    echo_rows(created, lambda c: f"  - {c.name}")
+    echo_rows(
+        created, lambda c: f"  - {c.name}", empty="no scaffold files were created"
+    )
 
 
 @cli.group(name="hook")
@@ -2866,13 +2953,24 @@ def score_compute_cmd(
         )
         from .safety.redactor import sanitize_value
 
-        export_svg.write_text(sanitize_value(svg).value, encoding="utf-8")
+        _write_export(export_svg, sanitize_value(svg).value)
         echo(f"Wrote SVG badge to {export_svg}")
 
     if export_html:
         html = HtmlReportGenerator.generate_html_report(report)
-        export_html.write_text(html, encoding="utf-8")
+        _write_export(export_html, html)
         echo(f"Wrote HTML report to {export_html}")
+
+
+def _write_export(path: Path, text: str) -> None:
+    """Write an export, creating its parent folder; an unwritable path is an
+    error outcome (exit 2), never a traceback."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        echo(f"[ERROR] cannot write {path}: {exc.strerror or exc}", err=True)
+        sys.exit(2)
 
 
 @cli.group(name="consensus")
@@ -2945,7 +3043,7 @@ def consensus_reconcile_cmd(
         f"Consensus Findings ({len(consensus)} agreed by >={int(min_agreement * 100)}% "
         f"of {total_models} models):"
     )
-    echo_rows(consensus, _consensus_line)
+    echo_rows(consensus, _consensus_line, empty="no review findings to reconcile")
 
 
 # -----------------------------------------------------------------------------
@@ -4695,7 +4793,7 @@ def agent_hook_cmd(host: str) -> None:
     "--project",
     "project_path",
     default=None,
-    type=click.Path(path_type=Path),
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Project root for project-scoped memory.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
@@ -4925,7 +5023,12 @@ def ship_env_cmd(as_json: bool) -> None:
             err=True,
         )
     if not as_json:
-        echo_rows(rows, lambda item: f"  - {item}", err=True)
+        echo_rows(
+            rows,
+            lambda item: f"  - {item}",
+            err=True,
+            empty="no environment keys are missing",
+        )
     if not res["passed"]:
         sys.exit(1)
 
@@ -4952,7 +5055,10 @@ def ship_docs_cmd(as_json: bool) -> None:
         )
     if not as_json:
         echo_rows(
-            rows, lambda item: f"  - {item['file']} -> {item['target']}", err=True
+            rows,
+            lambda item: f"  - {item['file']} -> {item['target']}",
+            err=True,
+            empty="no documentation links are stale",
         )
     if not res["passed"]:
         sys.exit(1)
@@ -4999,6 +5105,7 @@ def ship_migration_cmd(as_json: bool) -> None:
             err=True,
             cap=FINDINGS_CAP,
             noun="findings",
+            empty="no dangerous migrations were found",
         )
     if not res["passed"]:
         sys.exit(1)
@@ -5026,7 +5133,12 @@ def ship_semver_cmd(old_file: Path, new_file: Path, as_json: bool) -> None:
     else:
         echo(f"Ship SemVer: FAIL - {len(breaking)} breaking changes:", err=True)
     if not as_json:
-        echo_rows(breaking, lambda b: f"  - {b}", err=True)
+        echo_rows(
+            breaking,
+            lambda b: f"  - {b}",
+            err=True,
+            empty="no breaking changes were found",
+        )
     if breaking:
         sys.exit(1)
 
@@ -5050,7 +5162,9 @@ def ship_pack_cmd(as_json: bool) -> None:
             err=True,
         )
     if not as_json:
-        echo_rows(rows, lambda item: f"  - {item}", err=True)
+        echo_rows(
+            rows, lambda item: f"  - {item}", err=True, empty="no files were packed"
+        )
     if not res["passed"]:
         sys.exit(1)
 
@@ -5135,6 +5249,7 @@ def context_mistakes_cmd(as_json: bool) -> None:
     echo_rows(
         mistakes,
         lambda m: f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}",
+        empty="no reverted mistakes are recorded",
     )
 
 
@@ -5301,6 +5416,7 @@ def arch_guard_cmd(as_json: bool) -> None:
                 f"  {item['source_file']} ({item['source_layer']}) imports illegal layer {item['illegal_target_layer']}"
             ),
             err=True,
+            empty="no illegal layer imports were found",
         )
     if not res["passed"]:
         sys.exit(1)
@@ -5401,6 +5517,7 @@ def api_diff_cmd(base: str, as_json: bool) -> None:
             rows,
             lambda item: f"  {item['file']}: [{item['type']}] {item['details']}",
             err=True,
+            empty="no public API changes were found",
         )
     if not res["passed"]:
         sys.exit(1)
@@ -5425,7 +5542,12 @@ def db_drift_cmd(as_json: bool) -> None:
             err=True,
         )
     if not as_json:
-        echo_rows(rows, lambda item: f"  {item['model']}: {item['details']}", err=True)
+        echo_rows(
+            rows,
+            lambda item: f"  {item['model']}: {item['details']}",
+            err=True,
+            empty="no schema drift was found",
+        )
     if not res["passed"]:
         sys.exit(1)
 
@@ -5475,6 +5597,7 @@ def simplify_cmd(file_path: str, max_complexity: int, as_json: bool) -> None:
                 f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): "
                 f"{c['recommendation']}"
             ),
+            empty="no functions exceed the complexity threshold",
         )
 
 
@@ -5511,6 +5634,7 @@ def strictify_cmd(file_path: str, as_json: bool) -> None:
                 f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' "
                 f"-> Guard: {u['suggested_guard']}"
             ),
+            empty="no untyped arguments were found",
         )
 
 
@@ -5532,6 +5656,7 @@ def trace_cmd(as_json: bool) -> None:
             f"  {item['requirement']}: [{item['status']}] "
             f"Impls={len(item['implementations'])} Tests={len(item['tests'])}"
         ),
+        empty="no requirement IDs were found",
     )
 
 
@@ -5568,7 +5693,9 @@ def flight_recorder_cmd(session_id: str | None, as_json: bool) -> None:
         return
     echo(title)
     echo_rows(
-        events, lambda e: f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}"
+        events,
+        lambda e: f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}",
+        empty="no events are recorded",
     )
 
 
@@ -5854,6 +5981,7 @@ def hallu_guard_cmd(as_json: bool) -> None:
             err=True,
             cap=FINDINGS_CAP,
             noun="findings",
+            empty="no ungrounded imports were found",
         )
     if not res["passed"]:
         sys.exit(1)

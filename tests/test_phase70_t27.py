@@ -317,35 +317,136 @@ def test_t27_catalog_semantics_and_human_output(route_id: str, tmp_path: Path) -
         encoding="utf-8",
     )
 
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=fixture_dir):
-        if route_id in _BLOCKED_ROUTES:
+    if route_id in _BLOCKED_ROUTES:
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=fixture_dir):
             result = runner.invoke(cli, list(route_id.split(".")) + ["--help"])
-            assert result.exit_code == 0, (
-                f"blocked route {route_id} must still register --help"
+        assert result.exit_code == 0, (
+            f"blocked route {route_id} must still register --help"
+        )
+        assert "Usage" in result.output
+        return
+
+    case = _MATRIX_CASES[route_id]
+    _assert_outcome(route_id, "expect", case["expect"], case["argv"], fixture_dir)
+    for kind in _SUBCASES:
+        spec = case[kind]
+        _assert_subcase_declared(route_id, kind, spec)
+        if "argv" in spec:
+            _assert_outcome(route_id, kind, spec, spec["argv"], fixture_dir)
+
+
+_SUBCASES = ("empty", "denied", "failure")
+_GRANT_PARAMS = {"allow_cache_write", "allow_artifact_write"}
+
+
+def _route_command(route_id: str) -> click.Command:
+    if route_id == "<bare-rush>":
+        return cli
+    path = route_id.split(".")
+    # `lock` is resolved dynamically by `RushGroup.get_command`
+    # (cli.py:59-65) and is never a member of `cli.commands`.
+    command: click.Command = lock_cmd_group if path[0] == "lock" else cli
+    for part in path[1:] if path[0] == "lock" else path:
+        assert isinstance(command, click.Group)
+        command = command.commands[part]
+    return command
+
+
+def _assert_subcase_declared(route_id: str, kind: str, spec: dict[str, Any]) -> None:
+    """A sub-case either runs, is blocked on a named lane, or is impossible
+    for this route -- and "impossible" is checked against the live command."""
+    if "argv" in spec:
+        assert {"json_paths", "human_contains", "exit"} <= spec.keys(), (
+            f"{route_id} {kind}: a runnable sub-case needs json_paths, "
+            f"human_contains and exit, got {sorted(spec)}"
+        )
+        return
+    if "blocker" in spec:
+        assert {"lane", "reason"} <= spec["blocker"].keys(), (route_id, kind, spec)
+        return
+    reason = spec.get("not_applicable")
+    assert isinstance(reason, str) and reason, (
+        f"{route_id} {kind}: must be runnable, a blocker, or not_applicable "
+        f"with a reason, got {spec!r}"
+    )
+    command = _route_command(route_id)
+    if kind == "empty":
+        from rush.cli_support.rendering import COLLECTION_ROUTES
+
+        if route_id in ("capabilities", "plan"):
+            from rush.capabilities import _PLAN_PROFILES
+            from rush.catalog import TOOL_SPECS
+
+            assert len(TOOL_SPECS) > 0 and len(_PLAN_PROFILES["default"]) > 0, (
+                f"{route_id}: not_applicable requires proof that its backing "
+                "collections (TOOL_SPECS, default plan profile) are non-empty"
             )
-            assert "Usage" in result.output
             return
+        assert command not in COLLECTION_ROUTES, (
+            f"{route_id} is a collection route: its empty case must run"
+        )
+    elif kind == "denied":
+        assert not {p.name for p in command.params} & _GRANT_PARAMS, (
+            f"{route_id} declares a write grant: its denied case must run"
+        )
+    else:
+        path_params = [
+            p.name
+            for p in command.params
+            if type(p.type).__name__ in ("Path", "TargetPath")
+        ]
+        assert not path_params, (
+            f"{route_id} takes filesystem targets {path_params}: its failure "
+            "case must run"
+        )
 
-        if route_id == "<bare-rush>":
-            result = runner.invoke(cli, [])
-        elif route_id in ("memory", "scan"):
-            result = runner.invoke(cli, [route_id, "--json"])
-        else:
-            path = tuple(route_id.split("."))
-            # `lock` is resolved dynamically by `RushGroup.get_command`
-            # (cli.py:59-65) and is never a member of `cli.commands`.
-            command = lock_cmd_group if path[0] == "lock" else cli
-            walk_start = 1 if path[0] == "lock" else 0
-            for part in path[walk_start:-1]:
-                command = command.commands[part]
-            command = command.commands[path[-1]]
-            argv = list(path) + _build_argv(
-                command, fixture_file, fixture_dir, fixture_json_file
-            )
-            result = runner.invoke(cli, argv)
 
+def _assert_outcome(
+    route_id: str,
+    kind: str,
+    spec: dict[str, Any],
+    argv: list[str],
+    fixture_dir: Path,
+) -> None:
+    """Run one matrix outcome; assert its exact exit, every json_paths value
+    (from the `--json` run) and every human_contains string (from the run
+    without `--json`: stdout and stderr, as a user sees them)."""
+    ran = False
+
+    def invoke(args: list[str]) -> Any:
+        nonlocal ran
+        ran = True
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=fixture_dir) as cwd:
+            for rel, text in spec.get("setup", {}).items():
+                _write(Path(cwd), rel, text)
+            result = runner.invoke(cli, _materialize(args, fixture_dir))
         _assert_real_exercise(result)
+        assert result.exit_code == spec["exit"], (
+            f"{route_id} {kind} {args}: exit {result.exit_code} != "
+            f"{spec['exit']}; stdout={result.stdout[-1500:]!r} "
+            f"stderr={result.stderr[-800:]!r}"
+        )
+        return result
+
+    if spec["json_paths"]:
+        machine = invoke([a for a in argv if a != "--json"] + ["--json"])
+        payload = json.loads(machine.stdout)
+        for dotted, value in spec["json_paths"].items():
+            actual = _json_at(payload, dotted)
+            assert actual == value, (
+                f"{route_id} {kind}: --json {dotted!r} is {actual!r}, "
+                f"expected {value!r}"
+            )
+    human_argv = [a for a in argv if a != "--json"]
+    if spec["human_contains"] or not ran:
+        human = invoke(human_argv)
+        for text in spec["human_contains"]:
+            assert text in human.output, (
+                f"{route_id} {kind} {human_argv}: {text!r} not in human "
+                f"output {human.output[-1500:]!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -957,13 +1058,14 @@ def _materialize(argv: list[str], fixture_dir: Path) -> list[str]:
         "<fixture-json>": str(fixture_dir / "example.json"),
         "<fixture-dir>": str(fixture_dir),
         "<missing-target>": str(fixture_dir / "missing" / "absent.py"),
+        "<unwritable-target>": str(fixture_dir / "example.py" / "out.svg"),
     }
     return [replacements.get(arg, arg) for arg in argv]
 
 
 def _json_at(payload: Any, dotted: str) -> Any:
     for part in dotted.split("."):
-        payload = payload[part]
+        payload = payload[int(part)] if isinstance(payload, list) else payload[part]
     return payload
 
 
@@ -1118,6 +1220,10 @@ def test_t27_matrix_route_writes_only_its_allowed_paths(
         result = runner.invoke(cli, argv)
         written = _new_leaf_paths(tmp_path, before, Path(cwd))
     _assert_real_exercise(result)
+    assert result.exit_code == case["expect"]["exit"], (
+        f"{case_id}: expected exit {case['expect']['exit']}, got "
+        f"{result.exit_code}: {result.output}"
+    )
     unexpected = written - set(case["side_effects"]["allowed_paths"])
     assert not unexpected, (
         f"{case_id} wrote outside its declared allowed_paths: {sorted(unexpected)}"

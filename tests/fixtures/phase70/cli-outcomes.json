@@ -134,7 +134,22 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "agent",
+        "connect",
+        "phase70-agent",
+        "--session",
+        "phase70-session",
+        "--project",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "unknown agent 'phase70-agent'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -170,7 +185,18 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "agent",
+        "disconnect",
+        "phase70-agent",
+        "--project",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "unknown agent: 'phase70-agent'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -205,7 +231,18 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "agent",
+        "doctor",
+        "--project",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '--project'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -367,7 +404,17 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "api-diff",
+        "--json"
+      ],
+      "json_paths": {
+        "breaking_changes": []
+      },
+      "human_contains": [
+        "0 records: no public API changes were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -398,7 +445,17 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "arch-guard",
+        "--json"
+      ],
+      "json_paths": {
+        "violations": []
+      },
+      "human_contains": [
+        "0 records: no illegal layer imports were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -450,7 +507,17 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "attest",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "coverage: none (target_not_found)"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -475,12 +542,24 @@
         "status": "skipped"
       },
       "human_contains": [
-        "audit skipped"
+        "[AUDIT] Status: skipped"
       ],
       "exit": 0
     },
     "empty": {
-      "not_applicable": "analysis route: not a record collection"
+      "argv": [
+        "audit",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no step reported a finding"
+      ],
+      "exit": 0
     },
     "denied": {
       "argv": [
@@ -491,12 +570,24 @@
         "status": "skipped"
       },
       "human_contains": [
-        "audit skipped"
+        "[AUDIT] Status: skipped"
       ],
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "audit",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "audit",
+        "status": "error"
+      },
+      "human_contains": [
+        "audit: executed 0 tool(s) with status 'error'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -544,7 +635,18 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "benchmark",
+        "check",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "coverage: none (target_not_found)"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -598,20 +700,49 @@
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
-      "json_paths": {},
+      "json_paths": {
+        "jobs": [],
+        "results": []
+      },
       "human_contains": [
-        "queued"
+        "0 records: no benchmark jobs are recorded",
+        "0 records: no benchmark scenario results are recorded"
       ],
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "benchmark",
+        "status",
+        "--json"
+      ],
+      "json_paths": {
+        "jobs": [],
+        "results": []
+      },
+      "human_contains": [
+        "0 records: no benchmark jobs are recorded",
+        "0 records: no benchmark scenario results are recorded"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "benchmark",
+        "status",
+        "--output",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '--output'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -679,13 +810,36 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "bundle",
+        "analyze",
+        "<fixture-dir>",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no bundle files were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "bundle",
+        "analyze",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for 'DIST_DIR'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -712,13 +866,36 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "bundle",
+        "dead-assets",
+        "<fixture-dir>",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no unused assets were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "bundle",
+        "dead-assets",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for 'ASSETS_DIR'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -806,7 +983,7 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "not_applicable": "capabilities lists the fixed TOOL_SPECS catalog, which is never empty"
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -850,7 +1027,19 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "analysis route: not a record collection"
+      "argv": [
+        "check",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no step reported a finding"
+      ],
+      "exit": 0
     },
     "denied": {
       "argv": [
@@ -866,7 +1055,19 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "check",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "check",
+        "status": "error"
+      },
+      "human_contains": [
+        "check: executed 0 tool(s) with status 'error'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -926,7 +1127,19 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "codegraph",
+        "callers",
+        "main",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no code graph index at"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -937,7 +1150,7 @@
     "side_effects": {
       "allowed_paths": []
     },
-    "producer": "rush.cli:codegraph_callers_cmd",
+    "producer": "rush.codegraph.store:CodeGraphStore",
     "blocker": null
   },
   {
@@ -959,7 +1172,19 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "codegraph",
+        "slice",
+        "main",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no code graph index at"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -970,7 +1195,7 @@
     "side_effects": {
       "allowed_paths": []
     },
-    "producer": "rush.cli:codegraph_slice_cmd",
+    "producer": "rush.codegraph.store:CodeGraphStore",
     "blocker": null
   },
   {
@@ -1133,7 +1358,18 @@
       "exit": 1
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "commit-msg",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1225,7 +1461,17 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "config",
+        "check",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1273,7 +1519,7 @@
     "side_effects": {
       "allowed_paths": []
     },
-    "producer": "rush.cli:conflict_solve_cmd",
+    "producer": "rush.hygiene.ast_merger:ASTConflictMerger",
     "blocker": null
   },
   {
@@ -1294,13 +1540,35 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "consensus",
+        "reconcile",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no review findings to reconcile"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "consensus",
+        "reconcile",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[FINDINGS_FILES]",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1383,7 +1651,8 @@
     "expect": {
       "json_paths": {},
       "human_contains": [
-        "Aligned tokens: (Padded:"
+        "Aligned tokens:",
+        "(Padded: True)"
       ],
       "exit": 0
     },
@@ -1455,7 +1724,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "context",
+        "mistakes",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no reverted mistakes are recorded"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -1835,7 +2115,17 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "db-drift",
+        "--json"
+      ],
+      "json_paths": {
+        "drift_issues": []
+      },
+      "human_contains": [
+        "0 records: no schema drift was found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2192,7 +2482,18 @@
       "exit": 2
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "fix",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -2278,7 +2579,17 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "flight-recorder",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no events are recorded"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2465,12 +2776,27 @@
         "status": "fail"
       },
       "human_contains": [
-        "gate fail"
+        "[GATE] Status: fail"
       ],
       "exit": 1
     },
     "empty": {
-      "not_applicable": "analysis route: not a record collection"
+      "argv": [
+        "gate",
+        "test_ok.py",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "setup": {
+        "test_ok.py": "def test_ok():\n    assert True\n"
+      },
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no step reported a finding"
+      ],
+      "exit": 2
     },
     "denied": {
       "argv": [
@@ -2481,12 +2807,24 @@
         "status": "fail"
       },
       "human_contains": [
-        "gate fail"
+        "[GATE] Status: fail"
       ],
       "exit": 1
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "gate",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "gate",
+        "status": "error"
+      },
+      "human_contains": [
+        "gate: executed 0 tool(s) with status 'error'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -2512,7 +2850,25 @@
       "exit": 1
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "governance",
+        "check"
+      ],
+      "setup": {
+        "AGENTS.md": "Run tests before committing.\n",
+        ".cursorrules": "<!-- AUTO-GENERATED FROM AGENTS.md (SHA: 25895f3fb732) - DO NOT EDIT MANUALLY -->\n\nRun tests before committing.\n",
+        ".windsurfrules": "<!-- AUTO-GENERATED FROM AGENTS.md (SHA: 25895f3fb732) - DO NOT EDIT MANUALLY -->\n\nRun tests before committing.\n",
+        ".clinerules": "<!-- AUTO-GENERATED FROM AGENTS.md (SHA: 25895f3fb732) - DO NOT EDIT MANUALLY -->\n\nRun tests before committing.\n",
+        ".github/copilot-instructions.md": "<!-- AUTO-GENERATED FROM AGENTS.md (SHA: 25895f3fb732) - DO NOT EDIT MANUALLY -->\n\nRun tests before committing.\n",
+        ".gemini/antigravity/rules.md": "<!-- AUTO-GENERATED FROM AGENTS.md (SHA: 25895f3fb732) - DO NOT EDIT MANUALLY -->\n\nRun tests before committing.\n"
+      },
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no IDE rule files have drifted"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2524,7 +2880,10 @@
       "allowed_paths": []
     },
     "producer": "rush.cli:governance_check_cmd",
-    "blocker": null
+    "blocker": null,
+    "ownership": {
+      "src/rush/governance/public_operations.py": "governance manifest generator (scripts/build_remediation_manifests.py); T27 edited it only to import the MCP server lazily; serves no CLI route"
+    }
   },
   {
     "id": "governance.sync",
@@ -2544,7 +2903,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "governance",
+        "sync",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no IDE rule files needed syncing"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2648,7 +3018,17 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "hallu-guard",
+        "--json"
+      ],
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no ungrounded imports were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2711,7 +3091,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "hotspots",
+        "analyze",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no files have git churn to score"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2743,7 +3134,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "hotspots",
+        "bus-factor",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no files have git authorship to report"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2816,7 +3218,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "hygiene",
+        "dead-code",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no unreferenced symbols were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -2929,7 +3342,17 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "iam-audit",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "coverage: none (target_not_found)"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -2959,7 +3382,16 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "init",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -3041,7 +3473,17 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "license-matrix",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "coverage: none (target_not_found)"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -3583,7 +4025,7 @@
         "raw.operation": "overview"
       },
       "human_contains": [
-        "memory ok"
+        "memory: 0 useful record(s) in"
       ],
       "exit": 0
     },
@@ -3594,7 +4036,7 @@
         "raw.operation": "overview"
       },
       "human_contains": [
-        "memory ok"
+        "memory: 0 useful record(s) in"
       ],
       "exit": 0,
       "argv": [
@@ -5104,7 +5546,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "patch",
+        "memory",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no successful patches are remembered"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -5115,7 +5568,7 @@
     "side_effects": {
       "allowed_paths": []
     },
-    "producer": "rush.cli:patch_memory_list_cmd",
+    "producer": "rush.patch.memory:PatchMemoryStore",
     "blocker": null
   },
   {
@@ -5238,7 +5691,7 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "not_applicable": "plan's default profile is a fixed non-empty step list"
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -5278,13 +5731,35 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "plugin",
+        "list",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no plugins are configured"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "plugin",
+        "list",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -5311,13 +5786,28 @@
       "exit": 1
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "blocker": {
+        "lane": "X10",
+        "reason": "a real 0-findings plugin run requires a real, trusted-plugin python subprocess spawn; this file's isolation blocks subprocess for the base matrix run"
+      }
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "plugin",
+        "run",
+        "phase70-nonexistent-plugin",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -5426,7 +5916,19 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "add",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -5579,7 +6081,21 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "create",
+        "phase70-fixture",
+        "--parent",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '--parent'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
@@ -5781,7 +6297,16 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "project",
+        "show",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "no registered project matches"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -5965,7 +6490,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "release",
+        "check",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no version manifests were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -6119,7 +6655,21 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "scaffold",
+        "init"
+      ],
+      "setup": {
+        "AGENTS.md": "placeholder\n",
+        "rush.toml": "placeholder\n"
+      },
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no scaffold files were created"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -6415,7 +6965,17 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "score",
+        "compute",
+        "--export-svg",
+        "<unwritable-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "[ERROR] cannot write"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -6828,7 +7388,18 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "setup",
+        "<missing-target>",
+        "--allow-artifact-write",
+        "--allow-cache-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -6894,7 +7465,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "ship",
+        "docs",
+        "--json"
+      ],
+      "json_paths": {
+        "broken_links": []
+      },
+      "human_contains": [
+        "0 records: no documentation links are stale"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -6926,7 +7508,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "ship",
+        "env",
+        "--json"
+      ],
+      "json_paths": {
+        "missing_in_example": []
+      },
+      "human_contains": [
+        "0 records: no environment keys are missing"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -6989,7 +7582,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "ship",
+        "migration",
+        "--json"
+      ],
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no dangerous migrations were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -7021,7 +7625,18 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "ship",
+        "pack",
+        "--json"
+      ],
+      "json_paths": {
+        "leaks": []
+      },
+      "human_contains": [
+        "0 records: no files were packed"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -7055,7 +7670,20 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "ship",
+        "semver",
+        "<fixture-file>",
+        "<fixture-file>",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no breaking changes were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -7093,12 +7721,24 @@
     "expect": {
       "json_paths": {},
       "human_contains": [
-        "Simplify: File has"
+        "has clean complexity"
       ],
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "simplify",
+        "--file",
+        "<fixture-file>",
+        "--json"
+      ],
+      "json_paths": {
+        "candidates": []
+      },
+      "human_contains": [
+        "0 records: no functions exceed the complexity threshold"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -7350,7 +7990,7 @@
         "raw.operation": "status"
       },
       "human_contains": [
-        "status warn"
+        "rush status: warn"
       ],
       "exit": 1
     },
@@ -7361,7 +8001,19 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "status",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "status",
+        "status": "error"
+      },
+      "human_contains": [
+        "error: target not found:"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -7388,7 +8040,19 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "strictify",
+        "--file",
+        "<fixture-file>",
+        "--json"
+      ],
+      "json_paths": {
+        "untyped_arguments": []
+      },
+      "human_contains": [
+        "0 records: no untyped arguments were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -7473,18 +8137,44 @@
     "expect": {
       "json_paths": {},
       "human_contains": [
-        "All environment variables"
+        "Invalid value for '[ENV_EXAMPLE]'",
+        "does not exist"
       ],
-      "exit": 0
+      "exit": 2
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "sync",
+        "env"
+      ],
+      "setup": {
+        ".env.example": "KEY_1=x\n",
+        ".env": "KEY_1=x\n"
+      },
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no keys are missing"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "sync",
+        "env",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[ENV_EXAMPLE]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -7516,7 +8206,17 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "sync",
+        "openapi",
+        "<missing-target>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for 'OPENAPI_FILE'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -7889,7 +8589,17 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "trace",
+        "--json"
+      ],
+      "json_paths": {
+        "matrix": []
+      },
+      "human_contains": [
+        "0 records: no requirement IDs were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
@@ -7928,7 +8638,9 @@
       "not_applicable": "route takes no filesystem target to make missing"
     },
     "side_effects": {
-      "allowed_paths": []
+      "allowed_paths": [
+        "<home>/.rush/trusted_repositories.json"
+      ]
     },
     "producer": "rush.cli:trust_cmd",
     "blocker": null
@@ -8197,18 +8909,40 @@
     "expect": {
       "json_paths": {},
       "human_contains": [
-        "{\"ts\": \"level\": \"WARNING\","
+        "Affected package(s) (0):"
       ],
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "workspace",
+        "affected",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no workspace package is affected by the changed files"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "workspace",
+        "affected",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -8232,18 +8966,40 @@
         "status": "ok"
       },
       "human_contains": [
-        "workspace ok"
+        "Workspace boundary check: 0 packages scanned, 0 violations."
       ],
       "exit": 0
     },
     "empty": {
-      "not_applicable": "inspection route: not a record collection"
+      "argv": [
+        "workspace",
+        "boundary",
+        "--json"
+      ],
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no package boundary violations were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "workspace",
+        "boundary",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -8269,13 +9025,35 @@
       "exit": 0
     },
     "empty": {
-      "not_applicable": "service route: not a record collection"
+      "argv": [
+        "workspace",
+        "list",
+        "--json"
+      ],
+      "json_paths": {
+        "rows": []
+      },
+      "human_contains": [
+        "0 records: no workspace packages were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "workspace",
+        "list",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -8299,18 +9077,40 @@
         "status": "ok"
       },
       "human_contains": [
-        "workspace ok"
+        "Workspace lockfile validation: 0 issue(s) detected."
       ],
       "exit": 0
     },
     "empty": {
-      "not_applicable": "inspection route: not a record collection"
+      "argv": [
+        "workspace",
+        "locks",
+        "--json"
+      ],
+      "json_paths": {
+        "findings": []
+      },
+      "human_contains": [
+        "0 records: no lockfile issues were found"
+      ],
+      "exit": 0
     },
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "workspace",
+        "locks",
+        "<missing-target>",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '[PATH]'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []

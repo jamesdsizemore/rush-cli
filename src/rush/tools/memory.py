@@ -2618,9 +2618,13 @@ def _with_mutation_view(
             )
             changed[entry["id"]] = {"revision": entry["revision"], "kind": kind}
         store = TypedArtifactStore(root)
+        memories, _generation = store.snapshot_memories(include_internal=True)
+        archived = {m["id"]: m["archived"] for m in memories if m["id"] in changed}
         view = {
             "changed": changed,
-            "readback": {i: _readback_row(store.get_current(i)) for i in changed},
+            "readback": {
+                i: _readback_row(store.get_current(i), archived.get(i)) for i in changed
+            },
         }
     elif payload.get("applied") is False:
         view = {"unchanged": "preview only (apply=false); nothing committed"}
@@ -2633,11 +2637,16 @@ def _with_mutation_view(
     return cast(ToolResult, {**result, "raw": new_raw})
 
 
-def _readback_row(artifact: MemoryArtifact | None) -> dict[str, Any]:
-    if artifact is None:
+def _readback_row(
+    artifact: MemoryArtifact | None, archived: bool | None
+) -> dict[str, Any]:
+    """`archived` comes from the archived-aware inventory reader
+    (`snapshot_memories`); a row that reader no longer lists is not present."""
+    if artifact is None or archived is None:
         return {"present": False}
     return {
         "present": True,
+        "archived": archived,
         "revision": artifact.artifact_version,
         "subject": artifact.subject,
         "trust_tier": artifact.trust_tier,

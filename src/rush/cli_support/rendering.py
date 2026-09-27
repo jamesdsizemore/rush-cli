@@ -125,10 +125,15 @@ def echo_rows(
     cap: int = ROW_CAP,
     noun: str = "records",
     err: bool = False,
+    empty: str | None = None,
 ) -> None:
     """T27 §1: at most `cap` rows, then always the exact shown/total; when
-    truncated, also the copyable `rush ... --json` that prints every row."""
+    truncated, also the copyable `rush ... --json` that prints every row.
+    An empty list first prints `0 records: <empty>`, the producer's reason
+    (every cli.py call passes one; tests/test_phase70_t27_fixes.py checks)."""
     total = len(rows)
+    if total == 0 and empty is not None:
+        echo(f"0 records: {empty}", err=err)
     for row in rows[:cap]:
         echo(line(row), err=err)
     shown = min(total, cap)

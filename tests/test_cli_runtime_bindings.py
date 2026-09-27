@@ -38,7 +38,8 @@ def test_governance_check_reports_real_parity_results(tmp_path, monkeypatch):
     clean = runner.invoke(cli, ["governance", "check"])
     assert clean.exit_code == 0, clean.exception
     assert clean.output == (
-        "[OK] All multi-IDE governance rule files match AGENTS.md.\n0/0 records\n"
+        "[OK] All multi-IDE governance rule files match AGENTS.md.\n"
+        "0 records: no IDE rule files have drifted\n0/0 records\n"
     )
 
     (tmp_path / ".cursorrules").write_text("stale rules\n")

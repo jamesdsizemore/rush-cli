@@ -85,7 +85,8 @@ def test_benchmark_status_reads_durable_result_artifacts(tmp_path: Path) -> None
 
     assert result.exit_code == 0
     assert result.output == (
-        "0/0 jobs\nlocal-granite-278m-c0: pass (42ms)\n1/1 scenario results\n"
+        "0 records: no benchmark jobs are recorded\n0/0 jobs\n"
+        "local-granite-278m-c0: pass (42ms)\n1/1 scenario results\n"
     )
 
 
