@@ -5,6 +5,7 @@ Architecture §4.1. Every engine (ruff, eslint, etc.) implements ``Engine``.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -65,7 +66,9 @@ class Engine(ABC):
         run_id: str | None = None,
     ) -> EngineResult: ...
 
-    _cached_versions: ClassVar[dict[str, str]] = {}
+    # (path, st_ino, st_size, st_mtime_ns) -> version: replacing the
+    # executable's bytes at an unchanged path invalidates the entry (S11.7).
+    _cached_versions: ClassVar[dict[tuple[str, int, int, int], str]] = {}
 
     def version(
         self,
@@ -85,8 +88,14 @@ class Engine(ABC):
         binary_path = resolve_binary(self.binary)
         if binary_path is None:
             return None
-        if binary_path in Engine._cached_versions:
-            return Engine._cached_versions[binary_path]
+        cache_key: tuple[str, int, int, int] | None
+        try:
+            st = os.stat(binary_path)
+            cache_key = (binary_path, st.st_ino, st.st_size, st.st_mtime_ns)
+        except OSError:
+            cache_key = None
+        if cache_key is not None and cache_key in Engine._cached_versions:
+            return Engine._cached_versions[cache_key]
 
         try:
             r = run_subprocess(
@@ -109,8 +118,8 @@ class Engine(ABC):
                     break
             if ver is None and out:
                 ver = out.splitlines()[0]
-            if ver is not None:
-                Engine._cached_versions[binary_path] = ver
+            if ver is not None and cache_key is not None:
+                Engine._cached_versions[cache_key] = ver
             return ver
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return None

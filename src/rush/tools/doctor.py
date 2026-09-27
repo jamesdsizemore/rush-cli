@@ -187,29 +187,31 @@ class _EngineResolution:
 def _resolve_engine(engine_id: str, binary: str, root: Path) -> _EngineResolution:
     """Resolve `engine_id` the same way dispatch does, flagging cwd shadowing.
 
-    `root` must already be resolved. A binary that resolves to a file living
-    directly in `root` is never trusted as installed -- S15.3/§3 -- it is
-    surfaced as a `binary-shadowing` finding instead, and it is never probed.
+    `root` must already be resolved. Shadowing is queried from T11's own
+    project-scope filter (`binaries.project_scoped_candidate`) rather than
+    re-derived here: T11's `resolve_binary` already excludes a project-scoped
+    candidate and may recover a trusted one elsewhere on PATH (or via a
+    manifest), so `shadowed` is independent of whether resolution ultimately
+    succeeds -- a shadow attempt is reported even when a trusted install is
+    also found.
     """
     manifest_path = resolve_project_binary(engine_id, root)
     if manifest_path is not None:
         return _EngineResolution(manifest_path, "manifest", False)
 
+    shadowed = binaries_mod.project_scoped_candidate(binary, root) is not None
     resolved = resolve_binary(binary, engine_id=engine_id, project_root=root)
     if resolved is None:
-        return _EngineResolution(None, None, False)
+        return _EngineResolution(None, None, shadowed)
 
     resolved_path = Path(resolved).resolve()
-    if resolved_path.parent == root:
-        return _EngineResolution(None, None, True)
-
     scripts = binaries_mod._venv_scripts_dir()
     source = (
         "rush_runtime"
         if scripts is not None and resolved_path.parent == scripts.resolve()
         else "path"
     )
-    return _EngineResolution(resolved, source, False)
+    return _EngineResolution(resolved, source, shadowed)
 
 
 def _probe_version(executable: str) -> tuple[str | None, str]:
@@ -374,24 +376,24 @@ class DoctorTool(ToolFn):
                     }
                 )
                 continue
-            if entry["disposition"] == "missing":
-                if shadow_map.get(engine_id):
-                    findings.append(
-                        {
-                            "rule": "binary-shadowing",
-                            "message": (
-                                f"{engine_id}: a binary inside the project root shadows the "
-                                f"trusted resolution and is never trusted or probed. {entry['action']}"
-                            ).strip(),
-                        }
-                    )
-                else:
-                    findings.append(
-                        {
-                            "rule": "engine-missing",
-                            "message": f"{engine_id} is not installed. {entry['action']}".strip(),
-                        }
-                    )
+            if shadow_map.get(engine_id):
+                findings.append(
+                    {
+                        "rule": "binary-shadowing",
+                        "message": (
+                            f"{engine_id}: a binary inside the project root shadows the "
+                            "trusted resolution and is never trusted or probed. "
+                            f"{entry['action']}"
+                        ).strip(),
+                    }
+                )
+            elif entry["disposition"] == "missing":
+                findings.append(
+                    {
+                        "rule": "engine-missing",
+                        "message": f"{engine_id} is not installed. {entry['action']}".strip(),
+                    }
+                )
 
         # R15.3: doctor calls manifest verification explicitly -- the resolver
         # silently falls back to PATH on any tampered/scope-mismatched

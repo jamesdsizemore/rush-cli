@@ -63,6 +63,24 @@ def _resolve_target_path(
     return target_path
 
 
+# Per-tool CLI options, mapped explicitly (R11.6): generating flags from every
+# tool's `option_specs` would silently add unrelated options to other commands.
+_TOOL_CLI_OPTIONS: dict[str, tuple[click.Option, ...]] = {
+    "typecheck": (
+        click.Option(
+            ["--environment"],
+            type=click.Choice(["project", "isolated"]),
+            default=None,
+            help=(
+                "Python interpreter environment: project (.venv, requires "
+                "--allow-build) or isolated. Default prefers project and falls "
+                "back to isolated without --allow-build."
+            ),
+        ),
+    ),
+}
+
+
 def build_catalog_path_command(tool: ToolFn) -> click.Command:
     """Build the standard ``PATH --json`` CLI surface for a catalog tool."""
 
@@ -136,6 +154,7 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         allow_artifact_write: bool,
         allow_browser: bool,
         as_json: bool,
+        **tool_options: object,
     ) -> None:
         perms = _extract_permissions(
             allow_network=allow_network,
@@ -154,6 +173,11 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
             since=since,
         )
 
+        extra_kwargs: dict[str, object] = {
+            name: value for name, value in tool_options.items() if value is not None
+        }
+        if report_path:
+            extra_kwargs["report_path"] = report_path
         _run_tool(
             tool.name,
             target_path,
@@ -161,7 +185,8 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
             permissions=perms,
             export_sarif=export_sarif,
             export_html=export_html,
-            extra_kwargs={"report_path": report_path} if report_path else None,
+            extra_kwargs=extra_kwargs or None,
         )
 
+    command.params.extend(_TOOL_CLI_OPTIONS.get(tool.name, ()))
     return command

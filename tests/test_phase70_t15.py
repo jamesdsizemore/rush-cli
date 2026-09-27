@@ -67,7 +67,13 @@ def _isolated_binary_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _empty_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    empty_dir = tmp_path / "empty_path"
+    # T11 (runtime/binaries.py) filters any PATH entry living inside the
+    # project's logical root as project-scoped and untrusted. Every caller
+    # here treats `tmp_path` as the project root (`_python_project` etc.
+    # write markers directly into it), so this fixture directory must be a
+    # sibling of `tmp_path`, not a child of it -- otherwise a "real, installed"
+    # engine placed here would be excluded by T11 exactly like a shadow.
+    empty_dir = tmp_path.with_name(tmp_path.name + "_bin")
     empty_dir.mkdir()
     monkeypatch.setenv("PATH", str(empty_dir))
     return empty_dir
@@ -250,14 +256,41 @@ def test_python_project_missing_eslint_has_no_effect(
 # --- group: shadowing (S15.3, design ("never probes a cwd-shadowing binary")) --
 
 
+def test_shadow_plus_trusted_install_resolves_trusted_and_still_reports_shadow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both a project-root shadow and a real install on trusted PATH: the
+    engine resolves to the trusted binary (T11 recovers it), is never the
+    shadow, and doctor still reports the shadow as a warn-level finding."""
+    root = _python_project(tmp_path)
+    bin_dir = _empty_path(tmp_path, monkeypatch)
+    real = _fake_executable(bin_dir, "ruff", version_output="9.9.9-real")
+    shadow = _fake_executable(root, "ruff", version_output="EVIL-SHADOW")
+    monkeypatch.setenv("PATH", f"{root}{os.pathsep}{bin_dir}")
+
+    entries = doctor_mod.build_engine_inventory(root, probe=False)
+    ruff_entry = next(e for e in entries if e["engine"] == "ruff")
+    assert ruff_entry["disposition"] == "installed"
+    assert Path(ruff_entry["executable"]).resolve() == real.resolve()
+    assert Path(ruff_entry["executable"]).resolve() != shadow.resolve()
+
+    result = doctor_mod.DoctorTool().run(root)
+    rules = {f.get("rule") for f in result.get("findings", [])}
+    assert "binary-shadowing" in rules
+    assert result["status"] == "warn"
+
+
 def test_cwd_shadowing_binary_reported_and_never_probed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _python_project(tmp_path)
+    # T11: `resolve_binary` excludes any project-scoped PATH candidate. To
+    # exercise "excluded, with nothing legitimate to recover elsewhere" (not
+    # "excluded, then a real install found elsewhere"), no real ruff is
+    # placed anywhere trusted -- only the project-root shadow itself.
     bin_dir = _empty_path(tmp_path, monkeypatch)
-    _fake_executable(bin_dir, "ruff", version_output="9.9.9-real")
     # Shadow: a same-named binary living inside the project root itself, with
-    # the root also placed on PATH ahead of the real one.
+    # the root also placed on PATH ahead of the (empty) trusted directory.
     _fake_executable(root, "ruff", version_output="EVIL-SHADOW")
     monkeypatch.setenv("PATH", f"{root}{os.pathsep}{bin_dir}")
 

@@ -438,6 +438,11 @@ def _version_policy(engine_id: str, source: EngineSource) -> str:
         return "minimum:2.0.0"
     if engine_id == "pip-audit":
         return "minimum:2.10.1"
+    if engine_id == "pyrefly":
+        # First release whose `check --help` offers both interpreter-selection
+        # flags T11 relies on (0.36.2 has neither); enforced at runtime by
+        # `PyreflyEngine.support_problem`.
+        return "minimum:0.37.0"
     if source == "maven":
         return "project_locked"
     if source == "internal":

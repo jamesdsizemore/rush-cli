@@ -25,7 +25,7 @@ def test_pyrefly_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
 
     raw = PyreflyEngine().run(tmp_path, [], cwd=tmp_path)
     assert raw["exit_code"] == 0
-    assert calls == [["C:/bin/pyrefly", "check", "--output=json", str(tmp_path)]]
+    assert calls == [["C:/bin/pyrefly", "check", "--output-format=json", str(tmp_path)]]
 
 
 def test_pyrefly_normalizes_clean(tmp_path: Path) -> None:
