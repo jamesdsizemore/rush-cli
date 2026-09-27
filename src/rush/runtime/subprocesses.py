@@ -86,8 +86,12 @@ _PROCS_RECORD_LOCK = threading.Lock()
 # explicitly releases it. If the owner dies first, its copy of the write end
 # closes with it, the `read` returns EOF, `&&` short-circuits, and the shell
 # exits without ever running the real binary -- airtight, not a narrowed race.
+# The pipe is the gate shell's own stdin (fd 0), never a numbered fd in a
+# redirection: dash (Ubuntu's `/bin/sh`) rejects multi-digit fds there ("Bad
+# fd number"), which silently fails closed once the owner holds 10+ fds. The
+# real engine then gets `/dev/null`, preserving the owned path's DEVNULL stdin.
 _GATE_SHELL = "/bin/sh"
-_GATE_SCRIPT = 'read -r _ <&"$RUSH_GATE_FD" && exec "$@"'
+_GATE_SCRIPT = 'read -r _ && exec "$@" </dev/null'
 _GATE_RELEASE_PAYLOAD = b"\n"
 
 # S03: Windows Job Object fencing. The bootstrap gate itself is a small
@@ -571,11 +575,9 @@ def _launch_gated_process(
     pending: BaseException | None = None
     try:
         read_fd, write_fd = os.pipe()
-        gate_env = dict(os.environ if env is None else env)
-        gate_env["RUSH_GATE_FD"] = str(read_fd)
         proc = subprocess.Popen(
             [_GATE_SHELL, "-c", _GATE_SCRIPT, "sh", *exec_argv],
-            **{**popen_kwargs, "env": gate_env, "pass_fds": (read_fd,)},
+            **{**popen_kwargs, "stdin": read_fd},
         )
         # `start_new_session=True` makes the gate shell its own process-group
         # leader, and its pid survives its own later `exec`.

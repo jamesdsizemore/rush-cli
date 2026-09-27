@@ -11,6 +11,7 @@ platform-independently via the injectable `KeyReader` seam.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -169,6 +170,19 @@ _READER_THREADS: dict[int, threading.Thread] = {}
 _READER_ERRORS: dict[int, OSError] = {}
 
 
+def _read_pty_master(master_fd: int, *, platform: str = sys.platform) -> bytes:
+    """One read from the pty master. Once the child exits and every slave fd
+    is closed, Linux fails the master read with EIO where macOS returns
+    b"" -- both mean EOF (the documented Linux pty behaviour). Only that
+    exact case becomes b""; every other error still propagates."""
+    try:
+        return os.read(master_fd, 65536)
+    except OSError as exc:
+        if exc.errno == errno.EIO and platform.startswith("linux"):
+            return b""
+        raise
+
+
 def _start_drain_thread(master_fd: int) -> None:
     """A real terminal emulator continuously reads the pty master; nothing
     else does here. Without a drain, Rich's Live re-renders eventually fill
@@ -188,7 +202,7 @@ def _start_drain_thread(master_fd: int) -> None:
             if not ready:
                 continue
             try:
-                chunk = os.read(master_fd, 65536)
+                chunk = _read_pty_master(master_fd)
             except OSError as exc:
                 _READER_ERRORS[master_fd] = exc
                 return
@@ -216,7 +230,7 @@ def _start_capture_thread(master_fd: int, buffer: list[bytes]) -> None:
             if not ready:
                 continue
             try:
-                chunk = os.read(master_fd, 65536)
+                chunk = _read_pty_master(master_fd)
             except OSError as exc:
                 _READER_ERRORS[master_fd] = exc
                 return
@@ -227,6 +241,32 @@ def _start_capture_thread(master_fd: int, buffer: list[bytes]) -> None:
     thread = threading.Thread(target=_drain, daemon=True)
     thread.start()
     _READER_THREADS[master_fd] = thread
+
+
+def _raise_oserror(err: int):
+    def _read(fd: int, n: int) -> bytes:
+        raise OSError(err, os.strerror(err))
+
+    return _read
+
+
+def test_pty_master_read_treats_linux_eio_as_eof(monkeypatch) -> None:
+    monkeypatch.setattr(os, "read", _raise_oserror(errno.EIO))
+    assert _read_pty_master(3, platform="linux") == b""
+
+
+def test_pty_master_read_keeps_eio_an_error_off_linux(monkeypatch) -> None:
+    monkeypatch.setattr(os, "read", _raise_oserror(errno.EIO))
+    with pytest.raises(OSError) as raised:
+        _read_pty_master(3, platform="darwin")
+    assert raised.value.errno == errno.EIO
+
+
+def test_pty_master_read_keeps_other_linux_errors_real(monkeypatch) -> None:
+    monkeypatch.setattr(os, "read", _raise_oserror(errno.EBADF))
+    with pytest.raises(OSError) as raised:
+        _read_pty_master(3, platform="linux")
+    assert raised.value.errno == errno.EBADF
 
 
 def _send(master_fd: int, data: str, *, settle: float = 0.08) -> None:
