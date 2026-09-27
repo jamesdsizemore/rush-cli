@@ -75,7 +75,6 @@ executable route is unavailable/ENGINE_ROUTE_MISSING, not excluded").
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import json
@@ -83,6 +82,7 @@ import mimetypes
 import os
 import secrets
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -95,6 +95,9 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
 import tiktoken
+
+if sys.platform != "win32":
+    import fcntl
 
 from rush.catalog import ENGINE_SPECS, TOOL_SPECS
 from rush.engines.staging import (
@@ -218,8 +221,9 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     purely a waiting caller's own patience -- decoupled from any staleness
     concept, since there is none anymore.
 
-    POSIX only (`fcntl.flock`) -- the real Windows-equivalent named-mutex
-    primitive named in the plan is not implemented here.
+    On Windows (no `fcntl`), `msvcrt.locking` takes the same non-blocking
+    exclusive lock on the lock file's first byte; Windows likewise releases
+    it when the holding process exits.
     """
     lock_dir = root / ".rush" / "runs"
     lock_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +232,12 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     start = time.monotonic()
     while True:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if sys.platform == "win32":  # pragma: no cover - Windows-only path
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             break
         except OSError:
             if time.monotonic() - start >= timeout:
@@ -240,7 +249,12 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     try:
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        if sys.platform == "win32":  # pragma: no cover - Windows-only path
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
 
