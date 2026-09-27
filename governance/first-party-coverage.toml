@@ -2,9 +2,9 @@
 # Generated deterministically by rush.governance.coverage_manifest
 
 [manifest]
-revision = "9164a38c6d91e96ac46961886d169d1ec47bdf6c"
+revision = "8db1a25ed45fe506eb917d37de9f8e228c23121d"
 generator_version = "1.0.0"
-total_records = 1475
+total_records = 1479
 
 [[records]]
 path = ".github/workflows/ci.yml"
@@ -2638,6 +2638,11 @@ inclusion_rule = "directory-tree:scripts/"
 
 [[records]]
 path = "scripts/install.sh"
+classification = "script"
+inclusion_rule = "directory-tree:scripts/"
+
+[[records]]
+path = "scripts/phase70_t10_recovery.py"
 classification = "script"
 inclusion_rule = "directory-tree:scripts/"
 
@@ -6832,7 +6837,17 @@ classification = "test"
 inclusion_rule = "directory-tree:tests/"
 
 [[records]]
+path = "tests/test_phase70_t10.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
 path = "tests/test_phase70_t11.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase70_t12.py"
 classification = "test"
 inclusion_rule = "directory-tree:tests/"
 
@@ -6858,6 +6873,11 @@ inclusion_rule = "directory-tree:tests/"
 
 [[records]]
 path = "tests/test_phase70_t6.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase70_t9.py"
 classification = "test"
 inclusion_rule = "directory-tree:tests/"
 

@@ -39,6 +39,7 @@ EXCLUDED_DIRS = {
     ".scratch",
     ".rush",
     ".hermes",
+    ".orchestrator",
     "graft",
     ".codegraph",
     ".gemini",
