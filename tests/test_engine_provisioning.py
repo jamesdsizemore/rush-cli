@@ -1165,3 +1165,108 @@ def test_go_resolver_asks_module_proxy_for_concrete_version() -> None:
     )
     assert pinned.version == "v2.1.1"
     assert resolution_url(ENGINE_PACKAGES["zally"]) is None
+
+
+# --- aislop: pinned npm runtime fetched during the consented engine stage ---
+
+
+def _aislop_pypi(url: str) -> bytes:
+    return json.dumps(
+        {
+            "info": {"version": "0.16.1"},
+            "releases": {
+                "0.16.1": [
+                    {
+                        "packagetype": "bdist_wheel",
+                        "url": "u",
+                        "digests": {"sha256": "a"},
+                    }
+                ]
+            },
+        }
+    ).encode()
+
+
+def test_consented_aislop_provision_installs_package_and_prefetches_npm_runtime(
+    tmp_path: Path,
+) -> None:
+    """The consented engine stage installs the pinned PyPI package, then
+    fetches its npm runtime once online and verifies an offline run works."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    data_root = tmp_path / "data"
+    calls: list[tuple[list[str], dict[str, str] | None]] = []
+    cached = {"npm": False}
+
+    def runner(
+        argv: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, env))
+        if argv[:3] == ["uv", "tool", "install"]:
+            assert env is not None
+            dest = Path(env["UV_TOOL_BIN_DIR"])
+            exe = dest / "aislop"
+            exe.write_text("#!/bin/sh\n")
+            exe.chmod(0o755)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        offline = (env or {}).get("npm_config_offline")
+        if offline == "false":
+            cached["npm"] = True
+        ok = offline == "false" or cached["npm"]
+        return subprocess.CompletedProcess(
+            argv,
+            0 if ok else 1,
+            stdout="0.16.1" if ok else "",
+            stderr="" if ok else "ENOTCACHED",
+        )
+
+    plan = build_provision_plan(
+        project, ["aislop"], os_name="linux", arch="x86_64", data_root=data_root
+    )
+    result = resolve_and_apply_provision_plan(
+        plan,
+        ExecutionPermissions(network=True, download=True, cache_write=True, build=True),
+        project_id="proj-a",
+        current_platform=("linux", "x86_64"),
+        data_root=data_root,
+        http_get=_aislop_pypi,
+        runner=runner,
+        prober=lambda argv: subprocess.CompletedProcess(
+            argv, 0, stdout="0.16.1", stderr=""
+        ),
+        which=lambda name: f"/usr/bin/{name}",
+    )
+
+    assert "aislop" in result.applied, result.failed
+    assert calls[0][0][:4] == ["uv", "tool", "install", "--force"]
+    assert calls[0][0][4] == "aislop==0.16.1"
+    runtime = [
+        (argv[1:], (env or {}).get("npm_config_offline")) for argv, env in calls[1:]
+    ]
+    assert runtime == [
+        (["--version"], "true"),
+        (["--version"], "false"),
+        (["--version"], "true"),
+    ]
+
+
+def test_aislop_provision_without_npx_names_the_missing_runtime(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    plan = build_provision_plan(
+        project, ["aislop"], os_name="linux", arch="x86_64", data_root=tmp_path / "data"
+    )
+    result = resolve_and_apply_provision_plan(
+        plan,
+        ExecutionPermissions(network=True, download=True, cache_write=True, build=True),
+        project_id="proj-a",
+        current_platform=("linux", "x86_64"),
+        data_root=tmp_path / "data",
+        http_get=_aislop_pypi,
+        runner=lambda argv, env=None: pytest.fail(f"unexpected spawn {argv}"),
+        which=lambda name: None if name == "npx" else f"/usr/bin/{name}",
+    )
+
+    assert result.failed["aislop"]["code"] == "SYSTEM_PREREQUISITE_REQUIRED"
+    assert "npx" in result.failed["aislop"]["message"]
+    assert ENGINE_PACKAGES["aislop"].prerequisites == ("uv", "python", "node", "npm")

@@ -422,6 +422,9 @@ def _prerequisites(engine_id: str, source: EngineSource) -> tuple[str, ...]:
         return ("node", "npm")
     if engine_id == "git-guard":
         return ("git",)
+    if engine_id == "aislop":
+        # The PyPI package runs its pinned npm package through npx.
+        return ("uv", "python", "node", "npm")
     if engine_id == "semantic-drift":
         return ()
     return _SOURCE_PREREQUISITES[source]

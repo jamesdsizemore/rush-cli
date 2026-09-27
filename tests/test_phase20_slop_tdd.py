@@ -16,7 +16,8 @@ def test_cli_slop_clean_file(tmp_path: Path) -> None:
     test_file.write_text("def hello() -> str:\n    return 'world'\n", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["slop", str(tmp_path), "--json"])
+    # Real aislop via npx: the download grant covers a cold npm cache.
+    result = runner.invoke(cli, ["slop", str(tmp_path), "--allow-download", "--json"])
     assert result.exit_code in (0, 1, 2)
     payload = json.loads(result.output)
     assert payload["tool"] == "slop"

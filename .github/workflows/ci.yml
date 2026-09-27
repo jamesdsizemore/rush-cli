@@ -110,7 +110,7 @@ jobs:
         run: uv sync --all-extras --frozen
 
       - name: Install Python static-analysis engines
-        run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1 aislop==0.16.1
+        run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
 
       - name: Install Node-based static-analysis and eval engines
         run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0

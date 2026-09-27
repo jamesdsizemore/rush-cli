@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..permissions import ExecutionPermissions
 from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, engine_on_path, now_ms, run_engine
 from .routing import collect_files
@@ -16,11 +17,19 @@ class SlopTool(ToolFn):
     def mcp_description(self) -> str:
         return "Detect Python AI slop and deterministic JS/TS noise at <path>; missing sloppylint returns status='skipped' when no JS/TS fallback applies."
 
-    def __call__(self, path: Path) -> ToolResult:
-        return self.run(path)
+    def __call__(self, path: Path, allow_download: bool = False) -> ToolResult:
+        # aislop may fetch its npm package only under the download grant.
+        return self.run(path, permissions=ExecutionPermissions(download=allow_download))
 
-    def run(self, path: Path, *, config=None) -> ToolResult:
+    def run(
+        self,
+        path: Path,
+        *,
+        config=None,
+        permissions: ExecutionPermissions | None = None,
+    ) -> ToolResult:
         from ..engines import ENGINES
+        from ..engines.aislop import aislop_grants
 
         start = now_ms()
         python_files = collect_files(path, {"py", "pyi"})
@@ -52,7 +61,8 @@ class SlopTool(ToolFn):
                 if engine_to_use.name == "aislop"
                 else [str(file) for file in python_files]
             )
-            result = run_engine(engine_to_use, path, files, tool_name=self.name)
+            with aislop_grants(permissions or ExecutionPermissions()):
+                result = run_engine(engine_to_use, path, files, tool_name=self.name)
             result["findings"] = sorted(
                 [*result["findings"], *findings],
                 key=lambda item: (

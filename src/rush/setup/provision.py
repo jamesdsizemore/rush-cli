@@ -970,6 +970,41 @@ _MANAGER_BINARIES: dict[str, str] = {
 }
 
 
+# Engines whose pinned package runs a pinned npm package through `npx` on
+# first use (aislop 0.16.1: `npx --yes --package aislop@0.16.1 aislop`, 183
+# npm packages including @biomejs/@oxlint native binaries). Provisioning
+# fetches that package into the npm cache the engine uses, so a later run
+# works with npm offline and needs no download grant.
+NPM_RUNTIME_FETCH: dict[str, tuple[str, ...]] = {"aislop": ("--version",)}
+
+
+def prefetch_npm_runtime(
+    engine_id: str, executable: Path, runner: Runner = _default_runner
+) -> str:
+    """Make `engine_id`'s npm runtime available offline: `already_cached`
+    when an offline run already works, else `fetched` after one online run
+    that a second offline run then verifies. Raises ProvisionError."""
+    args = NPM_RUNTIME_FETCH.get(engine_id)
+    if args is None:
+        return "not_applicable"
+    argv = [str(executable), *args]
+    if runner(argv, {"npm_config_offline": "true"}).returncode == 0:
+        return "already_cached"
+    fetched = runner(argv, {"npm_config_offline": "false"})
+    if fetched.returncode != 0:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"{engine_id} could not fetch its npm package: "
+            f"{(fetched.stderr or '').strip()[-300:]}",
+        )
+    if runner(argv, {"npm_config_offline": "true"}).returncode != 0:
+        raise ProvisionError(
+            "ENGINE_PROTOCOL_MISMATCH",
+            f"{engine_id}'s npm package is still not usable offline after fetching",
+        )
+    return "fetched"
+
+
 def _check_manager_available(
     engine: EnginePackage, which: Callable[[str], str | None] = shutil.which
 ) -> None:
@@ -984,6 +1019,11 @@ def _check_manager_available(
         raise ProvisionError(
             "SYSTEM_PREREQUISITE_REQUIRED",
             f"required manager '{manager_binary}' is not installed",
+        )
+    if engine.engine_id in NPM_RUNTIME_FETCH and which("npx") is None:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"{engine.engine_id} runs its npm package through npx, which is not installed",
         )
 
 
@@ -1336,11 +1376,13 @@ def _apply_entry(
         dest, entry.engine_id, identity.version, ctx.project_root
     )
     if existing is not None:
+        prefetch_npm_runtime(entry.engine_id, Path(existing.executable), ctx.runner)
         _update_selection(ctx.project_root, entry.engine_id, dest / MANIFEST_FILENAME)
         result.reused[entry.engine_id] = existing
         return
     _claim_destination(dest, entry, identity, ctx)
     executable = _install_into(engine, identity, dest, ctx)
+    prefetch_npm_runtime(entry.engine_id, executable, ctx.runner)
     probe_argv = (
         [str(executable), *entry.probe[1:]]
         if entry.probe

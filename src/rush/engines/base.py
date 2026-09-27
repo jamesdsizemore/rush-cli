@@ -41,6 +41,18 @@ def ownership_kwargs(
     return {"owner_instance_id": owner_instance_id, "run_id": run_id}
 
 
+class EnvKwargs(TypedDict, total=False):
+    """A `run_subprocess` `env`, present only when the engine sets one."""
+
+    env: dict[str, str]
+
+
+def env_kwargs(env: dict[str, str] | None) -> EnvKwargs:
+    """`{"env": env}`, or `{}` so an engine inheriting Rush's environment
+    keeps its exact prior kwargs."""
+    return {} if env is None else {"env": env}
+
+
 class EngineResult(TypedDict, total=False):
     exit_code: int
     stdout: str
@@ -87,6 +99,10 @@ class Engine(ABC):
     # executable's bytes at an unchanged path invalidates the entry (S11.7).
     _cached_versions: ClassVar[dict[tuple[str, int, int, int], str]] = {}
 
+    def child_env(self) -> dict[str, str] | None:
+        """The environment for this engine's children; None inherits Rush's."""
+        return None
+
     def version(
         self,
         *,
@@ -114,10 +130,12 @@ class Engine(ABC):
         if cache_key is not None and cache_key in Engine._cached_versions:
             return Engine._cached_versions[cache_key]
 
+        env = self.child_env()
         try:
             r = run_subprocess(
                 [binary_path, "--version"],
                 timeout=10,
+                **env_kwargs(env),
                 **ownership_kwargs(owner_instance_id, run_id),
             )
             if r.returncode != 0:

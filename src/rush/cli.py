@@ -881,6 +881,14 @@ def _logical_cache_db() -> Path:
         "network and model tokens on your host account)."
     ),
 )
+@click.option(
+    "--run-check",
+    is_flag=True,
+    help=(
+        "With --agent: after setup, run `rush check` on the project with this "
+        "setup's grants and report its result."
+    ),
+)
 @permission_options
 @click.option(
     "--json",
@@ -901,6 +909,7 @@ def setup_cmd(
     install_guidance: bool,
     enable_agent_hooks: bool,
     verify_host: bool,
+    run_check: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -939,6 +948,7 @@ def setup_cmd(
         install_guidance=install_guidance,
         enable_hooks=enable_agent_hooks,
         verify_host=verify_host,
+        run_check=run_check,
     )
     click.echo(
         json.dumps(payload, indent=2, default=str)
