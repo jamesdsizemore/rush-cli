@@ -864,3 +864,43 @@ def test_run_setup_wizard_passes_its_runner_to_the_provision_plan(
         root, install=True, data_root=tmp_path / "data", runner=runner
     )
     assert seen["runner"] is runner
+
+
+def test_legacy_provision_permission_blocked_renders_one_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix-round review: a provision-only payload whose engine is blocked on
+    grants carries the resume command, so the rendering names one exact
+    recovery command with the missing grants."""
+    from types import SimpleNamespace
+
+    from rush.setup.provision import build_provision_plan, plan_to_dict
+    from rush.tools import setup_wizard
+
+    root = tmp_path / "project"
+    root.mkdir()
+    plan = build_provision_plan(root, [], data_root=tmp_path / "data")
+    outcome = SimpleNamespace(
+        plan_id=plan.plan_id,
+        identity_source="reviewed",
+        applied={},
+        reused={},
+        failed={},
+        permission_blocked={"aislop": list(_FETCH_FLAGS)},
+        requires_input={},
+        recovery_required={},
+    )
+    monkeypatch.setattr(setup_wizard, "_registered_project_id", lambda *a: "p1")
+    monkeypatch.setattr(setup_wizard, "apply_provision_plan", lambda *a, **k: outcome)
+    envelope = {
+        "kind": "provision",
+        "schema_version": 1,
+        "review": {"provision": plan_to_dict(plan)},
+    }
+    result = setup_wizard.apply_setup_review(envelope, None, None)
+    assert result["status"] == "partial", result
+    resume = setup_wizard.setup_resume_command(root)
+    assert result["resume_command"] == resume
+    text = setup_wizard.render_setup_result(result)
+    assert f"recover: {resume} {' '.join(_FETCH_FLAGS)}" in text
+    assert text.count(resume) == 1, text
