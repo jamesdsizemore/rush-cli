@@ -33,6 +33,8 @@ Need workflow inspection?          -> commit-msg / ci / release
 
 Command parameters are command-specific. Check generated help before invocation. `review` takes required `PATH`, `--llm`, `--use-graft`, repeatable `--changed-file`, permission flags, and `--json`; `format` also exposes `--check`.
 
+Most catalog commands also accept `--result-view [full|compact]` (full, the default, prints the whole result and writes nothing; compact stores the full redacted result in `.rush/cache/ccr.db`, requires `--allow-cache-write`, and is not allowed with `--no-cache`), `--limit N` (compact view: findings per page, 1-50, default 50), `--max-bytes N` (compact view: size budget of the whole printed result, 4096-65536 bytes, default 32768), and `--no-cache` (bypass and do not write to the result cache).
+
 ```bash
 uv run rush COMMAND --help
 uv run rush review PATH [--llm] [--use-graft] [--changed-file RELATIVE_PATH]... [--json]
@@ -52,7 +54,7 @@ uv run rush mcp serve
 | `format PATH --check` | Verify formatter conformance. | Ruff format, Prettier, Squoosh, Critical, Font-Spider, PyClean. | Check-only with `--check`; omit only when you intentionally allow formatting. |
 | `test PATH` | Run applicable project tests. | pytest, Vitest, Newman. | `fail` on test failures; test code may have project-defined side effects. |
 | `security PATH` | Dependency vulnerability, privacy SAST, container and env checks. | pip-audit, npm audit, OSV-Scanner, Semgrep, Trivy, Grype, Bearer, Horusec, Pa11y, OWASP ZAP, Deadfinder, A11yWatch, Dockle, Safe-Env, NCU. | Read-only normalization; scanner behavior depends on installed tool. |
-| `typecheck PATH` | Static type checks. | mypy, TypeScript `tsc`. | Read-only; missing helper skips. |
+| `typecheck PATH` | Static type checks. | mypy, TypeScript `tsc`; `--environment project\|isolated` selects which interpreter analyzes Python (`project` uses `.venv` and requires `--allow-build`; default prefers `project`, falling back to `isolated` without `--allow-build`), `--typecheck-config FILE` names an explicit tsconfig/mypy/pyrefly config inside the project root. | Read-only; missing helper skips. |
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
@@ -112,7 +114,8 @@ Evaluation commands expose permission flags according to their own generated hel
 
 | Command | Purpose | Options | Modification |
 |---|---|---|---|
-| `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
+| `check PATH` | Run the check suite: format (check-only), lint, typecheck, dead, slop, test; the test step needs `--allow-build`. | `--fail-fast`/`--no-fail-fast` (default: every step runs and is reported), `--result-view`, `--limit`, `--max-bytes`, Permissions, `--json` | none |
+| `status [PATH]` | Show the project's status without changing anything. | `--session`, `--result HANDLE` (read a stored result), `--view [result\|bytes]`, `--cursor`, `--offset`, `--limit`, `--max-bytes`, `--json` | none |
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
 | `fix PATH` | [Bounded Ruff remediation](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) for selected Python targets. | `--dry-run`, `--force`, `--allow-artifact-write` | Dry-run preview; apply is denied without artifact-write permission. |
@@ -127,6 +130,16 @@ Evaluation commands expose permission flags according to their own generated hel
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
+
+## `rush agent list|connect|disconnect|doctor|hook` (Phase 65 P65-05)
+
+- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
+- `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] [--install-guidance] [--profile core|full] [--yes] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`.
+- `rush agent disconnect AGENT_ID [--project PATH] [--json]` removes Rush's own, unchanged components for `AGENT_ID` — the MCP entry, the instruction block (or this agent from a shared block), and Rush skill/hook resources recorded as Rush-owned. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
+- `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.
+- `rush agent hook {claude|codex}` is the post-edit hook entrypoint the Rush Claude Code/Codex plugins run. It reads the host's JSON event on stdin, prints nothing, and runs no check unless agent hooks are enabled for this host and project; it always exits 0 so a hook never changes the edit's result.
+
+Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envelope over `AgentConnectionTool.handle_request` (`src/rush/tools/agent_connection.py`).
 
 ## Advanced Autonomous Agent, Hygiene & Governance Commands (Phases 29–40)
 

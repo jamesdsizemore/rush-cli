@@ -1,6 +1,6 @@
 # Phase 73: Agent activation and cross-agent continuity
 
-Status: implementation plan; no implementation or host acceptance claimed. Baseline: `ddc064117e971b48e29100004052e876e456faf2` plus existing user-owned dirty files. Binding inputs: repository `AGENTS.md`, [task-block template](../templates/task-block-template.md), [memory review](../reports/memory-system-implementation-review-2026-09-25.md) §§3, 4.2, 5, 6.5–6.9, 9–11, [Phase 70](phase-70-agent-adoption-and-usability-plan.md) D1–D3/T1–T7/T18–T24/T26/T28/T29, [Phase 71](phase-71-prototype-dashboard-integration-plan.md), and [memory program contract](memory-program-contract.md) C01–C09. New files below are proposed outputs, not existing behavior.
+Status: implementation plan; no implementation or host acceptance claimed. Baseline: `ddc064117e971b48e29100004052e876e456faf2` plus existing user-owned dirty files. Binding inputs: repository `AGENTS.md`, [task-block template](../templates/task-block-template.md), [memory review](../reports/memory-system-implementation-review-2026-09-25.md) §§3, 4.2, 5, 6.5–6.9, 9–11, [Phase 70](phase-70-agent-adoption-and-usability-plan.md) D1–D3/T1–T7/T18–T24/T26/T28/T29, `phase-71-prototype-dashboard-integration-plan.md`, and [memory program contract](memory-program-contract.md) C01–C09. New files below are proposed outputs, not existing behavior.
 
 ## 1. Goal and boundary
 
