@@ -322,8 +322,15 @@ def benchmark_run(
     foreground: bool,
 ) -> None:
     """Start a durable detached benchmark; live routes require explicit opt-in."""
+    from scripts.benchmarks.run import load_scenarios
     from scripts.benchmarks.run import main as benchmark_main
 
+    if scenario and scenario not in load_scenarios():
+        # T27: an unknown scenario is an invalid input (exit 2), checked
+        # before any job starts.
+        raise click.BadParameter(
+            f"unknown scenario: {scenario}", param_hint="'--scenario'"
+        )
     argv = ["--output", str(output), "--model-cache", str(model_cache)]
     if scenario:
         argv.extend(["--scenario", scenario])
@@ -792,8 +799,7 @@ def serve(
     try:
         binding = resolve_server_binding(project, session)
     except ServerBindingError as exc:
-        echo(f"rush mcp serve: {exc}", err=True)
-        sys.exit(1)
+        raise click.BadParameter(str(exc), param_hint="'--project'") from exc
     asyncio.run(run_stdio(memory_session, binding=binding, profile=profile))
 
 
@@ -1949,6 +1955,10 @@ def trust_cmd(
             revoke_trust(root)
             echo(f"Revoked trust for repository: {root}")
         else:
+            if not root.exists():
+                raise click.BadParameter(
+                    f"Path '{repo_path}' does not exist.", param_hint="'TARGET'"
+                )
             trust_repo(root)
             echo(f"Approved repository as trusted: {root}")
 
@@ -2612,6 +2622,17 @@ def _emit_codegraph(
     echo_rows(rows, line, empty=unavailable or empty)
 
 
+def _require_indexed_symbol(store: Any, symbol_name: str) -> None:
+    """T27: with an index available, an unknown symbol is an invalid input;
+    a known symbol with no callers stays an honest empty result."""
+    if isinstance(store, str) or store.find_nodes_by_symbol(symbol_name):
+        return
+    raise click.BadParameter(
+        f"no symbol named {symbol_name!r} is in the code graph",
+        param_hint="'SYMBOL_NAME'",
+    )
+
+
 @collection_route("rows")
 @codegraph_group.command(name="slice")
 @click.argument("symbol_name")
@@ -2622,6 +2643,7 @@ def codegraph_slice_cmd(symbol_name: str, as_json: bool) -> None:
 
     store = _codegraph_store()
     unavailable = store if isinstance(store, str) else None
+    _require_indexed_symbol(store, symbol_name)
     slices = [] if unavailable else VerbatimAstSlicer(store).slice_symbol(symbol_name)
     _emit_codegraph(
         f"Slices of '{symbol_name}' ({len(slices)}):",
@@ -2643,6 +2665,7 @@ def codegraph_callers_cmd(symbol_name: str, as_json: bool) -> None:
 
     store = _codegraph_store()
     unavailable = store if isinstance(store, str) else None
+    _require_indexed_symbol(store, symbol_name)
     steps = [] if unavailable else CallGraphTraverser(store).trace_callers(symbol_name)
     _emit_codegraph(
         f"Callers of '{symbol_name}' ({len(steps)}):",
@@ -5504,7 +5527,7 @@ def test_heal_cmd(
             f"Error: {res.get('error', res.get('summary', 'test healing failed'))}",
             err=True,
         )
-        sys.exit(1)
+        sys.exit(2)
     if res.get("status") == "skipped":
         echo(res.get("summary", res.get("diagnosis", "Test healing skipped")))
         return
@@ -5527,7 +5550,10 @@ def api_diff_cmd(base: str, as_json: bool) -> None:
     """Detect breaking public API signature changes against base Git ref."""
     from rush.tools.api_diff import ApiDiffer
 
-    res = ApiDiffer().diff_public_api(base_ref=base)
+    try:
+        res = ApiDiffer().diff_public_api(base_ref=base)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--base'") from exc
     rows = res.get("breaking_changes") or []
     if as_json:
         echo_json(res)
@@ -5707,6 +5733,12 @@ def flight_recorder_cmd(session_id: str | None, as_json: bool) -> None:
             events = recorder.replay_session(session_id)
         except MemoryStoreUnreadableError as exc:
             raise click.ClickException(f"{exc.code}: {exc}") from exc
+        recorded = (recorder.flights_dir / f"{session_id}.jsonl").exists()
+        if not events and not recorded:
+            # T27: an unknown session is not an empty recording.
+            raise click.BadParameter(
+                f"no recorded session {session_id!r}", param_hint="'--replay'"
+            )
         title = (
             f"Flight Recorder: Replaying session '{session_id}' ({len(events)} events):"
         )
@@ -5775,6 +5807,8 @@ def simulate_ci_cmd(workflow: str) -> None:
 
     sim = SimulateCi()
     res = sim.run_workflow(workflow_name=workflow)
+    if res.get("not_found"):
+        raise click.BadParameter(res["error"], param_hint="'--workflow'")
     if res["passed"]:
         echo(
             f"SimulateCI: Workflow '{workflow}' passed ({res['steps_executed']} steps)."

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
 import runpy
 import sqlite3
@@ -749,7 +750,9 @@ def test_benchmark_run_defaults_are_under_temp_home(_isolated_home: Path) -> Non
 # --- part B2 item 2: sync env with a missing env file -------------------------
 
 
-@pytest.mark.parametrize("missing", ["example"])  # a missing .env: see the domain-result test
+@pytest.mark.parametrize(
+    "missing", ["example"]
+)  # a missing .env: see the domain-result test
 def test_sync_env_missing_file_is_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
@@ -1013,6 +1016,35 @@ def test_empty_collection_route_prints_reason(
                 super().__init__(args, *rest, **kwargs)
 
         monkeypatch.setattr(subprocess, "Popen", _NoEnginePopen)
+    if route == "api-diff":
+        import subprocess
+
+        env = dict(os.environ)
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@example.invalid",
+            }
+        )
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main"],
+            check=True,
+            cwd=project,
+            capture_output=True,
+            env=env,
+        )
+        subprocess.run(
+            ["git", "add", "-A"], check=True, cwd=project, capture_output=True, env=env
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "base"],
+            check=True,
+            cwd=project,
+            capture_output=True,
+            env=env,
+        )
     argv = [
         {"<dir>": str(project), "<file>": str(project / "example.py")}.get(a, a)
         for a in _EMPTY_ROUTES[route]
@@ -1517,3 +1549,171 @@ def test_sync_env_missing_env_file_lists_every_key_as_missing(
     payload = json.loads(result.output)
     assert payload["passed"] is False
     assert sorted(payload["rows"]) == ["API_URL", "DEBUG"]
+
+
+# --- T27 R2: unknown identifiers and missing inputs are errors, never ok --------
+
+
+def test_trust_refuses_a_path_that_does_not_exist(tmp_path: Path) -> None:
+    """Trusting a nonexistent repository path would approve nothing real."""
+    missing = tmp_path / "nope" / "repo"
+    result = CliRunner().invoke(cli, ["trust", str(missing)])
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output
+    assert "Approved" not in result.output
+
+
+def test_session_restore_of_an_unknown_name_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ["session", "restore", "never-saved", "--json"])
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error", payload
+    assert result.exit_code == 2
+    assert "never-saved" in payload["summary"]
+
+
+def test_context_retrieve_of_an_unknown_handle_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ["context", "retrieve", "0" * 64, "--json"])
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error", payload
+    assert result.exit_code == 2
+
+
+def test_api_diff_with_an_unknown_base_ref_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    }
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("def f(x):\n    return x\n")
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "a"]):
+        subprocess.run(["git", *args], cwd=tmp_path, env=env, check=True)
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ["api-diff", "--base", "no-such-ref", "--json"])
+    assert result.exit_code == 2, result.output
+    assert "no-such-ref" in result.output
+    assert '"passed": true' not in result.output
+
+
+def test_flight_recorder_replay_of_an_unknown_session_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        cli, ["flight-recorder", "--replay", "never-recorded", "--json"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "never-recorded" in result.output
+
+
+def test_simulate_ci_with_a_missing_workflow_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ["simulate-ci", "--workflow", "missing.yml"])
+    assert result.exit_code == 2, result.output
+    assert "passed" not in result.output
+    assert "missing.yml" in result.output
+
+
+def test_mcp_serve_with_an_unknown_project_says_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ["mcp", "serve", "--project", "no-such-project"])
+    assert result.exit_code == 2, result.output
+    assert "no-such-project" in (result.output + (result.stderr or ""))
+
+
+def test_session_resume_of_an_unknown_name_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "session",
+            "resume",
+            "never-saved",
+            "--provider",
+            "claude_code",
+            "--allow-network",
+            "--json",
+        ],
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error", payload
+    assert result.exit_code == 2
+
+
+def _codegraph_index(root: Path) -> None:
+    from rush.codegraph.python_ast import PythonCodeGraphBuilder
+    from rush.codegraph.store import CodeGraphStore
+
+    store = CodeGraphStore(root / ".codegraph" / "graph.db")
+    target = root / "target.py"
+    target.write_text("def main():\n    return 1\n")
+    PythonCodeGraphBuilder.index_python_file(target, target.read_text(), store)
+
+
+@pytest.mark.parametrize("sub", ["callers", "slice"])
+def test_codegraph_unknown_symbol_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sub: str
+) -> None:
+    """An unknown symbol is not a symbol with zero callers or an empty slice."""
+    _codegraph_index(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ["codegraph", sub, "no_such_symbol", "--json"])
+    assert result.exit_code == 2, result.output
+    assert "no_such_symbol" in result.output
+    known = CliRunner().invoke(cli, ["codegraph", sub, "main", "--json"])
+    assert known.exit_code == 0, known.output
+
+
+def test_benchmark_run_with_an_unknown_scenario_is_an_invalid_input(
+    tmp_path: Path,
+) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "benchmark",
+            "run",
+            "--scenario",
+            "no-such-scenario",
+            "--foreground",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "no-such-scenario" in result.output
+
+
+def test_test_heal_invalid_target_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "test-heal",
+            "--target",
+            str(tmp_path.parent / "elsewhere.py"),
+            "--allow-slow",
+            "--allow-artifact-write",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "invalid test target" in result.output

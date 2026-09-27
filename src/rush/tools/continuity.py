@@ -578,7 +578,7 @@ class SessionContinuityTool(ToolFn):
             if evidence_file is None:
                 return self._result(
                     started,
-                    "skipped",
+                    "error",
                     f"Session checkpoint '{name}' was not found.",
                     operation="restore",
                     granted=granted,

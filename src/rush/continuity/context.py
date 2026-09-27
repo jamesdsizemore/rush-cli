@@ -324,7 +324,7 @@ def retrieve_context(
     }
     return build_continuity_result(
         started,
-        "ok" if content is not None else "skipped",
+        "ok" if content is not None else "error",
         "Recovered context handle."
         if content is not None
         else "Context handle was not found.",

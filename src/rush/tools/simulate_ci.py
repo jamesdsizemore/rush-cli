@@ -16,10 +16,13 @@ class SimulateCi:
     def run_workflow(self, workflow_name: str = "ci.yml") -> dict[str, Any]:
         wf_path = self.project_root / ".github" / "workflows" / workflow_name
         if not wf_path.exists():
+            # T27: a missing workflow never passes by default.
             return {
-                "passed": True,
+                "passed": False,
+                "not_found": True,
                 "steps_executed": 0,
-                "message": f"Workflow {workflow_name} not found, passing by default.",
+                "failed_step": None,
+                "error": f"workflow {workflow_name!r} not found at {wf_path}",
             }
 
         text = wf_path.read_text(encoding="utf-8", errors="ignore")
