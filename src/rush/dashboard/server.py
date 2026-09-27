@@ -59,7 +59,6 @@ from rush.memory.store import (
     readonly_view_reason,
 )
 from rush.permissions import ExecutionPermissions
-from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.engine_packages import ENGINE_PACKAGES
 from rush.setup.provision import build_provision_plan
@@ -95,6 +94,7 @@ from rush.workflows.project_run import (
 from rush.workflows.projects import (
     ProjectError,
     ProjectInvalidRequestError,
+    _scan_file_inventory,
     create_project,
     expand_artifact_reference,
     export_project_data,
@@ -1196,26 +1196,6 @@ def _operation_project_id(ctx: DashboardContext, operation_id: str) -> str | Non
 # --- P69-03.2a-c: unify every scan producer into one publication path -------
 
 
-def _scan_file_inventory(root: Path) -> list[dict[str, str]]:
-    """P69-03.2b: the project's own tracked-or-present files, its own
-    concept -- never derived from a scan's findings or a `ScanPlan`'s
-    `ScanCandidate` set (different tools legitimately target different file
-    subsets). Reuses the same `SKIP_DIRS` ignore convention every other
-    whole-tree walk in this codebase already shares (`rush.review.collection`)
-    rather than inventing a second bespoke list."""
-    if not root.is_dir():
-        return []
-    entries: list[dict[str, str]] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root)
-        if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
-            continue
-        entries.append({"path": rel.as_posix()})
-    return entries
-
-
 _UNAVAILABLE_SOURCE_IDENTITY = "source-identity-unavailable"
 
 
@@ -1338,11 +1318,13 @@ def _publish_scan_snapshot(
     generation: int | None = None,
     run_id: str = "",
     attempt_id: str = "",
+    file_inventory: list[dict[str, str]] | None = None,
 ) -> None:
     """P69-03.2c glue shared by `scan_start`/`scan_resume`/`rescan` (and
     CHECK_SUITE's own initial-launch scan via `publish_check_suite_scan`
-    below): adapts the producer's result, computes the file inventory, and
-    publishes both atomically through `ProjectRegistry.publish_scan_result` --
+    below): adapts the producer's result, computes the file inventory (or
+    reuses `file_inventory` when the caller already walked the tree, so one
+    publish walks it once), and publishes both atomically through `ProjectRegistry.publish_scan_result` --
     a failed or partial `run_state` is still published here (the map must
     render what actually completed, never silently drop the publish just
     because the run wasn't a full clean pass).
@@ -1378,7 +1360,9 @@ def _publish_scan_snapshot(
     snapshot = _snapshot_from_scan_result(
         project_id,
         result,
-        file_inventory=_scan_file_inventory(root),
+        file_inventory=(
+            file_inventory if file_inventory is not None else _scan_file_inventory(root)
+        ),
         existing_snapshot=existing,
     )
     snapshot["scan_provenance"] = scan_provenance
@@ -1746,6 +1730,7 @@ def publish_check_suite_scan(
         generation=scan_generation,
         run_id=run_id,
         attempt_id=attempt_id,
+        file_inventory=file_inventory,
     )
     return run_id, attempt_id
 

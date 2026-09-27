@@ -17,9 +17,12 @@ always executes.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
+import os
 import queue
+import stat
 import threading
 import time
 import uuid
@@ -249,27 +252,41 @@ def paginate(
 
 
 def _bounded_local_detail(root: Path, finding: dict[str, Any]) -> str:
-    """Canonical `path`/`line` drives ONLY a bounded local file read for
-    context -- never a subprocess, shell, or arbitrary command. A path
-    outside the project root, or any read failure, degrades to the
-    finding's own message; no exception ever escapes this function."""
+    """Canonical `path` drives ONLY a bounded local file read -- never a
+    subprocess, shell, or arbitrary command. The read goes through
+    `PhysicalRoot.open_contained` (no absolute path, no `..`, no symlinked
+    component even inside the root) and an `O_NOFOLLOW` open of a regular
+    file, and shows the whole file up to `_DETAIL_MAX_BYTES` (scrollable,
+    never a first-lines-only snippet), labelled "live file: <path>". A
+    refused path or any read failure degrades to the finding's own message.
+    Control characters are stripped from everything returned; no exception
+    ever escapes this function."""
+    message = safe_terminal_text(finding.get("message") or "")
     path_value = _finding_path(finding)
     if not path_value:
-        return str(finding.get("message") or "(no path)")
+        return message or "(no path)"
     try:
-        target = (root / path_value).resolve()
-        target.relative_to(root.resolve())
-        raw = target.read_bytes()[:_DETAIL_MAX_BYTES]
-        text = raw.decode("utf-8", errors="replace")
-        lines = text.splitlines()
-        line_no = finding.get("line")
-        if isinstance(line_no, int) and lines:
-            start = max(0, line_no - 1 - _DETAIL_CONTEXT_LINES)
-            end = min(len(lines), line_no + _DETAIL_CONTEXT_LINES)
-            return "\n".join(lines[start:end]) or str(finding.get("message") or "")
-        return "\n".join(lines[: _DETAIL_CONTEXT_LINES * 2])
+        from rush.io.physical_paths import ContainmentError, PhysicalRoot
+
+        try:
+            target = PhysicalRoot(root).open_contained(path_value)
+        except ContainmentError:
+            return message or "(path refused)"
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return message or "(not a regular file)"
+            raw = os.read(fd, _DETAIL_MAX_BYTES)
+        finally:
+            os.close(fd)
     except (OSError, ValueError):
-        return str(finding.get("message") or "(unable to read local context)")
+        return message or "(unable to read local context)"
+    text = safe_terminal_text(raw.decode("utf-8", errors="replace"))
+    header = safe_terminal_text(f"live file: {path_value}")
+    line_no = finding.get("line")
+    if isinstance(line_no, int):
+        header += f" (line {line_no})"
+    return "\n".join(part for part in (header, message, text) if part)
 
 
 # --------------------------------------------------------------------------
@@ -592,6 +609,13 @@ class ProjectState:
     plan_total: int = 0
     progress: ScanProgress | None = None
     progress_history: list[ScanProgress] = field(default_factory=list)
+    # T28-C: the read-only `project_map_snapshot` (memories/agents branches,
+    # captured artifact snapshots for detail), loaded lazily and reloaded
+    # when `map_snapshot_key` (run_id, status) changes.
+    map_snapshot: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    map_snapshot_key: tuple[str | None, str] | None = field(
+        default=None, repr=False, compare=False
+    )
     status: str = "idle"  # idle | scanning | cancelling | cancelled | complete | error
     # P69-06d: which process owns the run currently reflected here --
     # "dashboard" (a live server is the executor) or "local" (this TUI
@@ -873,19 +897,23 @@ def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
     `key` is stable and drives expand/collapse + selection; `parent` gates
     a finding leaf's visibility on its file node's expanded state.
 
-    ponytail: only the Files/Findings branches this module can source
-    data for are built here -- the full §3.8 Map spec also names
-    Directories/Memories/Agents branches, which would need data this
-    packet's allowed files have no access to (the web dashboard's
-    `project_map` machinery). Add those branches if/when that data
-    becomes reachable from here; nothing about this shape blocks it."""
+    T28-C: Memories and Agents branch nodes (parent "root", so hidden until
+    the root is expanded) come from the lazily loaded read-only
+    `project_map_snapshot`; not loaded or unavailable is said in the branch
+    label, never an empty-looking branch."""
     rows = project.flattened_findings()
     by_path: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         by_path.setdefault(_finding_path(row), []).append(row)
 
     nodes: list[dict[str, Any]] = [
-        {"key": "root", "label": project.name, "depth": 0, "kind": "project"}
+        {
+            "key": "root",
+            "label": project.name,
+            "depth": 0,
+            "kind": "project",
+            "children": True,
+        }
     ]
     for path in sorted(by_path):
         findings = by_path[path]
@@ -909,19 +937,68 @@ def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
                     "parent": file_key,
                 }
             )
+    snapshot = project.map_snapshot or {}
+    for kind, field_name, title in (
+        ("memory", "memories", "Memories"),
+        ("agent", "agents", "Agents"),
+    ):
+        branch_key = f"branch:{field_name}"
+        items = snapshot.get(field_name)
+        if project.map_snapshot is None:
+            label = f"{title}: not loaded"
+        elif snapshot.get("available") is False:
+            label = f"{title}: unavailable ({snapshot.get('reason')})"
+        elif isinstance(items, list):
+            label = f"{title} ({len(items)})"
+        else:
+            label = f"{title}: {items}"
+        leaves = (
+            [item for item in items if isinstance(item, dict)]
+            if isinstance(items, list)
+            else []
+        )
+        nodes.append(
+            {
+                "key": branch_key,
+                "label": label,
+                "depth": 1,
+                "kind": kind,
+                "parent": "root",
+                "children": leaves,
+            }
+        )
+        for idx, item in enumerate(leaves):
+            related = item.get("cites") if kind == "memory" else item.get("assigned_to")
+            nodes.append(
+                {
+                    "key": f"{branch_key}:{idx}",
+                    "label": f"{item.get('id')} -> {', '.join(map(str, related or []))}",
+                    "depth": 2,
+                    "kind": kind,
+                    "parent": branch_key,
+                }
+            )
     return nodes
 
 
 def _map_visible_nodes(
     project: ProjectState, expanded: set[str]
 ) -> list[dict[str, Any]]:
-    """Only a finding leaf is ever hidden -- gated on its file node's key
-    being in `expanded`. The root and file nodes are always visible."""
-    return [
-        node
-        for node in _map_nodes(project)
-        if node.get("parent") is None or node["parent"] in expanded
-    ]
+    """A node is visible only when every ancestor's key is in `expanded`.
+    The root and file nodes are always visible; finding leaves follow their
+    file node, Memories/Agents branches follow the root."""
+    nodes = _map_nodes(project)
+    parent_of = {node["key"]: node.get("parent") for node in nodes}
+
+    def shown(node: dict[str, Any]) -> bool:
+        parent = node.get("parent")
+        while parent is not None:
+            if parent not in expanded:
+                return False
+            parent = parent_of.get(parent)
+        return True
+
+    return [node for node in nodes if shown(node)]
 
 
 def _move_map_selection(state: TuiState, project: ProjectState, delta: int) -> None:
@@ -3550,6 +3627,27 @@ def _render_project_table(project: ProjectState) -> Panel:
             Text(sev, style=_severity_style(sev)),
             _safe(row.get("message", "")),
         )
+    # T28-C: a tool outcome with no findings (clean/skipped/denied/error)
+    # still gets its own visible row with its status and reason.
+    for result in project.results:
+        if result.get("findings"):
+            continue
+        status = safe_terminal_text(result.get("status", ""))
+        table.add_row(
+            Text(""),
+            _safe(result.get("tool", "")),
+            Text("-"),
+            Text(status, style=_severity_style(status)),
+            _safe(result.get("summary") or "no findings"),
+        )
+    if project.status == "scanning":
+        table.add_row(
+            Text(""),
+            Text("suite"),
+            Text("-"),
+            Text("running", style="bold yellow"),
+            Text("more tool results pending"),
+        )
     return Panel(
         table, title=_findings_title(project, rows, total_pages), style="green"
     )
@@ -3789,12 +3887,91 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     return Panel(Group(*lines), title=label, style=THEME["border"])
 
 
+def _load_map_snapshot(project: ProjectState) -> dict[str, Any] | None:
+    """T28-C: the read-only `project_map_snapshot` for the current attempt,
+    loaded lazily and cached until (run_id, status) changes. Never writes;
+    an unregistered project has none, a failure is an explicit unavailable
+    snapshot."""
+    key = (project.run_id, project.status)
+    if project.map_snapshot_key == key:
+        return project.map_snapshot
+    project.map_snapshot_key = key
+    project.map_snapshot = None
+    if project.project_id is None:
+        return None
+    from rush.workflows.projects import (
+        ProjectError,
+        project_map_snapshot,
+        resolve_project,
+    )
+
+    try:
+        record = resolve_project(project.project_id)
+        project.map_snapshot = project_map_snapshot(record, None, None)
+    except (ProjectError, OSError, ValueError) as exc:
+        project.map_snapshot = {
+            "available": False,
+            "reason": safe_terminal_text(exc),
+        }
+    return project.map_snapshot
+
+
+def _captured_detail(project: ProjectState, finding: dict[str, Any]) -> str | None:
+    """T28-C: the attempt's captured immutable snapshot of the finding's
+    path (`read_project_artifact_page`), preferred over the live file and
+    labelled with its run/attempt. `None` when nothing was captured."""
+    snapshot = _load_map_snapshot(project)
+    path_value = _finding_path(finding)
+    if not snapshot or not path_value or project.project_id is None:
+        return None
+    captured = (snapshot.get("artifact_snapshots") or {}).get(path_value)
+    if not isinstance(captured, dict):
+        return None
+    from rush.workflows.projects import ProjectError, read_project_artifact_page
+
+    cursor = base64.urlsafe_b64encode(
+        json.dumps(
+            {
+                "project_id": project.project_id,
+                "run_id": snapshot.get("run_id"),
+                "attempt_id": snapshot.get("attempt_id"),
+                "tool_id": captured.get("tool_id"),
+                "path": path_value,
+                "sha256": captured.get("sha256"),
+                "offset": 0,
+            }
+        ).encode("utf-8")
+    ).decode("ascii")
+    try:
+        page = read_project_artifact_page(
+            project.project_id, cursor, limit=_DETAIL_MAX_BYTES
+        )
+    except (ProjectError, OSError, ValueError):
+        return None
+    if page.get("error") or page.get("content_base64") is None:
+        return None
+    text = base64.b64decode(page["content_base64"]).decode("utf-8", errors="replace")
+    message = safe_terminal_text(finding.get("message") or "")
+    return "\n".join(
+        part
+        for part in (
+            safe_terminal_text(page.get("label")),
+            message,
+            safe_terminal_text(text),
+        )
+        if part
+    )
+
+
 def _render_detail(project: ProjectState) -> Panel:
     rows = project.visible_findings()
     if not rows or project.selected_index >= len(rows):
         return Panel(Text("No finding selected."), title="Detail")
     finding = rows[project.selected_index]
-    body = _safe(_bounded_local_detail(project.root, finding))
+    body = _safe(
+        _captured_detail(project, finding)
+        or _bounded_local_detail(project.root, finding)
+    )
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
@@ -4065,7 +4242,10 @@ def _render_project_selector(state: TuiState) -> Panel:
 def _render_map(state: TuiState, project: ProjectState) -> Panel:
     """U01 fix: the real Project -> Files -> Findings hierarchy
     (`_map_nodes`/`_map_visible_nodes`), with a `[+]`/`[-]` glyph on every
-    expandable file node -- previously no Map view existed at all."""
+    expandable file node -- previously no Map view existed at all. T28-C:
+    the read-only `project_map_snapshot` feeding the Memories/Agents
+    branches is loaded lazily here."""
+    _load_map_snapshot(project)
     nodes = _map_visible_nodes(project, state.map_expanded)
     lines: list[Text] = []
     for idx, node in enumerate(nodes):

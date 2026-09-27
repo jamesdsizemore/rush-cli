@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from rush.config import load_config
+from rush.io.physical_paths import ContainmentError, PhysicalRoot
 from rush.memory.store import (
     MemoryStoreUnreadableError,
     is_internal_memory_source,
@@ -59,6 +60,7 @@ from rush.memory.store import (
     readonly_view_reason,
     sqlite_has_table,
 )
+from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import read_summary_readonly
@@ -1951,6 +1953,332 @@ def project_snapshot(
     }
 
 
+# --- Phase 70 T28-C: read-only project map evidence ---------------------------
+
+_MAP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_NOT_CAPTURED = "not captured (unavailable)"
+_MAX_ARTIFACT_PAGE_BYTES = 1024 * 1024
+
+
+def _scan_file_inventory(root: Path) -> list[dict[str, str]]:
+    """P69-03.2b: the project's own tracked-or-present files, its own
+    concept -- never derived from a scan's findings or a `ScanPlan`'s
+    `ScanCandidate` set (different tools legitimately target different file
+    subsets). Reuses the same `SKIP_DIRS` ignore convention every other
+    whole-tree walk in this codebase already shares (`rush.review.collection`)
+    rather than inventing a second bespoke list."""
+    if not root.is_dir():
+        return []
+    entries: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
+            continue
+        entries.append({"path": rel.as_posix()})
+    return entries
+
+
+def _manifest_rel(run_id: str, attempt_id: str) -> str:
+    return f".rush/runs/{run_id}/attempts/{attempt_id}/manifest.json"
+
+
+def _read_contained_manifest(root: Path, run_id: str, attempt_id: str) -> Any:
+    """The attempt's `manifest.json` through `PhysicalRoot.open_contained`
+    (no symlinked component, no escape) and `_read_regular_json`. Raises
+    `FileNotFoundError` when absent, `ValueError` when refused or unusable."""
+    try:
+        path = PhysicalRoot(root).open_contained(_manifest_rel(run_id, attempt_id))
+    except (ContainmentError, ValueError) as exc:
+        raise ValueError(str(exc)) from exc
+    return _read_regular_json(path)
+
+
+def _current_map_memories(root: Path) -> list[dict[str, Any]] | str:
+    """Recorded memory artifacts with `cites` only from the recorded
+    `symbol_ref` (`path::Symbol`), over the zero-write reader."""
+
+    def _read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        conn.row_factory = sqlite3.Row
+        if not sqlite_has_table(conn, "memory_artifacts"):
+            return []
+        rows = conn.execute(
+            "SELECT id, symbol_ref, source FROM memory_artifacts ORDER BY id ASC"
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "cites": (
+                    [str(row["symbol_ref"]).split("::", 1)[0]]
+                    if row["symbol_ref"]
+                    else []
+                ),
+            }
+            for row in rows
+            if not is_internal_memory_source(row["source"])
+        ]
+
+    try:
+        memories = read_sqlite_readonly(root / ".rush" / "memory.db", _read)
+    except MemoryStoreUnreadableError as exc:
+        return f"unavailable ({exc})"
+    return memories if memories is not None else []
+
+
+def _current_map_agents(root: Path, run_id: str) -> list[dict[str, Any]]:
+    """`.rush/handoffs/*.json` recorded against exactly `run_id`, merged per
+    agent (`assigned_to` = that run's handed-off `finding_ids`)."""
+    agents: dict[str, list[str]] = {}
+    for handoff in _iter_handoffs(root):
+        if not isinstance(handoff, dict) or handoff.get("run_id") != run_id:
+            continue
+        agent_id = handoff.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            continue
+        assigned = agents.setdefault(agent_id, [])
+        for finding_id in handoff.get("finding_ids") or []:
+            if isinstance(finding_id, str) and finding_id not in assigned:
+                assigned.append(finding_id)
+    return [{"id": agent_id, "assigned_to": ids} for agent_id, ids in agents.items()]
+
+
+def project_map_snapshot(
+    project: dict[str, Any], run_id: str | None, attempt_id: str | None
+) -> dict[str, Any]:
+    """T28-C: the `build_project_map` input (files/findings/memories/agents)
+    for one resolved project, read-only. `run_id` given is a historical view
+    whose memories/agents come only from the manifest's frozen
+    `historical_memory_agent_snapshot` (never written here, never
+    live-substituted); `run_id` None is the current view, resolved through
+    T23's `select_attempt_chronology`. Missing, corrupt, or ambiguous
+    evidence is `available: False` with a `reason`, never an exception."""
+    root = Path(project["root"])
+    project_id = project["project_id"]
+    base: dict[str, Any] = {
+        "schema_version": 1,
+        "project_id": project_id,
+        "root": str(root),
+        "files": [],
+        "findings": [],
+        "memories": [],
+        "agents": [],
+    }
+
+    def unavailable(reason: str, **extra: Any) -> dict[str, Any]:
+        return {**base, **extra, "available": False, "reason": reason}
+
+    historical = run_id is not None
+    selection_state = "explicit"
+    if run_id is None:
+        chronology = select_attempt_chronology(root, project_id)
+        selection_state = chronology.state
+        if chronology.state in {"latest_unresolved", "chronology_ambiguous"}:
+            return unavailable(chronology.state, selection_state=chronology.state)
+        if chronology.published is None:
+            return {
+                **base,
+                "run_id": None,
+                "attempt_id": None,
+                "selection_state": chronology.state,
+                "artifact_snapshots": {},
+            }
+        run_id = chronology.published.run_id
+        attempt_id = chronology.published.attempt_id
+    if not _MAP_ID_RE.match(run_id):
+        return unavailable("invalid_run_id")
+    if attempt_id is None:
+        from rush.workflows.project_run import _highest_generation_attempt_dir
+
+        try:
+            attempt_dir = _highest_generation_attempt_dir(root, run_id)
+        except (OSError, ValueError):
+            attempt_dir = None
+        if attempt_dir is None:
+            return unavailable("attempt_not_found", run_id=run_id)
+        attempt_id = attempt_dir.name
+    if not _MAP_ID_RE.match(attempt_id):
+        return unavailable("invalid_attempt_id", run_id=run_id)
+    ids = {"run_id": run_id, "attempt_id": attempt_id}
+    try:
+        manifest = _read_contained_manifest(root, run_id, attempt_id)
+    except FileNotFoundError:
+        return unavailable("manifest_missing", **ids)
+    except ValueError as exc:
+        return unavailable(f"manifest_unreadable: {exc}", **ids)
+    if not isinstance(manifest, dict):
+        return unavailable("manifest_unreadable: not a JSON object", **ids)
+
+    aggregate = manifest.get("aggregate")
+    raw_findings = aggregate.get("findings") if isinstance(aggregate, dict) else None
+    findings = [
+        dict(finding, id=finding.get("finding_id") or finding.get("id"))
+        for finding in (raw_findings if isinstance(raw_findings, list) else [])
+        if isinstance(finding, dict)
+    ]
+    snapshot: dict[str, Any] = {
+        **base,
+        **ids,
+        "selection_state": selection_state,
+        "findings": findings,
+    }
+    if "file_inventory" in manifest:
+        inventory = manifest["file_inventory"]
+        snapshot["files"] = (
+            inventory if isinstance(inventory, list) else _scan_file_inventory(root)
+        )
+    else:
+        # A legacy manifest with no recorded inventory: never a live rewalk
+        # substituted as if recorded; only the attempt's own finding paths,
+        # flagged as such.
+        snapshot["file_inventory_missing"] = True
+        snapshot["files"] = [
+            {"path": path}
+            for path in sorted(
+                {f["path"] for f in findings if isinstance(f.get("path"), str)}
+            )
+        ]
+
+    if historical:
+        frozen = manifest.get("historical_memory_agent_snapshot")
+        frozen = frozen if isinstance(frozen, dict) else {}
+        memories = frozen.get("memories")
+        agents = frozen.get("agents")
+        snapshot["memories"] = memories if isinstance(memories, list) else _NOT_CAPTURED
+        snapshot["agents"] = agents if isinstance(agents, list) else _NOT_CAPTURED
+    else:
+        snapshot["memories"] = _current_map_memories(root)
+        snapshot["agents"] = _current_map_agents(root, run_id)
+
+    artifact_snapshots: dict[str, dict[str, Any]] = {}
+    for item in manifest.get("scheduled") or []:
+        if not isinstance(item, dict):
+            continue
+        captured = item.get("artifact_snapshots")
+        if not isinstance(captured, dict):
+            continue
+        for path, entry in captured.items():
+            if isinstance(entry, dict) and path not in artifact_snapshots:
+                artifact_snapshots[path] = {
+                    "tool_id": item.get("candidate_id"),
+                    "sha256": entry.get("sha256"),
+                }
+    snapshot["artifact_snapshots"] = artifact_snapshots
+    return snapshot
+
+
+def read_project_artifact_page(
+    project: str | Path,
+    cursor: str,
+    *,
+    data_root: Path | None = None,
+    limit: int = _MAX_ARTIFACT_PAGE_BYTES,
+) -> dict[str, Any]:
+    """T28-C/T28-E: one bounded byte page of an attempt's captured immutable
+    artifact snapshot (`scheduled[].artifact_snapshots`), never the live
+    file. `cursor` is base64url JSON `{project_id, run_id, attempt_id,
+    tool_id, path, sha256, offset}`. The manifest and the immutable path are
+    both reached through `PhysicalRoot.open_contained`, and the snapshot is
+    opened `O_NOFOLLOW` and must be a regular file of the recorded size.
+    Errors are returned as `error`: `invalid_cursor | not_found |
+    immutable_content_unavailable | invalid_path | read_failed`."""
+    record = resolve_project(project, data_root=data_root)
+    root = Path(record["root"])
+    project_id = record["project_id"]
+
+    def error(kind: str, path: Any = None) -> dict[str, Any]:
+        return {"path": path, "error": kind, "content_base64": None}
+
+    try:
+        payload = json.loads(_b64url_decode(cursor))
+    except (ValueError, TypeError):
+        return error("invalid_cursor")
+    if not isinstance(payload, dict):
+        return error("invalid_cursor")
+    run_id = payload.get("run_id")
+    attempt_id = payload.get("attempt_id")
+    tool_id = payload.get("tool_id")
+    rel_path = payload.get("path")
+    sha256 = payload.get("sha256")
+    offset = payload.get("offset", 0)
+    if not isinstance(rel_path, str):
+        return error("invalid_cursor")
+    if (
+        payload.get("project_id") != project_id
+        or not isinstance(run_id, str)
+        or not isinstance(attempt_id, str)
+        or not isinstance(tool_id, str)
+        or not isinstance(sha256, str)
+        or not _MAP_ID_RE.match(run_id)
+        or not _MAP_ID_RE.match(attempt_id)
+        or type(offset) is not int
+        or offset < 0
+    ):
+        return error("invalid_cursor", rel_path)
+    try:
+        manifest = _read_contained_manifest(root, run_id, attempt_id)
+    except (FileNotFoundError, ValueError):
+        return error("not_found", rel_path)
+    if not isinstance(manifest, dict) or manifest.get("project_id") != project_id:
+        return error("not_found", rel_path)
+    snapshot = None
+    for item in manifest.get("scheduled") or []:
+        if isinstance(item, dict) and item.get("candidate_id") == tool_id:
+            captured = item.get("artifact_snapshots")
+            snapshot = captured.get(rel_path) if isinstance(captured, dict) else None
+            break
+    if not isinstance(snapshot, dict):
+        return error("immutable_content_unavailable", rel_path)
+    if snapshot.get("sha256") != sha256:
+        return error("invalid_cursor", rel_path)
+    total_size = snapshot.get("size")
+    immutable_path = snapshot.get("immutable_path")
+    if type(total_size) is not int or not isinstance(immutable_path, str):
+        return error("immutable_content_unavailable", rel_path)
+    try:
+        target = PhysicalRoot(root).open_contained(immutable_path)
+    except (ContainmentError, ValueError):
+        return error("invalid_path", rel_path)
+    limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
+    try:
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return error("not_found", rel_path)
+    except OSError:
+        return error("invalid_path", rel_path)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return error("invalid_path", rel_path)
+        if st.st_size != total_size:
+            return error("immutable_content_unavailable", rel_path)
+        os.lseek(fd, offset, os.SEEK_SET)
+        chunk = os.read(fd, limit)
+    except OSError:
+        return error("read_failed", rel_path)
+    finally:
+        os.close(fd)
+    next_offset = offset + len(chunk)
+    next_cursor = (
+        _b64url_encode(json.dumps({**payload, "offset": next_offset}).encode("utf-8"))
+        if next_offset < total_size
+        else None
+    )
+    return {
+        "path": rel_path,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "tool_id": tool_id,
+        "label": f"captured snapshot (run {run_id}, attempt {attempt_id})",
+        "offset": offset,
+        "size": total_size,
+        "content_base64": base64.b64encode(chunk).decode("ascii"),
+        "next_cursor": next_cursor,
+        "sha256": sha256,
+        "media_type": snapshot.get("media_type"),
+    }
+
+
 __all__ = [
     "CURSOR_KEY_FILE",
     "REGISTRY_LOCK_FILE",
@@ -1982,9 +2310,11 @@ __all__ = [
     "list_projects_page",
     "project_git_commit_diff",
     "project_git_history",
+    "project_map_snapshot",
     "project_overview_evidence",
     "project_snapshot",
     "project_token_usage",
+    "read_project_artifact_page",
     "read_registry_state",
     "register_project",
     "relink_project",
