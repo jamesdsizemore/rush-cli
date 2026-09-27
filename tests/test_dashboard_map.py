@@ -3694,7 +3694,11 @@ def test_quit_after_dashboard_owned_rescan_cancels_the_correct_run_not_a_stale_l
         cancel_scan_run=lambda root, run_id: cancel_calls.append(run_id),
     )
     tui_module._request_cancel(project, actions_with_cancel)
-    assert cancel_calls == ["dashboard-run"], (
+    # T28-B: dashboard-owned work is cancelled by the owning server's own
+    # `cancel` operation, never the local marker-file cancel.
+    assert cancel_calls == [], "a dashboard-owned cancel must never run locally"
+    operation, arguments = owner.calls[-1]
+    assert (operation, arguments["run_id"]) == ("cancel", "dashboard-run"), (
         "Cancel run and stay must target the current run, never the stale "
         "pre-rescan local one"
     )

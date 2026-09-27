@@ -91,6 +91,21 @@ _TUI_KEYBINDINGS = [
     KeybindingAction(
         key="L", action_name="choose_later", description="Choose a project later"
     ),
+    KeybindingAction(
+        key="t",
+        action_name="setup_toggle_grant",
+        description="Setup: toggle the highlighted stage's grant",
+    ),
+    KeybindingAction(
+        key="p",
+        action_name="setup_apply",
+        description="Setup: review the toggled grants, then apply",
+    ),
+    KeybindingAction(
+        key="x",
+        action_name="setup_retry",
+        description="Setup: regenerate the review after a failed stage",
+    ),
     KeybindingAction(key="right", action_name="map_expand", description="Expand"),
     KeybindingAction(key="l", action_name="map_expand", description="Expand"),
     KeybindingAction(key="left", action_name="map_collapse", description="Collapse"),
@@ -408,6 +423,7 @@ def default_scan_actions(
         run_id: str = "",
         lexical_path: Path | None = None,
         original_input: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
         **kwargs: object,
     ) -> Any:
         from rush.workflows.suites import CHECK_SUITE, run_workflow_suite
@@ -424,6 +440,7 @@ def default_scan_actions(
             permissions=permissions,
             owner_instance_id=owner_instance_id,
             run_id=run_id,
+            cancel_check=cancel_check,
             original_requested_targets=(
                 (original_input,) if original_input is not None else None
             ),
@@ -615,6 +632,13 @@ class ProjectState:
     )
     section: str = "overview"
     views: dict[str, Any] = field(default_factory=dict, repr=False)
+    # T28-B: `rush ui --allow-*` grants for this project's Setup toggles, and
+    # the ordered (stage, status) events a setup apply worker posted.
+    launch_permissions: ExecutionPermissions | None = None
+    setup_apply_events: list[tuple[str, str]] = field(default_factory=list)
+    setup_apply_thread: threading.Thread | None = field(
+        default=None, repr=False, compare=False
+    )
     generation: int = 0
     pending: dict[Any, tuple[int, tuple[Any, ...]]] = field(
         default_factory=dict, repr=False
@@ -791,6 +815,13 @@ class TuiState:
         for section, view in project.views.items():
             self.views[(project_key(project), section)] = _coerce_view(view)
         project.views = {}
+        key = (project_key(project), "setup")
+        view = self.views.setdefault(key, SectionView())
+        if not isinstance(view.data, dict):
+            view.data = {}
+        view.data.setdefault(
+            "stage_grants", _default_stage_grants(project, self.launch_permissions)
+        )
 
     @property
     def active_pane(self) -> str:
@@ -1102,6 +1133,9 @@ class DashboardOwner:
             dispatch_dashboard_action,
         )
 
+        if operation == "cancel":
+            # T28-B: the TUI's work-kind cancel names the server's own op.
+            operation = "scan_cancel"
         if operation == "check_suite":
             return dispatch_control_check_suite(
                 self.base_url, self.control_capability, self.project_id
@@ -1209,6 +1243,7 @@ def _start_dashboard_owned(
     own durable status record is what a later `rush ui`/`rush dashboard`
     invocation reads to find the result."""
     project.owner = "dashboard"
+    project.work_kind = "dashboard"
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
@@ -1246,7 +1281,13 @@ def _start_dashboard_owned(
     thread.start()
 
 
-def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
+def _start_scan_thread(
+    project: ProjectState,
+    actions: ScanActions,
+    permissions: ExecutionPermissions | None = None,
+) -> None:
+    # T28-B: only the reviewed grants run the scan; unreviewed = none.
+    granted = permissions if permissions is not None else ExecutionPermissions()
     plan = actions.plan_scan(project.root)
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
@@ -1269,6 +1310,7 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
         return
 
     project.owner = "local"
+    project.work_kind = "scan"
     run_id = str(uuid.uuid4())
     project.run_id = run_id
     project.plan_total = len(list(getattr(plan, "candidates", None) or []))
@@ -1310,7 +1352,10 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
         outcome_status = "success"
         try:
             run = actions.execute_scan(
-                plan, run_id=run_id, owner_instance_id=owner_instance_id
+                plan,
+                run_id=run_id,
+                owner_instance_id=owner_instance_id,
+                permissions=granted,
             )
             aggregate = getattr(run, "aggregate", None)
             if aggregate is not None:
@@ -1339,6 +1384,8 @@ def _start_scan_thread(project: ProjectState, actions: ScanActions) -> None:
 
 def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
     baseline_run_id = project.run_id
+    # T28-B: the reviewed attempt; a newer attempt makes the rescan refuse.
+    expected_attempt_id = project.run_id
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
         # P69-06d: the identical check applies to every scan-triggering
@@ -1361,6 +1408,7 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
         return
 
     project.owner = "local"
+    project.work_kind = "rescan"
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
@@ -1378,7 +1426,10 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
     def _worker() -> None:
         try:
             outcome = actions.rescan_project_run(
-                project.root, baseline_run_id, owner_instance_id=owner_instance_id
+                project.root,
+                baseline_run_id,
+                owner_instance_id=owner_instance_id,
+                expected_attempt_id=expected_attempt_id,
             )
             run = outcome.get("run") if isinstance(outcome, dict) else None
             if isinstance(run, dict):
@@ -1432,6 +1483,8 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
 
     project.owner = "local"
     project.status = "scanning"
+    project.work_kind = "check"
+    project.cancel_event.clear()
     run_id = str(uuid.uuid4())
     # P69-06h: tag this local run's owner identity so Detach's force-exit can
     # still reap its owned subprocess groups (see `_start_rescan_thread`'s
@@ -1451,6 +1504,7 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
                     run_id=run_id,
                     lexical_path=project.lexical_path,
                     original_input=project.original_input,
+                    cancel_check=project.cancel_event.is_set,
                 )
                 if actions.run_check_suite
                 else None
@@ -1603,20 +1657,39 @@ def _execute_grant(
     if kind.startswith("project_"):
         _start_project_grant(state, grant)
         return
+    if kind == "setup_retry":
+        _regenerate_setup_review(state, grant)
+        return
     project = state.active_project
     try:
         if kind == "start_scan":
-            _start_scan_thread(project, actions)
+            _start_scan_thread(
+                project, actions, _permissions_of(grant.get("_permissions", ()))
+            )
         elif kind == "rescan":
             _start_rescan_thread(project, actions)
+        elif kind == "setup_apply":
+            _start_setup_apply_thread(
+                project,
+                actions,
+                grant["_review"],
+                _permissions_of(grant["_permissions"]),
+            )
         elif kind == "handoff":
             handoff = actions.build_handoff(
-                project.root, grant["run_id"], grant["agent_id"], finding_ids=()
+                project.root,
+                grant["run_id"],
+                grant["agent_id"],
+                finding_ids=tuple(grant["finding_ids"]),
             )
             dispatched = actions.dispatch_handoff(
                 project.root, handoff.handoff_id, handoff.session_capability
             )
-            state.message = f"handoff {dispatched.state}"
+            # The receipt's own state, verbatim: "delivered" is a delivery
+            # receipt, never proof of a completed repair.
+            receipt = getattr(dispatched, "state", "unknown")
+            state.message = f"handoff {receipt}"
+            project.last_message = f"handoff {handoff.handoff_id} {receipt}"
     except Exception as exc:  # noqa: BLE001 -- the confirmed, user-approved
         # mutation itself calls injectable Phase65 actions (`build_handoff`/
         # `dispatch_handoff`/scan start/rescan); this is the single point
@@ -1624,6 +1697,260 @@ def _execute_grant(
         # instead of crashing the interactive loop mid-render.
         state.message = f"{kind} failed: {exc}"
         project.status = "error"
+        if kind == "handoff":
+            _mark_agent_unavailable(state, project, grant["agent_id"], exc, actions)
+
+
+def _permissions_of(names: Any) -> ExecutionPermissions:
+    return ExecutionPermissions(**{name: True for name in names})
+
+
+def _mark_agent_unavailable(
+    state: TuiState,
+    project: ProjectState,
+    agent_id: str | None,
+    exc: Exception,
+    actions: ScanActions,
+) -> None:
+    """T28-B: a handoff to an agent absent from the detected agent list is
+    its own `unavailable` state (the Agents view), not a generic failure."""
+    try:
+        known = actions.list_agents()
+    except Exception as list_exc:  # noqa: BLE001 -- injectable agent-list
+        # seam; unreadable means the agent's availability is unknown.
+        known, reason = None, f"agent list unreadable: {list_exc}"
+    else:
+        reason = f"agent {agent_id} unavailable: {exc}"
+    if known is not None and agent_id in known:
+        return
+    state.views[(project_key(project), "agents")] = SectionView(
+        state="unavailable", reason=reason, data={"agent_id": agent_id}
+    )
+    state.message = reason
+
+
+def _default_stage_grants(
+    project: ProjectState, launch: ExecutionPermissions | None
+) -> dict[str, bool]:
+    """Per-stage Setup grant toggles: off, except a stage whose every grant
+    was already given at launch (`rush ui --allow-*`)."""
+    from rush.tools.setup_wizard import STAGE_GRANTS
+
+    given = project.launch_permissions or launch or ExecutionPermissions()
+    granted = {name for name, on in given.to_dict().items() if on}
+    return {
+        stage: bool(grants) and set(grants) <= granted
+        for stage, grants in {**STAGE_GRANTS, "engines": ()}.items()
+    }
+
+
+def _build_setup_view(state: TuiState, project: ProjectState) -> None:
+    """The resolution-only (`resolve=False`, no network) T26 preview for the
+    Setup section, built once and kept on its view; never applied here."""
+    from rush.tools import setup_wizard
+
+    view = state.views.setdefault((project_key(project), "setup"), SectionView())
+    data = view.data if isinstance(view.data, dict) else {}
+    data.setdefault(
+        "stage_grants", _default_stage_grants(project, state.launch_permissions)
+    )
+    view.data = data
+    try:
+        review = setup_wizard.build_setup_review(
+            project.root, state.data_root, resolve=False
+        )
+        data["review"] = review
+        data["review_text"] = setup_wizard.render_setup_review(review)
+    except Exception as exc:  # noqa: BLE001 -- the preview reads config,
+        # registry and engine state; any failure is shown as a failed view.
+        data["review_error"] = str(exc) or type(exc).__name__
+        view.state, view.reason = "failed", data["review_error"]
+        return
+    data.pop("review_error", None)
+    view.state, view.reason = "populated", None
+    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _regenerate_setup_review(state: TuiState, grant: Mapping[str, Any]) -> None:
+    """Failed-stage retry: a fresh review, never a re-apply of the old one."""
+    project = state.active_project
+    view = state.views.get((project_key(project), "setup"))
+    if view is not None and isinstance(view.data, dict):
+        view.data.pop("review", None)
+        view.data.pop("review_text", None)
+    _build_setup_view(state, project)
+    project.setup_apply_events.clear()
+    state.message = (
+        f"setup stage {grant.get('failed_stage')} failed: review regenerated, "
+        "review it and apply again"
+    )
+
+
+def _setup_data(state: TuiState) -> dict[str, Any]:
+    """The active project's Setup view data, building the preview first."""
+    project = state.active_project
+    view = state.views.get((project_key(project), "setup"))
+    data = view.data if view is not None and isinstance(view.data, dict) else {}
+    if "review" not in data and "review_error" not in data:
+        _build_setup_view(state, project)
+        data = state.views[(project_key(project), "setup")].data
+    return data
+
+
+def _setup_move(state: TuiState, step: int) -> None:
+    data = _setup_data(state)
+    count = len(data["stage_grants"])
+    data["stage_index"] = (data.get("stage_index", 0) + step) % count
+
+
+def _setup_toggle_grant(state: TuiState, actions: ScanActions) -> None:
+    data = _setup_data(state)
+    toggles = data["stage_grants"]
+    stage = list(toggles)[data.get("stage_index", 0) % len(toggles)]
+    toggles[stage] = not toggles[stage]
+    state.message = f"{stage} grant {'on' if toggles[stage] else 'off'}"
+
+
+def _setup_apply_running(project: ProjectState) -> bool:
+    thread = project.setup_apply_thread
+    return thread is not None and thread.is_alive()
+
+
+def _failed_setup_stage(project: ProjectState) -> str | None:
+    for stage, status in reversed(project.setup_apply_events):
+        if status not in ("started", "completed"):
+            return stage
+    return None
+
+
+def _setup_apply_enabled(state: TuiState) -> tuple[bool, str]:
+    if _setup_apply_running(state.active_project):
+        return False, "setup apply running"
+    return True, ""
+
+
+def _setup_retry_enabled(state: TuiState) -> tuple[bool, str]:
+    if _setup_apply_running(state.active_project):
+        return False, "setup apply running"
+    if _failed_setup_stage(state.active_project) is None:
+        return False, "no failed setup stage to retry"
+    return True, ""
+
+
+def _setup_apply_review(state: TuiState, actions: ScanActions) -> None:
+    """Review exactly the toggled stages' grants before any apply."""
+    data = _setup_data(state)
+    review = data.get("review")
+    if review is None:
+        state.message = f"setup review unavailable: {data.get('review_error')}"
+        return
+    project = state.active_project
+    stages = [stage for stage, on in data["stage_grants"].items() if on]
+    grants = sorted({g for s in stages for g in review["grants"].get(s, ())})
+    _open_grant(
+        state,
+        {
+            "kind": "setup_apply",
+            "project": project.name,
+            "root": str(project.root),
+            "summary": "Apply the reviewed setup: config, register, configure, "
+            "engines.",
+            "stages": ", ".join(stages) or "none",
+            "grants": ", ".join(grants) or "none",
+            "_permissions": tuple(grants),
+            "_review": review,
+            "_identity": _review_identity(state),
+        },
+    )
+
+
+def _setup_retry_review(state: TuiState, actions: ScanActions) -> None:
+    project = state.active_project
+    _open_grant(
+        state,
+        {
+            "kind": "setup_retry",
+            "project": project.name,
+            "root": str(project.root),
+            "failed_stage": _failed_setup_stage(project),
+            "summary": "Regenerate the setup review; nothing is applied until "
+            "the new review is applied.",
+        },
+    )
+
+
+def _start_setup_apply_thread(
+    project: ProjectState,
+    actions: ScanActions,
+    review: dict[str, Any],
+    permissions: ExecutionPermissions | None = None,
+) -> None:
+    """Apply a reviewed setup on a worker; each (stage, status) progress
+    event is appended to `project.setup_apply_events` in call order. An
+    outcome no stage event reports (a missing grant, a stale precondition)
+    is appended as `("setup", <status>)`."""
+    from rush.tools import setup_wizard
+
+    apply: Callable[..., Any] = setup_wizard.apply_setup_review
+    events = project.setup_apply_events
+    events.clear()
+
+    def _on_progress(stage: str, status: str) -> None:
+        events.append((stage, status))
+
+    def _worker() -> None:
+        try:
+            result = apply(review, permissions, None, on_progress=_on_progress)
+            status = str(result.get("status", "unknown"))
+            if status not in ("ok", "partial"):
+                events.append(("setup", status))
+            project.last_message = f"setup apply {status}"
+        except Exception as exc:  # noqa: BLE001 -- setup apply touches
+            # config, registry and engine installs; surface, never crash.
+            events.append(("setup", "failed"))
+            project.last_message = f"setup apply failed: {exc}"
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    project.setup_apply_thread = thread
+    thread.start()
+
+
+def _load_scans_section(
+    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
+) -> tuple[str, str | None, Any]:
+    """Scans history: every run's terminal manifest via the read-only
+    `load_run_manifest`; creates nothing."""
+    from rush.workflows.project_run import load_run_manifest
+
+    runs_dir = root / ".rush" / "runs"
+    history: list[dict[str, Any]] = []
+    try:
+        run_ids = sorted(p.name for p in runs_dir.iterdir() if p.is_dir())
+    except OSError:
+        run_ids = []
+    for run_id in run_ids:
+        manifest = load_run_manifest(root, run_id)
+        if manifest is not None:
+            history.append(manifest)
+    if not history:
+        return "empty", "no completed scan runs", {"history": history}
+    return "populated", None, {"history": history}
+
+
+def _scan_history_lines(view: SectionView | None) -> list[Any]:
+    """Scans history rows: run id, attempt, status, finished, findings."""
+    lines: list[Any] = _view_state_lines("Scan history", view)
+    data = view.data if view is not None and isinstance(view.data, Mapping) else {}
+    for manifest in data.get("history") or []:
+        totals = manifest.get("totals") or {}
+        lines.append(
+            _safe(
+                f"{manifest.get('run_id')}  {manifest.get('attempt_id')}  "
+                f"{manifest.get('run_state')}  {manifest.get('created_at')}  "
+                f"findings {totals.get('finding_count', 0)}"
+            )
+        )
+    return lines
 
 
 def _project_grant_worker(grant: Mapping[str, Any], data_root: Path | None) -> Any:
@@ -2227,13 +2554,32 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
     """Send the cooperative-cancel marker for `project`'s active run.
     Shared by the plain 'cancel_scan' key and Cancel-run-and-stay (P69-06g) --
     both send the identical request; they differ only in what happens to the
-    TUI process afterward."""
-    if project.status != "scanning" or not project.run_id:
+    TUI process afterward.
+
+    T28-B: dispatched by `project.work_kind` -- a check observes
+    `cancel_event` (forwarded as `run_workflow_suite`'s `cancel_check`), a
+    scan/rescan uses the run's marker-file cancel, and dashboard-owned work
+    is cancelled by the owning server's own `cancel` operation."""
+    if project.status != "scanning":
+        return
+    kind = project.work_kind
+    if kind == "check":
+        project.cancel_event.set()
+        project.status = "cancelling"
         return
     try:
-        # Filesystem-based, so this is correct for a dashboard-owned run too
-        # (both processes share the same project root) -- never routed
-        # through the dashboard's own HTTP action for this local button.
+        if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
+            owner = _dashboard_owner_for(project, actions)
+            if owner is None:
+                project.last_message = "cancel failed: dashboard owner not reachable"
+                return
+            owner.dispatch(
+                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
+            )
+            project.status = "cancelling"
+            return
+        if not project.run_id:
+            return
         actions.cancel_scan_run(project.root, project.run_id)
         project.status = "cancelling"
     except Exception as exc:  # noqa: BLE001 -- injectable Phase65
@@ -2394,6 +2740,7 @@ _SECTION_LOADERS: dict[
     str, Callable[[Path, str | None, Path | None, ScanActions], LoadOutcome]
 ] = {
     "overview": _load_overview_section,
+    "scans": _load_scans_section,
     "tokens": _load_tokens_section,
     "artifacts": _load_artifacts_section,
     "setup": _load_setup_section,
@@ -2482,6 +2829,13 @@ def _drain_results(state: TuiState) -> bool:
         prior = state.views.get(key)
         if ok:
             view_state, reason, data = payload
+            if (
+                section == "setup"
+                and prior is not None
+                and isinstance(prior.data, dict)
+            ):
+                data = {**prior.data, "agents": data}
+                view_state = prior.state if "review" in prior.data else view_state
             state.views[key] = SectionView(
                 state=view_state,
                 reason=reason,
@@ -2518,6 +2872,11 @@ def _handle_grant_review_key(state: TuiState, key: str, actions: ScanActions) ->
     state.pending_grant = None
     state.mode = "list"
     if key == "y" and grant is not None:
+        if "_identity" in grant and grant["_identity"] != _review_identity(state):
+            # T28-B: the project, attempt or source changed after review --
+            # the review no longer describes the effect, so nothing runs.
+            state.message = f"{grant['kind']} review is stale; nothing was run"
+            return
         _execute_grant(state, grant, actions)
     else:
         state.message = "declined"
@@ -2739,6 +3098,8 @@ def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
     def run(state: TuiState, actions: ScanActions) -> None:
         if state.mode == "map":
             _move_map_selection(state, state.active_project, step)
+        elif state.section == "setup":
+            _setup_move(state, step)
         else:
             _move_selection(state.active_project, step)
 
@@ -2822,8 +3183,28 @@ def _start_check(state: TuiState, actions: ScanActions) -> None:
     state.message = "analysis started"
 
 
+def _review_identity(state: TuiState) -> tuple[Any, ...]:
+    """What a review describes: the project, its attempt and its source
+    (the results the review was built from)."""
+    if not state.projects:
+        return ()
+    project = state.active_project
+    return (
+        state.active_index,
+        project_key(project),
+        str(project.root),
+        project.run_id,
+        id(project.results),
+        (project.registration or {}).get("revision"),
+    )
+
+
 def _start_scan_review(state: TuiState, actions: ScanActions) -> None:
     project = state.active_project
+    launch = state.launch_permissions or ExecutionPermissions()
+    reviewed = sorted(
+        {n for n, on in launch.to_dict().items() if on} | set(_PROJECT_WRITE_GRANTS)
+    )
     _open_grant(
         state,
         {
@@ -2831,6 +3212,13 @@ def _start_scan_review(state: TuiState, actions: ScanActions) -> None:
             "project": project.name,
             "root": str(project.root),
             "summary": "Run a full scan against this project's real source.",
+            "grants": ", ".join(reviewed),
+            "per-candidate grants": (
+                "engines: none (read-only); tools: at most the grants above -- "
+                "a candidate needing any other grant ends permission_blocked"
+            ),
+            "_permissions": tuple(reviewed),
+            "_identity": _review_identity(state),
         },
     )
 
@@ -2844,14 +3232,22 @@ def _rescan_review(state: TuiState, actions: ScanActions) -> None:
             "project": project.name,
             "root": str(project.root),
             "run_id": project.run_id,
+            "expected attempt": project.run_id,
             "summary": f"Rescan run {project.run_id} against current source.",
+            "_identity": _review_identity(state),
         },
     )
 
 
 def _handoff_review(state: TuiState, actions: ScanActions) -> None:
     project = state.active_project
-    finding_count = len(project.visible_findings())
+    # T28-B: exactly the visible (filtered) findings are reviewed and sent.
+    finding_ids = tuple(
+        str(row["finding_id"])
+        for row in project.visible_findings()
+        if row.get("finding_id")
+    )
+    finding_count = len(finding_ids)
     _open_grant(
         state,
         {
@@ -2861,6 +3257,8 @@ def _handoff_review(state: TuiState, actions: ScanActions) -> None:
             "run_id": project.run_id,
             "agent_id": state.selected_agent_id,
             "finding_count": finding_count,
+            "finding_ids": finding_ids,
+            "_identity": _review_identity(state),
             "summary": (
                 f"Send {finding_count} finding(s) from run {project.run_id} "
                 f"to agent {state.selected_agent_id}."
@@ -2907,7 +3305,14 @@ def _registration_state(state: TuiState) -> str | None:
 
 
 def _scan_enabled(state: TuiState) -> tuple[bool, str]:
-    if state.active_project.status == "scanning":
+    project = state.active_project
+    worker = project.scan_thread
+    # A local worker that has already exited is not running work, even
+    # before the next poll records its terminal status.
+    finished_locally = (
+        project.owner == "local" and worker is not None and not worker.is_alive()
+    )
+    if project.status == "scanning" and not finished_locally:
         return False, "scan already running"
     return True, ""
 
@@ -2990,6 +3395,25 @@ ACTIONS: tuple[Action, ...] = (
         _handoff_enabled,
     ),
     Action("cycle_agent", "Agent", "Section", ("setup",), _cycle_agent),
+    Action(
+        "setup_toggle_grant", "Toggle grant", "Section", ("setup",), _setup_toggle_grant
+    ),
+    Action(
+        "setup_apply",
+        "Apply setup",
+        "Section",
+        ("setup",),
+        _setup_apply_review,
+        _setup_apply_enabled,
+    ),
+    Action(
+        "setup_retry",
+        "Retry stage",
+        "Section",
+        ("setup",),
+        _setup_retry_review,
+        _setup_retry_enabled,
+    ),
     Action(
         "project_add",
         "Add",
@@ -3306,9 +3730,51 @@ def _render_overview(state: TuiState, project: ProjectState) -> Panel:
     return Panel(Group(*lines), title="Overview", style=THEME["border"])
 
 
+def _setup_apply_line(project: ProjectState) -> Text | None:
+    events = list(project.setup_apply_events)
+    if not events:
+        return None
+    return Text("\n").join(
+        [Text("Setup apply:", style="bold")]
+        + [_safe(f"  {stage} {status}") for stage, status in events]
+    )
+
+
+def _render_setup(state: TuiState, project: ProjectState) -> Panel:
+    view = state.views.get((project_key(project), "setup"))
+    data = view.data if view is not None and isinstance(view.data, dict) else {}
+    if "review" not in data and "review_error" not in data:
+        _build_setup_view(state, project)
+        view = state.views[(project_key(project), "setup")]
+        data = view.data
+    lines: list[Any] = _view_state_lines("Setup", view)
+    if data.get("review_text"):
+        lines.extend(_safe(line) for line in str(data["review_text"]).splitlines())
+    toggles = data.get("stage_grants") or {}
+    current = data.get("stage_index", 0) % max(len(toggles), 1)
+    lines.append(
+        _safe(
+            "Stage grants (j/k highlight, t toggle, p apply): "
+            + ", ".join(
+                f"{'>' if i == current else ''}{k} {'on' if v else 'off'}"
+                for i, (k, v) in enumerate(toggles.items())
+            )
+        )
+    )
+    progress = _setup_apply_line(project)
+    if progress is not None:
+        lines.append(progress)
+    agents = state.views.get((project_key(project), "agents"))
+    if agents is not None:
+        lines.extend(_view_state_lines("Agent", agents))
+    return Panel(Group(*lines), title="Setup", style=THEME["border"])
+
+
 def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     section = state.section
     label = SECTION_LABELS[section]
+    if section == "setup":
+        return _render_setup(state, project)
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
     if view is None:
@@ -3334,7 +3800,7 @@ def _render_grant_review(grant: dict[str, Any]) -> Panel:
     lines = [
         _safe(f"{key}: {value}", "white")
         for key, value in grant.items()
-        if key != "kind"
+        if key != "kind" and not key.startswith("_")
     ]
     lines.append(Text(""))
     lines.append(Text("[y] confirm    [any other key] decline", style="bold yellow"))
@@ -3710,9 +4176,16 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
     if state.mode == "help":
         return _render_help(state)
     if state.section == "overview":
+        progress = _setup_apply_line(project)
+        if progress is not None:
+            return Group(progress, _render_overview(state, project))
         return _render_overview(state, project)
     if state.section == "scans":
-        return _render_project_table(project)
+        history = state.views.get((project_key(project), "scans"))
+        return Group(
+            Panel(Group(*_scan_history_lines(history)), title="Scan history"),
+            _render_project_table(project),
+        )
     return _render_section_view(state, project)
 
 
@@ -3835,6 +4308,7 @@ def run_interactive_tui(
     _ACTIVE_REFRESH_INTERVAL = 1.0 / 20
     _IDLE_REFRESH_INTERVAL = 1.0 / 4
     last_refresh = 0.0
+    seen_setup_events = 0
 
     ticks = 0
     with raw_terminal():
@@ -3869,15 +4343,20 @@ def run_interactive_tui(
                     _dispatch_key(state, key, actions)
 
                 if live is not None:
+                    setup_events = sum(
+                        len(p.setup_apply_events) for p in state.projects
+                    )
                     has_activity = (
                         key is not None
                         or applied
                         or resized
+                        or setup_events != seen_setup_events
                         or any(
                             p.status in ("scanning", "cancelling")
                             for p in state.projects
                         )
                     )
+                    seen_setup_events = setup_events
                     # U04 fix: reduced motion renders the final state
                     # (already shown once by `Live(render_app(state), ...)`
                     # above) and never refreshes again on an idle timer --
