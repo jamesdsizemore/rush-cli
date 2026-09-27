@@ -1454,14 +1454,15 @@ class _Normalizer:
     def _status(
         statuses: list[ToolStatus], run_errors: list[dict[str, Any]]
     ) -> ToolStatus:
-        from ..tools.routing import combine_status
+        """T16 S16.3: one aggregate over every config group and run error --
+        no `skipped` start value, which the new precedence would read as a
+        skipped group next to an ok one. No group at all (no TypeScript in
+        scope) is `skipped`, with the empty scope recorded by `_coverage`."""
+        from ..tools.routing import aggregate_status
 
-        status: ToolStatus = "skipped"
-        for item in statuses:
-            status = combine_status(status, item)
-        for run_error in run_errors:
-            status = combine_status(status, run_error.get("status", "error"))
-        return status
+        return aggregate_status(
+            [*statuses, *(str(e.get("status", "error")) for e in run_errors)]
+        )
 
 
 def _coverage(

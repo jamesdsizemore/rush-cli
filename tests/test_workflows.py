@@ -129,7 +129,19 @@ def test_tool_typeerror_runs_once(tmp_path: Path, monkeypatch) -> None:
 
     assert calls == 1
     assert result["status"] == "error"
-    assert result["metadata"]["children"] == [{"tool": "broken", "status": "error"}]
+    # Phase 70 T16 §3 item 3: each child keeps summary, reason, engines,
+    # scope and execution next to tool/status.
+    assert result["metadata"]["children"] == [
+        {
+            "tool": "broken",
+            "status": "error",
+            "summary": "error: boom",
+            "reason": None,
+            "engines": [],
+            "scope": {"coverage": "unavailable", "reason": None},
+            "execution": {"disposition": "executed", "cause": None},
+        }
+    ]
     assert result["metadata"]["executed_tools"] == ()
 
 

@@ -41,6 +41,7 @@ from pydantic import (
 )
 from pydantic.json_schema import models_json_schema
 
+from rush.delivery import compact
 from rush.mcp_support.tool_registry import _PROJECT_DESCRIPTION
 from rush.safety.redactor import sanitize_value
 
@@ -506,6 +507,13 @@ _MEMORY_COMMON: dict[str, Any] = {
     "run_id": (StrictStr | None, _OPTIONAL),
     "agent_id": (StrictStr | None, _OPTIONAL),
     "session_id": (StrictStr | None, _OPTIONAL),
+    # Phase 70 T16 (R16.5/finding 1): the shared result-view parameters. The
+    # values pass through unchanged so `rush.delivery.compact` applies the
+    # one validation (RESULT_VIEW_INVALID) every transport shares.
+    "result_view": (compact.ResultViewParam, None),
+    "limit": (compact.LimitParam, None),
+    "max_bytes": (compact.MaxBytesParam, None),
+    "no_cache": (StrictBool, False),
 }
 _ALLOWLIST_REQUIRED = (Annotated[StrList, Field(min_length=1)], _REQUIRED)
 _ALLOWLIST_OPTIONAL = (StrList | None, _OPTIONAL)

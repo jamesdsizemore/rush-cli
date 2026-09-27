@@ -159,9 +159,21 @@ def test_review_honors_explicit_changed_file_scope_without_git_inference(
     assert {finding["path"] for finding in result["findings"]} == {
         str(tmp_path / "changed.py")
     }
+    # Phase 70 T16 (finding 8): the §3.2 v1 scope keeps `mode`/`files`.
     assert result["metadata"] == {
         "graft": "not-requested",
-        "scope": {"mode": "explicit-files", "files": ["changed.py"]},
+        "scope": {
+            "version": 1,
+            "kind": "file",
+            "mode": "explicit-files",
+            "files": ["changed.py"],
+            "logical_root": str(tmp_path),
+            "requested_file_count": 1,
+            "matched_file_count": 1,
+            "consumed_file_count": 1,
+            "coverage": "complete",
+            "reason": None,
+        },
     }
 
 
@@ -185,7 +197,18 @@ def test_review_preserves_empty_explicit_scope_metadata(tmp_path: Path) -> None:
     assert result["status"] == "ok"
     assert result["metadata"] == {
         "graft": "not-requested",
-        "scope": {"mode": "explicit-files", "files": []},
+        "scope": {
+            "version": 1,
+            "kind": "file",
+            "mode": "explicit-files",
+            "files": [],
+            "logical_root": str(tmp_path),
+            "requested_file_count": 1,
+            "matched_file_count": 0,
+            "consumed_file_count": 0,
+            "coverage": "none",
+            "reason": "no_reviewable_python_files",
+        },
     }
 
 

@@ -138,7 +138,9 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
     assert {f["finding_id"] for f in findings_a}.isdisjoint(
         {f["finding_id"] for f in findings_b}
     )
-    assert journey["run_a"].aggregate["status"] == "ok"
+    # Phase 70 T16 S16.3 and the owner's finding-9 decision (every engine is
+    # required): executed-ok candidates next to skipped ones aggregate to warn.
+    assert journey["run_a"].aggregate["status"] == "warn"
     # The real 121-engine registry is scheduled too (not just ReviewTool) --
     # every JS/IaC/docs-class engine candidate is honestly "unavailable" in
     # this sandbox, so the run's own real state is "incomplete", never a

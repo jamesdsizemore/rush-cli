@@ -10,7 +10,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
 
-from ..continuity.context import pack_context, retrieve_context
+from ..continuity.context import pack_context, retrieve_context, retrieve_result_view
 from ..continuity.coordination import (
     check_coordination,
     preview_merge,
@@ -181,6 +181,11 @@ class SessionContinuityTool(ToolFn):
         project_id: str | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
+        view: Literal["result", "bytes"] | None = None,
+        cursor: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        max_bytes: int | None = None,
     ) -> ToolResult | ToolResultV1:
         result = self.run(
             path,
@@ -213,6 +218,11 @@ class SessionContinuityTool(ToolFn):
             project_id=project_id,
             run_id=run_id,
             session_id=session_id,
+            view=view,
+            cursor=cursor,
+            offset=offset,
+            limit=limit,
+            max_bytes=max_bytes,
         )
         # FastMCP needs schema-bearing public types; ContinuityResult is the
         # exact legacy ToolResult dictionary with retained conversion methods.
@@ -251,8 +261,21 @@ class SessionContinuityTool(ToolFn):
         project_id: str | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
+        # T16 §3 item 10: result/bytes views of a stored compact result.
+        view: str | None = None,
+        cursor: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        max_bytes: int | None = None,
     ) -> ContinuityOutput:
         del config
+        self._result_view = {
+            "view": view,
+            "cursor": cursor,
+            "offset": offset,
+            "limit": limit,
+            "max_bytes": max_bytes,
+        }
         self._as_v1 = as_v1
         # P69-07 subsection e: one real per-call identity minted before dispatch, shared
         # by every operation in `dispatch_table` below -- never re-minted per branch. A
@@ -616,6 +639,14 @@ class SessionContinuityTool(ToolFn):
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> ContinuityOutput:
+        view = getattr(self, "_result_view", {})
+        if view.get("view") is not None:
+            # T16 S16.6: a view reads the stored compact result read-only;
+            # no view keeps the legacy full retrieval below.
+            return cast(
+                ContinuityOutput,
+                retrieve_result_view(root, handle or "", **view),
+            )
         return retrieve_context(
             started,
             root,

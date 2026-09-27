@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ import click
 
 from rush.config import RushConfigError, load_config
 from rush.contracts.results import ToolResultV1
+from rush.delivery import compact
 from rush.invocation import InvocationContext, InvocationExecutor, resolve_invocation
 from rush.invocation.executor import invalid_target_result
 from rush.invocation.models import InvalidTargetError
@@ -64,16 +65,14 @@ def exit_code_for(result: Any) -> int:
     return 0
 
 
-def exit_with_result(
+def export_reports(
     result: Any,
-    as_json: bool = False,
-    tool_name: str | None = None,
-    export_sarif: Path | None = None,
-    export_html: Path | None = None,
+    tool_name: str | None,
+    export_sarif: Path | None,
+    export_html: Path | None,
 ) -> None:
-    """Sanitize output via sanitize_value, export SARIF/HTML if requested, print output, and exit."""
-    from rush.safety.redactor import sanitize_value
-
+    """Write the requested SARIF/HTML exports of `result` (T16: in compact
+    mode this is always the full redacted result, never the projection)."""
     if export_sarif is not None and tool_name:
         from rush.sarif import export_to_sarif
 
@@ -86,6 +85,19 @@ def exit_with_result(
         title = f"Rush {tool_name} Report" if tool_name else "Rush Report"
         html_doc = export_to_html(result, title=title)
         export_html.write_text(html_doc, encoding="utf-8")
+
+
+def exit_with_result(
+    result: Any,
+    as_json: bool = False,
+    tool_name: str | None = None,
+    export_sarif: Path | None = None,
+    export_html: Path | None = None,
+) -> None:
+    """Sanitize output via sanitize_value, export SARIF/HTML if requested, print output, and exit."""
+    from rush.safety.redactor import sanitize_value
+
+    export_reports(result, tool_name, export_sarif, export_html)
 
     clean_result = sanitize_value(result).value
     if as_json:
@@ -150,15 +162,16 @@ def cli_invocation_context(
     )
 
 
-def execute_cli_tool(
+def prepare_cli_tool(
     tool_name: str,
     path: Path,
     *,
     original: tuple[str, ...] | None,
     extra_kwargs: dict[str, Any] | None = None,
     permissions: ExecutionPermissions | None = None,
-) -> Any:
-    """Run one catalog tool for one CLI target and return its result.
+) -> tuple[Path, Callable[[], Any]] | dict[str, Any]:
+    """Select, contain and resolve one catalog tool invocation without
+    running it: `(logical_root, run)`, or the `TARGET_INVALID` result.
 
     T9/R9.2: a malformed target (`InvalidTargetError`) is a `TARGET_INVALID`
     result -- zero engine calls, no traceback. Containment errors keep T8's
@@ -184,7 +197,59 @@ def execute_cli_tool(
         sys.exit(2)
     executor = InvocationExecutor()
     executor.register(tool_name, tool.__call__)
-    return executor.execute(context)
+    return selection.root, lambda: executor.execute(context)
+
+
+def execute_cli_tool(
+    tool_name: str,
+    path: Path,
+    *,
+    original: tuple[str, ...] | None,
+    extra_kwargs: dict[str, Any] | None = None,
+    permissions: ExecutionPermissions | None = None,
+) -> Any:
+    """Run one catalog tool for one CLI target and return its result."""
+    prepared = prepare_cli_tool(
+        tool_name,
+        path,
+        original=original,
+        extra_kwargs=extra_kwargs,
+        permissions=permissions,
+    )
+    return prepared if isinstance(prepared, dict) else prepared[1]()
+
+
+def deliver_cli(
+    tool_name: str,
+    view: compact.ViewOptions,
+    prepare: Callable[[], compact.Prepared | dict[str, Any]],
+    *,
+    as_json: bool,
+    permissions: ExecutionPermissions | None,
+    export_sarif: Path | None,
+    export_html: Path | None,
+) -> None:
+    """T16 §3 item 7: one `compact.deliver` call, then render and exit. In
+    compact mode SARIF/HTML exports receive the full redacted result."""
+
+    def export(full: dict[str, Any]) -> None:
+        export_reports(full, tool_name, export_sarif, export_html)
+
+    result = compact.deliver(
+        tool_name,
+        view,
+        cache_write=bool(permissions and permissions.cache_write),
+        prepare=prepare,
+        serialize=compact.cli_size,
+        export=export if view.compact else None,
+    )
+    exit_with_result(
+        result,
+        as_json=as_json,
+        tool_name=tool_name,
+        export_sarif=None if view.compact else export_sarif,
+        export_html=None if view.compact else export_html,
+    )
 
 
 def _run_tool(
@@ -196,19 +261,25 @@ def _run_tool(
     permissions: ExecutionPermissions | None = None,
     export_sarif: Path | None = None,
     export_html: Path | None = None,
+    view: compact.ViewOptions | None = None,
 ) -> None:
     """Shared helper: find the tool, call it via InvocationExecutor, sanitize, render, exit."""
-    result = execute_cli_tool(
+    view = view or compact.ViewOptions()
+    if view.no_cache:
+        extra_kwargs = {**(extra_kwargs or {}), "cache_policy": "bypass"}
+    original = None if _path_param_defaulted() else (str(path),)
+    deliver_cli(
         tool_name,
-        path,
-        original=None if _path_param_defaulted() else (str(path),),
-        extra_kwargs=extra_kwargs,
-        permissions=permissions,
-    )
-    exit_with_result(
-        result,
+        view,
+        lambda: prepare_cli_tool(
+            tool_name,
+            path,
+            original=original,
+            extra_kwargs=extra_kwargs,
+            permissions=permissions,
+        ),
         as_json=as_json,
-        tool_name=tool_name,
+        permissions=permissions,
         export_sarif=export_sarif,
         export_html=export_html,
     )

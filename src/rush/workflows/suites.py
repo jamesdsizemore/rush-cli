@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from rush.config import RushConfig
 from rush.invocation import InvocationExecutor, resolve_invocation
@@ -18,7 +19,7 @@ from rush.permissions import ExecutionPermissions
 from rush.tools import ALL_TOOLS
 from rush.tools.base import ToolResult
 from rush.tools.common import error_result, skipped_result
-from rush.tools.routing import aggregate_results
+from rush.tools.routing import aggregate_results, child_entry
 
 logger = get_logger("workflows.suites")
 
@@ -51,6 +52,21 @@ GATE_SUITE = WorkflowSuite(
     tool_sequence=("test", "coverage", "complexity", "tdd", "security", "secrets"),
     fail_fast_default=True,
 )
+
+
+def _suite_metadata(
+    aggregate: ToolResult, selection: RootSelection | None
+) -> dict[str, Any]:
+    """T16 §3 item 3: the aggregation's engines and scope, the scope naming
+    the suite's own target."""
+    metadata = dict(aggregate.get("metadata") or {})
+    if selection is not None:
+        metadata["scope"] = {
+            **metadata.get("scope", {}),
+            "logical_root": str(selection.root),
+            "requested_targets": [selection.relative.as_posix()],
+        }
+    return metadata
 
 
 def run_workflow_suite(
@@ -200,11 +216,11 @@ def run_workflow_suite(
         f"{suite.name}: executed {len(executed_tools)} tool(s) "
         f"with status '{aggregate['status']}'"
     )
+    # T16 §3 item 3: engines and scope from the aggregation, plus one full
+    # entry per child; the aggregate scope names the suite's own target.
     aggregate["metadata"] = {
-        "children": [
-            {"tool": child.get("tool"), "status": child.get("status")}
-            for child in children
-        ],
+        **_suite_metadata(aggregate, selection),
+        "children": [child_entry(child) for child in children],
         "executed_tools": tuple(executed_tools),
         # P69-06f: the aggregate reconstructed from whichever children
         # actually completed is real partial evidence, explicitly labelled

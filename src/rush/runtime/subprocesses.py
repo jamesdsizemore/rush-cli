@@ -27,6 +27,7 @@ from ..tools.base import ToolResult
 from .binaries import (
     AnalysisScope,
     analysis_scope,
+    compute_file_sha256,
     current_analysis_scope,
     engine_on_path,
     resolve_binary,
@@ -814,6 +815,7 @@ def run_subprocess(
         if ambient is not None:
             owner_instance_id, run_id = ambient
     exec_argv = _resolve_exec_argv(argv)
+    _record_spawn(exec_argv, cwd)
 
     if cancel_check is None and owner_instance_id is None:
         return _run_subprocess_blocking(
@@ -829,6 +831,34 @@ def run_subprocess(
         poll_interval=poll_interval,
         owner_instance_id=owner_instance_id,
         run_id=run_id,
+    )
+
+
+# T16 §3 item 2: the spawn recorder `run_engine` sets around one engine
+# dispatch. `run_subprocess` appends each child it starts (resolved
+# executable, actual cwd, kind); the kind is `main` unless a scope probe or a
+# `--version` probe is running.
+_SPAWNS: contextvars.ContextVar[list[dict[str, Any]] | None] = contextvars.ContextVar(
+    "rush_engine_spawns", default=None
+)
+_SPAWN_KIND: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "rush_engine_spawn_kind", default="main"
+)
+
+
+def _record_spawn(exec_argv: list[str], cwd: Path | None) -> None:
+    spawns = _SPAWNS.get()
+    if spawns is None:
+        return
+    spawns.append(
+        {
+            "kind": "version_probe"
+            if exec_argv[1:] == ["--version"]
+            else _SPAWN_KIND.get(),
+            "path": exec_argv[0],
+            "cwd": str(cwd) if cwd is not None else os.getcwd(),
+            "argv": list(exec_argv),
+        }
     )
 
 
@@ -1154,6 +1184,7 @@ def run_engine(
     run_id: str | None = None,
     consumed_paths: list[str] | None = None,
     project_root: Path | None = None,
+    scope_probe: bool = False,
 ) -> ToolResult:
     """Run an engine and always return a canonical result.
 
@@ -1162,21 +1193,254 @@ def run_engine(
     for the logical project root (``project_root``, else ``path``), so a
     verified project manifest wins and an executable found only inside the
     project (or a staged snapshot of it) is never selected from PATH.
+
+    T16 S16.2: every return -- executed, skipped, denied, timed out, crashed
+    -- carries `metadata.engines=[entry]`, built from the children this
+    dispatch actually spawned. `scope_probe=True` (finding 24) also runs the
+    engine's `show_files` listing with the identical argv, cwd, config and
+    staging redirection, as a recorded `scope_probe` spawn, and counts the
+    consumed files from it.
     """
-    with analysis_scope(_engine_analysis_scope(engine, path, project_root)):
-        return _run_engine_in_scope(
-            engine,
-            path,
-            args,
-            cwd=cwd,
-            tool_name=tool_name,
-            timeout=timeout,
-            permissions=permissions,
-            required_permissions=required_permissions,
-            owner_instance_id=owner_instance_id,
-            run_id=run_id,
-            consumed_paths=consumed_paths,
+    spawns: list[dict[str, Any]] = []
+    token = _SPAWNS.set(spawns)
+    listed: list[str] | None = None
+    try:
+        with analysis_scope(_engine_analysis_scope(engine, path, project_root)):
+            result = _run_engine_in_scope(
+                engine,
+                path,
+                args,
+                cwd=cwd,
+                tool_name=tool_name,
+                timeout=timeout,
+                permissions=permissions,
+                required_permissions=required_permissions,
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+                consumed_paths=consumed_paths,
+            )
+            if scope_probe and any(s["kind"] == "main" for s in spawns):
+                listed = _run_scope_probe(
+                    engine,
+                    path,
+                    list(args or []),
+                    cwd,
+                    consumed_paths,
+                    owner_instance_id=owner_instance_id,
+                    run_id=run_id,
+                )
+    finally:
+        _SPAWNS.reset(token)
+    metadata = result.get("metadata")
+    if metadata is None:
+        metadata = {}
+        result["metadata"] = metadata
+    metadata["engines"] = [
+        build_engine_entry(engine.name, result, spawns, consumed_paths, listed)
+    ]
+    return result
+
+
+# -- T16 §3 item 2: the per-engine entry --------------------------------------
+
+_CONFIG_FILE_NAMES = frozenset({"pyproject.toml", "ruff.toml", ".ruff.toml"})
+_DIGESTS: dict[tuple[str, int, int, int, int], str] = {}
+
+
+def _executable_digest(path: str) -> str | None:
+    """sha256 of the executable's final target, cached by its identity."""
+    real = os.path.realpath(path)
+    try:
+        st = os.stat(real)
+    except OSError:
+        return None
+    key = (real, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    if key not in _DIGESTS:
+        try:
+            _DIGESTS[key] = compute_file_sha256(real)
+        except OSError:
+            return None
+    return _DIGESTS[key]
+
+
+def _outcome_reason(result: ToolResult) -> str | None:
+    """Why a dispatch did not produce a normal engine verdict, else `None`."""
+    status = result.get("status")
+    summary = str(result.get("summary", ""))
+    if status == "skipped":
+        if summary.startswith("skipped: requires permission"):
+            return "permission_denied"
+        if "not on PATH" in summary or "disappeared from PATH" in summary:
+            return "engine_not_installed"
+        return "engine_skipped"
+    if status != "error":
+        return None
+    if (result.get("metadata") or {}).get("terminal_reason") == "timeout":
+        return "timeout"
+    if summary.startswith("error: engine crashed"):
+        return "crash"
+    if summary.startswith("error: staging input rejected"):
+        return "staging_input_rejected"
+    return "engine_error"
+
+
+def _identity(path: str) -> tuple[int, int] | None:
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _argv_targets(main: list[dict[str, Any]]) -> tuple[set[tuple[int, int]], bool]:
+    """(identities of existing files, any directory) among main argv entries."""
+    files: set[tuple[int, int]] = set()
+    directory = False
+    for spawn in main:
+        for arg in spawn["argv"][1:]:
+            candidate = os.path.join(spawn["cwd"], arg)
+            if os.path.isdir(candidate):
+                directory = True
+            elif os.path.isfile(candidate) and (ident := _identity(candidate)):
+                files.add(ident)
+    return files, directory
+
+
+def _probe_scope(listed: list[str], requested: int | None) -> dict[str, Any]:
+    consumed = sorted(
+        {p for p in listed if os.path.basename(p) not in _CONFIG_FILE_NAMES}
+    )
+    return {
+        "requested_file_count": requested,
+        "consumed_file_count": len(consumed),
+        "consumption_source": "engine_show_files",
+        "consumed_files": consumed,
+        "configuration_files": sorted(
+            {p for p in listed if os.path.basename(p) in _CONFIG_FILE_NAMES}
+        ),
+        "coverage": "complete" if consumed else "none",
+        "reason": None,
+    }
+
+
+def _entry_scope(
+    main: list[dict[str, Any]],
+    consumed_paths: list[str] | None,
+    listed: list[str] | None,
+    reason: str | None,
+) -> dict[str, Any]:
+    """R16.3: explicit file arguments are counted; a directory argument makes
+    the count unavailable (the engine discovers its contents) unless the
+    engine's own listing (finding 24) reports what it consumed."""
+    requested = len(consumed_paths) if consumed_paths is not None else None
+    if listed is not None:
+        return _probe_scope(listed, requested)
+    base: dict[str, Any] = {
+        "requested_file_count": requested,
+        "consumption_source": "explicit_arguments",
+    }
+    if not main:
+        return {**base, "consumed_file_count": 0, "coverage": "none", "reason": reason}
+    files, directory = _argv_targets(main)
+    if directory:
+        return {
+            **base,
+            "consumed_file_count": None,
+            "coverage": "unavailable",
+            "reason": "engine_discovers_directory_contents",
+        }
+    wanted = {i for p in consumed_paths or () if (i := _identity(p))}
+    if not files:
+        coverage = "none"
+    elif consumed_paths is None:
+        coverage = "unavailable"
+    else:
+        coverage = "complete" if wanted <= files else "partial"
+    return {
+        **base,
+        "consumed_file_count": len(files),
+        "coverage": coverage,
+        "reason": "requested_files_unknown" if coverage == "unavailable" else None,
+    }
+
+
+def build_engine_entry(
+    engine_name: str,
+    result: ToolResult,
+    spawns: list[dict[str, Any]],
+    consumed_paths: list[str] | None,
+    listed: list[str] | None,
+) -> dict[str, Any]:
+    """S16.2: one engine's recorded outcome. A missing engine or a refused
+    dispatch has `version:null` plus `version_unavailable_reason`."""
+    main = [spawn for spawn in spawns if spawn["kind"] == "main"]
+    reason = _outcome_reason(result)
+    executable = main[0]["path"] if main else None
+    version = result.get("engine_version")
+    metadata = result.get("metadata") or {}
+    return {
+        "engine": engine_name,
+        "executable": {
+            "path": executable,
+            "sha256": _executable_digest(executable) if executable else None,
+            "reason": None if executable else (reason or "not_spawned"),
+        },
+        "version": version,
+        "version_unavailable_reason": None
+        if version
+        else (reason or "engine_reports_no_version"),
+        "config": {
+            "path": None,
+            "sha256": None,
+            "reason": "engine_does_not_report_config",
+        },
+        "analysis_environment": metadata.get("analysis_environment")
+        or {"mode": "not_applicable"},
+        "status": result.get("status"),
+        "summary": result.get("summary"),
+        "reason": reason,
+        "cwd": main[0]["cwd"] if main else None,
+        "spawns": [
+            {"kind": s["kind"], "path": s["path"], "cwd": s["cwd"]} for s in spawns
+        ],
+        "scope": _entry_scope(main, consumed_paths, listed, reason),
+    }
+
+
+def _run_scope_probe(
+    engine: Engine,
+    path: Path,
+    args: list[str],
+    cwd: Path | None,
+    consumed_paths: list[str] | None,
+    *,
+    owner_instance_id: str | None,
+    run_id: str | None,
+) -> list[str] | None:
+    """Finding 24: the engine's own consumed-file listing, or `None` when it
+    cannot report one. Staged paths map back to the logical tree."""
+    from ..engines.staging import StagingInputError, map_staged_path
+
+    show_files = getattr(engine, "show_files", None)
+    if show_files is None:
+        return None
+    kind = _SPAWN_KIND.set("scope_probe")
+    try:
+        staging, run_path, run_cwd, extra_args = _staged_invocation(
+            engine, path, cwd, args, consumed_paths=consumed_paths
         )
+        with owned_execution_scope(owner_instance_id, run_id):
+            listed: list[str] | None = show_files(run_path, extra_args, cwd=run_cwd)
+    except (OSError, subprocess.SubprocessError, StagingInputError, ValueError):
+        return None
+    finally:
+        _SPAWN_KIND.reset(kind)
+    if listed is None or staging is None:
+        return listed
+    return [
+        map_staged_path(item, staging.staged_root, staging.original_root)
+        for item in listed
+    ]
 
 
 def _run_engine_in_scope(

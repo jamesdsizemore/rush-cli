@@ -129,7 +129,17 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_context_retrieve": (
             "Retrieve uncompressed content from CCR chunk store by hash",
-            ["chunk_hash", "path", "project"],
+            # Phase 70 T16 S16.6: result/bytes views of stored compact results.
+            [
+                "chunk_hash",
+                "cursor",
+                "limit",
+                "max_bytes",
+                "offset",
+                "path",
+                "project",
+                "view",
+            ],
         ),
         "rush_hallu_guard": (
             "Audit code imports against installed packages and stdlib",
@@ -218,9 +228,14 @@ def test_mcp_registration_characterization() -> None:
                 "allowed_signers",
                 "artifact_path",
                 "builder_id",
+                # Phase 70 T16 R16.5: the shared result-view parameters.
+                "limit",
+                "max_bytes",
+                "no_cache",
                 "output_path",
                 "path",
                 "project",
+                "result_view",
                 "trusted_roots",
                 "verify",
             ],

@@ -10,18 +10,29 @@ from typing import Any, cast
 import click
 
 from rush.catalog import TOOL_SPECS
-from rush.cli_support.options import _extract_permissions, permission_options
+from rush.cli_support.options import (
+    _extract_permissions,
+    permission_options,
+    result_view_options,
+)
 from rush.cli_support.rendering import (
     TargetPath,
     _run_tool,
+    deliver_cli,
     execute_cli_tool,
-    exit_with_result,
+    select_cli_target,
 )
-from rush.invocation.executor import target_error_result
+from rush.delivery import compact
+from rush.invocation.executor import invalid_target_result, target_error_result
+from rush.invocation.models import InvalidTargetError
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolFn, ToolResult
 from rush.tools.common import skipped_result
-from rush.tools.routing import aggregate_results, no_target_scope
+from rush.tools.routing import (
+    aggregate_results,
+    concat_engine_entries,
+    no_target_scope,
+)
 
 _EMPTY_SELECTION_REASONS = {
     "staged": "no_staged_files",
@@ -110,6 +121,8 @@ def _unit_result(
     ]
     result = dict(aggregate_results(tool_name, children))
     result["metadata"] = {
+        # T16 S16.2: every child's engine entries survive the selection.
+        "engines": concat_engine_entries(children),
         "scope": {
             "version": 1,
             "kind": "files",
@@ -185,6 +198,7 @@ def _scoped_result(
         return results[0]
     aggregate = dict(aggregate_results(tool_name, cast("list[ToolResult]", results)))
     aggregate["metadata"] = {
+        **cast("dict[str, Any]", aggregate.get("metadata") or {}),
         "children": [
             {
                 "workspace": name,
@@ -194,9 +208,20 @@ def _scoped_result(
                 "summary": result.get("summary"),
             }
             for (name, target), result in zip(units, results, strict=True)
-        ]
+        ],
     }
     return aggregate
+
+
+def _prepare_scoped(
+    tool_name: str, path: Path, scope: _Scope, run: dict[str, Any]
+) -> compact.Prepared | dict[str, Any]:
+    """The scoped run, deferred until the view checks pass (T16 §3 item 7)."""
+    try:
+        root = select_cli_target(path, anchor=Path.cwd()).root
+    except InvalidTargetError as exc:
+        return invalid_target_result(tool_name, exc)
+    return root, lambda: _scoped_result(tool_name, path, scope, run)
 
 
 def _run_catalog_command(
@@ -209,6 +234,7 @@ def _run_catalog_command(
     export_sarif: Path | None,
     export_html: Path | None,
     extra_kwargs: dict[str, Any] | None,
+    view: compact.ViewOptions,
 ) -> None:
     """A missing target, or a call with no scoping flag, goes straight to the
     shared `_run_tool` path (so a missing target is `TARGET_NOT_FOUND` with no
@@ -222,13 +248,18 @@ def _run_catalog_command(
             export_sarif=export_sarif,
             export_html=export_html,
             extra_kwargs=extra_kwargs,
+            view=view,
         )
         return
+    if view.no_cache:
+        extra_kwargs = {**(extra_kwargs or {}), "cache_policy": "bypass"}
     run = {"extra_kwargs": extra_kwargs, "permissions": permissions}
-    exit_with_result(
-        _scoped_result(tool_name, path, scope, run),
+    deliver_cli(
+        tool_name,
+        view,
+        lambda: _prepare_scoped(tool_name, path, scope, run),
         as_json=as_json,
-        tool_name=tool_name,
+        permissions=permissions,
         export_sarif=export_sarif,
         export_html=export_html,
     )
@@ -320,6 +351,7 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         help="Execute tool across all discovered monorepo workspaces.",
     )
     @permission_options
+    @result_view_options
     @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
     def command(
         path: Path,
@@ -327,6 +359,9 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
         export_sarif: Path | None,
         export_html: Path | None,
         no_cache: bool,
+        result_view: str | None,
+        limit: int | None,
+        max_bytes: int | None,
         staged: bool,
         changed: bool,
         since: str | None,
@@ -365,6 +400,7 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
             export_sarif=export_sarif,
             export_html=export_html,
             extra_kwargs=extra_kwargs or None,
+            view=compact.ViewOptions(result_view, limit, max_bytes, no_cache),
         )
 
     command.params.extend(_TOOL_CLI_OPTIONS.get(tool.name, ()))
