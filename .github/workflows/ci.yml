@@ -37,7 +37,10 @@ jobs:
           DO_NOT_TRACK: "1"
         run: |
           echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
-          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Lint
         run: uv run ruff check src tests scripts
@@ -128,7 +131,10 @@ jobs:
           DO_NOT_TRACK: "1"
         run: |
           echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
-          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Install Python static-analysis engines
         run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
@@ -167,7 +173,10 @@ jobs:
           DO_NOT_TRACK: "1"
         run: |
           echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
-          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Run representative real-engine contracts
         run: uv run pytest tests/test_tools.py -q
@@ -201,7 +210,10 @@ jobs:
           DO_NOT_TRACK: "1"
         run: |
           echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
-          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Install mutation, fuzz and contract acceptance engines
         run: uv pip install mutmut==3.7.0 atheris==3.1.0 pact-python-cli==2.6.0.1
@@ -244,7 +256,10 @@ jobs:
           DO_NOT_TRACK: "1"
         run: |
           echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
-          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Build distribution artifacts
         run: uv build

@@ -806,7 +806,8 @@ def test_every_ci_job_with_aislop_warms_its_npm_runtime_after_sync() -> None:
             for i, run in enumerate(runs)
             if "npm_config_cache=$RUNNER_TEMP/" in run
             and '>> "$GITHUB_ENV"' in run
-            and "uv run --no-sync aislop --version" in run
+            and 'npm exec --yes --package "aislop@$version" -- aislop --version' in run
+            and "import aislop_py; print(aislop_py.__version__)" in run
         ]
         assert warm and warm[0] > sync[0], name
         step = job["steps"][warm[0]]
