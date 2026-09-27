@@ -394,8 +394,11 @@ def test_t01_skill_is_guidance_only_without_secrets_or_memory_text() -> None:
         for pattern in _PROJECT_OR_MEMORY_PATTERNS:
             match = pattern.search(text)
             assert match is None, (resource, pattern.pattern, match and match.group())
-        if len(login) >= 3:
-            assert login not in text.lower(), resource
+        # The login alone can be an ordinary word (CI's is "runner"); what
+        # would identify this machine is a home path that names it.
+        home = str(Path.home()).lower()
+        for identifying in (home, f"/users/{login}", f"/home/{login}"):
+            assert identifying not in text.lower(), (resource, identifying)
 
 
 _SLOP_ENGINES = ("aislop", "sloppylint")

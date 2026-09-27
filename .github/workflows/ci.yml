@@ -57,6 +57,9 @@ jobs:
           write_sha256sums([archive], Path('dist/SHA256SUMS'))
           "
 
+      - name: Install pinned engines the test suite executes
+        run: uv pip install vulture==2.16
+
       - name: Install verified osv-scanner release
         run: |
           mkdir -p "$RUNNER_TEMP/osv-scanner"
