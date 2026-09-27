@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 192
+total_operations = 193
 
 [[operations]]
 id = "admin.agent_connect"
@@ -1908,6 +1908,18 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush sql --help"
+
+# Bare `rush` (no subcommand) runs this operation.
+[[operations]]
+id = "tool.status"
+kind = "tool"
+canonical_impl = "rush.tools.status:StatusTool"
+cli_command = "status"
+mcp_tool = "rush_status"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush status --help"
 
 [[operations]]
 id = "tool.tdd"

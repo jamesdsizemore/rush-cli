@@ -1852,6 +1852,122 @@ def probe_owner_alive(owner_instance_id: str, *, data_root: Path | None = None) 
         return not claimed
 
 
+def observe_owner(owner_instance_id: str, data_root: Path) -> str:
+    """T23: `alive`, `dead` or `activity_unverified` for a recorded owner,
+    observed without claiming or recovering it. Unlike `claim_dead_owner`,
+    it only opens an existing lock (never `mkdir`, never `O_CREAT`); a
+    missing lock is `activity_unverified`, never `alive`."""
+    if (
+        not owner_instance_id
+        or os.sep in owner_instance_id
+        or (os.altsep and os.altsep in owner_instance_id)
+    ):
+        return "activity_unverified"
+    if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+        # runner reachable in this environment.
+        return _observe_owner_windows(owner_instance_id)
+    path = data_root / "owners" / f"{owner_instance_id}.lock"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return "activity_unverified"
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return "alive"
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return "dead"
+    finally:
+        os.close(fd)
+
+
+def _observe_owner_windows(owner_instance_id: str) -> str:  # pragma: no cover
+    """`OpenMutexW` (never `CreateMutexW`): absent is `activity_unverified`,
+    held is `alive`, acquirable (released or abandoned) is `dead`."""
+    import ctypes
+
+    synchronize, wait_timeout = 0x00100000, 0x00000102
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.OpenMutexW.restype = ctypes.c_void_p
+    handle = kernel32.OpenMutexW(
+        synchronize, False, _windows_mutex_name(owner_instance_id)
+    )
+    if not handle:
+        return "activity_unverified"
+    try:
+        if kernel32.WaitForSingleObject(handle, 0) == wait_timeout:
+            return "alive"
+        kernel32.ReleaseMutex(handle)
+        return "dead"
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+_LEDGER_ADMISSION_COLUMNS = (
+    "run_id",
+    "attempt_id",
+    "operation_id",
+    "owner_instance_id",
+    "plan_id",
+)
+_LEDGER_PUBLISHED_COLUMNS = (
+    "published_generation",
+    "latest_published_run_id",
+    "latest_published_attempt_id",
+)
+
+
+def _ledger_row(
+    conn: sqlite3.Connection, table: str, columns: tuple[str, ...], project_id: str
+) -> dict[str, Any] | None:
+    """One project's row, reading only the columns this schema has (an older
+    ledger without `attempt_id` reports it as `None`); a missing table or row
+    is no evidence (`None`)."""
+    present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    wanted = [c for c in columns if c in present]
+    if not wanted:
+        return None
+    row = conn.execute(
+        f"SELECT {', '.join(wanted)} FROM {table} WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    values = dict(zip(wanted, row, strict=True))
+    return {c: values.get(c) for c in columns}
+
+
+def read_ledger_view(project_id: str, data_root: Path) -> dict[str, Any]:
+    """T23: the project's current scan admission and published result, read
+    through the shared zero-write SQLite opener -- never `MutationLedger`,
+    whose constructor creates directories, the schema and WAL files.
+    `project_generations.value` (the allocator) is never read.
+
+    `state` is `absent` (no ledger), `ok`, `corrupt` or `busy`."""
+    from rush.memory.store import MemoryStoreUnreadableError, read_sqlite_readonly
+
+    def read(conn: sqlite3.Connection) -> dict[str, Any]:
+        return {
+            "admission": _ledger_row(
+                conn, "scan_admission", _LEDGER_ADMISSION_COLUMNS, project_id
+            ),
+            "published": _ledger_row(
+                conn, "project_generations", _LEDGER_PUBLISHED_COLUMNS, project_id
+            ),
+        }
+
+    db = data_root / "dashboard" / "mutation_ledger.db"
+    try:
+        rows = read_sqlite_readonly(db, read)
+    except MemoryStoreUnreadableError as exc:
+        state = "corrupt" if exc.code == "E_STORE_CORRUPT" else "busy"
+        return {"state": state, "admission": None, "published": None, "error": str(exc)}
+    if rows is None:
+        return {"state": "absent", "admission": None, "published": None, "error": None}
+    return {"state": "ok", **rows, "error": None}
+
+
 @dataclass(eq=False)
 class _PendingOutcome:
     slot_id: str

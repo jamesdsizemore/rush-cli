@@ -201,8 +201,8 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 192
-    assert manifest_data.get("manifest", {}).get("total_operations") == 192
+    assert len(operations) == 193
+    assert manifest_data.get("manifest", {}).get("total_operations") == 193
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -236,17 +236,17 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         else:
             declared_transports[op_id] = "mcp"
 
-    assert len(declared_transports) == 192
-    # 62 dual-transport, 112 cli-only, 18 mcp-only
-    assert sum(1 for t in declared_transports.values() if t == "both") == 62
+    assert len(declared_transports) == 193
+    # 63 dual-transport, 112 cli-only, 18 mcp-only
+    assert sum(1 for t in declared_transports.values() if t == "both") == 63
     assert sum(1 for t in declared_transports.values() if t == "cli") == 112
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 192
-    assert report["tool_count"] == 79
+    assert report["total"] == 193
+    assert report["tool_count"] == 80
     assert report["admin_count"] == 95
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
@@ -375,7 +375,7 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     paired_ops = [
         op for op in operations if op.get("cli_command") and op.get("mcp_tool")
     ]
-    assert len(paired_ops) == 62
+    assert len(paired_ops) == 63
 
     # 1. All paired operations MUST be kind == "tool" and enforce ToolResultV1,
     #    except deliberately dual-transport admin mutations (e.g. memory
@@ -518,8 +518,38 @@ def test_unprobed_route_is_not_advertised() -> None:
             f"Advertised MCP tool '{tool_name}' is unprobed / unmanifested in governance/public-operations.toml"
         )
 
-    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 174
-    assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 79
+    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 175
+    assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 80
+
+
+def test_bare_rush_route_is_status() -> None:
+    """T23 (X1): the root group is invocable bare, and that route is the
+    manifested `status` operation -- the leaf collector above never sees the
+    root group itself."""
+    import tomllib
+
+    from rush.cli import cli, status_cmd
+
+    manifest = tomllib.loads(
+        Path("governance/public-operations.toml").read_text(encoding="utf-8")
+    )
+    status_ops = [op for op in manifest["operations"] if op["id"] == "tool.status"]
+    assert cli.invoke_without_command is True
+    assert cli.no_args_is_help is False
+    assert cli.commands["status"] is status_cmd
+    assert status_ops == [
+        {
+            "id": "tool.status",
+            "kind": "tool",
+            "canonical_impl": "rush.tools.status:StatusTool",
+            "cli_command": "status",
+            "mcp_tool": "rush_status",
+            "input_contract": "ToolInputOptions",
+            "output_contract": "ToolResult",
+            "effect_class": "read-only",
+            "safe_probe": "rush status --help",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

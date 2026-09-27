@@ -524,6 +524,16 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         (),
         scope_kind="operation",
     ),
+    # T23: `workflow` keeps status out of scan candidates (project_run).
+    "status": ToolSpec(
+        "status",
+        "workflow",
+        "Show the selected project's registration, setup, scan and memory status without changing anything.",
+        "Read-only project status at <path>: registration, config, engines, scan activity, "
+        "latest and published results, agents, memory. operation=result reads a stored result.",
+        (),
+        scope_kind="operation",
+    ),
     "patch-apply": ToolSpec(
         name="patch-apply",
         category="workflow",
@@ -944,6 +954,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "tdd": "real_adapter",
     "fix": "real_adapter",
     "doctor": "real_adapter",
+    "status": "real_adapter",
     "patch-apply": "real_adapter",
     "attest": "real_adapter",
     "license-matrix": "real_adapter",

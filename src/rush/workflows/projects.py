@@ -39,6 +39,8 @@ import hmac
 import json
 import os
 import re
+import sqlite3
+import stat
 import subprocess
 import time
 import uuid
@@ -50,7 +52,14 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from rush.config import load_config
-from rush.memory.store import TypedArtifactStore, is_internal_memory_source
+from rush.memory.store import (
+    MemoryStoreUnreadableError,
+    TypedArtifactStore,
+    is_internal_memory_source,
+    read_sqlite_readonly,
+    readonly_view_reason,
+    sqlite_has_table,
+)
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import TelemetryStore
@@ -284,6 +293,29 @@ def read_registry_strict(data_root: Path) -> dict[str, Any]:
         lambda p: isinstance(p, dict) and isinstance(p.get("projects"), dict),
     )
     return _strict_result("registry", path, state)
+
+
+@dataclass(frozen=True)
+class RegistryState:
+    """T23: typed `read_registry_strict` result (`missing|ok|corrupt|unreadable`)."""
+
+    state: str
+    path: str
+    registry: dict[str, Any] | None
+    error: str | None
+    sha256: str | None
+
+
+def read_registry_state(data_root: Path) -> RegistryState:
+    """T23: `read_registry_strict` as a `RegistryState`; never creates `data_root`."""
+    result = read_registry_strict(data_root)
+    return RegistryState(
+        result["state"],
+        result["path"],
+        result["registry"],
+        result["error"],
+        result["sha256"],
+    )
 
 
 def read_session_selections_strict(data_root: Path) -> dict[str, Any]:
@@ -976,6 +1008,255 @@ def _iter_handoffs(root: Path) -> list[dict[str, Any]]:
     return handoffs
 
 
+# --- Phase 70 T23: read-only attempt chronology ------------------------------
+
+
+@dataclass(frozen=True)
+class AttemptEvidence:
+    """One validated `attempt.json` header plus its terminal manifest (`None`
+    while the attempt is incomplete)."""
+
+    run_id: str
+    attempt_id: str
+    started_at: datetime
+    attempt_generation: int | None
+    header: dict[str, Any]
+    manifest: dict[str, Any] | None
+
+    @property
+    def completed(self) -> bool:
+        return self.manifest is not None
+
+
+@dataclass(frozen=True)
+class ChronologyView:
+    """`select_attempt_chronology`'s result. `state` is `none | resolved |
+    incomplete | latest_unresolved | chronology_ambiguous`; `published` is
+    the most recently started completed attempt (`published_state` `none |
+    resolved | chronology_ambiguous`), `attempts` every validated attempt."""
+
+    state: str
+    run_id: str | None = None
+    attempt_id: str | None = None
+    started_at: str | None = None
+    attempt_generation: int | None = None
+    ordering: str | None = None
+    affected_ids: tuple[str, ...] = ()
+    run_count: int = 0
+    latest: AttemptEvidence | None = None
+    published: AttemptEvidence | None = None
+    published_state: str = "none"
+    attempts: tuple[AttemptEvidence, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "run_id": self.run_id,
+            "attempt_id": self.attempt_id,
+            "started_at": self.started_at,
+            "attempt_generation": self.attempt_generation,
+            "ordering": self.ordering,
+            "affected_ids": list(self.affected_ids),
+        }
+
+
+def _real_subdirs(parent: Path) -> tuple[list[Path], list[str]]:
+    """`lstat`-only listing: real subdirectories, and the names of symlinked
+    entries (never followed -- corrupt evidence). Regular files are ignored.
+    A missing `parent` lists nothing."""
+    try:
+        entries = sorted(os.scandir(parent), key=lambda entry: entry.name)
+    except FileNotFoundError:
+        return [], []
+    dirs = [Path(e.path) for e in entries if e.is_dir(follow_symlinks=False)]
+    links = [e.name for e in entries if e.is_symlink()]
+    return dirs, links
+
+
+def _read_regular_json(path: Path) -> Any:
+    """JSON of a regular (never symlinked) file. Raises `FileNotFoundError`
+    when absent and `ValueError` for anything else unusable."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError(str(exc)) from exc
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"{path.name} is not a regular file")
+    try:
+        return json.loads(path.read_bytes())
+    except OSError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.utcoffset() == UTC.utcoffset(None) else None
+
+
+def _load_attempt(
+    attempt_dir: Path, run_id: str, project_id: str | None
+) -> AttemptEvidence | None:
+    """A validated attempt, or `None` for missing/corrupt ordering evidence:
+    identities must match their directories (and the registered project), a
+    present `attempt_generation` must be a positive non-bool int, and
+    `started_at` must be ISO-8601 UTC. A present manifest must be an object."""
+    try:
+        header = _read_regular_json(attempt_dir / "attempt.json")
+    except (FileNotFoundError, ValueError):
+        return None
+    if (
+        not isinstance(header, dict)
+        or header.get("run_id") != run_id
+        or header.get("attempt_id") != attempt_dir.name
+        or (project_id is not None and header.get("project_id") != project_id)
+    ):
+        return None
+    generation = header.get("attempt_generation")
+    if "attempt_generation" in header and (
+        type(generation) is not int or generation < 1
+    ):
+        return None
+    started_at = _utc_timestamp(header.get("started_at"))
+    if started_at is None:
+        return None
+    try:
+        manifest = _read_regular_json(attempt_dir / "manifest.json")
+    except FileNotFoundError:
+        manifest = None
+    except ValueError:
+        return None
+    if manifest is not None and not isinstance(manifest, dict):
+        return None
+    return AttemptEvidence(
+        run_id, attempt_dir.name, started_at, generation, header, manifest
+    )
+
+
+def _select_in_run(attempts: list[AttemptEvidence]) -> AttemptEvidence | None:
+    """P69-02k within one run: generation-bearing attempts outrank legacy
+    ones; `None` (ambiguous) for a duplicate generation, or for more than one
+    attempt when none carries a generation."""
+    stamped = [a for a in attempts if a.attempt_generation is not None]
+    if stamped:
+        generations = [a.attempt_generation for a in stamped]
+        if len(set(generations)) != len(generations):
+            return None
+        return max(stamped, key=lambda a: a.attempt_generation or 0)
+    return attempts[0] if len(attempts) == 1 else None
+
+
+def _latest_started(
+    candidates: list[AttemptEvidence],
+) -> tuple[AttemptEvidence | None, list[str]]:
+    """Across runs: the most recently started attempt, or `(None, tied run
+    IDs)` when the maximum `started_at` is shared. UUIDs, per-run generations
+    and manifest `created_at` never order runs."""
+    if not candidates:
+        return None, []
+    top = max(a.started_at for a in candidates)
+    tied = [a for a in candidates if a.started_at == top]
+    if len(tied) > 1:
+        return None, sorted(a.run_id for a in tied)
+    return tied[0], []
+
+
+@dataclass
+class _RunScan:
+    """Per-run evidence gathered by `_chronology_runs`."""
+
+    latest: list[AttemptEvidence]
+    completed: list[AttemptEvidence]
+    validated: list[AttemptEvidence]
+    unresolved: list[str]
+    ambiguous: list[str]
+    run_count: int
+
+
+def _chronology_runs(root: Path, project_id: str | None) -> _RunScan:
+    """Each run's selected attempt and selected completed attempt, every
+    validated attempt, and the IDs of unresolved and ambiguous runs."""
+    scan = _RunScan([], [], [], [], [], 0)
+    rush_dir = root / ".rush"
+    if rush_dir.is_symlink():
+        scan.unresolved.append(".rush")
+        return scan
+    run_dirs, linked = _real_subdirs(rush_dir / "runs")
+    scan.unresolved.extend(linked)
+    scan.run_count = len(run_dirs) + len(linked)
+    for run_dir in run_dirs:
+        attempt_dirs, linked_attempts = _real_subdirs(run_dir / "attempts")
+        loaded = [_load_attempt(d, run_dir.name, project_id) for d in attempt_dirs]
+        attempts = [a for a in loaded if a is not None]
+        scan.validated.extend(attempts)
+        if linked_attempts or not loaded or len(attempts) != len(loaded):
+            scan.unresolved.append(run_dir.name)
+            continue
+        selected = _select_in_run(attempts)
+        if selected is None:
+            scan.ambiguous.extend([run_dir.name, *(a.attempt_id for a in attempts)])
+            continue
+        scan.latest.append(selected)
+        done = _select_in_run([a for a in attempts if a.completed])
+        if done is not None:
+            scan.completed.append(done)
+    return scan
+
+
+def select_attempt_chronology(root: Path, project_id: str | None) -> ChronologyView:
+    """T23/P69-02k read-only chronology over `.rush/runs/*/attempts/*`.
+
+    Validates every attempt header (`_load_attempt`); symlinked run/attempt
+    directories are corrupt evidence, never followed. Any missing or corrupt
+    evidence makes the latest attempt `latest_unresolved` (never an older
+    success substituted); a duplicate generation or an equal cross-run
+    `started_at` is `chronology_ambiguous`. Writes nothing."""
+    scan = _chronology_runs(root, project_id)
+    published, published_ties = _latest_started(scan.completed)
+    published_state = (
+        "chronology_ambiguous"
+        if published_ties
+        else ("resolved" if published is not None else "none")
+    )
+    shared: dict[str, Any] = {
+        "run_count": scan.run_count,
+        "published": published,
+        "published_state": published_state,
+        "attempts": tuple(scan.validated),
+    }
+    if scan.unresolved:
+        return ChronologyView(
+            "latest_unresolved", affected_ids=tuple(scan.unresolved), **shared
+        )
+    if scan.ambiguous:
+        return ChronologyView(
+            "chronology_ambiguous", affected_ids=tuple(scan.ambiguous), **shared
+        )
+    chosen, ties = _latest_started(scan.latest)
+    if ties:
+        return ChronologyView(
+            "chronology_ambiguous", affected_ids=tuple(ties), **shared
+        )
+    if chosen is None:
+        return ChronologyView("none", **shared)
+    return ChronologyView(
+        "resolved" if chosen.completed else "incomplete",
+        run_id=chosen.run_id,
+        attempt_id=chosen.attempt_id,
+        started_at=chosen.started_at.isoformat(),
+        attempt_generation=chosen.attempt_generation,
+        ordering="started_at",
+        latest=chosen,
+        **shared,
+    )
+
+
 # --- Phase 66 P66-06: bounded, argv-based, read-only Git evidence -----------
 #
 # Every subprocess call below passes an argv list (never `shell=True`, never a
@@ -1442,6 +1723,48 @@ def project_token_usage(
     }
 
 
+def _memory_counts(
+    conn: sqlite3.Connection, include_internal: bool
+) -> tuple[dict[str, int], int] | None:
+    """Every live row per subject (archived and expired included, as
+    `list_artifact_refs`) and the tombstoned-id count (`list_deleted_refs`);
+    `None` for a schema that predates `artifact_version`/archive/expiry."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_artifacts)")}
+    if not {"artifact_version", "archived_at", "expired_at"} <= columns:
+        return None
+    counts: dict[str, int] = {}
+    for subject, source in conn.execute("SELECT subject, source FROM memory_artifacts"):
+        if include_internal or not is_internal_memory_source(source):
+            counts[subject] = counts.get(subject, 0) + 1
+    if not sqlite_has_table(conn, "memory_changes"):
+        return counts, 0
+    deleted = conn.execute(
+        "SELECT COUNT(DISTINCT artifact_id) FROM memory_changes WHERE tombstone = 1 "
+        "AND artifact_id NOT IN (SELECT id FROM memory_artifacts)"
+    ).fetchone()[0]
+    return counts, int(deleted)
+
+
+def _readonly_memory_counts(
+    root: Path, *, include_internal: bool
+) -> tuple[dict[str, int], int]:
+    """T23: memory counts over the shared zero-write reader
+    (`read_sqlite_readonly`) -- never a constructed store (no directory,
+    schema, cursor key or sidecar). No DB counts nothing; an unreadable or
+    unmigrated one raises `MemoryStoreUnreadableError`, never an empty count."""
+    db = Path(root).resolve() / ".rush" / "memory.db"
+    counts = read_sqlite_readonly(
+        db, lambda conn: _memory_counts(conn, include_internal)
+    )
+    if counts is not None:
+        return counts
+    if db.exists():
+        raise MemoryStoreUnreadableError(
+            readonly_view_reason("migration_required"), code="E_MIGRATION"
+        )
+    return {}, 0
+
+
 def project_snapshot(
     project: str | Path,
     *,
@@ -1455,34 +1778,34 @@ def project_snapshot(
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
 
-    manifests = _iter_run_manifests(root)
-    latest = manifests[-1] if manifests else None
-    findings_count = sum(
-        len((m.get("aggregate") or {}).get("findings") or []) for m in manifests
-    )
-    coverage = None
-    if latest is not None:
-        coverage = (latest.get("aggregate") or {}).get("metadata", {}).get("coverage")
+    # T23: the latest attempt by the shared read-only chronology (never UUID
+    # order), and its own counts only -- never a sum across manifests.
+    chronology = select_attempt_chronology(root, record["project_id"])
+    manifest = chronology.latest.manifest if chronology.latest else None
+    aggregate = (manifest or {}).get("aggregate") or {}
+    run_state = manifest.get("run_state") if manifest else None
+    if chronology.state == "incomplete":
+        run_state = "incomplete"
 
-    store = TypedArtifactStore(root)
-    subject_counts: dict[str, int] = {}
-    for row in store.list_artifact_refs():
-        if not include_internal and is_internal_memory_source(row["source"]):
-            continue
-        subject_counts[row["subject"]] = subject_counts.get(row["subject"], 0) + 1
+    subject_counts, deleted_count = _readonly_memory_counts(
+        root, include_internal=include_internal
+    )
 
     return {
         "project": record,
         "runs": {
-            "count": len(manifests),
-            "latest_run_id": latest.get("run_id") if latest else None,
-            "latest_run_state": latest.get("run_state") if latest else None,
-            "coverage": coverage,
-            "findings_count": findings_count,
+            "count": chronology.run_count,
+            "latest_run_id": chronology.run_id,
+            "latest_run_state": run_state,
+            "coverage": (aggregate.get("metadata") or {}).get("coverage"),
+            "findings_count": (
+                len(aggregate.get("findings") or []) if manifest is not None else None
+            ),
+            "selection_state": chronology.state,
         },
         "memory": {
             "counts_by_subject": subject_counts,
-            "deleted_count": len(store.list_deleted_refs()),
+            "deleted_count": deleted_count,
             "admin_capabilities": [
                 "write",
                 "promote",
@@ -1503,6 +1826,8 @@ def project_snapshot(
 __all__ = [
     "CURSOR_KEY_FILE",
     "REGISTRY_LOCK_FILE",
+    "AttemptEvidence",
+    "ChronologyView",
     "ProjectBusyError",
     "ProjectDestinationExistsError",
     "ProjectError",
@@ -1516,6 +1841,7 @@ __all__ = [
     "ProjectRootConflictError",
     "ProjectRootMissingError",
     "ProjectSetupRequiredError",
+    "RegistryState",
     "compute_settings_plan_id",
     "configure_project",
     "create_project",
@@ -1530,9 +1856,11 @@ __all__ = [
     "project_git_history",
     "project_snapshot",
     "project_token_usage",
+    "read_registry_state",
     "register_project",
     "relink_project",
     "resolve_active_project",
     "resolve_project",
+    "select_attempt_chronology",
     "select_project",
 ]

@@ -115,13 +115,13 @@ def test_every_manifest_operation_has_one_adapter() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 192
+    assert len(operations) == 193
 
     registry = OperationRegistry()
     report = registry.reconcile_manifest(MANIFEST_PATH)
 
-    assert report["total"] == 192
-    assert report["tool_count"] == 79
+    assert report["total"] == 193
+    assert report["tool_count"] == 80
     assert report["admin_count"] == 95
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
