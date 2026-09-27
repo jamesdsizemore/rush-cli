@@ -570,6 +570,9 @@ def test_t27_catalog_semantics_and_human_output(route_id: str, tmp_path: Path) -
             f"blocked route {route_id} must still register --help"
         )
         assert "Usage" in result.output
+        failure = _MATRIX_CASES[route_id]["failure"]
+        if "argv" in failure:
+            _assert_outcome(route_id, "failure", failure, failure["argv"], fixture_dir)
         return
 
     case = _MATRIX_CASES[route_id]
@@ -636,13 +639,13 @@ def _assert_subcase_declared(route_id: str, kind: str, spec: dict[str, Any]) -> 
             f"{route_id} declares a write grant: its denied case must run"
         )
     else:
-        path_params = [
+        value_params = [
             p.name
             for p in command.params
-            if type(p.type).__name__ in ("Path", "TargetPath")
+            if not getattr(p, "is_flag", False) and p.name != "help"
         ]
-        assert not path_params, (
-            f"{route_id} takes filesystem targets {path_params}: its failure "
+        assert not value_params, (
+            f"{route_id} takes value parameters {value_params}: its failure "
             "case must run"
         )
 

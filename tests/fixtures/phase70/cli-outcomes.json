@@ -18,9 +18,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["--log-level", "loud"], "json_paths": {}, "human_contains": ["Invalid value for '--log-level': 'loud' is not one of"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -285,9 +283,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["agent", "hook", "cursor"], "json_paths": {}, "human_contains": ["'cursor' is not one of 'claude', 'codex'"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -1691,9 +1687,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["context", "align-prompt"], "json_paths": {}, "human_contains": ["Missing option '--system'"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -1865,9 +1859,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["context", "persona", "--set", "loud"], "json_paths": {}, "human_contains": ["Invalid value for '--set': 'loud' is not one of"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -2130,9 +2122,7 @@
     "denied": {
       "not_applicable": "blocked on the real-service lane"
     },
-    "failure": {
-      "not_applicable": "blocked on the real-service lane"
-    },
+    "failure": {"argv": ["dashboard", "<missing-target>"], "json_paths": {}, "human_contains": ["Invalid value for '[PATH]'", "does not exist"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -3024,9 +3014,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["guard", "check-cmd", "rm -rf /"], "json_paths": {}, "human_contains": ["[BLOCKED] Blocked destructive root/directory recursive deletion."], "exit": 1},
     "side_effects": {
       "allowed_paths": []
     },
@@ -3496,9 +3484,7 @@
     "denied": {
       "not_applicable": "blocked on the network lane"
     },
-    "failure": {
-      "not_applicable": "blocked on the network lane"
-    },
+    "failure": {"argv": ["install", "--agents", "some"], "json_paths": {}, "human_contains": ["Invalid value for '--agents': 'some' is not one of 'all', 'none'."], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -4128,9 +4114,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "--offset", "-1"], "json_paths": {}, "human_contains": ["Invalid value for '--offset': -1 is not in the range x>=0."], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -4236,9 +4220,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "ask", "nonsense", "phase70 fixture query"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -4750,9 +4732,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "list", "nonsense", "phase70 fixture query"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -4801,9 +4781,7 @@
       ],
       "exit": 0
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "maintain", "--task", "nonsense", "--allow-cache-write"], "json_paths": {}, "human_contains": ["Invalid value for '--task': 'nonsense' is not one of"], "exit": 2},
     "side_effects": {
       "allowed_paths": [
         "<cwd>/.rush/cache",
@@ -4977,9 +4955,7 @@
       ],
       "exit": 0
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "promote", "nonsense", "phase70-source", "--content", "{}", "--allow-cache-write", "--allow-artifact-write"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": [
         "<cwd>/.rush/cache",
@@ -5030,9 +5006,7 @@
     "denied": {
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "recall", "nonsense", "phase70 fixture query"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -5376,9 +5350,7 @@
       ],
       "exit": 0
     },
-    "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
-    },
+    "failure": {"argv": ["memory", "write", "nonsense", "phase70-source", "--content", "{}", "--allow-cache-write", "--allow-artifact-write"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": [
         "<cwd>/.rush/cache",
@@ -8999,9 +8971,7 @@
     "denied": {
       "not_applicable": "blocked on the real-terminal lane"
     },
-    "failure": {
-      "not_applicable": "blocked on the real-terminal lane"
-    },
+    "failure": {"argv": ["ui", "<missing-target>"], "json_paths": {}, "human_contains": ["Invalid value for '[PATHS]...'", "does not exist"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
@@ -9094,9 +9064,7 @@
     "denied": {
       "not_applicable": "blocked on the real-terminal lane"
     },
-    "failure": {
-      "not_applicable": "blocked on the real-terminal lane"
-    },
+    "failure": {"argv": ["watch", "<missing-target>"], "json_paths": {}, "human_contains": ["Invalid value for '[PATH]'", "does not exist"], "exit": 2},
     "side_effects": {
       "allowed_paths": []
     },
