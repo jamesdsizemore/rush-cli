@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..memory.consolidation import consolidate_episodes
 from ..memory.embeddings import EmbeddingConfig
@@ -46,6 +46,8 @@ from ..memory.store import (
     TrojanSourceFoundError,
     TypedArtifactStore,
     VersionConflictError,
+    artifact_version_sources,
+    collect_committed_writes,
     internal_source_exclusion_sql,
     owner_scope_for_row,
     readonly_state_code,
@@ -56,6 +58,7 @@ from ..memory.trust import default_entry_tier
 from ..permissions import ExecutionPermissions, check_permissions
 from ..token_economy.telemetry import TelemetryStore
 from .base import ToolFn, ToolResult
+from .routing import attach_memory_attribution, memory_block, memory_receipt
 
 MemoryOperation = Literal[
     "ask",
@@ -549,7 +552,14 @@ class MemoryTool(ToolFn):
             "edit": lambda: self._run_edit(started, root, granted, request),
             "archive": lambda: self._run_archive(started, root, granted, request),
         }
-        return dispatch_table[operation]()
+        with collect_committed_writes() as committed:
+            result = dispatch_table[operation]()
+        return cast(
+            ToolResult,
+            attach_memory_attribution(
+                result, _memory_attribution(root, operation, result, committed)
+            ),
+        )
 
     def _query(
         self,
@@ -2488,6 +2498,125 @@ class MemoryTool(ToolFn):
             raw=raw,
             metadata={"operation": operation},
         )
+
+
+# --- T19: memory attribution ---------------------------------------------------------
+#
+# `written` is every MemoryArtifact revision the operation committed (noted by the store
+# only after each commit, so a denied, failed or preview-only mutation reports nothing).
+# `used` is every artifact whose identity or content the operation's successful result
+# actually returns -- after its own access checks, never an unreturned candidate.
+
+_Ref = tuple[str, int, str | None]
+
+
+def _ref(
+    entry: Any, *, id_key: str = "id", version_key: str = "version"
+) -> _Ref | None:
+    if not isinstance(entry, dict):
+        return None
+    artifact_id = entry.get(id_key)
+    version = entry.get(version_key)
+    if not isinstance(artifact_id, str) or not isinstance(version, int):
+        return None
+    source = entry.get("source")
+    return artifact_id, version, source if isinstance(source, str) else None
+
+
+def _refs(entries: Any, **keys: str) -> list[_Ref]:
+    if not isinstance(entries, list):
+        return []
+    return [
+        ref for ref in (_ref(entry, **keys) for entry in entries) if ref is not None
+    ]
+
+
+def _plan_check_refs(data: dict[str, Any]) -> list[_Ref]:
+    refs = [
+        ref
+        for check in data.get("checks") or []
+        if isinstance(check, dict)
+        for ref in _refs(check.get("refs"))
+    ]
+    refs.extend(
+        ref
+        for gap in data.get("coverage_gaps") or []
+        if isinstance(gap, dict) and (ref := _ref(gap.get("ref"))) is not None
+    )
+    return refs
+
+
+def _handoff_prepare_refs(data: dict[str, Any]) -> list[_Ref]:
+    delta = data.get("delta") or {}
+    constraints = delta.get("constraints") or {}
+    return _refs(delta.get("changes")) + _refs(constraints.get("intent_refs"))
+
+
+def _envelope_read_refs(operation: str, code: Any, data: dict[str, Any]) -> list[_Ref]:
+    """The artifacts one successful envelope operation returned."""
+    if operation in ("ask", "recall", "list", "related"):
+        return _refs(data.get("items"))
+    if operation == "expand":
+        ref = _ref(data)
+        return [ref] if code == "OK" and ref is not None else []
+    if operation in ("prepare", "resume"):
+        return _refs(data.get("evidence_refs"))
+    if operation == "receive":
+        return _refs(data.get("changes"))
+    if operation == "handoff":
+        return _handoff_prepare_refs(data)
+    if operation == "last_success_diagnose":
+        ref = _ref(data.get("baseline_ref"))
+        return [ref] if ref is not None else []
+    if operation == "plan_checks":
+        return _plan_check_refs(data)
+    if operation == "recipe" and "usable" in data:
+        ref = _ref(data, id_key="recipe_id")
+        return [ref] if ref is not None else []
+    if operation == "intent":
+        ref = _ref(data.get("evidence_ref"))
+        return [ref] if ref is not None else []
+    return []
+
+
+def _read_refs(operation: str, result: ToolResult) -> list[_Ref]:
+    if result.get("status") not in ("ok", "warn"):
+        return []
+    raw = result.get("raw")
+    if isinstance(raw, list):
+        # Legacy (`request=None`) ask/recall/list: the returned artifacts.
+        return _refs(raw, version_key="artifact_version")
+    if isinstance(raw, dict) and isinstance(raw.get("data"), dict):
+        return _envelope_read_refs(operation, raw.get("code"), raw["data"])
+    return []
+
+
+def _memory_attribution(
+    root: Path,
+    operation: str,
+    result: ToolResult,
+    committed: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The operation name is the verb; `promote` keeps its two committed effects
+    apart (candidate `write`, then `promote`)."""
+    refs = _read_refs(operation, result)
+    missing = [(i, v) for i, v, source in refs if source is None]
+    sources = artifact_version_sources(root, missing) if missing else {}
+    used = [
+        memory_receipt(i, v, source or sources[(i, v)], operation)
+        for i, v, source in refs
+        if source is not None or (i, v) in sources
+    ]
+    written = [
+        memory_receipt(
+            entry["id"],
+            entry["revision"],
+            entry["source"],
+            entry["kind"] if operation == "promote" else operation,
+        )
+        for entry in committed
+    ]
+    return memory_block(used, written)
 
 
 # --- T20: bare `rush memory` read-only overview --------------------------------------

@@ -14,7 +14,9 @@ import secrets
 import sqlite3
 import time
 import urllib.parse
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -50,6 +52,68 @@ INTERNAL_MEMORY_SOURCES = frozenset(
         "migration:checkpoint_journal",
     }
 )
+
+#: SQLite's signed 64-bit INTEGER range: a larger Python int raises
+#: `OverflowError` at parameter binding, so versions are range-checked first.
+SQLITE_INT_MIN = -(2**63)
+SQLITE_INT_MAX = 2**63 - 1
+
+
+def sqlite_integer_in_range(value: int) -> bool:
+    return SQLITE_INT_MIN <= value <= SQLITE_INT_MAX
+
+
+# T19: MemoryArtifact revisions committed inside `collect_committed_writes()`.
+# Every store mutator notes a revision only after its transaction commits, so a
+# rolled-back or failed write is never reported as written.
+_COMMITTED_WRITES: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "rush_memory_committed_writes", default=None
+)
+# T19: artifact rows a read-only compatibility reader returned to its caller
+# inside `collect_memory_reads()`.
+_MEMORY_READS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "rush_memory_reads", default=None
+)
+
+
+@contextmanager
+def collect_committed_writes() -> Iterator[list[dict[str, Any]]]:
+    """Collect `{id, revision, source, kind}` for every revision committed in
+    this block, in commit order."""
+    collected: list[dict[str, Any]] = []
+    token = _COMMITTED_WRITES.set(collected)
+    try:
+        yield collected
+    finally:
+        _COMMITTED_WRITES.reset(token)
+
+
+@contextmanager
+def collect_memory_reads() -> Iterator[list[dict[str, Any]]]:
+    """Collect `{id, revision, source}` for every row a read-only
+    compatibility reader returned in this block, in read order."""
+    collected: list[dict[str, Any]] = []
+    token = _MEMORY_READS.set(collected)
+    try:
+        yield collected
+    finally:
+        _MEMORY_READS.reset(token)
+
+
+def note_committed_write(
+    artifact_id: str, revision: int, source: str, kind: str
+) -> None:
+    collected = _COMMITTED_WRITES.get()
+    if collected is not None:
+        collected.append(
+            {"id": artifact_id, "revision": revision, "source": source, "kind": kind}
+        )
+
+
+def note_memory_read(artifact_id: str, revision: int, source: str) -> None:
+    collected = _MEMORY_READS.get()
+    if collected is not None:
+        collected.append({"id": artifact_id, "revision": revision, "source": source})
 
 
 def is_internal_memory_source(source: str) -> bool:
@@ -854,6 +918,38 @@ def sqlite_has_table(conn: sqlite3.Connection, name: str) -> bool:
     )
 
 
+def artifact_version_sources(
+    project_root: Path, refs: Iterable[tuple[str, int]]
+) -> dict[tuple[str, int], str]:
+    """T19: the recorded `source` of each exact `(artifact_id, version)`, read
+    from the append-only version history through one `read_sqlite_readonly`
+    connection (nothing is created or migrated). A ref with no stored version,
+    or an unreadable store, is absent from the result."""
+    wanted = [ref for ref in dict.fromkeys(refs) if sqlite_integer_in_range(ref[1])]
+    if not wanted:
+        return {}
+
+    def read(conn: sqlite3.Connection) -> dict[tuple[str, int], str]:
+        if not sqlite_has_table(conn, "memory_artifact_versions"):
+            return {}
+        found: dict[tuple[str, int], str] = {}
+        for artifact_id, version in wanted:
+            row = conn.execute(
+                "SELECT source FROM memory_artifact_versions "
+                "WHERE artifact_id = ? AND artifact_version = ?",
+                (artifact_id, version),
+            ).fetchone()
+            if row is not None:
+                found[(artifact_id, version)] = row[0]
+        return found
+
+    db = Path(project_root).resolve() / ".rush" / "memory.db"
+    try:
+        return read_sqlite_readonly(db, read) or {}
+    except MemoryStoreUnreadableError:
+        return {}
+
+
 class TypedArtifactStore:
     """WAL-mode SQLite store for `MemoryArtifact` rows across every memory subject."""
 
@@ -1264,8 +1360,9 @@ class TypedArtifactStore:
             if not apply:
                 return {"applied": False, "affected": affected}
 
+            tombstones: list[tuple[str, int, str]] = []
             for artifact_id, row in rows.items():
-                _write_version(
+                tombstone_version = _write_version(
                     conn,
                     artifact_id,
                     content={},
@@ -1275,6 +1372,7 @@ class TypedArtifactStore:
                     tombstone=True,
                     subject=row["subject"],
                 )
+                tombstones.append((artifact_id, tombstone_version, row["source"]))
                 conn.execute(
                     "DELETE FROM memory_artifacts WHERE id = ?", (artifact_id,)
                 )
@@ -1305,7 +1403,9 @@ class TypedArtifactStore:
                     {"affected": affected},
                 )
             conn.commit()
-            return {"applied": True, "affected": affected}
+        for artifact_id, tombstone_version, source in tombstones:
+            note_committed_write(artifact_id, tombstone_version, source, "delete")
+        return {"applied": True, "affected": affected}
 
     def edit(
         self,
@@ -1393,6 +1493,7 @@ class TypedArtifactStore:
                     {"trust_tier": new_trust_tier},
                 )
             conn.commit()
+            note_committed_write(artifact_id, new_version, row["source"], "edit")
             return {
                 "applied": True,
                 "id": artifact_id,
@@ -1473,6 +1574,7 @@ class TypedArtifactStore:
                     {"archived": archived},
                 )
             conn.commit()
+            note_committed_write(artifact_id, new_version, row["source"], "archive")
             return {
                 "applied": True,
                 "id": artifact_id,
@@ -1965,8 +2067,10 @@ class TypedArtifactStore:
         *,
         expected_version: int | None = None,
         owner_scope: OwnerScope | None = None,
-    ) -> None:
+    ) -> tuple[str, int, str] | None:
         """Shared delete body for `delete()`/`_prepare_write()`'s conflict-eviction path.
+        Returns the tombstone revision's `(id, revision, source)`, or `None` when
+        there was no row; the caller notes it only after its own commit (T19).
         Caller owns the transaction (BEGIN/commit) -- this never opens its own connection,
         so a conflict-delete and the insert that follows it (P69-01.2g) share one atomic
         transaction instead of two separately-committed ones.
@@ -1980,9 +2084,9 @@ class TypedArtifactStore:
             (artifact_id,),
         ).fetchone()
         if row is None:
-            return
+            return None
         self._require_owner(row, artifact_id, owner_scope)
-        _write_version(
+        tombstone_version = _write_version(
             conn,
             artifact_id,
             content=json.loads(row["content"]),
@@ -1992,10 +2096,11 @@ class TypedArtifactStore:
             tombstone=True,
         )
         conn.execute("DELETE FROM memory_artifacts WHERE id = ?", (artifact_id,))
+        return artifact_id, tombstone_version, row["source"]
 
     def _prepare_write(
         self, conn: sqlite3.Connection, artifact: MemoryArtifact
-    ) -> MemoryArtifact:
+    ) -> tuple[MemoryArtifact, tuple[str, int, str] | None]:
         """Shared pre-insert step for `write()`/`write_pass()`: enforces Invariant 1
         (no-STATED-on-entry), resolves any STATED conflict, and redacts content
         (Invariant 2). Runs inside the caller's own open transaction (P69-01.2g) --
@@ -2009,6 +2114,7 @@ class TypedArtifactStore:
                 "promotion is the only path to STATED"
             )
         owner_scope = artifact.owner_scope or self._owner_scope_default
+        evicted = None
         if artifact.symbol_ref is not None:
             existing = self._find_stated_conflict(
                 conn, artifact.subject, artifact.symbol_ref, owner_scope
@@ -2017,14 +2123,25 @@ class TypedArtifactStore:
                 existing is not None
                 and evaluate_conflict(artifact, existing) == "delete"
             ):
-                self._delete_tx(conn, existing.id, owner_scope=owner_scope)
+                evicted = self._delete_tx(conn, existing.id, owner_scope=owner_scope)
         sanitized_content = sanitize_value(artifact.content).value
-        return dataclasses.replace(
+        stored = dataclasses.replace(
             artifact,
             content=sanitized_content,
             artifact_version=1,
             owner_scope=owner_scope,
         )
+        return stored, evicted
+
+    @staticmethod
+    def _note_inserted(
+        stored: MemoryArtifact, evicted: tuple[str, int, str] | None
+    ) -> None:
+        """T19: after the insert transaction commits, its conflict eviction
+        (a tombstone revision) and the new artifact's first revision."""
+        if evicted is not None:
+            note_committed_write(*evicted, "delete")
+        note_committed_write(stored.id, stored.artifact_version, stored.source, "write")
 
     def _insert_row(self, conn: sqlite3.Connection, stored: MemoryArtifact) -> None:
         """Shared insert body for `write()`/`write_pass()`: the artifact row plus its
@@ -2083,7 +2200,7 @@ class TypedArtifactStore:
         back too, rather than leaving the deleted artifact permanently gone."""
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            stored = self._prepare_write(conn, artifact)
+            stored, evicted = self._prepare_write(conn, artifact)
             self._insert_row(conn, stored)
             if receipt_operation_id:
                 self._write_receipt(
@@ -2095,6 +2212,7 @@ class TypedArtifactStore:
                     {},
                 )
             conn.commit()
+        self._note_inserted(stored, evicted)
         return stored
 
     def write_pass(
@@ -2115,7 +2233,7 @@ class TypedArtifactStore:
         now = time.time()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            stored = self._prepare_write(conn, artifact)
+            stored, evicted = self._prepare_write(conn, artifact)
             self._insert_row(conn, stored)
             conn.execute(
                 "INSERT INTO memory_behavior_success "
@@ -2135,6 +2253,7 @@ class TypedArtifactStore:
                 ),
             )
             conn.commit()
+        self._note_inserted(stored, evicted)
         return stored
 
     def get_behavior_success(
@@ -2408,6 +2527,7 @@ class TypedArtifactStore:
                 (json.dumps(sanitized_content), new_version, artifact_id),
             )
             conn.commit()
+            note_committed_write(artifact_id, new_version, row["source"], "update")
 
     def promote(
         self,
@@ -2458,7 +2578,12 @@ class TypedArtifactStore:
                     artifact.artifact_version,
                     {"promoted": True},
                 )
-            return artifact, decision
+        # The `with` block commits on exit; only a real promotion wrote a revision.
+        if decision.promoted:
+            note_committed_write(
+                artifact.id, artifact.artifact_version, artifact.source, "promote"
+            )
+        return artifact, decision
 
     def delete(
         self,
@@ -2476,13 +2601,15 @@ class TypedArtifactStore:
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            self._delete_tx(
+            tombstone = self._delete_tx(
                 conn,
                 artifact_id,
                 expected_version=expected_version,
                 owner_scope=owner_scope,
             )
             conn.commit()
+        if tombstone is not None:
+            note_committed_write(*tombstone, "delete")
 
     def search(
         self,

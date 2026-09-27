@@ -12,8 +12,8 @@ from typing import Any
 
 from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
 from rush.io.physical_paths import PhysicalRoot
-from rush.memory.migration import read_origin_kind_readonly, read_origin_readonly
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.migration import read_origin_kind_refs_readonly, read_origin_readonly
+from rush.memory.store import MemoryArtifact, TypedArtifactStore, note_memory_read
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import SecretRedactor
 
@@ -189,9 +189,14 @@ class CheckpointJournal:
                 )
         seen = physical_names | {str(entry["checkpoint_id"]) for entry in results}
         physical.open_contained(Path(".rush") / "memory.db", purpose="read")
-        for entry in read_origin_kind_readonly(self.project_root, "checkpoint"):
+        for entry, ref in read_origin_kind_refs_readonly(
+            self.project_root, "checkpoint"
+        ):
             identity = str(entry.get("checkpoint_id") or entry.get("name"))
             if identity not in seen:
                 results.append(entry)
                 seen.add(identity)
+                # T19: only a store row this listing actually returns is read.
+                if ref is not None:
+                    note_memory_read(*ref)
         return sorted(results, key=lambda x: x.get("created_at", 0), reverse=True)

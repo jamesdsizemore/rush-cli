@@ -192,7 +192,8 @@ def test_cached_result_keeps_original_execution_identity(tmp_path: Path) -> None
             self._store[key] = value
 
     tool = _ProbeTool()
-    executor = InvocationExecutor(cache=_DictCache())
+    cache = _DictCache()
+    executor = InvocationExecutor(cache=cache)
     executor.register(tool.name, tool.__call__, pure=True)
 
     req = {"operation_id": "probe", "path": str(target), "allow_cache_write": True}
@@ -202,16 +203,22 @@ def test_cached_result_keeps_original_execution_identity(tmp_path: Path) -> None
     result1 = executor.execute(ctx1)
     assert tool.calls == 1
     assert len(_observations(root)) == 1
+    stored_before = json.dumps(cache._store, sort_keys=True)
 
     ctx2 = resolve_invocation(req, transport="cli", workspace_root=root, config=config)
     result2 = executor.execute(ctx2)
     assert tool.calls == 1, "cache hit must not re-invoke the handler"
     # Phase 70 T16 §3 item 4: a hit is the original receipt plus the cache
     # mark `metadata.execution.cache`; the cached original is never rewritten.
+    # Phase 70 T19 B6: the hit copy moves the original observation receipt to
+    # `metadata.cache.original_memory`; this invocation consumed and committed
+    # no memory, so it carries no `metadata.memory`.
     from rush.invocation.cache_policy import decide_cache
 
     cache_key = decide_cache(ctx2, pure=True).cache_key
     metadata1 = dict(result1.get("metadata") or {})
+    memory1 = metadata1.pop("memory")
+    assert memory1["written"] and memory1["used"] == []
     assert result2 == {
         **result1,
         "metadata": {
@@ -220,9 +227,14 @@ def test_cached_result_keeps_original_execution_identity(tmp_path: Path) -> None
                 **(metadata1.get("execution") or {}),
                 "cache": {"hit": True, "cache_key": cache_key},
             },
+            "cache": {"original_memory": memory1},
         },
     }, "cache hit must preserve the original receipt identity"
     assert "cache" not in (metadata1.get("execution") or {})
+    assert json.dumps(cache._store, sort_keys=True) == stored_before, (
+        "the stored cache object must never be rewritten by a hit"
+    )
+    assert result1["metadata"]["memory"] == memory1
     assert len(_observations(root)) == 1, (
         "cache hit must not create a fresh observation"
     )

@@ -7,7 +7,6 @@ adaptation for CLI and MCP transports.
 from __future__ import annotations
 
 import copy
-import dataclasses
 import inspect
 import json
 from collections.abc import Callable, Iterator
@@ -616,12 +615,7 @@ class InvocationExecutor:
             and "cache_write" in context.permissions
             and context.operation_id not in ("memory", "status")
         ):
-            try:
-                from rush.memory.experience import record_observation
-
-                record_observation(context, result)
-            except Exception:  # noqa: BLE001, S110
-                pass
+            result = _record_observation(context, result)
 
         if (
             decision.decision == "eligible"
@@ -636,15 +630,49 @@ class InvocationExecutor:
         return result
 
 
+def _record_observation(context: InvocationContext, result: Any) -> Any:
+    """MC05/T19: commit one observation and attach its `written` receipt after
+    the tool's own receipts. A failed write (`None` or a raise) attaches
+    nothing and never converts or reruns the original result."""
+    try:
+        from rush.memory.experience import record_observation
+        from rush.tools.routing import (
+            attach_memory_attribution,
+            memory_block,
+            memory_receipt,
+        )
+
+        artifact = record_observation(context, result)
+        if artifact is None:
+            return result
+        return attach_memory_attribution(
+            result,
+            memory_block(
+                written=[
+                    memory_receipt(
+                        artifact.id,
+                        artifact.artifact_version,
+                        artifact.source,
+                        "observation",
+                    )
+                ]
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        return result
+
+
 def _with_metadata(result: Any, update: Callable[[dict[str, Any]], None]) -> Any:
     """Apply `update` to a copy of the result's metadata: legacy
     `metadata`, or `extensions.metadata` of a strict ToolResultV1."""
     if isinstance(result, ToolResultV1):
+        from rush.tools.routing import with_v1_extensions
+
         extensions = copy.deepcopy(result.extensions)
         metadata = dict(extensions.get("metadata") or {})
         update(metadata)
         extensions["metadata"] = metadata
-        return dataclasses.replace(result, extensions=extensions)
+        return with_v1_extensions(result, extensions)
     if not isinstance(result, dict):
         return result
     updated = dict(result)
@@ -665,13 +693,23 @@ def _current_metadata(result: Any) -> dict[str, Any]:
 def mark_cache_hit(result: Any, cache_key: str) -> Any:
     """T16 §3 item 4: a cache hit returns a copy carrying
     `metadata.execution.cache={"hit": true, "cache_key": key}`; the cached
-    object -- and its original scope -- is never rewritten."""
+    object -- and its original scope -- is never rewritten.
+
+    T19 B6: the original invocation's memory receipts move to
+    `metadata.cache.original_memory`; this invocation consumed and committed
+    nothing, so the copy carries no `metadata.memory`."""
     result = copy.deepcopy(result)
 
     def update(metadata: dict[str, Any]) -> None:
         execution = dict(metadata.get("execution") or {})
         execution["cache"] = {"hit": True, "cache_key": cache_key}
         metadata["execution"] = execution
+        original_memory = metadata.pop("memory", None)
+        if original_memory is not None:
+            metadata["cache"] = {
+                **(metadata.get("cache") or {}),
+                "original_memory": original_memory,
+            }
 
     return _with_metadata(result, update)
 

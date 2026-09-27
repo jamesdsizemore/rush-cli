@@ -69,6 +69,11 @@ DEFAULT_ENCODING = "cl100k_base"
 
 _EXCERPT_CHARS = 200
 
+# T19: `MerkleInvalidator.hash_content` (sha256 of the UTF-8 text) through an
+# instance built without `__init__`, whose constructor creates `.rush/cache`;
+# a read-only recall creates nothing.
+_CONTENT_HASHER = MerkleInvalidator.__new__(MerkleInvalidator)
+
 
 @dataclasses.dataclass
 class SourceValidationMemo:
@@ -82,10 +87,10 @@ class SourceValidationMemo:
         default_factory=dict
     )
 
-    def source_hash(self, merkle: MerkleInvalidator, file_path: Path) -> str | None:
+    def source_hash(self, file_path: Path) -> str | None:
         if file_path not in self._hash_cache:
             try:
-                self._hash_cache[file_path] = merkle.hash_content(
+                self._hash_cache[file_path] = _CONTENT_HASHER.hash_content(
                     file_path.read_text(encoding="utf-8")
                 )
             except (OSError, UnicodeError):
@@ -129,7 +134,6 @@ def defended_recall(
     if not allowed_sources:
         return []
     memo = memo or SourceValidationMemo()
-    merkle = MerkleInvalidator(project_root=store.project_root)
     rows = store.search_candidates(
         subject,
         query,
@@ -160,7 +164,7 @@ def defended_recall(
         if artifact.symbol_ref is not None and artifact.content_hash is not None:
             path_part = artifact.symbol_ref.split("::", 1)[0]
             file_path = (store.project_root / path_part).resolve()
-            current_hash = memo.source_hash(merkle, file_path)
+            current_hash = memo.source_hash(file_path)
             if current_hash != artifact.content_hash:
                 artifact = dataclasses.replace(artifact, stale=True)
 
@@ -272,7 +276,30 @@ def _excerpt(content: dict[str, Any]) -> str:
     return text[:_EXCERPT_CHARS]
 
 
-def _candidate_to_item(row: Any) -> dict[str, Any] | None:
+def _item_relations(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    version: int,
+    allowed_sources: Sequence[str],
+) -> list[dict[str, Any]]:
+    """MC03: the candidate's authorized depth-1 relations through
+    `related_artifacts()`, which revalidates every neighbor's source and current
+    version, so a denied or version-changed neighbor is never disclosed."""
+    # Deferred import: `rush.memory.relations` imports this module's budgets.
+    from rush.memory.relations import related_artifacts
+
+    related = related_artifacts(
+        store,
+        artifact_id=artifact_id,
+        version=version,
+        session_allowlist=allowed_sources,
+    )
+    return list(related["items"]) if related["code"] == "OK" else []
+
+
+def _candidate_to_item(
+    row: Any, store: TypedArtifactStore, allowed_sources: Sequence[str]
+) -> dict[str, Any] | None:
     """`None` marks a corrupt candidate (malformed/non-object `content`) to skip — never
     raises, so one bad row can't abort the whole page (MC02.1 "corrupt candidates do not
     starve page")."""
@@ -289,9 +316,9 @@ def _candidate_to_item(row: Any) -> dict[str, Any] | None:
         "source": row["source"],
         "trust": row["trust_tier"],
         "freshness": "stale" if row["stale"] else "fresh",
-        # MC03 (relations.py) isn't implemented yet; every item reports no known relations
-        # rather than fabricating any.
-        "relations": [],
+        "relations": _item_relations(
+            store, row["id"], row["artifact_version"], allowed_sources
+        ),
     }
 
 
@@ -471,7 +498,7 @@ def recall_page(
             break
         for row in batch:
             scanned += 1
-            item = _candidate_to_item(row)
+            item = _candidate_to_item(row, store, allowed_sources)
             if item is None:
                 continue
             trial_bytes = _trial_page_bytes(
@@ -981,7 +1008,7 @@ def hybrid_page(
     items: list[dict[str, Any]] = []
     items_bytes, _tokens = _measure_page([], None, True, encoding)
     for row in fused["rows"]:
-        item = _candidate_to_item(row)
+        item = _candidate_to_item(row, store, allowed_sources)
         if item is None:
             continue
         trial_bytes = _trial_page_bytes(

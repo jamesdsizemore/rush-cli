@@ -9,13 +9,18 @@ from typing import Any
 import tiktoken
 
 from ..codegraph.context_packer import ContextPacker
+from ..memory.store import MemoryArtifact
 from ..permissions import (
     ExecutionPermissions,
     check_permissions,
 )
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
-from ..token_economy.memory_cache_gate import check_memory_before_pack, write_cache_fill
+from ..token_economy.memory_cache_gate import (
+    CacheGateResult,
+    check_memory_before_pack,
+    write_cache_fill,
+)
 from ..token_economy.telemetry import TelemetryStore
 from .results import _WRITE_PERMISSION, ContinuityOutput, build_continuity_result
 
@@ -95,6 +100,34 @@ def _memory_event_attribution(
     }
 
 
+def _cache_fill_receipts(filled: MemoryArtifact | None) -> list[dict[str, Any]]:
+    from ..tools.routing import memory_receipt
+
+    if filled is None:
+        return []
+    return [
+        memory_receipt(filled.id, filled.artifact_version, filled.source, "cache_fill")
+    ]
+
+
+def _cache_hit_receipts(gate: CacheGateResult) -> list[dict[str, Any]]:
+    from ..tools.routing import memory_receipt
+
+    if not gate.hit or gate.artifact_id is None or gate.revision is None:
+        return []
+    return [
+        memory_receipt(gate.artifact_id, gate.revision, gate.source or "", "cache_hit")
+    ]
+
+
+def _pack_memory(
+    used: list[dict[str, Any]], written: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    from ..tools.routing import memory_block
+
+    return memory_block(used, written)
+
+
 def pack_context(
     started: float,
     project_root: Path,
@@ -137,6 +170,7 @@ def pack_context(
         token_budget=token_budget,
         encoding=_DEFAULT_ENCODING,
     )
+    filled = None
     if gate.hit:
         if gate.content is None:
             return build_continuity_result(
@@ -153,7 +187,7 @@ def pack_context(
             target, target_symbol=target_symbol, max_tokens=1_000_000
         )
         if granted.cache_write:
-            write_cache_fill(
+            filled = write_cache_fill(
                 project_root,
                 context_path,
                 target_symbol,
@@ -162,6 +196,9 @@ def pack_context(
                 encoding=_DEFAULT_ENCODING,
                 view="v1" if as_v1 else "v2",
             )
+    # T19: a committed cache fill is `written` whether or not the pack is then
+    # delivered; the gate hit is `used` only when delivered (below).
+    written = _cache_fill_receipts(filled)
     estimated = int(packed.get("tokens", 0))
     selected_evidence = [{"path": context_path, "selection": "target_file"}]
     if estimated > token_budget:
@@ -202,6 +239,7 @@ def pack_context(
             requested=_WRITE_PERMISSION,
             context_envelope=envelope,
             as_v1=as_v1,
+            memory=_pack_memory([], written),
         )
     safe_packed, redactions = SecretRedactor.redact_value(packed)
     if not gate.hit and granted.cache_write:
@@ -233,6 +271,7 @@ def pack_context(
         raw=safe_packed,
         context_envelope=envelope,
         as_v1=as_v1,
+        memory=_pack_memory(_cache_hit_receipts(gate), written),
     )
 
 
