@@ -5,12 +5,12 @@ Architecture §8, Phase 24.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from rush.config import RushConfig
+from rush.config import RushConfig, RushConfigError, load_config
 from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.invocation.models import InvocationError
 from rush.invocation.targets import RootSelection, assert_contained, select_root
@@ -71,6 +71,19 @@ def _suite_metadata(
             "requested_targets": [selection.relative.as_posix()],
         }
     return metadata
+
+
+def memory_summary_clause(memory: Mapping[str, Any] | None) -> str | None:
+    """T21: the neutral count of an already-deduplicated `metadata.memory`
+    union, or `None` when nothing was read or written. Never recalls."""
+    used = len((memory or {}).get("used") or [])
+    written = len((memory or {}).get("written") or [])
+    if not used and not written:
+        return None
+    return (
+        f"memory: read {used} prior record{'s' if used != 1 else ''}, "
+        f"wrote {written} record{'s' if written != 1 else ''}"
+    )
 
 
 def _step_outcome(
@@ -173,6 +186,13 @@ def run_workflow_suite(
         assert_contained(selection)
     except (InvocationError, OSError, ValueError) as exc:
         selection_error = exc
+    if config is None and selection is not None:
+        # T21 (G4): as single-tool CLI/MCP calls do, so `[tools.memory]
+        # record` applies inside a suite; a malformed `rush.toml` fails open.
+        try:
+            config = load_config(start=selection.root)
+        except RushConfigError:
+            config = None
     tools_by_name = {tool.name: tool for tool in ALL_TOOLS}
     children: list[ToolResult] = []
     executed_tools: list[str] = []
@@ -298,4 +318,7 @@ def run_workflow_suite(
         # as cancelled rather than silently presented as a full run.
         "cancelled": cancelled,
     }
+    clause = memory_summary_clause((aggregate.get("metadata") or {}).get("memory"))
+    if clause is not None:
+        aggregate["summary"] += f"; {clause}"
     return aggregate

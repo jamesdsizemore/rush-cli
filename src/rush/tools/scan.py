@@ -51,10 +51,30 @@ from rush.workflows.project_run import (
     rescan_project_run,
 )
 from rush.workflows.projects import ProjectError, ensure_cursor_key, resolve_project
+from rush.workflows.suites import memory_summary_clause
 
 from .base import Finding, ToolFn, ToolResult, ToolStatus
 
 ScanAction = Literal["plan", "run", "status"]
+
+#: T21: a summary suffix and the receipts lifted into `metadata.memory`.
+_MemoryNote = tuple[str, dict[str, Any] | None]
+_NO_MEMORY: _MemoryNote = ("", None)
+
+
+def _memory_note(aggregate: Any, *, attempt_id: str | None = None) -> _MemoryNote:
+    """T21 B1/B3: the clause from an attempt aggregate's own persisted
+    `metadata.memory` -- no recall (B5). A stored attempt (`status`) names its
+    attempt and lifts nothing: the status call itself consumed no memory."""
+    metadata = aggregate.get("metadata") if isinstance(aggregate, dict) else None
+    memory = metadata.get("memory") if isinstance(metadata, dict) else None
+    clause = memory_summary_clause(memory)
+    if clause is None:
+        return _NO_MEMORY
+    if attempt_id is not None:
+        return f"; attempt {attempt_id} {clause}", None
+    return f"; {clause}", memory
+
 
 _WRITE_PERMISSION = ExecutionPermissions(cache_write=True, artifact_write=True)
 
@@ -180,7 +200,7 @@ class ScanTool(ToolFn):
                 )
 
         try:
-            raw = self._dispatch(
+            raw, (suffix, memory) = self._dispatch(
                 action,
                 path=path,
                 plan_id=plan_id,
@@ -200,7 +220,13 @@ class ScanTool(ToolFn):
         except ValueError as exc:
             return self._result(started, "error", f"scan {action}: {exc}")
 
-        return self._result(started, "ok", f"scan {action}: ok", raw=raw)
+        return self._result(
+            started,
+            "ok",
+            f"scan {action}: ok{suffix}",
+            raw=raw,
+            metadata={"memory": memory} if memory else None,
+        )
 
     def _dispatch(
         self,
@@ -218,7 +244,7 @@ class ScanTool(ToolFn):
         cursor: str | None,
         permissions: ExecutionPermissions,
         data_root: Path | None,
-    ) -> Any:
+    ) -> tuple[Any, _MemoryNote]:
         if action == "plan":
             plan = plan_scan(
                 path,
@@ -229,7 +255,7 @@ class ScanTool(ToolFn):
                 timeout_seconds=timeout_seconds,
                 data_root=data_root,
             )
-            return plan.to_dict()
+            return plan.to_dict(), _NO_MEMORY
 
         if action == "run":
             if not plan_id:
@@ -239,7 +265,8 @@ class ScanTool(ToolFn):
             if staged is None:
                 raise ScanPlanStaleError(f"unknown or stale plan_id: {plan_id}")
             run = execute_scan(staged, permissions=permissions, data_root=data_root)
-            return run.to_dict()
+            data = run.to_dict()
+            return data, _memory_note(data["aggregate"])
 
         if action == "status":
             if not run_id:
@@ -256,7 +283,7 @@ class ScanTool(ToolFn):
                 manifest=manifest,
                 limit=limit,
                 cursor=cursor,
-            )
+            ), _status_memory_note(manifest)
 
         raise ValueError(f"unknown scan action: {action}")
 
@@ -269,7 +296,7 @@ class ScanTool(ToolFn):
         compatibility = _compatibility(request) if isinstance(request, dict) else None
 
         try:
-            data = self._handle_request_unsafe(request)
+            data, (suffix, memory) = self._handle_request_unsafe(request)
         except ScanError as exc:
             return self._envelope_result(
                 started,
@@ -293,9 +320,13 @@ class ScanTool(ToolFn):
             status="ok",
             data=data,
             compatibility=compatibility,
+            summary_suffix=suffix,
+            memory=memory,
         )
 
-    def _handle_request_unsafe(self, request: dict[str, Any]) -> Any:
+    def _handle_request_unsafe(
+        self, request: dict[str, Any]
+    ) -> tuple[Any, _MemoryNote]:
         if not isinstance(request, dict):
             raise ScanInvalidRequestError("request must be an object")
         version = request.get("schema_version")
@@ -341,7 +372,7 @@ class ScanTool(ToolFn):
                 concurrency=request.get("concurrency", 2),
                 timeout_seconds=request.get("timeout_seconds", 300),
             )
-            return plan.to_dict()
+            return plan.to_dict(), _NO_MEMORY
 
         if operation == "run":
             plan_id = request.get("plan_id")
@@ -352,7 +383,8 @@ class ScanTool(ToolFn):
             if staged is None:
                 raise ScanPlanStaleError(f"unknown or stale plan_id: {plan_id}")
             run = execute_scan(staged, permissions=granted)
-            return run.to_dict()
+            data = run.to_dict()
+            return data, _memory_note(data["aggregate"])
 
         if operation == "status":
             run_id = request.get("run_id")
@@ -370,13 +402,14 @@ class ScanTool(ToolFn):
                 manifest=manifest,
                 limit=request.get("limit", 50),
                 cursor=request.get("cursor"),
-            )
+            ), _status_memory_note(manifest)
 
         if operation == "rescan":
             run_id = request.get("run_id")
             if not run_id:
                 raise ScanInvalidRequestError("rescan requires run_id")
-            return rescan_project_run(project, run_id, permissions=granted)
+            data = rescan_project_run(project, run_id, permissions=granted)
+            return data, _memory_note(data["run"]["aggregate"])
 
         raise ScanInvalidRequestError(f"unknown operation: {operation!r}")
 
@@ -389,6 +422,8 @@ class ScanTool(ToolFn):
         data: Any = None,
         error: Exception | None = None,
         compatibility: dict[str, Any] | None = None,
+        summary_suffix: str = "",
+        memory: dict[str, Any] | None = None,
     ) -> ToolResult:
         error_payload: dict[str, Any] | None = None
         if error is not None:
@@ -406,18 +441,28 @@ class ScanTool(ToolFn):
             "error": error_payload,
         }
         summary = (
-            f"scan {operation}: ok" if error is None else f"scan {operation}: {error}"
+            f"scan {operation}: ok{summary_suffix}"
+            if error is None
+            else f"scan {operation}: {error}"
         )
-        result = self._result(started, status, summary, raw=raw)
+        metadata: dict[str, Any] = {}
         if compatibility is not None:
-            result["metadata"] = {"compatibility": compatibility}
-        return result
+            metadata["compatibility"] = compatibility
+        if memory:
+            metadata["memory"] = memory
+        return self._result(started, status, summary, raw=raw, metadata=metadata)
 
     def _result(
-        self, started: float, status: ToolStatus, summary: str, *, raw: Any = None
+        self,
+        started: float,
+        status: ToolStatus,
+        summary: str,
+        *,
+        raw: Any = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
         findings: list[Finding] = []
-        return ToolResult(
+        result = ToolResult(
             tool=self.name,
             engine=None,
             engine_version=None,
@@ -427,6 +472,16 @@ class ScanTool(ToolFn):
             findings=findings,
             raw=raw,
         )
+        if metadata:
+            result["metadata"] = metadata
+        return result
+
+
+def _status_memory_note(manifest: dict[str, Any]) -> _MemoryNote:
+    """T21 B3: the stored attempt's own clause, from its persisted aggregate."""
+    return _memory_note(
+        manifest.get("aggregate"), attempt_id=str(manifest.get("attempt_id"))
+    )
 
 
 # T6: accepted-but-ignored legacy fields. They never change a scan; any call that
