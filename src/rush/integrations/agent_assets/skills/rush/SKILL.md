@@ -151,6 +151,22 @@ tests it is `ok`.
 {"profile": "core", "tool": "rush_test", "arguments": {"path": ".", "allow_build": true}, "expect": {"status": "ok", "raw_operation": null}}
 ```
 
+`rush_check` without `allow_build` runs every step except tests; its test
+step is `skipped` with the reason `requires permission: --allow-build`. The
+unused import makes the lint step `fail`, the worst step status, so the
+check is `fail`.
+
+```json rush-example
+{"profile": "core", "tool": "rush_check", "arguments": {"path": "."}, "expect": {"status": "fail", "raw_operation": null}}
+```
+
+The same check with `allow_build` also runs the test step. The lint step
+still fails, so the check is still `fail`.
+
+```json rush-example
+{"profile": "core", "tool": "rush_check", "arguments": {"path": ".", "allow_build": true}, "expect": {"status": "fail", "raw_operation": null}}
+```
+
 Dead code on the full profile: vulture reports the unused function, so the
 result is `warn`.
 

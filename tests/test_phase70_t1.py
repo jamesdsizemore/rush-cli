@@ -25,6 +25,7 @@ import importlib.resources
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -397,6 +398,69 @@ def test_t01_skill_is_guidance_only_without_secrets_or_memory_text() -> None:
             assert login not in text.lower(), resource
 
 
+_SLOP_ENGINES = ("aislop", "sloppylint")
+
+
+def _path_without_slop_engines() -> str:
+    """PATH minus every directory holding a slop engine (aislop, sloppylint)."""
+    return os.pathsep.join(
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry
+        and not any((Path(entry) / engine).exists() for engine in _SLOP_ENGINES)
+    )
+
+
+@pytest.mark.parametrize("engines", ["ambient_path", "slop_engines_removed"])
+def test_t01_check_examples_execute_as_declared_with_and_without_slop_engine(
+    engines: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """6: "Granted vs denied allow_build for check", as executable examples.
+    Each `rush_check` example returns exactly its declared aggregate status
+    and raw_operation on the core fixture (registered project, one F401
+    import, pyproject.toml), both on the ambient PATH (aislop installed on
+    a developer machine) and with every slop-engine directory removed from
+    PATH, so the declared status never depends on a slop engine being
+    installed. Denied: the test step is `skipped` naming allow-build.
+    Granted: the test step runs."""
+    _isolate_home(tmp_path, monkeypatch)
+    if engines == "slop_engines_removed":
+        monkeypatch.setenv("PATH", _path_without_slop_engines())
+        for engine in _SLOP_ENGINES:
+            assert shutil.which(engine) is None, engine
+    examples = _examples(_skill_text())
+    check_examples = [
+        ex for ex in examples if ex["profile"] == "core" and ex["tool"] == "rush_check"
+    ]
+    denied = [ex for ex in check_examples if not ex["arguments"].get("allow_build")]
+    granted = [ex for ex in check_examples if ex["arguments"].get("allow_build")]
+    assert denied and granted, "need denied and granted rush_check examples"
+    root = _project(tmp_path, f401=1)
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "fixture"\nversion = "0"\n', encoding="utf-8"
+    )
+    monkeypatch.chdir(root)
+    from rush.workflows.projects import register_project
+
+    register_project(root)
+    from rush.mcp import build_server
+
+    server = build_server(profile="core")
+    for example in check_examples:
+        result = _call(server, example["tool"], example["arguments"])
+        assert result["status"] == example["expect"]["status"], result["summary"]
+        raw = result.get("raw") or {}
+        actual_raw_operation = raw.get("operation") if isinstance(raw, dict) else None
+        assert actual_raw_operation == example["expect"]["raw_operation"]
+        children = (result.get("metadata") or {}).get("children") or []
+        test_child = next(child for child in children if child["tool"] == "test")
+        if example in denied:
+            assert test_child["status"] == "skipped"
+            assert "allow-build" in test_child["summary"]
+        else:
+            assert test_child["status"] != "skipped", test_child["summary"]
+
+
 # --- Mapping to the brief's single test name --------------------------------
 #
 # Brief: tests/test_phase70_adoption.py::test_t01_installed_skill_contract
@@ -414,3 +478,4 @@ def test_t01_skill_is_guidance_only_without_secrets_or_memory_text() -> None:
 #   test_t01_core_profile_examples_execute_as_declared
 #   test_t01_check_example_test_step_distinguishes_permission_denial
 #   test_t01_skill_is_guidance_only_without_secrets_or_memory_text
+#   test_t01_check_examples_execute_as_declared_with_and_without_slop_engine
