@@ -405,3 +405,195 @@ def build_catalog_path_command(tool: ToolFn) -> click.Command:
 
     command.params.extend(_TOOL_CLI_OPTIONS.get(tool.name, ()))
     return command
+
+
+# ---------------------------------------------------------------------------
+# T25: navigable help (everyday set, category index, `rush help`, `--help-all`)
+# ---------------------------------------------------------------------------
+
+CLI_CATEGORY_OVERRIDES: dict[str, str] = {
+    # quality
+    "api-diff": "quality",
+    "arch-guard": "quality",
+    "audit": "quality",
+    "blast-radius": "quality",
+    "check": "quality",
+    "codegraph": "quality",
+    "consensus": "quality",
+    "guard": "quality",
+    "hotspots": "quality",
+    "hygiene": "quality",
+    "outline": "quality",
+    "score": "quality",
+    "simplify": "quality",
+    "strictify": "quality",
+    # security
+    "hallu-guard": "security",
+    "trust": "security",
+    # test
+    "simulate-ci": "test",
+    "test-heal": "test",
+    # workflow
+    "bundle": "workflow",
+    "conflict": "workflow",
+    "db-drift": "workflow",
+    "gate": "workflow",
+    "patch": "workflow",
+    "plan": "workflow",
+    "scaffold": "workflow",
+    "scan": "workflow",
+    "ship": "workflow",
+    "swarm-merge": "workflow",
+    "sync": "workflow",
+    "workspace": "workflow",
+    "watch": "workflow",
+    "lock": "workflow",
+    # memory (a CLI grouping name distinct from the `memory` command, which
+    # falls back to its own ToolSpec category)
+    "context": "memory",
+    "flight-recorder": "memory",
+    "session": "memory",
+    # services
+    "dashboard": "services",
+    "mcp": "services",
+    "ui": "services",
+    # administration
+    "agent": "administration",
+    "cache": "administration",
+    "capabilities": "administration",
+    "config": "administration",
+    "gain": "administration",
+    "governance": "administration",
+    "help": "administration",
+    "hook": "administration",
+    "init": "administration",
+    "install": "administration",
+    "plugin": "administration",
+    "project": "administration",
+    "setup": "administration",
+    "status": "administration",
+    "token": "administration",
+    "trace": "administration",
+}
+
+ALL_CATEGORIES = (
+    "quality",
+    "security",
+    "test",
+    "workflow",
+    "memory",
+    "services",
+    "administration",
+)
+
+EVERYDAY_SET = (
+    "status",
+    "check",
+    "lint",
+    "review",
+    "security",
+    "test",
+    "memory",
+    "setup",
+    "install",
+    "agent",
+    "mcp",
+)
+
+
+def command_category(name: str) -> str:
+    """Resolve `name`'s help category: pinned override first, else its real
+    ToolSpec category (an alias inherits whatever its own name resolves to,
+    same as any other command -- no group-based guessing)."""
+    override = CLI_CATEGORY_OVERRIDES.get(name)
+    if override is not None:
+        return override
+    return TOOL_SPECS[name].category
+
+
+def _live_names(group: click.Group, ctx: click.Context) -> list[str]:
+    return sorted(set(group.list_commands(ctx)) | {"lock"})
+
+
+def _members_of_category(names: list[str], category: str) -> list[str]:
+    return sorted(name for name in names if command_category(name) == category)
+
+
+def format_everyday_commands(
+    group: click.Group, ctx: click.Context, formatter: click.HelpFormatter
+) -> None:
+    """Default `--help` body: the everyday set, then a category index
+    (`rush help CATEGORY` for the rest) -- never the full flat command list.
+    No per-command descriptions here: a command's own help text is free to
+    mention any other command name (e.g. `check` mentions `format` and
+    `typecheck`), which would leak names the everyday set must not show --
+    `rush COMMAND --help` is the place for that detail."""
+    rows: list[tuple[str, str]] = [
+        (name, "")
+        for name in EVERYDAY_SET
+        if (cmd := group.get_command(ctx, name)) is not None and not cmd.hidden
+    ]
+    if rows:
+        with formatter.section("Commands"):
+            formatter.write_dl(rows)
+
+    live_names = _live_names(group, ctx)
+    category_rows = [
+        (
+            category,
+            (
+                f"{len(_members_of_category(live_names, category))} commands "
+                f"-- rush help {category}"
+            ),
+        )
+        for category in ALL_CATEGORIES
+    ]
+    with formatter.section("Categories"):
+        formatter.write_dl(category_rows)
+
+
+def _echo_help_all(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    for name in _live_names(cast("click.Group", ctx.command), ctx):
+        click.echo(name)
+    ctx.exit()
+
+
+help_all_option = click.option(
+    "--help-all",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_echo_help_all,
+    help="List every registered command name, not just the everyday set.",
+)
+
+
+def build_help_command(group: click.Group) -> click.Command:
+    """`rush help` / `rush help CATEGORY`: the category index / membership,
+    routed through the same override-or-ToolSpec resolution as the default
+    `--help` view."""
+
+    @click.command(name="help")
+    @click.argument("category", required=False)
+    @click.pass_context
+    def help_cmd(ctx: click.Context, category: str | None) -> None:
+        live_names = _live_names(group, ctx)
+        if category is None:
+            click.echo("Categories:")
+            for cat in ALL_CATEGORIES:
+                count = len(_members_of_category(live_names, cat))
+                click.echo(f"  {cat} ({count}) -- rush help {cat}")
+            return
+        if category not in ALL_CATEGORIES:
+            raise click.UsageError(
+                f"Unknown category {category!r}. Valid categories: "
+                f"{', '.join(ALL_CATEGORIES)}",
+                ctx=ctx,
+            )
+        click.echo(f"{category}:")
+        for name in _members_of_category(live_names, category):
+            click.echo(f"  {name}")
+
+    return help_cmd

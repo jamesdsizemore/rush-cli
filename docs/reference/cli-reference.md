@@ -2,6 +2,10 @@
 
 Current authority: generated Click metadata from `uv run rush --help` and `uv run rush COMMAND --help` at source baseline `997b56e`. Examples assume the editable source checkout and therefore use `uv run rush`. Phase 65 owns standalone installation and the integrated beginner workflow; Phase 66 owns the persistent TUI and complete web workflow.
 
+## Discovering commands
+
+`rush --help` lists the everyday set — `status`, `check`, `lint`, `review`, `security`, `test`, `memory`, `setup`, `install`, `agent`, `mcp` — plus a category index. Registered commands fall under one of seven categories: `quality`, `security`, `test`, `workflow`, `memory`, `services`, `administration`. Use `rush help` to list the categories, `rush help CATEGORY` to list the commands in one, and `rush --help-all` to list all registered command names at once (including everyday-set members and category-only names).
+
 ## `session resume`
 
 `rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli|9router_cli|omniroute_api} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI or fixed loopback provider route. `9router_cli` starts Codex with fixed local 9Router environment variables and no model argument; it requires `RUSH_9ROUTER_API_KEY` but never retains it. Z.AI is intentionally deferred; `9router_api` returns canonical `skipped`.
@@ -133,7 +137,7 @@ Evaluation commands expose permission flags according to their own generated hel
 
 ## `rush agent list|connect|disconnect|doctor|hook` (Phase 65 P65-05)
 
-- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
+- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
 - `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] [--install-guidance] [--profile core|full] [--yes] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`.
 - `rush agent disconnect AGENT_ID [--project PATH] [--json]` removes Rush's own, unchanged components for `AGENT_ID` — the MCP entry, the instruction block (or this agent from a shared block), and Rush skill/hook resources recorded as Rush-owned. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
 - `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.

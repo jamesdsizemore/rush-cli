@@ -26,7 +26,12 @@ from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
 warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
 
 from . import __version__
-from .cli_support.catalog_commands import build_catalog_path_command
+from .cli_support.catalog_commands import (
+    build_catalog_path_command,
+    build_help_command,
+    format_everyday_commands,
+    help_all_option,
+)
 from .cli_support.options import (
     _extract_permissions,
     permission_options,
@@ -84,6 +89,11 @@ class RushGroup(click.Group):
             return lock_cmd_group
         return super().get_command(ctx, cmd_name)
 
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        format_everyday_commands(self, ctx, formatter)
+
 
 @click.group(
     cls=RushGroup,
@@ -91,6 +101,7 @@ class RushGroup(click.Group):
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 @click.version_option(__version__, "--version", "-V", message="%(version)s")
+@help_all_option
 @click.option(
     "--log-level",
     envvar="RUSH_LOG_LEVEL",
@@ -103,7 +114,6 @@ def cli(ctx: click.Context, log_level: str) -> None:
     """rush — agentic code-quality tools for coding agents.
 
     \b
-    Five tools: review, lint, format, test, security.
     Pairs well with `npx @nanonets/graft` for context-graph queries.
     """
     setup_logging(log_level)
@@ -5854,6 +5864,9 @@ def lock_inspect_cmd(path: Path) -> None:
     root = _resolve_project_root(path)
     res = MeshLockManager.inspect(root, path)
     click.echo(json.dumps(res, indent=2))
+
+
+cli.add_command(build_help_command(cli))
 
 
 if __name__ == "__main__":

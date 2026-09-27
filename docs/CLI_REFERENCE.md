@@ -1,5 +1,9 @@
 # CLI reference
 
+## Discovering commands
+
+`rush --help` lists the everyday set — `status`, `check`, `lint`, `review`, `security`, `test`, `memory`, `setup`, `install`, `agent`, `mcp` — plus a category index. Registered commands fall under one of seven categories: `quality`, `security`, `test`, `workflow`, `memory`, `services`, `administration`. Use `rush help` to list the categories, `rush help CATEGORY` to list the commands in one, and `rush --help-all` to list all registered command names at once (including everyday-set members and category-only names).
+
 ## Recover an omitted context pack
 
 When `rush context pack --budget N --allow-cache-write --json` returns `skipped` with `metadata.context_envelope.recovery.state: "available"`, pass its handle to `rush context retrieve HANDLE --json`. Without explicit cache-write permission, an insufficient budget returns `recovery.state: "not_created"` with `cache_write_required` and writes no CCR data. Stored payloads are redacted before local persistence; an unknown handle remains a structured `skipped` result.
@@ -164,7 +168,7 @@ Evidence: `tests/test_fix.py::test_dry_run_preserves_index_and_unrelated_files` 
 
 ### `rush scan --project ID_OR_PATH`
 
-Status: P65-04/P65-06/P65-08 (Phase 65, [project provisioning, scan, and agent workflow plan](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md)). Wraps `ScanTool`'s canonical `plan`/`run`/`status` operations over the shared `rush.workflows.suites` aggregation. `rush scan --project ID_OR_PATH` builds and previews an immutable plan covering every catalog candidate with a reasoned disposition (`applicable`, `excluded_by_user`, `not_applicable`, `requires_input`, ...); no execution occurs and no run manifest is written. `--full` additionally executes that plan and persists one immutable run manifest under `<project_root>/.rush/runs/<run_id>/`; the response merges the run's `aggregate` `ToolResult`, a `coverage` object (candidate/scheduled/executed/finding totals, matching the manifest's own denominator — an unavailable engine never silently shrinks it), and `expansion_links` (`manifest_path` and the paginated `status` cursor) alongside `run_id`. `--install` applies the project's `setup`/`provision.py` plan (P65-02) before scanning, and requires the same `--allow-*` grants as `setup --install`. `run` additionally requires `--allow-cache-write` and `--allow-artifact-write`; without `--full` those grants are not required.
+Status: P65-04/P65-06/P65-08 (Phase 65, [project provisioning, scan, and agent workflow plan](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md)). Wraps `ScanTool`'s canonical `plan`/`run`/`status` operations over the shared `rush.workflows.suites` aggregation. `rush scan --project ID_OR_PATH` builds and previews an immutable plan covering every catalog candidate with a reasoned disposition (`applicable`, `excluded_by_user`, `not_applicable`, `requires_input`, ...); no execution occurs and no run manifest is written. `--full` additionally executes that plan and persists one immutable run manifest under `<project_root>/.rush/runs/<run_id>/`; the response merges the run's `aggregate` `ToolResult`, a `coverage` object (candidate/scheduled/executed/finding totals, matching the manifest's own denominator — an unavailable engine never silently shrinks it), and `expansion_links` (`manifest_path` and the paginated `status --cursor` value) alongside `run_id`. `--install` applies the project's `setup`/`provision.py` plan (P65-02) before scanning, and requires the same `--allow-*` grants as `setup --install`. `run` additionally requires `--allow-cache-write` and `--allow-artifact-write`; without `--full` those grants are not required.
 
 `cancel`, `resume`, `rescan`, and `handoff` are registered `scan` subcommands (P65-06/P65-08), each taking `RUN_ID` as a positional argument and `--project ID_OR_PATH` (required):
 - `rush scan handoff RUN_ID --project ID_OR_PATH --agent AGENT_ID [--finding FINDING_ID ...] [--max-tokens N] [--max-bytes N] --allow-cache-write --allow-artifact-write [--json]` prepares a bounded agent handoff packet of `RUN_ID`'s unresolved findings (every unresolved finding by default; repeat `--finding` to scope to specific ones). Requires `--allow-cache-write` and `--allow-artifact-write`.
@@ -172,7 +176,7 @@ Status: P65-04/P65-06/P65-08 (Phase 65, [project provisioning, scan, and agent w
 - `rush scan cancel RUN_ID --project ID_OR_PATH [--json]` requests cooperative cancellation of an in-flight run.
 - `rush scan resume RUN_ID --project ID_OR_PATH [--allow-* ...] [--json]` resumes a run interrupted before completion; a stale/changed source or config since the original plan is refused, never silently resumed against the wrong baseline.
 
-Registered MCP reaches `rush_scan(request)` for `plan`/`run`/`status`/`rescan`, and `rush_scan_handoff(request)` for the handoff lifecycle (`prepare`/`dispatch`/`status`/`acknowledge`/`complete`) — both single-`dict` envelopes over the same `handle_request` contract (plan §6.1). `rush_scan` does not auto-compose `--full`'s convenience workflow — callers stage `plan`, execute `run` with the returned `plan_id`, and poll `status` with the returned `run_id` for coverage totals and the paginated candidate cursor.
+Registered MCP reaches `rush_scan(request)` for `plan`/`run`/`status`/`rescan`, and `rush_scan_handoff(request)` for the handoff lifecycle (`prepare`/`dispatch`/`status`/`acknowledge`/`complete`) — both single-`dict` envelopes over the same `handle_request` contract (plan §6.1). `rush_scan` does not auto-compose `--full`'s convenience workflow — callers stage `plan`, execute `run` with the returned `plan_id`, and poll `status` with the returned `run_id` for coverage totals and the paginated candidate `--cursor` value.
 
 ### `rush install [--agents all|none] [--memory on|off] [--project PATH_OR_ID] [--create NAME [--parent DIR]] [--init-git] [--install-guidance] [--session-id ID] [--version V] [--json]`
 
@@ -180,7 +184,7 @@ Status: P65-10 (Phase 65 §3.1/§6.2). The one-command global install: downloads
 
 ### `rush agent list|connect|disconnect|doctor|hook` (Phase 65 P65-05)
 
-- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
+- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
 - `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] [--install-guidance] [--profile core|full] [--yes] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. `--consent` allows real tool-observation payloads to be recorded for that scope; without it, only the connection itself is registered. `--acknowledge` is required before the connection reports `connected: true` — writing the config file is necessary but not sufficient. `--install-guidance` writes the project's Rush instruction block into `CLAUDE.md`/`AGENTS.md` without prompting; without it, a terminal asks `[y/N]` and a non-interactive run leaves guidance pending. A new registration always launches `mcp serve --profile core`; an existing entry keeps its own args unless `--profile core|full` is also given, which previews the migration (config path, current and new command/args, current profile, current config sha256) first and applies it only after `--yes` or a terminal `[y/N]`. A preview-only run, a decline, a stale-config conflict, or a failed write whose prior entry was restored is `skipped`, exit 0; a failed write that could not restore the prior entry is `error`, exit 2.
 - `rush agent disconnect AGENT_ID [--project PATH] [--json]` removes Rush's own, unchanged components for `AGENT_ID` — the MCP entry, the instruction block (or this agent from a shared block), and Rush skill/hook resources recorded as Rush-owned. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
 - `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.
@@ -560,21 +564,6 @@ Compare performance metrics against `.rush/baselines.json` regression thresholds
 * `--json`: Emit canonical result JSON. Permission flags are listed by `rush benchmark check --help`.
 
 
-
-### Historical `rush toon-inspect` name
-Not registered. TOON is an internal serialization component, not this CLI command.
-
-### Historical `rush skeletonize` name
-Not registered. Current outline entrypoint: `rush token outline FILE_PATH`.
-
-### Historical `rush context-cache` name
-Not registered. Current context commands are listed by `rush context --help`.
-
-### Historical `rush ccr-retrieve` name
-Not registered. Current retrieval uses `rush context retrieve CHUNK_HASH`; it does not expose a semantic `--query` option.
-
-### Historical `rush context-mistakes` name
-Not registered. Current entrypoint: `rush context mistakes`.
 
 ## Output File Write Safety & Containment (Phase 55)
 
