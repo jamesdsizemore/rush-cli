@@ -21,12 +21,14 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
+from _process_children import spawn_child
 
 # `rush.tools.common` is imported first on purpose: importing the
 # `rush.runtime` package first partially initializes it and raises a circular
 # ImportError (pre-existing import topology, not introduced here).
 import rush.tools.common  # noqa: F401
 from rush.runtime import subprocesses
+from rush.setup import provision as provision_module
 from rush.tools import common
 
 
@@ -133,13 +135,9 @@ def _pattern_pids(pattern: str) -> list[int]:
 
 
 def _fork_and_run(target, *args) -> int:
-    pid = os.fork()
-    if pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            target(*args)
-        finally:
-            os._exit(0)
-    return pid
+    json_args = [str(a) if isinstance(a, Path) else a for a in args]
+    proc = spawn_child(target.__module__, target.__name__, json_args)
+    return proc.pid
 
 
 def _kill_and_reap(pid: int) -> None:
@@ -147,6 +145,46 @@ def _kill_and_reap(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
     with suppress(ChildProcessError):
         os.waitpid(pid, 0)
+
+
+def _child_owner_hangs_before_release(
+    binary: str, pgid_file: str, data_root: str
+) -> None:
+    provision_module.default_data_root = lambda: Path(data_root)
+
+    def hang(owner_instance_id: str, run_id: str, pgid: int) -> None:
+        Path(pgid_file).write_text(str(pgid))
+        time.sleep(300)
+
+    subprocesses._record_owned_process = hang  # type: ignore[assignment]
+    subprocesses.run_subprocess(
+        [binary], owner_instance_id="owner-dies-a", run_id="run-dies-a"
+    )
+
+
+def _child_owner_hangs_inside_popen(binary: str, token: str, data_root: str) -> None:
+    provision_module.default_data_root = lambda: Path(data_root)
+    real_popen = subprocess.Popen
+
+    def hanging_popen(*args, **kwargs):
+        real_popen(*args, **kwargs)
+        time.sleep(300)
+
+    subprocesses.subprocess.Popen = hanging_popen  # type: ignore[assignment]
+    subprocesses.run_subprocess(
+        [binary, token],
+        owner_instance_id="owner-dies-b",
+        run_id="run-dies-b",
+    )
+
+
+def _child_run_owned_subprocess(
+    binary: str, owner_id: str, run_id: str, data_root: str
+) -> None:
+    provision_module.default_data_root = lambda: Path(data_root)
+    subprocesses.run_subprocess(
+        [binary], owner_instance_id=owner_id, run_id=run_id, timeout=600
+    )
 
 
 def test_owned_subprocess_real_engine_binary_never_execs_before_the_procs_record_is_durably_persisted_and_the_gate_is_released(
@@ -253,17 +291,9 @@ def test_owner_death_before_gate_release_including_before_popen_returns_means_th
     binary_a = _sentinel_binary(tmp_path, sentinel_a)
     pgid_file = tmp_path / "gate-pgid"
 
-    def _owner_hangs_before_release() -> None:
-        def hang(owner_instance_id: str, run_id: str, pgid: int) -> None:
-            pgid_file.write_text(str(pgid))
-            time.sleep(300)
-
-        subprocesses._record_owned_process = hang  # type: ignore[assignment]
-        subprocesses.run_subprocess(
-            [str(binary_a)], owner_instance_id="owner-dies-a", run_id="run-dies-a"
-        )
-
-    owner_pid = _fork_and_run(_owner_hangs_before_release)
+    owner_pid = _fork_and_run(
+        _child_owner_hangs_before_release, binary_a, pgid_file, owned_data_root
+    )
     try:
         assert _wait_until(pgid_file.exists), "gate process was never spawned"
         gate_pgid = int(pgid_file.read_text())
@@ -282,21 +312,9 @@ def test_owner_death_before_gate_release_including_before_popen_returns_means_th
     binary_b = _sentinel_binary(tmp_path, sentinel_b)
     token = f"rush-gate-probe-{uuid.uuid4().hex}"
 
-    def _owner_hangs_inside_popen() -> None:
-        real_popen = subprocess.Popen
-
-        def hanging_popen(*args, **kwargs):
-            real_popen(*args, **kwargs)
-            time.sleep(300)
-
-        subprocesses.subprocess.Popen = hanging_popen  # type: ignore[assignment]
-        subprocesses.run_subprocess(
-            [str(binary_b), token],
-            owner_instance_id="owner-dies-b",
-            run_id="run-dies-b",
-        )
-
-    owner_pid_b = _fork_and_run(_owner_hangs_inside_popen)
+    owner_pid_b = _fork_and_run(
+        _child_owner_hangs_inside_popen, binary_b, token, owned_data_root
+    )
     try:
         assert _wait_until(lambda: bool(_pattern_pids(token))), (
             "gate process was never spawned for the before-Popen-returns variant"
@@ -492,15 +510,9 @@ def test_parent_death_during_blocking_owned_subprocess_call_is_reaped_by_recover
     binary = _sentinel_binary(tmp_path, sentinel, sleep_seconds=300)
     owner_id = "owner-crashes-mid-scan"
 
-    def _owner_runs_slow_engine_child() -> None:
-        subprocesses.run_subprocess(
-            [str(binary)],
-            owner_instance_id=owner_id,
-            run_id="run-crashes",
-            timeout=600,
-        )
-
-    owner_pid = _fork_and_run(_owner_runs_slow_engine_child)
+    owner_pid = _fork_and_run(
+        _child_run_owned_subprocess, binary, owner_id, "run-crashes", owned_data_root
+    )
     try:
         assert _wait_until(
             lambda: bool(subprocesses.read_owned_process_records(owner_id))
@@ -816,19 +828,13 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
     binary_a = _sentinel_binary(tmp_path, sentinel_a, sleep_seconds=300)
     binary_b = _sentinel_binary(tmp_path, sentinel_b, sleep_seconds=300)
 
-    def _run_a() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_a)], owner_instance_id=owner_id, run_id="run-a", timeout=600
-        )
-
-    def _run_b() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
-        )
-
     started_pgids: list[int] = []
-    pid_a = _fork_and_run(_run_a)
-    pid_b = _fork_and_run(_run_b)
+    pid_a = _fork_and_run(
+        _child_run_owned_subprocess, binary_a, owner_id, "run-a", owned_data_root
+    )
+    pid_b = _fork_and_run(
+        _child_run_owned_subprocess, binary_b, owner_id, "run-b", owned_data_root
+    )
     try:
         assert _wait_until(
             lambda: len(subprocesses.read_owned_process_records(owner_id)) == 2
@@ -886,18 +892,12 @@ def test_reap_owner_processes_with_no_run_id_filter_keeps_existing_owner_wide_be
     binary_a = _sentinel_binary(tmp_path, sentinel_a, sleep_seconds=300)
     binary_b = _sentinel_binary(tmp_path, sentinel_b, sleep_seconds=300)
 
-    def _run_a() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_a)], owner_instance_id=owner_id, run_id="run-a", timeout=600
-        )
-
-    def _run_b() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
-        )
-
-    owner_pid_a = _fork_and_run(_run_a)
-    owner_pid_b = _fork_and_run(_run_b)
+    owner_pid_a = _fork_and_run(
+        _child_run_owned_subprocess, binary_a, owner_id, "run-a", owned_data_root
+    )
+    owner_pid_b = _fork_and_run(
+        _child_run_owned_subprocess, binary_b, owner_id, "run-b", owned_data_root
+    )
     try:
         assert _wait_until(
             lambda: len(subprocesses.read_owned_process_records(owner_id)) == 2

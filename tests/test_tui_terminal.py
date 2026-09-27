@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _process_children import spawn_pty_child
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix", reason="these tests require a POSIX pty"
@@ -95,6 +96,23 @@ def _set_pty_size(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
+def _child_run_pty_harness(
+    harness_path: str, rows: int, cols: int, error_path: str
+) -> None:
+    try:
+        _set_pty_size(0, rows, cols)
+        runpy.run_path(harness_path, run_name="__main__")
+    except BaseException as exc:  # noqa: BLE001 -- child-process diagnostics
+        # only: this is the child's last chance to record ANY failure
+        # (including exotic ones) to `error_path` before it exits
+        # silently; the parent test asserts on `error_path` via
+        # `_collect`.
+        try:
+            Path(error_path).write_text(repr(exc))
+        except OSError:
+            pass
+
+
 def _run_pty_harness(
     tmp_path: Path,
     *,
@@ -104,8 +122,6 @@ def _run_pty_harness(
     cols: int = 80,
     capture: list[bytes] | None = None,
 ) -> tuple[int, int, Path]:
-    import pty
-
     result_path = tmp_path / "result.json"
     error_path = tmp_path / "result.json.error"
     ready_path = tmp_path / "ready"
@@ -123,21 +139,11 @@ def _run_pty_harness(
     harness_path = tmp_path / "harness.py"
     harness_path.write_text(harness_src)
 
-    pid, master_fd = pty.fork()
-    if pid == 0:
-        try:
-            _set_pty_size(0, rows, cols)
-            runpy.run_path(str(harness_path), run_name="__main__")
-        except BaseException as exc:  # noqa: BLE001 -- child-process diagnostics
-            # only: this is the forked test child's last chance to record
-            # ANY failure (including exotic ones) to `error_path` before
-            # `os._exit(0)` below discards it silently; the parent test
-            # asserts on `error_path` via `_collect`.
-            try:
-                error_path.write_text(repr(exc))
-            except OSError:
-                pass
-        os._exit(0)
+    pid, master_fd = spawn_pty_child(
+        "test_tui_terminal",
+        "_child_run_pty_harness",
+        [str(harness_path), rows, cols, str(error_path)],
+    )
 
     _set_pty_size(master_fd, rows, cols)
     if capture is not None:
