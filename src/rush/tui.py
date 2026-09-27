@@ -22,7 +22,6 @@ import io
 import json
 import os
 import queue
-import stat
 import threading
 import time
 import uuid
@@ -58,7 +57,9 @@ PAGE_SIZE = 20
 handoff previews) that has no dedicated terminal visualization."""
 
 _DETAIL_CONTEXT_LINES = 4
-_DETAIL_MAX_BYTES = 8192
+_DETAIL_MAX_BYTES = 1024 * 1024
+# Lines of file text rendered below the scroll start; the panel crops the rest.
+_DETAIL_WINDOW_LINES = 200
 
 # T28-A: TUI-local bindings appended to the shared DEFAULT_KEYBINDINGS; the
 # live `_KEYMAP` is built from both once `ACTIONS` (below) is defined, so every
@@ -254,9 +255,9 @@ def paginate(
 def _bounded_local_detail(root: Path, finding: dict[str, Any]) -> str:
     """Canonical `path` drives ONLY a bounded local file read -- never a
     subprocess, shell, or arbitrary command. The read goes through
-    `PhysicalRoot.open_contained` (no absolute path, no `..`, no symlinked
-    component even inside the root) and an `O_NOFOLLOW` open of a regular
-    file, and shows the whole file up to `_DETAIL_MAX_BYTES` (scrollable,
+    `open_contained_file` (no absolute path, no `..`, every component opened
+    from the root with `dir_fd` + `O_NOFOLLOW`, a regular file with no other
+    hard link), and shows the whole file up to `_DETAIL_MAX_BYTES` (scrollable,
     never a first-lines-only snippet), labelled "live file: <path>". A
     refused path or any read failure degrades to the finding's own message.
     Control characters are stripped from everything returned; no exception
@@ -266,22 +267,33 @@ def _bounded_local_detail(root: Path, finding: dict[str, Any]) -> str:
     if not path_value:
         return message or "(no path)"
     try:
-        from rush.io.physical_paths import ContainmentError, PhysicalRoot
+        from rush.io.physical_paths import ContainmentError
+        from rush.workflows.projects import open_contained_file
 
         try:
-            target = PhysicalRoot(root).open_contained(path_value)
-        except ContainmentError:
-            return message or "(path refused)"
-        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
+            fd = open_contained_file(root, path_value)
+        except ContainmentError as exc:
+            if exc.code == "NOT_REGULAR_FILE":
                 return message or "(not a regular file)"
-            raw = os.read(fd, _DETAIL_MAX_BYTES)
+            return message or "(path refused)"
+        try:
+            chunks: list[bytes] = []
+            remaining = _DETAIL_MAX_BYTES
+            while remaining:
+                chunk = os.read(fd, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            size = os.fstat(fd).st_size
         finally:
             os.close(fd)
     except (OSError, ValueError):
         return message or "(unable to read local context)"
+    raw = b"".join(chunks)
     text = safe_terminal_text(raw.decode("utf-8", errors="replace"))
+    if size > len(raw):
+        text += f"\n... truncated at {len(raw)} of {size} bytes"
     header = safe_terminal_text(f"live file: {path_value}")
     line_no = finding.get("line")
     if isinstance(line_no, int):
@@ -605,16 +617,29 @@ class ProjectState:
     selected_index: int = 0
     filter_text: str = ""
     detail_page: int = 0
+    # First file-text line shown in Detail; `None` = the finding line minus
+    # `_DETAIL_CONTEXT_LINES`. The cursor scrolls it; selecting a row resets.
+    detail_scroll: int | None = None
     run_id: str | None = None
     plan_total: int = 0
     progress: ScanProgress | None = None
     progress_history: list[ScanProgress] = field(default_factory=list)
     # T28-C: the read-only `project_map_snapshot` (memories/agents branches,
     # captured artifact snapshots for detail), loaded lazily and reloaded
-    # when `map_snapshot_key` (run_id, status) changes.
+    # when `map_snapshot_key` (run_id, status, memory.db mtime, handoffs
+    # mtime) changes.
     map_snapshot: dict[str, Any] | None = field(default=None, repr=False, compare=False)
-    map_snapshot_key: tuple[str | None, str] | None = field(
+    map_snapshot_key: tuple[str | None, str, int | None, int | None] | None = field(
         default=None, repr=False, compare=False
+    )
+    # T28-C Map presentation: file paths read from `map_snapshot`'s
+    # inventory (cached per snapshot object) and, per directory ("" = the
+    # root), how many 100-file pages are shown.
+    map_inventory: tuple[dict[str, Any], list[str]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    map_dir_pages: dict[str, int] = field(
+        default_factory=dict, repr=False, compare=False
     )
     status: str = "idle"  # idle | scanning | cancelling | cancelled | complete | error
     # P69-06d: which process owns the run currently reflected here --
@@ -808,6 +833,8 @@ class TuiState:
     # re-entering Map via F3, so both survive either.
     map_expanded: set[str] = field(default_factory=set)
     map_selected_index: int = 0
+    # T28-C: the `/` query typed in `mode == "map_search"`.
+    map_query: str = ""
 
     def __post_init__(self) -> None:
         if self.active_index is None and self.projects:
@@ -891,11 +918,66 @@ def _move_selection(project: ProjectState, delta: int) -> None:
     project.detail_page = project.selected_index // PAGE_SIZE
 
 
-def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
+_MAP_DIR_PAGE_SIZE = 100
+
+
+def _map_inventory_paths(project: ProjectState) -> list[str]:
+    """T28-C: every file path in the loaded snapshot's recorded inventory,
+    read through `build_project_map(node_types=("file",))`; when that
+    groups a large inventory, each group is paged through `expand_group`
+    until its last page. Cached per snapshot object; `[]` when no snapshot
+    (or an unavailable one) is loaded."""
+    snapshot = project.map_snapshot
+    if (
+        not isinstance(snapshot, dict)
+        or not isinstance(snapshot.get("files"), list)
+        or "project_id" not in snapshot
+    ):
+        return []
+    if project.map_inventory is not None and project.map_inventory[0] is snapshot:
+        return project.map_inventory[1]
+    from rush.dashboard.project_map import build_project_map, expand_group
+
+    def file_paths(nodes: list[dict[str, Any]]) -> set[str]:
+        return {
+            node["path"]
+            for node in nodes
+            if node.get("kind") == "file" and isinstance(node.get("path"), str)
+        }
+
+    try:
+        graph = build_project_map(snapshot, node_types=("file",))
+        paths = file_paths(graph["nodes"])
+        for group in graph.get("groups") or []:
+            cursor: str | None = None
+            while True:
+                page = expand_group(
+                    snapshot, group["id"], node_types=("file",), cursor=cursor
+                )
+                paths |= file_paths(page["members"])
+                cursor = page.get("next_cursor")
+                if not cursor:
+                    break
+    except (KeyError, TypeError, ValueError):
+        paths = set()
+    result = sorted(paths)
+    project.map_inventory = (snapshot, result)
+    return result
+
+
+def _map_nodes(
+    project: ProjectState, *, all_pages: bool = False
+) -> list[dict[str, Any]]:
     """U01 fix: the real Map hierarchy -- Project root -> one node per
     distinct finding path -> one leaf node per finding under that path.
     `key` is stable and drives expand/collapse + selection; `parent` gates
     a finding leaf's visibility on its file node's expanded state.
+
+    T28-C: file nodes are the recorded inventory plus every finding path,
+    nested under `dir:<path>` directory nodes (presentation only; a
+    root-level file keeps depth 1 and no parent). A directory shows its
+    files 100 per page with a `more:<dir>` node for the rest, unless
+    `all_pages` (Map search) asks for every node.
 
     T28-C: Memories and Agents branch nodes (parent "root", so hidden until
     the root is expanded) come from the lazily loaded read-only
@@ -906,6 +988,16 @@ def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
     for row in rows:
         by_path.setdefault(_finding_path(row), []).append(row)
 
+    sub_dirs: dict[str, set[str]] = {}
+    dir_files: dict[str, list[str]] = {}
+    for path in sorted(set(_map_inventory_paths(project)) | set(by_path)):
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            sub_dirs.setdefault("/".join(parts[: depth - 1]), set()).add(
+                "/".join(parts[:depth])
+            )
+        dir_files.setdefault("/".join(parts[:-1]), []).append(path)
+
     nodes: list[dict[str, Any]] = [
         {
             "key": "root",
@@ -915,28 +1007,66 @@ def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
             "children": True,
         }
     ]
-    for path in sorted(by_path):
-        findings = by_path[path]
-        file_key = f"file:{path}"
-        nodes.append(
-            {
+
+    def emit(directory: str, depth: int) -> None:
+        parent = f"dir:{directory}" if directory else None
+        for sub in sorted(sub_dirs.get(directory, ())):
+            node: dict[str, Any] = {
+                "key": f"dir:{sub}",
+                "label": f"{sub.rsplit('/', 1)[-1]}/",
+                "depth": depth,
+                "kind": "directory",
+                "children": True,
+            }
+            if parent:
+                node["parent"] = parent
+            nodes.append(node)
+            emit(sub, depth + 1)
+        files = dir_files.get(directory, [])
+        shown = files
+        if not all_pages:
+            pages = project.map_dir_pages.get(directory, 1)
+            shown = files[: pages * _MAP_DIR_PAGE_SIZE]
+        for path in shown:
+            findings = by_path.get(path, [])
+            file_key = f"file:{path}"
+            file_node: dict[str, Any] = {
                 "key": file_key,
-                "label": f"{path} ({len(findings)})",
-                "depth": 1,
+                "label": f"{path} ({len(findings)})" if findings else path,
+                "depth": depth,
                 "kind": "file",
+                "path": path,
                 "children": findings,
             }
-        )
-        for idx, finding in enumerate(findings):
-            nodes.append(
-                {
-                    "key": f"{file_key}:finding:{idx}",
-                    "label": str(finding.get("message", "")),
-                    "depth": 2,
-                    "kind": "finding",
-                    "parent": file_key,
-                }
-            )
+            if parent:
+                file_node["parent"] = parent
+            nodes.append(file_node)
+            for idx, finding in enumerate(findings):
+                nodes.append(
+                    {
+                        "key": f"{file_key}:finding:{idx}",
+                        "label": str(finding.get("message", "")),
+                        "depth": depth + 1,
+                        "kind": "finding",
+                        "parent": file_key,
+                    }
+                )
+        if len(shown) < len(files):
+            more: dict[str, Any] = {
+                "key": f"more:{directory}",
+                "label": (
+                    f"... {len(files) - len(shown)} more files "
+                    f"(expand for the next {_MAP_DIR_PAGE_SIZE})"
+                ),
+                "depth": depth,
+                "kind": "more",
+                "children": True,
+            }
+            if parent:
+                more["parent"] = parent
+            nodes.append(more)
+
+    emit("", 1)
     snapshot = project.map_snapshot or {}
     for kind, field_name, title in (
         ("memory", "memories", "Memories"),
@@ -3173,6 +3303,8 @@ def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
     def run(state: TuiState, actions: ScanActions) -> None:
         if state.mode == "map":
             _move_map_selection(state, state.active_project, step)
+        elif state.mode == "detail":
+            _scroll_detail(state.active_project, step)
         elif state.section == "setup":
             _setup_move(state, step)
         else:
@@ -3181,8 +3313,25 @@ def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
     return run
 
 
+def _detail_default_scroll(project: ProjectState) -> int:
+    rows = project.visible_findings()
+    if project.selected_index >= len(rows):
+        return 0
+    line = rows[project.selected_index].get("line")
+    return max(0, line - 1 - _DETAIL_CONTEXT_LINES) if isinstance(line, int) else 0
+
+
+def _scroll_detail(project: ProjectState, step: int) -> None:
+    """Scrolls the Detail file text; `_render_detail` clamps the end."""
+    start = project.detail_scroll
+    if start is None:
+        start = _detail_default_scroll(project)
+    project.detail_scroll = max(0, start + step)
+
+
 def _select_row(state: TuiState, actions: ScanActions) -> None:
     if state.active_project.visible_findings():
+        state.active_project.detail_scroll = None
         state.mode = "detail"
 
 
@@ -3209,8 +3358,79 @@ def _map_expand(state: TuiState, actions: ScanActions) -> None:
         nodes = _map_visible_nodes(state.active_project, state.map_expanded)
         if 0 <= state.map_selected_index < len(nodes):
             node = nodes[state.map_selected_index]
-            if node.get("children"):
+            if node.get("kind") == "more":
+                directory = node["key"].removeprefix("more:")
+                pages = state.active_project.map_dir_pages
+                pages[directory] = pages.get(directory, 1) + 1
+            elif node.get("children"):
                 state.map_expanded.add(node["key"])
+
+
+def _focus_filter(state: TuiState, actions: ScanActions) -> None:
+    """`/`: in Map it searches the map's own nodes (`map_search`),
+    elsewhere it filters findings."""
+    if state.mode == "map":
+        state.map_query = ""
+        state.mode = "map_search"
+    else:
+        state.mode = "search"
+
+
+def _map_search_jump(state: TuiState) -> None:
+    """Selects the first Map node (in tree order, every page, collapsed
+    or not) whose label or key contains the query, expanding each ancestor
+    and paging its directory far enough to show it."""
+    query = state.map_query.strip().lower()
+    if not query:
+        return
+    project = state.active_project
+    nodes = _map_nodes(project, all_pages=True)
+    target = next(
+        (
+            node
+            for node in nodes
+            if query in str(node["label"]).lower() or query in node["key"].lower()
+        ),
+        None,
+    )
+    if target is None:
+        state.message = safe_terminal_text(f"no map node matches {query!r}")
+        return
+    by_key = {node["key"]: node for node in nodes}
+    file_node = (
+        by_key.get(target.get("parent", "")) if target["kind"] == "finding" else target
+    )
+    if file_node is not None and file_node["kind"] == "file":
+        parent = file_node.get("parent")
+        siblings = [
+            node["key"]
+            for node in nodes
+            if node["kind"] == "file" and node.get("parent") == parent
+        ]
+        directory = parent.removeprefix("dir:") if parent else ""
+        needed = siblings.index(file_node["key"]) // _MAP_DIR_PAGE_SIZE + 1
+        project.map_dir_pages[directory] = max(
+            project.map_dir_pages.get(directory, 1), needed
+        )
+    ancestor = target.get("parent")
+    while ancestor is not None:
+        state.map_expanded.add(ancestor)
+        ancestor = by_key.get(ancestor, {}).get("parent")
+    visible = [node["key"] for node in _map_visible_nodes(project, state.map_expanded)]
+    state.map_selected_index = visible.index(target["key"])
+
+
+def _handle_map_search_key(state: TuiState, key: str) -> None:
+    if key == "enter":
+        _map_search_jump(state)
+        state.mode = "map"
+    elif key == "escape":
+        state.map_query = ""
+        state.mode = "map"
+    elif key == "backspace":
+        state.map_query = state.map_query[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.map_query += key
 
 
 def _map_collapse(state: TuiState, actions: ScanActions) -> None:
@@ -3508,7 +3728,7 @@ ACTIONS: tuple[Action, ...] = (
         _relink_enabled,
     ),
     Action("choose_later", "Later", "Section", (), _choose_later, _add_enabled),
-    Action("focus_filter", "Filter", "Text input", ("scans",), _set_mode("search")),
+    Action("focus_filter", "Filter", "Text input", ("scans",), _focus_filter),
     Action("confirm_grant", "Confirm", "Text input", (), lambda state, actions: None),
     Action(
         "cancel_scan",
@@ -3557,6 +3777,7 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         return
     modal: dict[str, Callable[[TuiState, str, ScanActions], None]] = {
         "search": lambda st, k, a: _handle_search_key(st, k),
+        "map_search": lambda st, k, a: _handle_map_search_key(st, k),
         "grant_review": _handle_grant_review_key,
         "memory_search": _handle_memory_search_key,
         "memory_edit": _handle_memory_edit_key,
@@ -3889,10 +4110,24 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
 
 def _load_map_snapshot(project: ProjectState) -> dict[str, Any] | None:
     """T28-C: the read-only `project_map_snapshot` for the current attempt,
-    loaded lazily and cached until (run_id, status) changes. Never writes;
-    an unregistered project has none, a failure is an explicit unavailable
+    loaded lazily and cached until (run_id, status) or the st_mtime_ns of
+    `.rush/memory.db` / `.rush/handoffs` changes (a missing one is `None`),
+    so a deleted memory store or a new handoff reloads. Never writes; an
+    unregistered project has none, a failure is an explicit unavailable
     snapshot."""
-    key = (project.run_id, project.status)
+
+    def _mtime(rel: str) -> int | None:
+        try:
+            return (project.root / rel).stat().st_mtime_ns
+        except OSError:
+            return None
+
+    key = (
+        project.run_id,
+        project.status,
+        _mtime(".rush/memory.db"),
+        _mtime(".rush/handoffs"),
+    )
     if project.map_snapshot_key == key:
         return project.map_snapshot
     project.map_snapshot_key = key
@@ -3950,14 +4185,18 @@ def _captured_detail(project: ProjectState, finding: dict[str, Any]) -> str | No
         return None
     if page.get("error") or page.get("content_base64") is None:
         return None
-    text = base64.b64decode(page["content_base64"]).decode("utf-8", errors="replace")
+    chunk = base64.b64decode(page["content_base64"])
+    text = safe_terminal_text(chunk.decode("utf-8", errors="replace"))
+    size = page.get("size")
+    if isinstance(size, int) and size > len(chunk):
+        text += f"\n... truncated at {len(chunk)} of {size} bytes"
     message = safe_terminal_text(finding.get("message") or "")
     return "\n".join(
         part
         for part in (
             safe_terminal_text(page.get("label")),
             message,
-            safe_terminal_text(text),
+            text,
         )
         if part
     )
@@ -3968,14 +4207,33 @@ def _render_detail(project: ProjectState) -> Panel:
     if not rows or project.selected_index >= len(rows):
         return Panel(Text("No finding selected."), title="Detail")
     finding = rows[project.selected_index]
-    body = _safe(
-        _captured_detail(project, finding)
-        or _bounded_local_detail(project.root, finding)
+    body = _captured_detail(project, finding) or _bounded_local_detail(
+        project.root, finding
     )
+    # The label line and the finding message stay pinned; the file text
+    # below them scrolls from `detail_scroll` (default: the finding line).
+    message = safe_terminal_text(finding.get("message") or "")
+    lines = body.split("\n")
+    pinned = 1 + (len(message.split("\n")) if message else 0)
+    head, text_lines = lines[:pinned], lines[pinned:]
+    start = project.detail_scroll
+    if start is None:
+        start = _detail_default_scroll(project)
+    start = min(start, max(0, len(text_lines) - 1))
+    if project.detail_scroll is not None:
+        project.detail_scroll = start
+    parts: list[Text] = [_safe("\n".join(head))]
+    if start > 0:
+        parts.append(
+            _safe(f"... {start} earlier lines above (scroll up to see them)", "dim")
+        )
+    window = text_lines[start : start + _DETAIL_WINDOW_LINES]
+    if window:
+        parts.append(_safe("\n".join(window)))
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
-    return Panel(body, title=title, style="magenta")
+    return Panel(Group(*parts), title=title, style="magenta")
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
@@ -4267,6 +4525,8 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
     present, since each used to insert its own extra line)."""
     if state.mode == "search":
         return Text(f"/{project.filter_text}", style="bold yellow")
+    if state.mode == "map_search":
+        return _safe(f"map search /{state.map_query}", "bold yellow")
     if state.mode == "quit_confirm":
         # P69-06g: the copy names exactly what Detach does for this run's
         # *current* ownership state -- never implying invisible continuation
@@ -4356,7 +4616,7 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
         return _render_memory_admin(state)
     if state.mode == "git":
         return _render_git_panel(state)
-    if state.mode == "map":
+    if state.mode in ("map", "map_search"):
         return _render_map(state, project)
     if state.mode == "project_selector":
         return _render_project_selector(state)
@@ -4412,7 +4672,7 @@ def render_app(state: TuiState) -> Layout:
     # nav pane at all. Previously there was only one `>= 100` check with
     # no distinct 80-99/narrow behavior.
     branch = _width_branch(state.terminal_size[0])
-    in_pane_mode = state.mode in ("list", "map") and state.overlay is None
+    in_pane_mode = state.mode in ("list", "map", "map_search") and state.overlay is None
     if branch == "wide" and in_pane_mode:
         overview = state.mode == "list" and state.section == "overview"
         layout["main"].split_row(

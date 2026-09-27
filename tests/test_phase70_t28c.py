@@ -23,6 +23,7 @@ depends on an unmerged predecessor, so no `RED-via-Tn` label applies.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1015,3 +1016,534 @@ def test_t28c_map_detail_falls_back_to_live_file_without_captured_snapshot() -> 
             "with no captured snapshot, detail must read the live file and "
             "label it 'live file'"
         )
+
+
+# ---------------------------------------------------------------------------
+# T28-C fix round 1 (review r1).
+# ---------------------------------------------------------------------------
+
+
+def _cursor(
+    *,
+    project_id: str,
+    run_id: str,
+    attempt_id: str,
+    tool_id: str,
+    path: str,
+    sha256: str,
+    offset: int = 0,
+) -> str:
+    """Encodes an artifact-page cursor exactly as the server issues it."""
+    import base64
+
+    payload = {
+        "project_id": project_id,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "tool_id": tool_id,
+        "path": path,
+        "sha256": sha256,
+        "offset": offset,
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+
+def _artifact_project(tmp_path: Path) -> tuple[str, Path, Path, dict[str, Any]]:
+    """Registers a project whose run-a attempt published one immutable
+    artifact snapshot (`report.txt`). Returns (project_id, root, data_root,
+    snapshot)."""
+    import hashlib
+
+    root = tmp_path / "proj"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    data_root = tmp_path / "rush-data" / "proj"
+    project_id = register_project(root, data_root=data_root).project_id
+    data = b"hello artifact bytes"
+    digest = hashlib.sha256(b"tool-a").hexdigest()[:24]
+    attempt_rel = ".rush/runs/run-a/attempts/run-a-attempt-1"
+    immutable_rel = f"{attempt_rel}/artifacts/{digest}/0.bin"
+    (root / immutable_rel).parent.mkdir(parents=True, exist_ok=True)
+    (root / immutable_rel).write_bytes(data)
+    snapshot = {
+        "immutable_path": immutable_rel,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "media_type": "text/plain",
+    }
+    scheduled = [
+        {
+            "candidate_id": "tool-a",
+            "category": "lint",
+            "outcome": "executed",
+            "child": {"status": "ok", "artifacts": ["report.txt"]},
+            "artifact_snapshots": {"report.txt": snapshot},
+        }
+    ]
+    manifest = {
+        "schema_version": 1,
+        "run_id": "run-a",
+        "attempt_id": "run-a-attempt-1",
+        "plan_id": "plan-run-a",
+        "project_id": project_id,
+        "root": str(root),
+        "run_state": "completed",
+        "severity": "warn",
+        "concurrency": 1,
+        "timeout_seconds": 300,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "candidates": scheduled,
+        "scheduled": scheduled,
+        "aggregate": {
+            "tool": "scan",
+            "engine": None,
+            "status": "ok",
+            "findings": [],
+            "metadata": {"coverage": {"empty": False}},
+        },
+        "totals": {
+            "candidate_count": 1,
+            "scheduled_count": 1,
+            "executed_count": 1,
+            "finding_count": 0,
+        },
+    }
+    (root / attempt_rel / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    (root / attempt_rel / "attempt.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-a",
+                "attempt_id": "run-a-attempt-1",
+                "plan_id": "plan-run-a",
+                "project_id": project_id,
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "attempt_generation": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project_id, root, data_root, snapshot
+
+
+def test_t28c_artifact_page_reads_a_check_suite_manifest_without_project_id(
+    tmp_path: Path,
+) -> None:
+    """A CHECK_SUITE-published manifest carries no `project_id`; identity is
+    the cursor's project resolved to its root, so the page reads. A manifest
+    naming a different project stays not_found."""
+    import base64
+
+    from rush.workflows.projects import read_project_artifact_page
+
+    project_id, root, data_root, snapshot = _artifact_project(tmp_path)
+    manifest_path = root / _MANIFEST_TEMPLATE.format(
+        run_id="run-a", attempt_id="run-a-attempt-1"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["project_id"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    cursor = _cursor(
+        project_id=project_id,
+        run_id="run-a",
+        attempt_id="run-a-attempt-1",
+        tool_id="tool-a",
+        path="report.txt",
+        sha256=snapshot["sha256"],
+    )
+    page = read_project_artifact_page(project_id, cursor, data_root=data_root)
+    assert page.get("error") is None, page
+    assert base64.b64decode(page["content_base64"]) == b"hello artifact bytes"
+
+    manifest["project_id"] = "someone-else"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    page = read_project_artifact_page(project_id, cursor, data_root=data_root)
+    assert page["error"] == "not_found"
+
+
+def _seed_memory_db(root: Path) -> Path:
+    import sqlite3
+
+    db = root / ".rush" / "memory.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "CREATE TABLE memory_artifacts (id TEXT, symbol_ref TEXT, source TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO memory_artifacts VALUES ('m1', 'src/a.py::f', 'agent')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db
+
+
+def test_t28c_map_shows_memories_before_any_scan(tmp_path: Path) -> None:
+    root, data_root, project_id = _project(tmp_path, "proj")
+    _seed_memory_db(root)
+    snapshot = _snapshot(root, data_root, project_id, run_id=None, attempt_id=None)
+    assert snapshot["memories"] == [{"id": "m1", "cites": ["src/a.py"]}]
+    assert snapshot["agents"] == []
+
+
+def test_t28c_malformed_inventory_is_missing_not_rewalked(tmp_path: Path) -> None:
+    root, data_root, project_id = _project(tmp_path, "proj")
+    manifest_path = _write_manifest(
+        root,
+        run_id="run-1",
+        attempt_id="1",
+        findings=[{"finding_id": "f1", "path": "src/a.py"}],
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["file_inventory"] = {"not": "a list"}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (root / "src" / "live_only.py").write_text("x = 1\n")
+
+    snapshot = _snapshot(root, data_root, project_id, run_id="run-1", attempt_id="1")
+    assert snapshot["file_inventory_missing"] is True
+    assert snapshot["files"] == [{"path": "src/a.py"}]
+
+
+def test_t28c_deeply_nested_cursor_is_invalid(tmp_path: Path) -> None:
+    import base64
+
+    from rush.workflows.projects import read_project_artifact_page
+
+    _root, data_root, project_id = _project(tmp_path, "proj")
+    for raw in (b"[" * 100000 + b"]" * 100000, b"[1, 2]", b"\xff\xfe"):
+        cursor = base64.urlsafe_b64encode(raw).decode("ascii")
+        page = read_project_artifact_page(project_id, cursor, data_root=data_root)
+        assert page["error"] == "invalid_cursor"
+
+
+def test_t28c_map_reloads_after_memory_delete_and_new_handoff(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The map snapshot cache key covers `.rush/memory.db` and
+    `.rush/handoffs` mtimes, so a deleted memory store or a new handoff
+    reloads the snapshot without a new run or status change."""
+    import os
+
+    from rush import tui as tui_mod
+    from rush.workflows import projects as wp
+
+    root = tmp_path / "proj"
+    (root / ".rush" / "handoffs").mkdir(parents=True)
+    db = root / ".rush" / "memory.db"
+    db.write_bytes(b"x")
+    calls: list[int] = []
+    monkeypatch.setattr(wp, "resolve_project", lambda project_id: object())
+    monkeypatch.setattr(
+        wp,
+        "project_map_snapshot",
+        lambda record, run_id, attempt_id: calls.append(1) or {"available": True},
+    )
+    project = ProjectState(name="proj", root=root, project_id="pid")
+
+    tui_mod._load_map_snapshot(project)
+    tui_mod._load_map_snapshot(project)
+    assert len(calls) == 1, "unchanged state is served from the cache"
+
+    db.unlink()
+    tui_mod._load_map_snapshot(project)
+    assert len(calls) == 2, "deleting memory.db must reload the snapshot"
+
+    handoffs = root / ".rush" / "handoffs"
+    (handoffs / "h1.json").write_text("{}", encoding="utf-8")
+    st = handoffs.stat()
+    os.utime(handoffs, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+    tui_mod._load_map_snapshot(project)
+    assert len(calls) == 3, "a new handoff must reload the snapshot"
+
+    tui_mod._load_map_snapshot(project)
+    assert len(calls) == 3
+
+
+def _artifact_cursor_for(project_id: str, snapshot: dict[str, Any]) -> str:
+    return _cursor(
+        project_id=project_id,
+        run_id="run-a",
+        attempt_id="run-a-attempt-1",
+        tool_id="tool-a",
+        path="report.txt",
+        sha256=snapshot["sha256"],
+    )
+
+
+def test_t28c_intermediate_symlink_component_is_refused(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A directory component swapped for a symlink after
+    `PhysicalRoot.open_contained` validated the path (the check/use race)
+    must still be refused: each component is opened from the root with
+    dir_fd and O_NOFOLLOW, never re-resolved by path."""
+    import shutil
+
+    from rush.io.physical_paths import PhysicalRoot
+    from rush.workflows.projects import read_project_artifact_page
+
+    project_id, root, data_root, snapshot = _artifact_project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    swap: dict[str, Any] = {}
+    original = PhysicalRoot.open_contained
+
+    def racing_open_contained(
+        self: PhysicalRoot, relative_path: Any, purpose: str = "read"
+    ) -> Path:
+        result = original(self, relative_path, purpose)
+        victim = swap.get("dir")
+        if str(relative_path) == swap.get("rel") and not victim.is_symlink():
+            shutil.copytree(victim, outside / victim.name)
+            shutil.rmtree(victim)
+            victim.symlink_to(outside / victim.name, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(PhysicalRoot, "open_contained", racing_open_contained)
+
+    # Artifact page: the snapshot's parent directory is swapped for a
+    # symlink to an identical copy outside the root.
+    swap["rel"] = snapshot["immutable_path"]
+    swap["dir"] = (root / snapshot["immutable_path"]).parent
+    page = read_project_artifact_page(
+        project_id, _artifact_cursor_for(project_id, snapshot), data_root=data_root
+    )
+    assert page.get("error") == "invalid_path", page
+    assert not page.get("content_base64"), "no bytes are served on refusal"
+
+    # Live-file detail: `src` is swapped for a symlink to an outside copy.
+    (root / "src").mkdir()
+    (root / "src" / "a.py").write_text("OUTSIDE_SECRET = 1\n", encoding="utf-8")
+    swap["rel"] = "src/a.py"
+    swap["dir"] = root / "src"
+    detail = _bounded_local_detail(root, {"path": "src/a.py", "message": "(fb)"})
+    assert "OUTSIDE_SECRET" not in detail, detail
+    assert "live file" not in detail.lower()
+
+
+def test_t28c_hard_link_to_outside_file_is_refused(tmp_path: Path) -> None:
+    """A regular file inside the root that is a hard link (st_nlink > 1) to
+    a file outside it is refused by both the live-file detail and the
+    captured-artifact page read."""
+    from rush.workflows.projects import read_project_artifact_page
+
+    project_id, root, data_root, snapshot = _artifact_project(tmp_path)
+    outside_file = tmp_path / "outside-secret.py"
+    outside_file.write_text("HARDLINK_SECRET = 1\n", encoding="utf-8")
+    os.link(outside_file, root / "x.py")
+    detail = _bounded_local_detail(root, {"path": "x.py", "message": "(fb)"})
+    assert "HARDLINK_SECRET" not in detail, detail
+    assert "live file" not in detail.lower()
+
+    immutable = root / snapshot["immutable_path"]
+    outside_bytes = tmp_path / "outside-artifact.bin"
+    outside_bytes.write_bytes(immutable.read_bytes())
+    immutable.unlink()
+    os.link(outside_bytes, immutable)
+    page = read_project_artifact_page(
+        project_id, _artifact_cursor_for(project_id, snapshot), data_root=data_root
+    )
+    assert page.get("error") == "invalid_path", page
+
+    # A single-link regular file still reads.
+    (root / "y.py").write_text("PLAIN = 1\n", encoding="utf-8")
+    detail = _bounded_local_detail(root, {"path": "y.py", "message": "(fb)"})
+    assert "PLAIN = 1" in detail
+
+
+def test_t28c_detail_shows_the_finding_line_of_a_long_file(tmp_path: Path) -> None:
+    """A 3000-line file with the finding at line 1500: the detail opens at
+    the finding line (minus context) with a marker that earlier lines are
+    above, the cursor scrolls, selecting a row resets the scroll, and a file
+    over the 1 MiB cap says it is truncated."""
+    from rich.layout import Layout
+
+    from rush import tui as tui_mod
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "big.py").write_text(
+        "\n".join(f"row_{i:04d} = {i}" for i in range(1, 3001)) + "\n",
+        encoding="utf-8",
+    )
+    finding = Finding(path="big.py", line=1500, message="too long", severity="warn")
+    project = ProjectState(
+        name="proj",
+        root=root,
+        results=[_tool_result("ruff", "fail", findings=[finding])],
+    )
+
+    def screen() -> str:
+        console = Console(record=True, width=100, height=24)
+        console.print(Layout(tui_mod._render_detail(project)))
+        return console.export_text()
+
+    rendered = screen()
+    assert "row_1500 = 1500" in rendered, rendered
+    assert "row_0001" not in rendered
+    assert "earlier lines above" in rendered
+    assert "too long" in rendered, "the finding message stays visible"
+
+    state = tui_mod.TuiState(projects=[project], active_index=0)
+    state.mode = "detail"
+    tui_mod._cursor(40)(state, None)  # type: ignore[arg-type]
+    assert project.selected_index == 0, "scrolling must not move the selection"
+    assert "row_1540 = 1540" in screen()
+    tui_mod._cursor(-5000)(state, None)  # type: ignore[arg-type]
+    rendered = screen()
+    assert "row_0001 = 1" in rendered
+    assert "earlier lines above" not in rendered
+
+    tui_mod._select_row(state, None)  # type: ignore[arg-type]
+    assert project.detail_scroll is None
+    assert "row_1500 = 1500" in screen()
+
+    big = root / "big.py"
+    big.write_bytes(b"x = 1\n" * ((1024 * 1024) // 6 + 100))
+    size = big.stat().st_size
+    detail = tui_mod._bounded_local_detail(root, {"path": "big.py", "line": 1})
+    assert f"truncated at {1024 * 1024} of {size} bytes" in detail
+
+
+def _inventory_project(tmp_path: Path, paths: list[str]) -> ProjectState:
+    """A project whose loaded map snapshot records `paths` as its file
+    inventory (the `build_project_map` input), with no findings."""
+    return ProjectState(
+        name="inv",
+        root=tmp_path,
+        map_snapshot={
+            "schema_version": 1,
+            "project_id": "inv",
+            "files": [{"path": path} for path in paths],
+            "findings": [],
+            "memories": [],
+            "agents": [],
+        },
+    )
+
+
+def test_t28c_map_groups_files_into_directories_from_the_inventory(
+    tmp_path: Path,
+) -> None:
+    """Map file nodes come from the recorded inventory (not only finding
+    paths) and nest under expandable directory nodes; a root-level file
+    stays at depth 1 with no parent."""
+    from rush import tui as tui_mod
+
+    project = _inventory_project(
+        tmp_path, ["a.py", "src/b.py", "src/pkg/c.py", "docs/d.md"]
+    )
+    project.results = [
+        _tool_result(
+            "ruff",
+            "fail",
+            findings=[
+                Finding(path="src/b.py", line=3, message="bad b", severity="warn")
+            ],
+        )
+    ]
+    by_key = {node["key"]: node for node in tui_mod._map_nodes(project)}
+    assert by_key["file:a.py"]["depth"] == 1
+    assert by_key["file:a.py"].get("parent") is None
+    assert by_key["dir:src"]["depth"] == 1 and by_key["dir:src"].get("parent") is None
+    assert by_key["dir:src/pkg"]["parent"] == "dir:src"
+    assert by_key["file:src/pkg/c.py"]["parent"] == "dir:src/pkg"
+    assert by_key["file:src/pkg/c.py"]["depth"] == 3
+    assert by_key["file:docs/d.md"]["parent"] == "dir:docs"
+    assert by_key["file:src/b.py:finding:0"]["parent"] == "file:src/b.py"
+    assert by_key["file:src/b.py:finding:0"]["depth"] == 3
+
+    collapsed = [n["key"] for n in tui_mod._map_visible_nodes(project, set())]
+    assert collapsed[:4] == ["root", "dir:docs", "dir:src", "file:a.py"], collapsed
+    assert "file:src/b.py" not in collapsed
+
+    state = tui_mod.TuiState(projects=[project], active_index=0)
+    state.mode = "map"
+    state.map_selected_index = collapsed.index("dir:src")
+    tui_mod._map_expand(state, None)  # type: ignore[arg-type]
+    shown = [n["key"] for n in tui_mod._map_visible_nodes(project, state.map_expanded)]
+    assert "file:src/b.py" in shown and "dir:src/pkg" in shown
+    assert "file:src/pkg/c.py" not in shown
+    tui_mod._map_collapse(state, None)  # type: ignore[arg-type]
+    shown = [n["key"] for n in tui_mod._map_visible_nodes(project, state.map_expanded)]
+    assert "file:src/b.py" not in shown
+
+
+def test_t28c_map_paginates_a_large_directory(tmp_path: Path) -> None:
+    """A directory with more than 100 files shows 100 at a time plus a
+    'more' node; expanding it shows the next page until every file shows.
+    250 files also force `build_project_map` to group, so the inventory is
+    read through `expand_group` pages without losing a file."""
+    from rush import tui as tui_mod
+
+    paths = [f"big/f_{i:04d}.py" for i in range(250)]
+    project = _inventory_project(tmp_path, paths)
+
+    state = tui_mod.TuiState(projects=[project], active_index=0)
+    state.mode = "map"
+    state.map_expanded = {"dir:big"}
+
+    def big_files() -> list[str]:
+        return [
+            n["key"]
+            for n in tui_mod._map_visible_nodes(project, state.map_expanded)
+            if n["key"].startswith("file:big/")
+        ]
+
+    for expected in (100, 200, 250):
+        assert len(big_files()) == expected
+        visible = tui_mod._map_visible_nodes(project, state.map_expanded)
+        more = [i for i, n in enumerate(visible) if n["key"] == "more:big"]
+        if expected == 250:
+            assert more == []
+            break
+        assert len(more) == 1
+        assert f"{250 - expected} more" in visible[more[0]]["label"]
+        state.map_selected_index = more[0]
+        tui_mod._map_expand(state, None)  # type: ignore[arg-type]
+    assert big_files() == [f"file:{path}" for path in paths]
+
+
+def test_t28c_map_search_reaches_a_collapsed_file(tmp_path: Path) -> None:
+    """`/` in Map mode searches every node, including files under
+    collapsed directories and beyond a directory's first page, expands the
+    path to the match and selects it -- it never enters findings search."""
+    from types import SimpleNamespace
+
+    from rush import tui as tui_mod
+
+    paths = ["a.py", "deep/nested/target_mod.py"] + [
+        f"big/f_{i:04d}.py" for i in range(250)
+    ]
+    project = _inventory_project(tmp_path, paths)
+    state = tui_mod.TuiState(projects=[project], active_index=0)
+    state.section = "map"
+    state.mode = "map"
+    actions = SimpleNamespace()
+
+    def search(query: str) -> str:
+        tui_mod._dispatch_key(state, "/", actions)  # type: ignore[arg-type]
+        assert state.mode == "map_search"
+        for ch in query:
+            tui_mod._dispatch_key(state, ch, actions)  # type: ignore[arg-type]
+        tui_mod._dispatch_key(state, "enter", actions)  # type: ignore[arg-type]
+        assert state.mode == "map"
+        visible = tui_mod._map_visible_nodes(project, state.map_expanded)
+        return str(visible[state.map_selected_index]["key"])
+
+    assert search("target_mod") == "file:deep/nested/target_mod.py"
+    assert {"dir:deep", "dir:deep/nested"} <= state.map_expanded
+    assert project.filter_text == "", "Map search must not filter findings"
+
+    assert search("f_0230") == "file:big/f_0230.py"
+    assert "dir:big" in state.map_expanded
+
+    tui_mod._dispatch_key(state, "/", actions)  # type: ignore[arg-type]
+    for ch in "zz":
+        tui_mod._dispatch_key(state, ch, actions)  # type: ignore[arg-type]
+    tui_mod._dispatch_key(state, "escape", actions)  # type: ignore[arg-type]
+    assert state.mode == "map"
+    assert state.map_query == ""

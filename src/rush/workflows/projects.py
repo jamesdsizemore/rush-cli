@@ -2076,11 +2076,14 @@ def project_map_snapshot(
         if chronology.state in {"latest_unresolved", "chronology_ambiguous"}:
             return unavailable(chronology.state, selection_state=chronology.state)
         if chronology.published is None:
+            # No published attempt yet: memories are project-scoped and
+            # still read; agents are run-scoped, so there are none.
             return {
                 **base,
                 "run_id": None,
                 "attempt_id": None,
                 "selection_state": chronology.state,
+                "memories": _current_map_memories(root),
                 "artifact_snapshots": {},
             }
         run_id = chronology.published.run_id
@@ -2122,15 +2125,13 @@ def project_map_snapshot(
         "selection_state": selection_state,
         "findings": findings,
     }
-    if "file_inventory" in manifest:
-        inventory = manifest["file_inventory"]
-        snapshot["files"] = (
-            inventory if isinstance(inventory, list) else _scan_file_inventory(root)
-        )
+    inventory = manifest.get("file_inventory")
+    if isinstance(inventory, list):
+        snapshot["files"] = inventory
     else:
-        # A legacy manifest with no recorded inventory: never a live rewalk
-        # substituted as if recorded; only the attempt's own finding paths,
-        # flagged as such.
+        # A legacy manifest with no recorded inventory, or a malformed
+        # (non-list) one: never a live rewalk substituted as if recorded;
+        # only the attempt's own finding paths, flagged as such.
         snapshot["file_inventory_missing"] = True
         snapshot["files"] = [
             {"path": path}
@@ -2167,6 +2168,58 @@ def project_map_snapshot(
     return snapshot
 
 
+def open_contained_file(root: Path | str, relative_path: str) -> int:
+    """Opens `relative_path` under `root` read-only and returns the fd.
+
+    Lexical checks go through `PhysicalRoot.open_contained`; then every
+    component is opened from the root's own fd with `dir_fd` and
+    `O_NOFOLLOW` (`O_DIRECTORY` for directories), so a component swapped
+    for a symlink after validation is refused instead of followed. The
+    result must be a regular file with `st_nlink == 1` (a hard link can
+    alias a file outside the root). Raises `ContainmentError` on a refusal,
+    `FileNotFoundError` when a component is missing, `OSError` otherwise.
+    The caller closes the fd."""
+    physical = PhysicalRoot(root)
+    target = physical.open_contained(relative_path)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    # O_NONBLOCK: opening a FIFO planted at the path must not hang the reader.
+    file_flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    parts = Path(relative_path).parts
+    if not parts:
+        raise ContainmentError("NOT_REGULAR_FILE", "Path names no file", relative_path)
+    if os.open in os.supports_dir_fd:
+        dir_flags = os.O_RDONLY | nofollow | getattr(os, "O_DIRECTORY", 0)
+        dir_fd = os.open(physical.root_path, dir_flags)
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+                os.close(dir_fd)
+                dir_fd = next_fd
+            fd = os.open(parts[-1], file_flags, dir_fd=dir_fd)
+        finally:
+            os.close(dir_fd)
+    else:
+        # ponytail: no dir_fd (Windows) -- open_contained's component walk
+        # plus O_NOFOLLOW on the leaf is the check; the fstat checks remain.
+        fd = os.open(target, file_flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ContainmentError(
+                "NOT_REGULAR_FILE", "Not a regular file", relative_path
+            )
+        if st.st_nlink > 1:
+            raise ContainmentError(
+                "HARDLINK_DISALLOWED",
+                "A hard-linked file may alias a file outside the root",
+                relative_path,
+            )
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def read_project_artifact_page(
     project: str | Path,
     cursor: str,
@@ -2179,7 +2232,8 @@ def read_project_artifact_page(
     file. `cursor` is base64url JSON `{project_id, run_id, attempt_id,
     tool_id, path, sha256, offset}`. The manifest and the immutable path are
     both reached through `PhysicalRoot.open_contained`, and the snapshot is
-    opened `O_NOFOLLOW` and must be a regular file of the recorded size.
+    opened by `open_contained_file` (per-component `dir_fd` + `O_NOFOLLOW`,
+    no hard link) and must be a regular file of the recorded size.
     Errors are returned as `error`: `invalid_cursor | not_found |
     immutable_content_unavailable | invalid_path | read_failed`."""
     record = resolve_project(project, data_root=data_root)
@@ -2191,7 +2245,7 @@ def read_project_artifact_page(
 
     try:
         payload = json.loads(_b64url_decode(cursor))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return error("invalid_cursor")
     if not isinstance(payload, dict):
         return error("invalid_cursor")
@@ -2219,7 +2273,12 @@ def read_project_artifact_page(
         manifest = _read_contained_manifest(root, run_id, attempt_id)
     except (FileNotFoundError, ValueError):
         return error("not_found", rel_path)
-    if not isinstance(manifest, dict) or manifest.get("project_id") != project_id:
+    # Identity is the cursor's project resolved to its root (the manifest was
+    # read under that root); a CHECK_SUITE manifest records no project_id, so
+    # only a manifest naming a different project is refused.
+    if not isinstance(manifest, dict) or manifest.get("project_id", project_id) != (
+        project_id
+    ):
         return error("not_found", rel_path)
     snapshot = None
     for item in manifest.get("scheduled") or []:
@@ -2235,21 +2294,17 @@ def read_project_artifact_page(
     immutable_path = snapshot.get("immutable_path")
     if type(total_size) is not int or not isinstance(immutable_path, str):
         return error("immutable_content_unavailable", rel_path)
-    try:
-        target = PhysicalRoot(root).open_contained(immutable_path)
-    except (ContainmentError, ValueError):
-        return error("invalid_path", rel_path)
     limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
     try:
-        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = open_contained_file(root, immutable_path)
+    except (ContainmentError, ValueError):
+        return error("invalid_path", rel_path)
     except FileNotFoundError:
         return error("not_found", rel_path)
     except OSError:
         return error("invalid_path", rel_path)
     try:
         st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            return error("invalid_path", rel_path)
         if st.st_size != total_size:
             return error("immutable_content_unavailable", rel_path)
         os.lseek(fd, offset, os.SEEK_SET)
@@ -2308,6 +2363,7 @@ __all__ = [
     "list_project_artifacts",
     "list_projects",
     "list_projects_page",
+    "open_contained_file",
     "project_git_commit_diff",
     "project_git_history",
     "project_map_snapshot",
