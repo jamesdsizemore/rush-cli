@@ -32,6 +32,11 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
+from rush.integrations.agent_hooks import (
+    HOOK_AGENTS,
+    registered_project_id,
+    set_hook_activation,
+)
 from rush.integrations.agents import (
     MCP_PROFILES,
     AgentConnectionError,
@@ -121,7 +126,13 @@ class AgentConnectionTool(ToolFn):
         resources: Sequence[OwnedResource] = (),
         profile: str | None = None,
         confirm_profile: ProfileConsent = False,
+        agent_hooks: Literal["enable", "disable"] | None = None,
+        hook_result_cache: bool = False,
     ) -> ToolResult:
+        """Phase 70 T7: `agent_hooks` enables or disables this host's post-edit
+        hook for `project_root` (D3 opt-in, connect only); `hook_result_cache`
+        additionally lets each hook check store its full result for a
+        `result_handle`. Invalid hook requests are rejected before any write."""
         started = monotonic()
         granted = permissions or ExecutionPermissions()
 
@@ -131,6 +142,18 @@ class AgentConnectionTool(ToolFn):
                 return self._result(
                     started, "skipped", f"agent connect requires {', '.join(missing)}."
                 )
+        if agent_hooks is not None or hook_result_cache:
+            try:
+                _check_hook_request(
+                    action,
+                    agent_id,
+                    project_root,
+                    agent_hooks,
+                    hook_result_cache,
+                    data_root,
+                )
+            except ValueError as exc:
+                return self._result(started, "error", f"agent {action}: {exc}")
 
         try:
             raw = self._dispatch(
@@ -163,7 +186,20 @@ class AgentConnectionTool(ToolFn):
             return self._result(started, "error", f"agent {action}: {exc}")
 
         if action == "connect":
-            return self._connect_result(started, raw)
+            if agent_hooks is None:
+                return self._connect_result(started, raw)
+            assert agent_id is not None and project_root is not None  # checked above
+            raw["hooks"] = _apply_hooks(
+                raw, agent_id, project_root, agent_hooks, hook_result_cache, data_root
+            )
+            result = self._connect_result(started, raw)
+            result["summary"] += f"; agent hooks: {raw['hooks']['state']}"
+            if (
+                raw["hooks"]["state"] in ("conflict", "error")
+                and result["status"] == "ok"
+            ):
+                result["status"] = "warn"
+            return result
         if action == "disconnect":
             status: ToolStatus = "ok" if raw["status"] == "ok" else "warn"
             return self._result(
@@ -454,6 +490,60 @@ def _profile_fields(request: dict[str, Any], operation: str) -> tuple[str | None
     if confirm and profile is None:
         raise _AgentInvalidRequestError("confirm_profile_migration requires profile")
     return profile, confirm
+
+
+def _check_hook_request(
+    action: str,
+    agent_id: str | None,
+    project_root: Path | None,
+    agent_hooks: str | None,
+    hook_result_cache: bool,
+    data_root: Path | None,
+) -> None:
+    """T7: every hook-flag precondition, checked read-only before connect writes."""
+    if action != "connect":
+        raise ValueError("agent hook flags apply to connect only")
+    if agent_hooks is None or (hook_result_cache and agent_hooks != "enable"):
+        raise ValueError("--hook-result-cache needs --enable-agent-hooks")
+    if agent_id not in HOOK_AGENTS:
+        raise ValueError(
+            f"agent hooks are available for {', '.join(sorted(HOOK_AGENTS))} only"
+        )
+    if project_root is None:
+        raise ValueError("agent hooks are enabled per project; pass --project PATH")
+    registered_project_id(project_root, data_root)
+
+
+def _apply_hooks(
+    raw: dict[str, Any],
+    agent_id: str,
+    project_root: Path,
+    agent_hooks: str,
+    hook_result_cache: bool,
+    data_root: Path | None,
+) -> dict[str, Any]:
+    if "apply" not in raw:  # a refused profile migration wrote nothing
+        return {
+            "state": "pending",
+            "reason": "nothing was written because the profile migration was not applied",
+        }
+    try:
+        hooks = set_hook_activation(
+            agent_id,
+            project_root,
+            enable=agent_hooks == "enable",
+            recovery_cache_write=hook_result_cache,
+            data_root=data_root,
+        )
+    except (AgentConnectionError, ValueError, OSError) as exc:
+        return {"state": "error", "error": str(exc)}
+    if agent_hooks == "enable" and hooks["state"] in ("applied", "unchanged"):
+        hooks["note"] = (
+            f"{agent_id} runs this hook only through the Rush plugin "
+            f"(rush install --agent-plugin {HOOK_AGENTS[agent_id]}) and its own "
+            "hook approval"
+        )
+    return hooks
 
 
 class _AgentInvalidRequestError(AgentConnectionError):
