@@ -4,6 +4,7 @@ import hashlib
 import re
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ class FailureLedger:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS failure_ledgers (
@@ -38,7 +39,7 @@ class FailureLedger:
         safe_patch = SecretRedactor.redact_text(failed_patch)
         safe_error = SecretRedactor.redact_text(error_message)
         now = int(time.time())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO failure_ledgers (fingerprint, error_message, failed_patch, created_at)
@@ -52,7 +53,7 @@ class FailureLedger:
 
     def is_known_failure(self, patch: str) -> bool:
         fingerprint = hashlib.sha256(patch.encode("utf-8")).hexdigest()
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cur = conn.execute(
                 "SELECT 1 FROM failure_ledgers WHERE fingerprint = ?", (fingerprint,)
             )
@@ -62,7 +63,7 @@ class FailureLedger:
         """Return safe failure evidence without disclosing the failed patch."""
         if not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
             return None
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             row = conn.execute(
                 "SELECT error_message, created_at FROM failure_ledgers WHERE fingerprint = ?",
                 (fingerprint,),

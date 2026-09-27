@@ -22,6 +22,7 @@ from rush.contracts.results import (
 )
 from rush.invocation.cache_policy import decide_cache
 from rush.logging import get_logger, log_subsystem
+from rush.runtime.sqlite_util import ClosingConnection
 from rush.safety.redactor import sanitize_value
 from rush.tools.base import ToolResult
 
@@ -100,7 +101,9 @@ class ResultCache:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        conn = sqlite3.connect(
+            str(self.db_path), timeout=10.0, factory=ClosingConnection
+        )
         conn.row_factory = sqlite3.Row
         return conn
 

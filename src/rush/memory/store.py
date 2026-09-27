@@ -19,11 +19,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from types import TracebackType
 from typing import Any, Literal
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.trust import PromotionResult, evaluate_conflict, evaluate_promotion
+from rush.runtime.sqlite_util import ClosingConnection
 from rush.safety.redactor import sanitize_value
 
 MemoryFamily = Literal["handoff", "experience", "memory", "skill"]
@@ -141,24 +141,6 @@ def useful_memory_count(conn: sqlite3.Connection) -> int:
         params,
     ).fetchone()
     return int(row[0])
-
-
-class _ClosingConnection(sqlite3.Connection):
-    """`with` commits or rolls back, then closes. A bare `sqlite3.Connection`
-    stays open after `with` until garbage collection (its statement cache is a
-    reference cycle), holding committed pages in `-wal` until then."""
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-        /,
-    ) -> Literal[False]:
-        try:
-            return super().__exit__(exc_type, exc, tb)
-        finally:
-            self.close()
 
 
 class TrustTierError(ValueError):
@@ -868,7 +850,7 @@ def read_sqlite_readonly[T](
     `MemoryStoreUnreadableError` with `readonly_state_code`. Nothing is ever migrated.
     """
     if Path(f"{db}-wal").exists():
-        # ponytail: store writers close on `with` exit (`_ClosingConnection`); any
+        # ponytail: store writers close on `with` exit (`ClosingConnection`); any
         # other writer this process leaked (a bare `with sqlite3.connect()` stays
         # open until collected) is collected first, so it checkpoints and removes
         # its WAL now, not mid-read -- a read-only connection that closes last
@@ -969,7 +951,7 @@ class TypedArtifactStore:
         if self._readonly_conn is not None:
             return self._readonly_conn
         conn = sqlite3.connect(
-            str(self.db_path), timeout=10.0, factory=_ClosingConnection
+            str(self.db_path), timeout=10.0, factory=ClosingConnection
         )
         conn.row_factory = sqlite3.Row
         return conn

@@ -6,6 +6,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from rush.runtime.sqlite_util import ClosingConnection
+
 
 @dataclass(frozen=True)
 class GraphNode:
@@ -34,7 +36,7 @@ class CodeGraphStore:
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+        return sqlite3.connect(str(self.db_path), factory=ClosingConnection)
 
     def _init_db(self) -> None:
         with self._get_conn() as conn:
