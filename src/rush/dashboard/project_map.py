@@ -969,6 +969,8 @@ def expand_group_edge(
     if decoded.get("edge") != edge_id:
         raise CursorRejected(f"cursor does not belong to group-edge {edge_id!r}")
     relation = decoded.get("relation")
+    if not isinstance(relation, str):
+        raise CursorRejected(f"cursor for group-edge {edge_id!r} carries no relation")
     src = decoded.get("source")
     tgt = decoded.get("target")
     offset = int(decoded.get("offset", 0))

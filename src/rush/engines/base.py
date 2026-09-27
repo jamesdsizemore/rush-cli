@@ -17,9 +17,16 @@ from ..tools.common import resolve_binary, run_subprocess
 RawFinding = dict[str, Any]
 
 
+class OwnershipKwargs(TypedDict, total=False):
+    """The `run_subprocess` ownership pair, present together or not at all."""
+
+    owner_instance_id: str
+    run_id: str
+
+
 def ownership_kwargs(
     owner_instance_id: str | None, run_id: str | None
-) -> dict[str, str]:
+) -> OwnershipKwargs:
     """P69-01.2j: the ownership pair as `run_subprocess` kwargs, or `{}`.
 
     An engine forwards its own `owner_instance_id`/`run_id` into its
@@ -48,6 +55,10 @@ class EngineResult(TypedDict, total=False):
     # T12 A13: the scoped tsc run (groups, exclusions, temp directory). It
     # holds no `path`/`file` key, so staging's generic remap leaves it alone.
     tsc: dict[str, Any]
+    # P69-03h: a repository-state engine's (git-guard/diff-cover/undercover)
+    # real-evidence digest; `run_engine` carries it onto the ToolResult's
+    # `metadata["repository_state_provenance"]`.
+    provenance: dict[str, str | None]
 
 
 class Engine(ABC):

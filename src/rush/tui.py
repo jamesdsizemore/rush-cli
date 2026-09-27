@@ -1416,13 +1416,14 @@ def _memory_refresh(
 _MEMORY_OWNER_SCOPE_KINDS = ("project", "user", "session", "agent")
 
 
-def _tui_session_owner_scope_id() -> str:
+def _tui_session_owner_scope_id() -> str | None:
     """This standalone TUI invocation's `session`-kind owner id (P69-07 subsection b).
 
     A `rush ui` run with no dashboard server never creates a `DashboardAuth` session, so
     there is no browser session id to reuse. This process's own invocation identity
     (`_tui_owner_instance_id()`, minted once per process) is that identity: non-secret,
     already scoped to exactly this invocation, and never an authentication credential.
+    `None` when the owner lifetime lock could not be acquired (no identity exists).
     """
     return _tui_owner_instance_id()
 
@@ -1445,11 +1446,12 @@ def _default_owner_scope_id(kind: str, project: ProjectState) -> str:
     """The derived id for an owner kind that has one. `project` is this project's own
     registered canonical id (M09) when one was resolved at load time, falling back to
     the legacy root-path identity only for an unregistered project; `session` is this
-    invocation's session id. `user`/`agent` are opaque and have no derivable default."""
+    invocation's session id, with no default when the owner lifetime lock is unavailable.
+    `user`/`agent` are opaque and have no derivable default."""
     if kind == "project":
         return project.project_id or str(project.root)
     if kind == "session":
-        return _tui_session_owner_scope_id()
+        return _tui_session_owner_scope_id() or ""
     return ""
 
 
