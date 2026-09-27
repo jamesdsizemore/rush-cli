@@ -141,15 +141,17 @@ def test_two_projects_with_identical_filenames_do_not_mix_findings_or_memory(
         root_a,
         run_id="run-a",
         scheduled=[_scheduled_item("typecheck", "quality")],
-        findings=[{"finding_id": "fa1", "path": "app.py", "severity": "error"}],
+        findings=[
+            {"finding_id": "finding-alpha-1", "path": "app.py", "severity": "error"}
+        ],
     )
     _write_manifest(
         root_b,
         run_id="run-b",
         scheduled=[_scheduled_item("typecheck", "quality")],
         findings=[
-            {"finding_id": "fb1", "path": "app.py", "severity": "warn"},
-            {"finding_id": "fb2", "path": "app.py", "severity": "warn"},
+            {"finding_id": "finding-beta-1", "path": "app.py", "severity": "warn"},
+            {"finding_id": "finding-beta-2", "path": "app.py", "severity": "warn"},
         ],
     )
 
@@ -190,8 +192,8 @@ def test_two_projects_with_identical_filenames_do_not_mix_findings_or_memory(
     serialized_b = json.dumps(snapshot_b)
     assert "beta unrelated notes" not in serialized_a
     assert "alpha secret finding notes" not in serialized_b
-    assert "fb1" not in serialized_a and "fb2" not in serialized_a
-    assert "fa1" not in serialized_b
+    assert "finding-beta-1" not in serialized_a and "finding-beta-2" not in serialized_a
+    assert "finding-alpha-1" not in serialized_b
 
 
 def test_known_profiling_export_and_unrecognized_categories_all_discoverable(
