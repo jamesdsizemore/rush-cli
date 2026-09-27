@@ -74,31 +74,33 @@ def test_ui_cmd_accepts_multiple_project_paths(
 def test_ui_json_flag_returns_snapshot_and_exits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P69-06a: `--json` prints each project's check-suite result as JSON
-    and exits 0, never entering the interactive interface."""
+    """P69-06a / T28 Non-TTY: `--json` prints `[{project, path, status}]`
+    (status = the StatusTool raw payload) and exits 0, never entering the
+    interactive interface and never running checks."""
     from click.testing import CliRunner
 
+    import rush.tools.status as status_module
     import rush.tui as tui_module
     import rush.workflows.suites as suites_module
     from rush.cli import cli
 
     proj = tmp_path / "proj"
     proj.mkdir()
+    status_paths: list[Path] = []
 
-    def fake_run_workflow_suite(
-        *, suite: object, path: Path, permissions: object, **kwargs: object
-    ) -> dict:
-        return {
-            "tool": "suite",
-            "status": "ok",
-            "findings": [],
-            "summary": f"checked {path.name}",
-        }
+    class FakeStatusTool:
+        def __call__(self, path: Path) -> dict:
+            status_paths.append(path)
+            return {"raw": {"checked": path.name}, "summary": "status ok"}
+
+    def fail_run_workflow_suite(*a: object, **k: object) -> dict:
+        raise AssertionError("--json must never run checks")
 
     def fail_run_interactive_tui(*a: object, **k: object) -> None:
         raise AssertionError("--json must not enter the interactive interface")
 
-    monkeypatch.setattr(suites_module, "run_workflow_suite", fake_run_workflow_suite)
+    monkeypatch.setattr(status_module, "StatusTool", FakeStatusTool)
+    monkeypatch.setattr(suites_module, "run_workflow_suite", fail_run_workflow_suite)
     monkeypatch.setattr(tui_module, "run_interactive_tui", fail_run_interactive_tui)
 
     runner = CliRunner()
@@ -106,19 +108,26 @@ def test_ui_json_flag_returns_snapshot_and_exits(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert isinstance(payload, list)
-    assert payload[0]["project"] == proj.name
-    assert payload[0]["result"]["summary"] == f"checked {proj.name}"
+    assert payload == [
+        {
+            "project": proj.name,
+            "path": str(proj.resolve()),
+            "status": {"checked": proj.name},
+        }
+    ]
+    assert status_paths == [proj.resolve()]
 
 
 def test_ui_non_tty_plain_pipe_exits_immediately_no_read_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P69-06a: without `--json`, a non-tty stdout (a real pipe, and
-    `CliRunner`'s default capture) prints a concise plain snapshot and
-    exits 0 rather than entering the interactive read loop."""
+    """P69-06a / T28 Non-TTY: without `--json`, a non-tty stdout (a real
+    pipe, and `CliRunner`'s default capture) prints one status line per
+    project plus the `rush status`/`rush check` next steps and exits 0,
+    never entering the interactive read loop and never running checks."""
     from click.testing import CliRunner
 
+    import rush.tools.status as status_module
     import rush.tui as tui_module
     import rush.workflows.suites as suites_module
     from rush.cli import cli
@@ -126,24 +135,32 @@ def test_ui_non_tty_plain_pipe_exits_immediately_no_read_loop(
     proj = tmp_path / "proj"
     proj.mkdir()
 
-    def fake_run_workflow_suite(
-        *, suite: object, path: Path, permissions: object, **kwargs: object
-    ) -> dict:
-        return {"tool": "suite", "status": "ok", "findings": [], "summary": "done"}
+    class FakeStatusTool:
+        def __call__(self, path: Path) -> dict:
+            return {"raw": {}, "summary": "status done"}
+
+    def fail_run_workflow_suite(*a: object, **k: object) -> dict:
+        raise AssertionError("a non-tty `rush ui` must never run checks")
 
     def fail_run_interactive_tui(*a: object, **k: object) -> None:
         raise AssertionError(
             "must not enter the interactive read loop for a non-tty pipe"
         )
 
-    monkeypatch.setattr(suites_module, "run_workflow_suite", fake_run_workflow_suite)
+    monkeypatch.setattr(status_module, "StatusTool", FakeStatusTool)
+    monkeypatch.setattr(suites_module, "run_workflow_suite", fail_run_workflow_suite)
     monkeypatch.setattr(tui_module, "run_interactive_tui", fail_run_interactive_tui)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["ui", str(proj)])
 
     assert result.exit_code == 0, result.output
-    assert "done" in result.output
+    root = proj.resolve()
+    assert result.output.splitlines() == [
+        f"{proj.name}: status done",
+        f"Next: rush status {root} --json",
+        f"      rush check {root}",
+    ]
 
 
 def test_ui_cmd_starts_interface_before_scan_completes() -> None:
@@ -1686,7 +1703,11 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
         ],
     )
     keys: list[str | None] = ["f3", "2", "down", "+", None, None, "q"]
+    # The launch read consumes the first size, so ticks 1-4 (every key up
+    # to "+") run at 120x40 and the shrink to 60x18 happens afterwards.
+    # Below 60x20 only q/c/F2/Escape are accepted (T28 shared design).
     sizes = [
+        (120, 40),
         (120, 40),
         (120, 40),
         (120, 40),
@@ -1704,6 +1725,7 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
         max_ticks=50,
     )
     assert "file:a.py" in state.map_expanded
+    assert state.map_selected_index == 1
     assert state.terminal_size == (60, 18)
 
 

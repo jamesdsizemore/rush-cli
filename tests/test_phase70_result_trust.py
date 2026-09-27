@@ -1981,6 +1981,22 @@ def _probe_check_suite(
     return probe, _spy(monkeypatch, suites)
 
 
+def _spy_status_tool(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Replace StatusTool (the non-TTY `rush ui` read path) with a recorder of
+    the root each call receives; its raw payload echoes that root."""
+    from rush.tools import status
+
+    calls: list[Path] = []
+
+    class _RecordingStatusTool:
+        def __call__(self, path: Path) -> dict:
+            calls.append(path)
+            return {"raw": {"root": str(path)}, "summary": "t8 status"}
+
+    monkeypatch.setattr(status, "StatusTool", _RecordingStatusTool)
+    return calls
+
+
 def test_t08_check_cli_alias_root_entry_runs_on_canonical_root(
     monkeypatch: pytest.MonkeyPatch, world: SimpleNamespace
 ) -> None:
@@ -2039,46 +2055,79 @@ def test_t08_check_cli_rejects_symlink_escape_via_cli_runner(
 def test_t08_ui_json_without_paths_records_originals_unavailable(
     monkeypatch: pytest.MonkeyPatch, world: SimpleNamespace
 ) -> None:
-    """H: `rush ui --json` with no paths records original_requested_targets
-    as unavailable (the model's empty tuple), never a fabricated cwd string."""
+    """H + T28 Non-TTY: `rush ui --json` with no paths reads the zero-write
+    status of the cwd's root (never a check run), and its snapshot carries no
+    fabricated original; the interactive path records the original input as
+    unavailable (None), never a fabricated cwd string."""
     from click.testing import CliRunner
 
+    from rush import cli as cli_module
+    from rush import tui
     from rush.cli import cli
 
     probe, captured = _probe_check_suite(monkeypatch)
+    status_calls = _spy_status_tool(monkeypatch)
     monkeypatch.chdir(world.proj)
 
     result = CliRunner().invoke(cli, ["ui", "--json"])
 
     assert result.exit_code == 0, result.output
-    context = captured[-1]
-    assert context.original_requested_targets == ()
-    assert context.workspace_root == world.proj.resolve()
-    assert probe.calls == [(str(world.proj.resolve()), str(world.proj.resolve()))]
+    root = world.proj.resolve()
+    assert json.loads(result.stdout) == [
+        {"project": root.name, "path": str(root), "status": {"root": str(root)}}
+    ]
+    assert status_calls == [root]
+    assert probe.calls == []
+    assert captured == []
+
+    seeds: list = []
+    monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: True)
+    monkeypatch.setattr(tui, "run_interactive_tui", lambda s, **kwargs: seeds.extend(s))
+    assert CliRunner().invoke(cli, ["ui"]).exit_code == 0
+    [seed] = seeds
+    assert seed.original_input is None
+    assert seed.root == root
+    assert probe.calls == []
 
 
 def test_t08_ui_json_alias_root_entry_runs_on_canonical_root(
     monkeypatch: pytest.MonkeyPatch, world: SimpleNamespace
 ) -> None:
-    """B/H: `rush ui --json alias` works on the canonical marked root and
-    passes the user's own original input."""
+    """B/H + T28 Non-TTY: `rush ui --json alias` reads the status of the
+    canonical marked root (never the alias spelling, never a check run); the
+    interactive path keeps the user's own original input and lexical path."""
     from click.testing import CliRunner
 
+    from rush import cli as cli_module
+    from rush import tui
     from rush.cli import cli
 
     probe, captured = _probe_check_suite(monkeypatch)
+    status_calls = _spy_status_tool(monkeypatch)
     monkeypatch.chdir(world.base)
 
     result = CliRunner().invoke(cli, ["ui", "--json", "alias"])
 
     assert result.exit_code == 0, result.output
-    snapshots = json.loads(result.stdout)
-    assert [s["result"]["status"] for s in snapshots] == ["ok"]
-    context = captured[-1]
-    assert context.workspace_root == world.realproj.resolve()
-    assert [t.relative_path for t in context.targets] == [Path(".")]
-    assert context.original_requested_targets == ("alias",)
-    assert probe.calls == [(str(world.realproj.resolve()), str(world.base.resolve()))]
+    root = world.realproj.resolve()
+    assert json.loads(result.stdout) == [
+        {"project": root.name, "path": str(root), "status": {"root": str(root)}}
+    ]
+    assert status_calls == [root]
+    assert probe.calls == []
+    assert captured == []
+
+    seeds: list = []
+    monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: True)
+    monkeypatch.setattr(tui, "run_interactive_tui", lambda s, **kwargs: seeds.extend(s))
+    assert CliRunner().invoke(cli, ["ui", "alias"]).exit_code == 0
+    [seed] = seeds
+    assert seed.root == root
+    assert seed.original_input == "alias"
+    assert seed.lexical_path == world.base.resolve() / "alias"
+    assert probe.calls == []
 
 
 def test_t08_dashboard_alias_suite_runs_on_registered_root(
@@ -3269,6 +3318,7 @@ def test_t08_root_entry_dispatch_unmarked_and_registered_aliases(
     from rush.dashboard import server as dashboard_server
 
     probe, captured = _probe_check_suite(monkeypatch)
+    status_calls = _spy_status_tool(monkeypatch)
     seeds: list[list] = []
     monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: transport == "ui")
     monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: transport == "ui")
@@ -3297,6 +3347,7 @@ def test_t08_root_entry_dispatch_unmarked_and_registered_aliases(
         assert f"[SYMLINK_DISALLOWED] at 'plainalias': {message}" in rejected.output
     assert probe.calls == []
     assert seeds == []
+    assert status_calls == []
 
     if transport == "dashboard":
         return
@@ -3306,6 +3357,19 @@ def test_t08_root_entry_dispatch_unmarked_and_registered_aliases(
         [[seed]] = seeds
         assert seed.root == w.regplain
         assert seed.lexical_path == w.root / "regalias"
+        return
+    if transport == "ui-json":
+        # T28 Non-TTY: the registered root's status is read; no check runs.
+        assert json.loads(accepted.stdout) == [
+            {
+                "project": w.regplain.name,
+                "path": str(w.regplain),
+                "status": {"root": str(w.regplain)},
+            }
+        ]
+        assert status_calls == [w.regplain]
+        assert probe.calls == []
+        assert captured == []
         return
     assert captured[-1].workspace_root == w.regplain
     assert probe.calls == [(str(w.regplain), str(w.root))]
@@ -3898,15 +3962,23 @@ def test_t08_original_request_data(
     from rush.cli import cli
 
     _, captured = _probe_check_suite(monkeypatch)
+    status_calls = _spy_status_tool(monkeypatch)
     monkeypatch.chdir(w.proj)
     assert CliRunner().invoke(cli, ["check", "--json"]).exit_code == 0
     assert captured[-1].original_requested_targets == ()
     assert captured[-1].invocation_start_cwd == w.proj
     assert CliRunner().invoke(cli, ["check", ".", "--json"]).exit_code == 0
     assert captured[-1].original_requested_targets == (".",)
-    assert CliRunner().invoke(cli, ["ui", "--json"]).exit_code == 0
-    assert captured[-1].original_requested_targets == ()
-    assert captured[-1].invocation_start_cwd == w.proj
+    # T28 Non-TTY: `rush ui --json` reads status only -- no new invocation
+    # context (so no fabricated original) and the cwd's root, not ".".
+    contexts_before = len(captured)
+    ui_json = CliRunner().invoke(cli, ["ui", "--json"])
+    assert ui_json.exit_code == 0, ui_json.output
+    assert len(captured) == contexts_before
+    assert status_calls == [w.proj]
+    [snapshot] = json.loads(ui_json.stdout)
+    assert set(snapshot) == {"project", "path", "status"}
+    assert snapshot["path"] == str(w.proj)
 
     wrapper, _, mcp_captured = _std_probe_wrapper(monkeypatch, w.proj)
     wrapper()

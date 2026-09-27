@@ -248,7 +248,7 @@ class ProjectTool(ToolFn):
         if action == "select":
             if not project_id or not session_id:
                 raise ValueError("select requires project_id and session_id")
-            return select_project(session_id, project_id)
+            return select_project(session_id, project_id, data_root=data_root)
         if action == "configure":
             if not project_id:
                 raise ValueError("configure requires project_id")

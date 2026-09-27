@@ -1270,6 +1270,9 @@ _GIT_DIRTY_MAX = 200
 _GIT_DIFF_MAX_LINES = 500
 _GIT_LOG_FIELD_SEP = "\x1f"
 _GIT_REF_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
+# Read-only Git: never run a repository-configured fsmonitor hook, never take
+# the optional index lock (so a status read cannot rewrite `.git/index`).
+_GIT_READ = ("git", "-c", "core.fsmonitor=false", "--no-optional-locks")
 
 
 def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
@@ -1280,7 +1283,7 @@ def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             [
-                "git",
+                *_GIT_READ,
                 "log",
                 f"--format={fmt}",
                 f"-n{max(1, limit)}",
@@ -1314,7 +1317,7 @@ def _git_dirty_files(root: Path) -> list[dict[str, Any]]:
     line shape) -- never collapsed to a delete+add."""
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain=v1"],
+            [*_GIT_READ, "status", "--porcelain=v1"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1353,7 +1356,7 @@ def _git_summary(root: Path) -> dict[str, Any]:
         }
     try:
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            [*_GIT_READ, "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1361,7 +1364,7 @@ def _git_summary(root: Path) -> dict[str, Any]:
             timeout=5,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"],
+            [*_GIT_READ, "status", "--porcelain"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1437,7 +1440,16 @@ def project_git_commit_diff(
         }
     try:
         patch = subprocess.run(
-            ["git", "show", "--find-renames", "--no-color", "--patch", commit],
+            [
+                *_GIT_READ,
+                "show",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--no-color",
+                "--patch",
+                commit,
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1445,7 +1457,16 @@ def project_git_commit_diff(
             timeout=5,
         ).stdout
         name_status = subprocess.run(
-            ["git", "show", "--find-renames", "--name-status", "--format=", commit],
+            [
+                *_GIT_READ,
+                "show",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--name-status",
+                "--format=",
+                commit,
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1488,7 +1509,7 @@ def _git_show_path_digest(root: Path, commit: str, path: str) -> str | None:
     engines use for `git_link["path_digests"]`."""
     try:
         result = subprocess.run(
-            ["git", "show", f"{commit}:{path}"],
+            [*_GIT_READ, "show", "--no-textconv", f"{commit}:{path}"],
             cwd=root,
             check=True,
             capture_output=True,

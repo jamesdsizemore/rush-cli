@@ -1416,30 +1416,29 @@ def ui_cmd(
         entries.append((typed, selected))
 
     if json_output or not _interactive_terminal():
-        from .workflows.suites import CHECK_SUITE, run_workflow_suite
+        # Phase 66 §3.8: without an interactive terminal `rush ui` reports the
+        # zero-write `rush status` of each project; it never runs checks.
+        from .tools.status import StatusTool
 
         snapshots = []
-        for raw, selection in entries:
-            res = run_workflow_suite(
-                suite=CHECK_SUITE,
-                path=selection.lexical,
-                permissions=perms,
-                original_requested_targets=None if raw is None else (raw,),
-                invocation_start_cwd=anchor,
-            )
+        summaries = []
+        for _raw, selection in entries:
+            status = StatusTool()(selection.target)
             snapshots.append(
                 {
                     "project": selection.target.name or str(selection.target),
                     "path": str(selection.target),
-                    "result": res,
+                    "status": status.get("raw"),
                 }
             )
+            summaries.append(status.get("summary", ""))
         if json_output:
             click.echo(json.dumps(snapshots))
         else:
-            for snap in snapshots:
-                result = snap["result"] if isinstance(snap["result"], dict) else {}
-                click.echo(f"{snap['project']}: {result.get('summary', 'done')}")
+            for snap, summary in zip(snapshots, summaries, strict=True):
+                click.echo(f"{snap['project']}: {summary}")
+                click.echo(f"Next: rush status {snap['path']} --json")
+                click.echo(f"      rush check {snap['path']}")
         return
 
     seeds = [

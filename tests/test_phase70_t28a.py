@@ -262,30 +262,29 @@ def test_t28a_every_section_reachable() -> None:
 
 
 def test_t28a_delayed_response_after_switching_project_ignored() -> None:
-    """Design brief: 'Delayed A response after selecting B.' A stale
-    background result for project A that arrives after the user switched to
-    project B must never be applied to B's view."""
+    """Design brief: 'Delayed A response after selecting B.' A background
+    result for project A requested before the user switched to B (through
+    the real F2 selector) must be dropped; the same result delivered without
+    the switch must be applied."""
+    actions = default_scan_actions()
+    result = {"tool": "lint", "status": "ok", "findings": [], "summary": "late"}
+
     project_a = ProjectState(name="A", root=Path("/tmp/t28a-race-a"))
     project_b = ProjectState(name="B", root=Path("/tmp/t28a-race-b"))
     state = TuiState(projects=[project_a, project_b])
-    state.active_index = 1  # user already switched to B
+    generation = project_a.begin_request(("scans", "results"))
+    _dispatch_key(state, "f2", actions)
+    _dispatch_key(state, "down", actions)
+    _dispatch_key(state, "enter", actions)
+    assert state.active_project is project_b
+    assert project_a.apply_delayed_result(result, generation=generation) is False
+    assert result not in project_a.results
 
-    generation_before = getattr(project_a, "generation", None)
-    # Simulate A's delayed background response landing after the switch.
-    stale_result = {"tool": "lint", "status": "ok", "findings": [], "summary": "stale"}
-    apply_result = getattr(project_a, "apply_delayed_result", None)
-    if apply_result is None:
-        pytest.fail(
-            "ProjectState (or TuiState) must expose a generation-guarded "
-            "way to apply a background result so a stale response for A "
-            "arriving after switching to B is provably dropped -- no such "
-            "hook exists yet"
-        )
-    apply_result(stale_result, generation=generation_before)
-    assert stale_result not in project_a.results, (
-        "a delayed response for the no-longer-current generation must be "
-        "dropped, not merged into project A's results"
-    )
+    control = ProjectState(name="C", root=Path("/tmp/t28a-race-c"))
+    generation = control.begin_request(("scans", "results"))
+    assert control.apply_delayed_result(result, generation=generation) is True
+    assert result in control.results
+    assert control.apply_delayed_result(result, generation=generation) is False
 
 
 def test_t28a_reads_create_no_registry_store_lock_telemetry_files(
