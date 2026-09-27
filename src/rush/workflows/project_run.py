@@ -778,6 +778,27 @@ def _execute_candidate(
     # candidate's finding IDs/evidence are computed by the caller. A call
     # made outside a staged attempt (`active_staging()` is `None`) is
     # unaffected -- today's exact behavior byte for byte.
+    # T8: capture the logical (pre-staging) path-bearing values verbatim,
+    # before any staging substitution below rewrites them to the staged
+    # tree -- diagnostics keep the original request even though execution
+    # identity/cache identity below stays the staged/normalized value.
+    # Finding 8: derive originals only from this candidate's own explicit
+    # override (`targets[candidate.candidate_id]`), never from the merged
+    # `request` dict -- `request["path"]` is always populated (falls back to
+    # `str(root)`, the resolved registered root, when no override exists),
+    # so reading it here would record that resolved root as a fabricated
+    # "original request" whenever a caller supplied no real one.
+    candidate_override = targets.get(candidate.candidate_id, {})
+    original_targets: list[str] = []
+    for key in ("path", "file", "filename"):
+        value = candidate_override.get(key)
+        if isinstance(value, str):
+            original_targets.append(value)
+    for key in ("files", "paths"):
+        values = candidate_override.get(key)
+        if isinstance(values, (list, tuple)):
+            original_targets.extend(str(v) for v in values)
+
     staging = active_staging()
     staged_root = root
     if staging is not None:
@@ -802,6 +823,7 @@ def _execute_candidate(
             workspace_root=staged_root,
             config=config,
             permissions=permissions,
+            original_requested_targets=tuple(original_targets) or None,
         )
         result = executor.execute(context)
         if staging is not None:

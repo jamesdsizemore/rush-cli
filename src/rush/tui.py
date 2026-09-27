@@ -317,6 +317,8 @@ def default_scan_actions(
         *,
         owner_instance_id: str = "",
         run_id: str = "",
+        lexical_path: Path | None = None,
+        original_input: str | None = None,
         **kwargs: object,
     ) -> Any:
         from rush.workflows.suites import CHECK_SUITE, run_workflow_suite
@@ -325,12 +327,17 @@ def default_scan_actions(
         # P69-06f: this process's own identity travels into the suite, so
         # every subprocess it spawns is fenced under an owner recovery can
         # probe and Detach's force-exit can terminate.
+        # T8 (4)(b): the suite walks the user's lexical path when known, so
+        # a root-entry alias is judged as typed; `root` stays the resolved one.
         return run_workflow_suite(
             suite=CHECK_SUITE,
-            path=root,
+            path=lexical_path if lexical_path is not None else root,
             permissions=permissions,
             owner_instance_id=owner_instance_id,
             run_id=run_id,
+            original_requested_targets=(
+                (original_input,) if original_input is not None else None
+            ),
         )
 
     return ScanActions(
@@ -357,6 +364,10 @@ class ProjectSeed:
     name: str
     root: Path
     results: list[ToolResult] = field(default_factory=list)
+    # T8 (4)(b): the lexical absolute path and the user's original input
+    # string; `None` when unavailable (never a fabricated cwd string).
+    lexical_path: Path | None = None
+    original_input: str | None = None
 
 
 @dataclass
@@ -371,6 +382,9 @@ class ProjectState:
     # of the raw root path.
     project_id: str | None = None
     results: list[ToolResult] = field(default_factory=list)
+    # T8 (4)(b): carried from `ProjectSeed` for the initial check suite.
+    lexical_path: Path | None = None
+    original_input: str | None = None
     selected_index: int = 0
     filter_text: str = ""
     detail_page: int = 0
@@ -1128,6 +1142,8 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
                     project.root,
                     owner_instance_id=owner_instance_id,
                     run_id=run_id,
+                    lexical_path=project.lexical_path,
+                    original_input=project.original_input,
                 )
                 if actions.run_check_suite
                 else None
@@ -2455,6 +2471,8 @@ def run_interactive_tui(
                 root=seed.root,
                 results=list(seed.results),
                 project_id=_resolve_registered_project_id(seed.root),
+                lexical_path=seed.lexical_path,
+                original_input=seed.original_input,
             )
             for seed in project_seeds
         ]

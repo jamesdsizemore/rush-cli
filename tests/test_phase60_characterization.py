@@ -91,13 +91,27 @@ def test_mcp_registration_characterization() -> None:
         assert tool_name in tools, f"Catalog tool {tool_name} missing from MCP server"
         mcp_tool = tools[tool_name]
         assert mcp_tool.description == tool.mcp_description
-        assert "path" in mcp_tool.parameters.get("properties", {})
+        props = mcp_tool.parameters.get("properties", {})
+        assert "path" in props
+        # Phase 70 T8 decision (4)(a): every path-taking catalog tool
+        # publishes exactly one optional declared-root argument -- the new
+        # `project`, or its own pre-existing `project_id` (continuity, memory).
+        declared = {"project", "project_id"} & set(props)
+        expected_declared = (
+            {"project_id"}
+            if tool_name in {"rush_continuity", "rush_memory"}
+            else {"project"}
+        )
+        assert declared == expected_declared, f"Declared-root arg for {tool_name}"
+        assert not (declared & set(mcp_tool.parameters.get("required", []))), (
+            f"Declared-root arg must be optional for {tool_name}"
+        )
 
     # 2. Assert custom phase tools are registered with exact descriptions and parameters
     expected_custom_tools: dict[str, tuple[str, list[str]]] = {
         "rush_ship_clean": (
             "Clean scratch directories and build caches before release",
-            ["allow_artifact_write", "apply", "path"],
+            ["allow_artifact_write", "apply", "path", "project"],
         ),
         "rush_ship_env": (
             "Audit codebase environment variable usage against .env.example",
@@ -109,15 +123,15 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_token_outline": (
             "Generate token-efficient AST skeleton outline of a code file",
-            ["focus_symbol", "path"],
+            ["focus_symbol", "path", "project"],
         ),
         "rush_context_retrieve": (
             "Retrieve uncompressed content from CCR chunk store by hash",
-            ["chunk_hash", "path"],
+            ["chunk_hash", "path", "project"],
         ),
         "rush_hallu_guard": (
             "Audit code imports against installed packages and stdlib",
-            ["path"],
+            ["path", "project"],
         ),
         "rush_context_mistakes_check": (
             "Check git revert history for past mistakes and anti-patterns",
@@ -125,7 +139,7 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_context_pack": (
             "Pack graph-pruned context outline under a strict token budget",
-            ["allow_cache_write", "budget", "path", "symbol"],
+            ["allow_cache_write", "budget", "path", "project", "symbol"],
         ),
         "rush_context_gain_stats": (
             "Get real-time token economy savings and cost metrics",
@@ -133,7 +147,7 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_blast_radius": (
             "Calculate downstream transitive blast radius for a changed file",
-            ["depth", "path"],
+            ["depth", "path", "project"],
         ),
         "rush_arch_guard": (
             "Validate codebase against clean architecture layer boundaries",
@@ -146,6 +160,7 @@ def test_mcp_registration_characterization() -> None:
                 "allow_build",
                 "allow_slow",
                 "dry_run",
+                "project",
                 "runs",
                 "seed",
                 "target",
@@ -161,11 +176,11 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_simplify": (
             "Decompose high-complexity functions into modular helpers",
-            ["file", "max_complexity"],
+            ["file", "max_complexity", "project"],
         ),
         "rush_strictify": (
             "Synthesize runtime type guards for unvalidated parameters",
-            ["file"],
+            ["file", "project"],
         ),
         "rush_trace": (
             "Scan codebase and specs to output requirement traceability matrix",
@@ -173,11 +188,11 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_mesh_acquire_lock": (
             "Acquire non-blocking multi-agent file lock",
-            ["agent_id", "capability", "path"],
+            ["agent_id", "capability", "path", "project"],
         ),
         "rush_mesh_release_lock": (
             "Release multi-agent file lock",
-            ["agent_id", "capability", "path"],
+            ["agent_id", "capability", "path", "project"],
         ),
         "rush_swarm_merge": (
             "Execute 3-way AST merge conflict resolution",
@@ -203,6 +218,7 @@ def test_mcp_registration_characterization() -> None:
                 "builder_id",
                 "output_path",
                 "path",
+                "project",
                 "trusted_roots",
                 "verify",
             ],

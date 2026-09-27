@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 import uuid
@@ -202,6 +203,9 @@ def launch_dashboard(
 MAX_HEADERS_BYTES = 16 * 1024
 MAX_HEADER_FIELDS = 64
 MAX_BODY_BYTES = 256 * 1024
+# Lingering close after a rejected request (`_linger_discard`).
+_LINGER_SECONDS = 2.0
+_LINGER_MAX_BYTES = 4 * MAX_BODY_BYTES
 SOCKET_TIMEOUT_SECONDS = 5
 MAX_CONCURRENT_REQUESTS = 8
 BOOTSTRAP_FAILURE_LIMIT = 10
@@ -3049,6 +3053,27 @@ def _list_run_ids(root: Path) -> list[str]:
     return sorted(p.name for p in runs_dir.iterdir() if p.is_dir())
 
 
+def _latest_pending_attempt(root: Path) -> tuple[str, str] | None:
+    """The latest run's latest attempt, when its terminal manifest has not
+    yet recorded a publication outcome (`_record_manifest_publication`)."""
+    manifests = [
+        manifest
+        for manifest in (
+            load_run_manifest(root, run_id) for run_id in _list_run_ids(root)
+        )
+        if manifest is not None
+    ]
+    if not manifests:
+        return None
+    latest = max(manifests, key=lambda m: str(m.get("created_at") or ""))
+    if latest.get("publication"):
+        return None
+    run_id, attempt_id = latest.get("run_id"), latest.get("attempt_id")
+    if not run_id or not attempt_id:
+        return None
+    return str(run_id), str(attempt_id)
+
+
 def _run_summary(manifest: dict[str, Any]) -> dict[str, Any]:
     totals = manifest.get("totals") or {}
     scheduled = manifest.get("scheduled") or []
@@ -3266,6 +3291,17 @@ def _build_scans_section(
     else:
         manifest = manifests[-1] if manifests else None
     if manifest is None:
+        return result
+    # T037/T8.md §4: an attempt is presented as a finished `run` only once
+    # its admission is released. `execute_scan` writes the terminal manifest
+    # before the dashboard releases the admission, so without this a caller
+    # could see the run while the project still reports it active (a follow-up
+    # resume/rescan then conflicts). Released-but-unpublished candidate events
+    # are covered by `/events`' pending-publication catch-up.
+    if admission is not None and (
+        admission.get("run_id"),
+        admission.get("attempt_id"),
+    ) == (manifest.get("run_id"), manifest.get("attempt_id")):
         return result
 
     run_id = manifest["run_id"]
@@ -3992,6 +4028,28 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 secrets_to_redact.append(cookie)
             return tuple(secrets_to_redact)
 
+        def _linger_discard(self) -> None:
+            """Lingering close after a rejection that leaves the request body
+            unread. Closing a socket with unread input makes the kernel send
+            RST, which can destroy the error response before the client reads
+            it -- a client still sending an oversized body typically sees
+            ECONNRESET/EPIPE instead of the 413. Half-close, then discard at
+            most `_LINGER_MAX_BYTES` for at most `_LINGER_SECONDS`."""
+            self.close_connection = True
+            try:
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_WR)
+                self.connection.settimeout(_LINGER_SECONDS)
+                read = getattr(self.rfile, "read1", self.rfile.read)
+                remaining = _LINGER_MAX_BYTES
+                while remaining > 0:
+                    chunk = read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                pass
+
         def _check_request_limits(
             self, *, require_content_length: bool = False
         ) -> int | None:
@@ -4002,6 +4060,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400, "malformed_request", "too many header fields", request_id
                 )
+                self._linger_discard()
                 return None
             # Count request-line bytes and header framing (": " + CRLF per
             # header, plus the terminating CRLF) alongside names/values --
@@ -4017,11 +4076,13 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400, "malformed_request", "headers too large", request_id
                 )
+                self._linger_discard()
                 return None
             if self.headers.get("Transfer-Encoding"):
                 self._send_error(
                     400, "malformed_request", "chunked transfer rejected", request_id
                 )
+                self._linger_discard()
                 return None
             length_header = self.headers.get("Content-Length")
             if length_header is None:
@@ -4029,6 +4090,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     self._send_error(
                         400, "malformed_request", "Content-Length required", request_id
                     )
+                    self._linger_discard()
                     return None
                 return 0
             try:
@@ -4037,16 +4099,19 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 self._send_error(
                     400, "malformed_request", "invalid Content-Length", request_id
                 )
+                self._linger_discard()
                 return None
             if length < 0:
                 self._send_error(
                     400, "malformed_request", "invalid Content-Length", request_id
                 )
+                self._linger_discard()
                 return None
             if length > MAX_BODY_BYTES:
                 self._send_error(
                     413, "body_too_large", "request body exceeds limit", request_id
                 )
+                self._linger_discard()
                 return None
             return length
 
@@ -4063,6 +4128,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     "Content-Type must be application/json",
                     request_id,
                 )
+                self._linger_discard()
                 return None
             raw = self.rfile.read(length) if length else b""
             if not raw:
@@ -4546,21 +4612,33 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             # `events.json` -- otherwise a caller polling this route mid-scan
             # only ever sees status transitions until the run's own
             # completion flush (`_publish_scan_snapshot`) ingests the rest.
+            # T8.md §4: the same catch-up also covers the latest attempt whose
+            # publication is still pending. The admission is released
+            # (T037) before `_publish_scan_snapshot` ingests, so between the
+            # two a caller can already see the run on disk with neither path
+            # having ingested its events; this closes that window without
+            # reordering release and publish.
             admission = ctx.mutations.admission_for_project(project_id)
             admitted_run_id = admission.get("run_id") if admission else None
             admitted_attempt_id = admission.get("attempt_id") if admission else None
-            if admitted_run_id and admitted_attempt_id:
-                try:
-                    admitted_root = Path(resolve_project(project_id)["root"])
-                except ProjectError:
-                    admitted_root = None
-                if admitted_root is not None:
+            try:
+                project_root: Path | None = Path(resolve_project(project_id)["root"])
+            except ProjectError:
+                project_root = None
+            if project_root is not None:
+                catch_up: list[tuple[str, str]] = []
+                if admitted_run_id and admitted_attempt_id:
+                    catch_up.append((admitted_run_id, admitted_attempt_id))
+                pending = _latest_pending_attempt(project_root)
+                if pending is not None and pending not in catch_up:
+                    catch_up.append(pending)
+                for catch_run_id, catch_attempt_id in catch_up:
                     ctx.mutations.ingest_attempt_events(
                         project_id,
-                        admitted_run_id,
-                        admitted_attempt_id,
+                        catch_run_id,
+                        catch_attempt_id,
                         load_scan_events(
-                            admitted_root, admitted_run_id, admitted_attempt_id
+                            project_root, catch_run_id, catch_attempt_id
                         ).get("events")
                         or [],
                     )

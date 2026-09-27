@@ -110,9 +110,15 @@ class _StubLint:
 
 
 def _isolate_data_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the registry/data roots, and scan engines: a scan's engine-row
+    candidates execute only engines a test declares (none by default), so
+    each is a deterministic `unavailable` row instead of running whatever the
+    host has on PATH (aislop, detect-secrets, osv-scanner, ...) and making
+    scan duration, findings and cancel timing host-dependent."""
     data_root = tmp_path / "rush-data"
     monkeypatch.setattr(projects_module, "default_data_root", lambda: data_root)
     monkeypatch.setattr(provision_module, "default_data_root", lambda: data_root)
+    monkeypatch.setattr("rush.engines.ENGINES", {})
 
 
 def _register(tmp_path: Path) -> tuple[str, Path]:
@@ -306,9 +312,12 @@ def test_large_map_pagination_is_complete() -> None:
         "agents": [],
     }
 
-    started = time.perf_counter()
+    # CPU time of this thread, not wall-clock: under a loaded host (parallel
+    # test shards) wall time mostly measures waiting for a CPU, which says
+    # nothing about the quadratic-blowup regression this bound guards.
+    started = time.thread_time()
     result = build_project_map(snapshot)
-    elapsed = time.perf_counter() - started
+    elapsed = time.thread_time() - started
 
     # Full evidence inventory (10,000 files + 30,000 findings + root) is
     # never dropped, even though only a bounded overview is rendered.

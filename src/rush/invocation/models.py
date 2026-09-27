@@ -53,6 +53,16 @@ class InvocationContext:
     # additive and defaulted, so every existing construction is unaffected.
     owner_instance_id: str = ""
     run_id: str = ""
+    # T8: verbatim input strings as the caller originally typed them, for
+    # diagnostics only -- never re-executed or used to recompute targets.
+    # Additive and defaulted, so every existing construction is unaffected.
+    # An empty tuple means the caller did not supply an original -- this is
+    # explicitly "unavailable", never reconstructed from resolved targets.
+    original_requested_targets: tuple[str, ...] = ()
+    invocation_start_cwd: Path | None = None
+    # T8: the registered root the caller declared (MCP `project`/`project_id`),
+    # `None` when none was declared.
+    declared_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +85,10 @@ class TransportDivergenceError(InvocationError):
 
 class ScopeWideningError(InvocationError):
     """Raised when target resolution widens execution scope beyond boundary."""
+
+
+class AmbiguousRootError(InvocationError):
+    """Raised when an explicit registered root conflicts with the requested target."""
 
 
 class UndeclaredInputError(InvocationError):
@@ -112,6 +126,7 @@ class ProviderEgressError(InvocationError):
 
 
 __all__ = [
+    "AmbiguousRootError",
     "CacheDecision",
     "CachePolicy",
     "InvocationContext",

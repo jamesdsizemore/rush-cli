@@ -27,12 +27,17 @@ from . import __version__
 from .cli_support.catalog_commands import build_catalog_path_command
 from .cli_support.options import _extract_permissions, permission_options
 from .cli_support.rendering import (
+    _path_param_defaulted,
     _render_session_result,
     _run_tool,
+    cli_invocation_context,
     exit_code_for,
     exit_with_result,
+    select_cli_target,
 )
 from .config import RushConfigError, load_config
+from .invocation.models import InvocationError
+from .invocation.targets import RootSelection, assert_contained, select_root
 from .logging import setup_logging
 from .memory.store import MemorySubject, OwnerScope, legacy_owner_scope
 from .permissions import ExecutionPermissions
@@ -779,11 +784,14 @@ def _run_suite_cli(
         allow_artifact_write=allow_artifact_write,
         allow_browser=allow_browser,
     )
+    # T8: the suite walks the user's own input once from the invocation cwd.
     result = run_workflow_suite(
         suite=suite,
-        path=path.resolve(),
+        path=path,
         permissions=perms,
         fail_fast=fail_fast,
+        original_requested_targets=None if _path_param_defaulted() else (str(path),),
+        invocation_start_cwd=Path.cwd(),
     )
     if as_json:
         click.echo(json.dumps(result, indent=2))
@@ -968,6 +976,15 @@ def watch_cmd(
         allow_browser=allow_browser,
     )
     suite_map = {"check": CHECK_SUITE, "audit": AUDIT_SUITE, "gate": GATE_SUITE}
+    # T8: one ROOT-ENTRY walk from the invocation cwd, before anything is
+    # watched or run; every later trigger reuses its selection.
+    invocation_start_cwd = Path.cwd()
+    original = None if _path_param_defaulted() else (str(path),)
+    try:
+        selection = select_cli_target(path, anchor=invocation_start_cwd)
+    except InvocationError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(2)
 
     def on_change_handler(changed_paths: list[Path]) -> None:
         click.echo(
@@ -977,28 +994,33 @@ def watch_cmd(
             tools_map = {t.name: t for t in ALL_TOOLS}
             t = tools_map.get(tool_name)
             if t:
-                from .invocation import InvocationExecutor, resolve_invocation
+                from .invocation import InvocationExecutor
 
-                target = path.resolve()
+                try:
+                    context = cli_invocation_context(
+                        t.name, selection, original=original, permissions=perms
+                    )
+                except RushConfigError as exc:
+                    click.echo(str(exc), err=True)
+                    return
                 executor = InvocationExecutor()
                 executor.register(t.name, t.__call__)
-                context = resolve_invocation(
-                    {"operation_id": t.name, "path": str(target)},
-                    transport="cli",
-                    workspace_root=target if target.is_dir() else target.parent,
-                    permissions=perms,
-                )
                 res = executor.execute(context)
                 click.echo(res.get("summary", "Done."))
         else:
             suite = suite_map.get(suite_name, CHECK_SUITE)
             res = run_workflow_suite(
-                suite=suite, path=path.resolve(), permissions=perms, fail_fast=False
+                suite=suite,
+                path=path,
+                permissions=perms,
+                fail_fast=False,
+                original_requested_targets=original,
+                invocation_start_cwd=invocation_start_cwd,
             )
             click.echo(res.get("summary", "Done."))
 
     watcher = FileWatcher(
-        root=path.resolve(), debounce_ms=debounce_ms, on_change=on_change_handler
+        root=selection.target, debounce_ms=debounce_ms, on_change=on_change_handler
     )
     watcher.watch_blocking()
 
@@ -1058,20 +1080,38 @@ def ui_cmd(
         allow_artifact_write=allow_artifact_write,
         allow_browser=allow_browser,
     )
-    resolved_paths = [p.resolve() for p in paths] or [Path.cwd()]
+    # T8 (5.1)/(5.4): one ROOT-ENTRY walk per input from the invocation cwd,
+    # in place of `p.resolve()`; with no paths the invocation cwd is the
+    # lexical path and the original input is unavailable (None). A rejected
+    # input fails before any seed is built or any suite runs.
+    anchor = Path.cwd()
+    inputs: list[str | None] = [str(p) for p in paths] or [None]
+    entries: list[tuple[str | None, RootSelection]] = []
+    for typed in inputs:
+        try:
+            selected = select_root("." if typed is None else typed, anchor=anchor)
+            assert_contained(selected)
+        except InvocationError as exc:
+            click.echo(str(exc), err=True)
+            sys.exit(2)
+        entries.append((typed, selected))
 
     if json_output or not _stdout_is_tty():
         from .workflows.suites import CHECK_SUITE, run_workflow_suite
 
         snapshots = []
-        for resolved in resolved_paths:
+        for raw, selection in entries:
             res = run_workflow_suite(
-                suite=CHECK_SUITE, path=resolved, permissions=perms
+                suite=CHECK_SUITE,
+                path=selection.lexical,
+                permissions=perms,
+                original_requested_targets=None if raw is None else (raw,),
+                invocation_start_cwd=anchor,
             )
             snapshots.append(
                 {
-                    "project": resolved.name or str(resolved),
-                    "path": str(resolved),
+                    "project": selection.target.name or str(selection.target),
+                    "path": str(selection.target),
                     "result": res,
                 }
             )
@@ -1084,8 +1124,13 @@ def ui_cmd(
         return
 
     seeds = [
-        ProjectSeed(name=resolved.name or str(resolved), root=resolved)
-        for resolved in resolved_paths
+        ProjectSeed(
+            name=selection.target.name or str(selection.target),
+            root=selection.target,
+            lexical_path=selection.lexical,
+            original_input=raw,
+        )
+        for raw, selection in entries
     ]
     run_interactive_tui(seeds, actions=default_scan_actions(permissions=perms))
 
@@ -1325,8 +1370,19 @@ def dashboard_cmd(
         allow_browser=allow_browser,
     )
 
-    resolved_path = path.resolve()
-    record = register_project(resolved_path)
+    # T8 (4)(d): one ROOT-ENTRY walk in place of `path.resolve()`, rejected
+    # before registration, server start, or any scan; the registered root is
+    # the only root used after it.
+    anchor = Path.cwd()
+    original = None if _path_param_defaulted() else (str(path),)
+    try:
+        selection = select_root(str(path), anchor=anchor)
+        assert_contained(selection)
+    except InvocationError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(2)
+    record = register_project(selection.target)
+    registered_root = Path(record.root)
     empty_snapshot = {
         "schema_version": 1,
         "project_id": record.project_id,
@@ -1366,7 +1422,7 @@ def dashboard_cmd(
         # single tool runs -- the same guarantee execute_scan/resume_scan_run/
         # rescan_project_run already give via _write_attempt_header.
         run_id, attempt_id = capture_initial_scan_provenance(
-            resolved_path, record.project_id
+            registered_root, record.project_id
         )
         # P69-03m: this launch's ordering number is allocated here, at
         # acceptance, before a single tool runs -- this bare thread is outside
@@ -1390,21 +1446,23 @@ def dashboard_cmd(
             tool_name = str(child.get("tool") or "")
             if tool_name:
                 check_suite_snapshots[tool_name] = _capture_artifact_snapshots(
-                    resolved_path, run_id, attempt_id, tool_name, child
+                    registered_root, run_id, attempt_id, tool_name, child
                 )
 
         aggregate = run_workflow_suite(
             suite=CHECK_SUITE,
-            path=resolved_path,
+            path=registered_root,
             permissions=perms,
             owner_instance_id=ctx.owner_instance_id,
             run_id=run_id,
             on_tool_complete=_on_tool_complete,
+            original_requested_targets=original,
+            invocation_start_cwd=anchor,
         )
         publish_check_suite_scan(
             ctx,
             record.project_id,
-            resolved_path,
+            registered_root,
             aggregate,
             run_id=run_id,
             attempt_id=attempt_id,

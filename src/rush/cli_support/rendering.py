@@ -12,7 +12,13 @@ import click
 
 from rush.config import RushConfigError, load_config
 from rush.contracts.results import ToolResultV1
-from rush.invocation import InvocationExecutor, resolve_invocation
+from rush.invocation import InvocationContext, InvocationExecutor, resolve_invocation
+from rush.invocation.targets import (
+    RootSelection,
+    assert_contained,
+    assert_root_config_not_linked,
+    select_root,
+)
 from rush.permissions import ExecutionPermissions
 from rush.theme import render_result
 from rush.tools import ALL_TOOLS
@@ -78,6 +84,54 @@ def exit_with_result(
     sys.exit(exit_code_for(result))
 
 
+def _path_param_defaulted() -> bool:
+    """T8: a Click-defaulted `path` is not user input, so its original is
+    unavailable rather than reported as typed."""
+    ctx = click.get_current_context(silent=True)
+    return (
+        ctx is not None
+        and ctx.get_parameter_source("path") is click.core.ParameterSource.DEFAULT
+    )
+
+
+def select_cli_target(path: Path | str, *, anchor: Path) -> RootSelection:
+    """T8/§3.2: the invocation cwd is the anchor, used exactly once. The
+    ROOT-ENTRY walk and the containment pre-check both run before any
+    config read, hash or handler call."""
+    selection = select_root(str(path), anchor=anchor)
+    assert_contained(selection)
+    assert_root_config_not_linked(selection.root)
+    return selection
+
+
+def cli_invocation_context(
+    tool_name: str,
+    selection: RootSelection,
+    *,
+    original: tuple[str, ...] | None,
+    extra_kwargs: dict[str, Any] | None = None,
+    permissions: ExecutionPermissions | None = None,
+) -> InvocationContext:
+    """The CLI invocation for an already-selected, contained target. Config
+    discovery starts at the selected root; raises `RushConfigError` on a
+    malformed one."""
+    req = {
+        "operation_id": tool_name,
+        "path": selection.relative.as_posix(),
+        "permissions": permissions,
+        **(extra_kwargs or {}),
+    }
+    return resolve_invocation(
+        req,
+        transport="cli",
+        workspace_root=selection.root,
+        config=load_config(start=selection.root),
+        permissions=permissions,
+        original_requested_targets=original,
+        invocation_start_cwd=selection.anchor,
+    )
+
+
 def _run_tool(
     tool_name: str,
     path: Path,
@@ -93,29 +147,20 @@ def _run_tool(
     if tool is None:
         click.echo(f"unknown tool: {tool_name}", err=True)
         sys.exit(2)
+    selection = select_cli_target(path, anchor=Path.cwd())
     try:
-        config = load_config(start=path)
+        context = cli_invocation_context(
+            tool_name,
+            selection,
+            original=None if _path_param_defaulted() else (str(path),),
+            extra_kwargs=extra_kwargs,
+            permissions=permissions,
+        )
     except RushConfigError as e:
         click.echo(str(e), err=True)
         sys.exit(2)
     executor = InvocationExecutor()
     executor.register(tool_name, tool.__call__)
-    kwargs = dict(extra_kwargs or {})
-    target_p = path.resolve()
-    workspace_root = target_p if target_p.is_dir() else target_p.parent
-    req = {
-        "operation_id": tool_name,
-        "path": str(path),
-        "permissions": permissions,
-        **kwargs,
-    }
-    context = resolve_invocation(
-        req,
-        transport="cli",
-        workspace_root=workspace_root,
-        config=config,
-        permissions=permissions,
-    )
     result = executor.execute(context)
 
     exit_with_result(

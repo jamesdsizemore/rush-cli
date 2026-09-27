@@ -34,7 +34,11 @@ def build_server_instructions() -> str:
         "with status (ok|warn|fail|error|skipped), findings, and summary. "
         "If status='skipped', the underlying engine is not installed; install it "
         "or pick a different path. Pairs well with `npx @nanonets/graft` for "
-        f"context-graph queries. Maturity: {maturity}."
+        f"context-graph queries. Maturity: {maturity}. "
+        "Path resolution (§3.2): relative paths resolve against the "
+        "server-start working directory captured once at startup; a `project` "
+        "(or existing `project_id`) argument declares a registered root that "
+        "relative paths resolve against instead."
     )
 
 
@@ -73,8 +77,13 @@ def build_server(memory_session: str | None = None):
         )
         return server
 
+    # T8: capture the server-start cwd exactly once. Every normal/custom
+    # wrapper anchors its relative-path resolution to this snapshot, so a
+    # process cwd change after server creation cannot retarget a later
+    # relative call.
+    anchor_cwd = Path.cwd().resolve()
     server = FastMCP(SERVER_NAME, instructions=build_server_instructions())
-    _register_tools(server)
+    _register_tools(server, anchor_cwd)
     return server
 
 
@@ -134,10 +143,10 @@ def rush_context_retrieve(chunk_hash: str, path: str = ".") -> dict:
     return result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
 
 
-def rush_hallu_guard(path: str = "") -> str:
+def rush_hallu_guard(path: str = "", *, _anchor: Path | None = None) -> str:
     from rush.tools.hallu_guard import HalluGuard
 
-    guard = HalluGuard()
+    guard = HalluGuard(project_root=_anchor)
     if path:
         violations = guard.check_file(Path(path))
         return "Grounded" if not violations else f"Violations: {', '.join(violations)}"
@@ -190,10 +199,10 @@ def rush_context_gain_stats() -> str:
 
 
 # Phase 46 Tools
-def rush_blast_radius(path: str, depth: int = 5) -> str:
+def rush_blast_radius(path: str, depth: int = 5, *, _anchor: Path | None = None) -> str:
     from rush.tools.blast_radius import BlastRadiusAnalyzer
 
-    analyzer = BlastRadiusAnalyzer()
+    analyzer = BlastRadiusAnalyzer(project_root=_anchor)
     report = analyzer.analyze([Path(path)], max_depth=depth)
     return report.model_dump_json(indent=2)
 
@@ -219,12 +228,16 @@ def rush_test_heal(
     allow_slow: bool = False,
     allow_artifact_write: bool = False,
     allow_build: bool = False,
+    *,
+    _anchor: Path | None = None,
 ) -> str:
     import json
 
     from rush.tools.test_heal import TestHealer
 
-    healer = TestHealer()
+    # T8 (5.3): the MCP layer binds `_anchor` (the declared root, else the
+    # server-start cwd); it is never part of the published schema.
+    healer = TestHealer(project_root=_anchor)
     res = healer(
         target,
         runs=runs,
@@ -258,22 +271,24 @@ def rush_db_drift() -> str:
     return json.dumps(res, indent=2)
 
 
-def rush_simplify(file: str, max_complexity: int = 10) -> str:
+def rush_simplify(
+    file: str, max_complexity: int = 10, *, _anchor: Path | None = None
+) -> str:
     import json
 
     from rush.tools.simplify import ComplexityDecomposer
 
-    decomposer = ComplexityDecomposer()
+    decomposer = ComplexityDecomposer(project_root=_anchor)
     res = decomposer.decompose_file(Path(file), max_complexity=max_complexity)
     return json.dumps(res, indent=2)
 
 
-def rush_strictify(file: str) -> str:
+def rush_strictify(file: str, *, _anchor: Path | None = None) -> str:
     import json
 
     from rush.tools.strictify import TypeSynthesizer
 
-    synth = TypeSynthesizer()
+    synth = TypeSynthesizer(project_root=_anchor)
     res = synth.audit_and_synthesize(Path(file))
     return json.dumps(res, indent=2)
 
@@ -290,7 +305,11 @@ def rush_trace() -> str:
 
 
 def rush_mesh_acquire_lock(
-    path: str, agent_id: str, capability: str | None = None
+    path: str,
+    agent_id: str,
+    capability: str | None = None,
+    *,
+    _anchor: Path | None = None,
 ) -> bool:
     """Acquire non-blocking multi-agent file lock using caller capability."""
     from rush.mcp_mesh.capabilities import LockCapabilityInput
@@ -303,7 +322,7 @@ def rush_mesh_acquire_lock(
         if capability is not None
         else None
     )
-    mgr = MeshLockManager()
+    mgr = MeshLockManager(project_root=_anchor)
     res = mgr.acquire(Path(path), agent_id=agent_id, capability=cap_input)
     return bool(res[0] if isinstance(res, tuple) else res)
 
@@ -312,7 +331,11 @@ rush_mesh_acquire_lock.__dict__["_sensitive_params"] = ("capability",)
 
 
 def rush_mesh_release_lock(
-    path: str, agent_id: str, capability: str | None = None
+    path: str,
+    agent_id: str,
+    capability: str | None = None,
+    *,
+    _anchor: Path | None = None,
 ) -> bool:
     """Release multi-agent file lock using caller capability."""
     from rush.mcp_mesh.capabilities import LockCapabilityInput
@@ -325,7 +348,7 @@ def rush_mesh_release_lock(
         if capability is not None
         else None
     )
-    mgr = MeshLockManager()
+    mgr = MeshLockManager(project_root=_anchor)
     return mgr.release(Path(path), capability=cap_input, agent_id=agent_id)
 
 
@@ -342,6 +365,43 @@ def rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:
     return json.dumps(res, indent=2)
 
 
+def _anchor_request(
+    request: dict[str, object],
+    anchor: Path | None,
+    *,
+    paths: dict[str | None, tuple[str, ...]] | None = None,
+    projects: tuple[str, ...] | None = (),
+) -> dict[str, object]:
+    """T8/§3.7: anchor a request dict's path-bearing fields to the server-start
+    cwd (`anchor`, bound by the MCP layer) before delegating. `paths` maps an
+    operation (`None`: every operation) to its path fields; `projects` lists
+    the operations whose `project` reference is routed ID first, then as an
+    anchored path (`None`: every operation). Only `str` values are rewritten;
+    a direct Python call (`anchor is None`) is untouched."""
+    from rush.invocation.targets import (
+        anchor_path_value,
+        anchor_project_value,
+        registered_root_index,
+    )
+
+    if anchor is None or not isinstance(request, dict):
+        return dict(request) if isinstance(request, dict) else request
+    anchored = dict(request)
+    operation = anchored.get("operation")
+    for key in (paths or {}).get(None, ()) + (paths or {}).get(
+        operation if isinstance(operation, str) else "", ()
+    ):
+        if isinstance(anchored.get(key), str):
+            anchored[key] = anchor_path_value(anchored[key], anchor)
+    if isinstance(anchored.get("project"), str) and (
+        projects is None or operation in projects
+    ):
+        anchored["project"] = anchor_project_value(
+            anchored["project"], anchor, registered_root_index()
+        )
+    return anchored
+
+
 # P65-03.3 CONNECT (Phase 65 §3.2): one `rush_project` MCP tool over `ProjectTool`,
 # matching the CLI's `project` group. `select` binds a project to the caller-supplied
 # `session_id` explicitly -- never a global cwd guessed by this server.
@@ -350,10 +410,19 @@ def rush_swarm_merge(base_code: str, ours_code: str, theirs_code: str) -> str:
 # schema_version: 1 and operation-specific fields." Dispatches through the
 # canonical envelope call boundary (`handle_request`), not the legacy
 # flat-kwarg `.run()` path.
-def rush_project(request: dict[str, object]) -> dict[str, object]:
+def rush_project(
+    request: dict[str, object], *, _anchor: Path | None = None
+) -> dict[str, object]:
     from rush.tools.project import ProjectTool
 
-    result = ProjectTool().handle_request(dict(request))
+    result = ProjectTool().handle_request(
+        _anchor_request(
+            request,
+            _anchor,
+            paths={"add": ("path",), "relink": ("path",), "create": ("parent",)},
+            projects=("show", "snapshot", "artifacts"),
+        )
+    )
     return dict(result)
 
 
@@ -375,9 +444,12 @@ def rush_project(request: dict[str, object]) -> dict[str, object]:
 _SCAN_DIRECT_OPERATIONS = frozenset({"cancel", "resume"})
 
 
-def rush_scan(request: dict[str, object]) -> dict[str, object]:
+def rush_scan(
+    request: dict[str, object], *, _anchor: Path | None = None
+) -> dict[str, object]:
     from rush.tools.scan import ScanTool
 
+    request = _anchor_request(request, _anchor, projects=None)
     operation = request.get("operation") if isinstance(request, dict) else None
     if operation in _SCAN_DIRECT_OPERATIONS:
         return _rush_scan_direct_operation(dict(request), str(operation))
@@ -515,10 +587,14 @@ def _rush_scan_direct_operation(
 # P65-05.3 CONNECT (Phase 65 §3.2): one `rush_agent_connection` MCP tool over
 # `AgentConnectionTool`, matching `rush_project`/`rush_scan`'s wiring mechanism
 # and the CLI's `agent list/connect/doctor` commands.
-def rush_agent_connection(request: dict[str, object]) -> dict[str, object]:
+def rush_agent_connection(
+    request: dict[str, object], *, _anchor: Path | None = None
+) -> dict[str, object]:
     from rush.tools.agent_connection import AgentConnectionTool
 
-    result = AgentConnectionTool().handle_request(dict(request))
+    result = AgentConnectionTool().handle_request(
+        _anchor_request(request, _anchor, paths={None: ("project_root", "rush_binary")})
+    )
     return dict(result)
 
 
@@ -529,10 +605,14 @@ def rush_agent_connection(request: dict[str, object]) -> dict[str, object]:
 # carries `state` (the real, non-fabricated lifecycle state) so a caller's
 # next operation is unambiguous. `rush_scan`'s `rescan` operation (plan §6.1)
 # is implemented via `ScanTool`; see `rush.workflows.project_run.rescan_project_run`.
-def rush_scan_handoff(request: dict[str, object]) -> dict[str, object]:
+def rush_scan_handoff(
+    request: dict[str, object], *, _anchor: Path | None = None
+) -> dict[str, object]:
     from rush.tools.scan_handoff import ScanHandoffTool
 
-    result = ScanHandoffTool().handle_request(dict(request))
+    result = ScanHandoffTool().handle_request(
+        _anchor_request(request, _anchor, projects=None)
+    )
     return dict(result)
 
 
@@ -566,7 +646,7 @@ _attest_tool = next((t for t in ALL_TOOLS if t.name == "attest"), None)
 rush_attest_generate = _attest_tool.__call__ if _attest_tool else None
 
 
-def _register_tools(server) -> None:
+def _register_tools(server, anchor_cwd: Path | None = None) -> None:
     """Register each tool function as an MCP tool, routing via resolve_invocation and InvocationExecutor."""
     from rush.invocation import InvocationExecutor
     from rush.mcp_support.tool_registry import (
@@ -575,7 +655,7 @@ def _register_tools(server) -> None:
     )
 
     executor = InvocationExecutor()
-    register_all_tools(server, executor, ALL_TOOLS)
+    register_all_tools(server, executor, ALL_TOOLS, anchor_cwd=anchor_cwd)
 
     # 2. Register custom phase tools
     custom_tools = [
@@ -701,7 +781,7 @@ def _register_tools(server) -> None:
         ),
     ]
 
-    register_custom_tools(server, executor, custom_tools)
+    register_custom_tools(server, executor, custom_tools, anchor_cwd=anchor_cwd)
 
 
 mcp_server = build_server()

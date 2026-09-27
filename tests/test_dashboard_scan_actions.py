@@ -133,9 +133,15 @@ def _wait_until(predicate, *, timeout: float = 60.0, interval: float = 0.02) -> 
 
 
 def _isolate_data_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the registry/data roots, and scan engines: a scan's engine-row
+    candidates execute only engines a test declares (none by default), so
+    each is a deterministic `unavailable` row instead of running whatever the
+    host has on PATH (aislop, detect-secrets, osv-scanner, ...) and making
+    scan duration, findings and cancel timing host-dependent."""
     data_root = tmp_path / "rush-data"
     monkeypatch.setattr(projects_module, "default_data_root", lambda: data_root)
     monkeypatch.setattr(provision_module, "default_data_root", lambda: data_root)
+    monkeypatch.setattr("rush.engines.ENGINES", {})
 
 
 def _register(tmp_path: Path) -> tuple[str, Path]:

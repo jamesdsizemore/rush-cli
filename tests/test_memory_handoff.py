@@ -9,6 +9,7 @@ never a hardcoded fake result standing in for a live call.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -475,9 +476,26 @@ def test_cancelled_receiver_leaks_no_process(tmp_path: Path) -> None:
         env=env,
     )
     try:
-        time.sleep(0.5)
+        # Synchronize on the receiver actually serving (an MCP initialize
+        # round trip), never on a fixed sleep: a cold start under load can
+        # outlast any sleep, and closing stdin before it serves turns this
+        # into a startup-time check instead of a cancellation check.
+        assert process.stdin is not None and process.stdout is not None
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "t-mc11.4", "version": "1"},
+            },
+        }
+        process.stdin.write((json.dumps(initialize) + "\n").encode())
+        process.stdin.flush()
+        response = json.loads(process.stdout.readline())
+        assert response["id"] == 1 and "result" in response, response
         assert process.poll() is None, "receiver exited before it could be cancelled"
-        assert process.stdin is not None
         process.stdin.close()
         process.wait(timeout=10)
     finally:

@@ -11,6 +11,8 @@ from pathlib import Path
 
 from rush.config import RushConfig
 from rush.invocation import InvocationExecutor, resolve_invocation
+from rush.invocation.models import InvocationError
+from rush.invocation.targets import RootSelection, assert_contained, select_root
 from rush.logging import get_logger, log_subsystem
 from rush.permissions import ExecutionPermissions
 from rush.tools import ALL_TOOLS
@@ -62,6 +64,8 @@ def run_workflow_suite(
     on_tool_complete: Callable[[ToolResult], None] | None = None,
     owner_instance_id: str = "",
     run_id: str = "",
+    original_requested_targets: tuple[str, ...] | None = None,
+    invocation_start_cwd: Path | None = None,
 ) -> ToolResult:
     """Execute a sequence of tools defined by a workflow suite and combine results.
 
@@ -91,11 +95,28 @@ def run_workflow_suite(
       (P69-01.2j) -- this is a separate invocation-construction site, so
       without them every subprocess a suite run spawns records no owner and
       Detach's force-exit/recovery reap path has nothing to act on.
+    * `original_requested_targets` (T8) is never derived from `path` here --
+      a caller may pass a value it already normalized (the dashboard passes
+      its registered root), so only the caller's own supplied originals are
+      recorded. Omitting it (the default) is explicitly "unavailable".
+    * `path` is walked once, from `invocation_start_cwd` (default: the
+      current working directory), by the shared ROOT-ENTRY walk
+      (`select_root`); every step reuses that selection.
     """
     log_subsystem(
         "workflow", "INFO", f"Starting workflow suite '{suite.name}' on {path}"
     )
 
+    anchor = invocation_start_cwd if invocation_start_cwd is not None else Path.cwd()
+    # T8: walked exactly once for the whole suite; a rejected input becomes
+    # each step's error child without re-resolving it.
+    selection: RootSelection | None = None
+    selection_error: Exception | None = None
+    try:
+        selection = select_root(str(path), anchor=anchor)
+        assert_contained(selection)
+    except (InvocationError, OSError, ValueError) as exc:
+        selection_error = exc
     tools_by_name = {tool.name: tool for tool in ALL_TOOLS}
     children: list[ToolResult] = []
     executed_tools: list[str] = []
@@ -121,12 +142,14 @@ def run_workflow_suite(
 
         log_subsystem("workflow", "INFO", f"[{suite.name}] Running step: {tool_name}")
         try:
+            if selection is None:
+                assert selection_error is not None
+                raise selection_error
             executor = InvocationExecutor()
             executor.register(tool_name, tool.__call__)
-            target = path.resolve()
             request: dict[str, object] = {
                 "operation_id": tool_name,
-                "path": str(target),
+                "path": selection.relative.as_posix(),
             }
             # P69-01.2j: structural ownership travels with the request, so
             # each tool's own `run_subprocess()` call is fenced and reapable.
@@ -136,9 +159,11 @@ def run_workflow_suite(
             context = resolve_invocation(
                 request,
                 transport="cli",
-                workspace_root=target if target.is_dir() else target.parent,
+                workspace_root=selection.root,
                 config=config,
                 permissions=permissions,
+                original_requested_targets=original_requested_targets,
+                invocation_start_cwd=anchor,
             )
             res: ToolResult = executor.execute(context)
             children.append(res)
