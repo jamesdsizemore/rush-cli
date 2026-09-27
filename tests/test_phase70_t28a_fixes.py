@@ -767,3 +767,155 @@ def test_ui_json_help_names_read_only_status() -> None:
     assert result.exit_code == 0, result.output
     assert "read-only status" in result.output
     assert "check-suite result" not in result.output
+
+
+# -- review round 3, fixed directly by the orchestrator ----------------------
+
+
+def test_footer_keeps_help_visible_when_the_status_line_wraps(tmp_path: Path) -> None:
+    """R3 major 2: the footer height counts the wrapped status line, so a long
+    message or the quit-confirm choices never push `?:Help` out of view."""
+    for width, height in ((60, 20), (80, 24), (120, 40)):
+        state = TuiState(projects=[ProjectState(name="p", root=tmp_path)])
+        state.message = "m" * 70 + " " + "word " * 12
+        assert "?:Help" in _render(state, width, height), (width, height)
+        state = TuiState(projects=[ProjectState(name="p", root=tmp_path)])
+        state.active_project.status = "scanning"
+        _dispatch_key(state, "q", _actions())
+        assert state.mode == "quit_confirm"
+        text = _render(state, width, height)
+        assert "?:Help" in text, (width, height, text)
+        assert "[r]" in text, (width, height, text)
+
+
+def test_reduced_motion_draws_the_finished_scan_and_reloads_its_views(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R3 major 3 + minor: when running work finishes, reduced motion draws
+    the finished state without a key press, and Overview, Tokens and Scans
+    are reloaded for that project."""
+    import rush.tui as tui_module
+
+    monkeypatch.setenv("RUSH_REDUCED_MOTION", "1")
+    drawn: list[str] = []
+    submitted: list[str] = []
+    ticks = {"n": 0}
+    seen: dict[str, TuiState] = {}
+
+    class _FakeLive:
+        def __init__(self, renderable: object, **kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def update(self, renderable: object, refresh: bool = False) -> None:
+            drawn.append(seen["state"].active_project.status)
+
+    def poll(state: TuiState, actions: ScanActions) -> None:
+        seen["state"] = state
+        ticks["n"] += 1
+        state.active_project.status = "scanning" if ticks["n"] < 4 else "done"
+
+    monkeypatch.setattr("rich.live.Live", _FakeLive)
+    monkeypatch.setattr(tui_module, "_poll_running_scans", poll)
+    monkeypatch.setattr(
+        tui_module,
+        "_submit",
+        lambda state, project, section, actions: submitted.append(section),
+    )
+
+    class _IdleReader:
+        def read_key(self, timeout: float) -> str | None:
+            return None
+
+        def get_size(self) -> tuple[int, int]:
+            return (120, 40)
+
+    run_interactive_tui(
+        [ProjectSeed(name="rm", root=tmp_path)],
+        key_reader=_IdleReader(),
+        actions=_actions(),
+        use_live=True,
+        max_ticks=8,
+    )
+    assert "done" in drawn, drawn
+    # Launch loads only the Overview; finishing reloads all three.
+    assert submitted[0] == "overview", submitted
+    assert {"overview", "tokens", "scans"} <= set(submitted[1:]), submitted
+
+
+def test_below_minimum_size_quit_and_projects_are_visible_and_answerable(
+    tmp_path: Path,
+) -> None:
+    """R3 minor: under 60x20 the guidance overlay still shows what q and F2
+    opened and accepts that choice's keys; all state is kept."""
+    state = TuiState(
+        projects=[
+            ProjectState(name="alpha", root=tmp_path / "a"),
+            ProjectState(name="beta", root=tmp_path / "b"),
+        ]
+    )
+    state.terminal_size = (50, 15)
+    state.active_project.status = "scanning"
+    _dispatch_key(state, "q", _actions())
+    text = _render(state, 50, 15)
+    assert "too small" in text and "[r]" in text, text
+    _dispatch_key(state, "r", _actions())
+    assert state.mode == "list"
+    assert "quit cancelled" in _render(state, 50, 15)
+
+    _dispatch_key(state, "f2", _actions())
+    assert state.mode == "project_selector"
+    text = _render(state, 50, 15)
+    assert ">alpha" in text and "beta" in text, text
+    _dispatch_key(state, "down", _actions())
+    assert ">beta" in _render(state, 50, 15)
+    _dispatch_key(state, "escape", _actions())
+    assert state.mode == "list" and state.active_index == 0
+
+
+@pytest.mark.parametrize("key", ["n", "escape"])
+def test_no_projects_screen_can_decline_a_grant_review(
+    tmp_path: Path, key: str
+) -> None:
+    """R3 minor: with no project open, a pending grant review is declined by
+    n or Escape (only y runs it)."""
+    ran: list[Any] = []
+    state = TuiState(projects=[])
+    state.pending_grant = {"kind": "project_create", "target": str(tmp_path)}
+    state.mode = "grant_review"
+    import rush.tui as tui_module
+
+    original = tui_module._execute_grant
+    try:
+        tui_module._execute_grant = lambda *a, **k: ran.append(a)  # type: ignore[assignment]
+        _dispatch_key(state, key, _actions())
+    finally:
+        tui_module._execute_grant = original  # type: ignore[assignment]
+    assert ran == []
+    assert state.pending_grant is None and state.mode == "list"
+    assert state.message == "declined"
+
+
+def test_relink_form_prefills_the_known_new_root(tmp_path: Path, home: Path) -> None:
+    """R3 minor: when the Overview found a moved project at this root, the
+    Relink form opens with that root filled in."""
+    import rush.tui as tui_module
+
+    old = tmp_path / "old"
+    old.mkdir()
+    data_root = tmp_path / "data"
+    record = register_project(old, data_root=data_root)
+    new = tmp_path / "new"
+    old.rename(new)
+    registration = tui_module._moved_registration(new, data_root)
+    assert registration is not None and registration["new_root"] == str(new)
+    state = TuiState(projects=[ProjectState(name="p", root=new)], data_root=data_root)
+    _apply_registration(state, state.active_project, registration)
+    tui_module._project_relink_form(state, _actions())
+    assert state.form is not None
+    assert state.form["values"]["new_root"] == str(new), (record, state.form)

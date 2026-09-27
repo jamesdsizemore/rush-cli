@@ -263,28 +263,36 @@ def test_t28a_every_section_reachable() -> None:
 
 def test_t28a_delayed_response_after_switching_project_ignored() -> None:
     """Design brief: 'Delayed A response after selecting B.' A background
-    result for project A requested before the user switched to B (through
-    the real F2 selector) must be dropped; the same result delivered without
-    the switch must be applied."""
+    Overview result for project A requested before the user switched to B
+    (through the real F2 selector) is dropped by the loop's real drain; the
+    same post without the switch is applied."""
+    from rush.tui import _drain_results, project_key
+
     actions = default_scan_actions()
-    result = {"tool": "lint", "status": "ok", "findings": [], "summary": "late"}
+    payload = ("ready", None, {"summary": "late"})
 
     project_a = ProjectState(name="A", root=Path("/tmp/t28a-race-a"))
     project_b = ProjectState(name="B", root=Path("/tmp/t28a-race-b"))
     state = TuiState(projects=[project_a, project_b])
-    generation = project_a.begin_request(("scans", "results"))
+    generation = project_a.begin_request("overview")
+    identity = project_a.pending["overview"][1]
     _dispatch_key(state, "f2", actions)
     _dispatch_key(state, "down", actions)
     _dispatch_key(state, "enter", actions)
     assert state.active_project is project_b
-    assert project_a.apply_delayed_result(result, generation=generation) is False
-    assert result not in project_a.results
+    state.result_queue.put((project_a, "overview", generation, identity, True, payload))
+    _drain_results(state)
+    assert (project_key(project_a), "overview") not in state.views
 
     control = ProjectState(name="C", root=Path("/tmp/t28a-race-c"))
-    generation = control.begin_request(("scans", "results"))
-    assert control.apply_delayed_result(result, generation=generation) is True
-    assert result in control.results
-    assert control.apply_delayed_result(result, generation=generation) is False
+    state = TuiState(projects=[control])
+    generation = control.begin_request("overview")
+    identity = control.pending["overview"][1]
+    state.result_queue.put((control, "overview", generation, identity, True, payload))
+    assert _drain_results(state) is True
+    assert state.views[(project_key(control), "overview")].data == {"summary": "late"}
+    state.result_queue.put((control, "overview", generation, identity, True, payload))
+    assert _drain_results(state) is False, "a second delivery is not applied"
 
 
 def test_t28a_reads_create_no_registry_store_lock_telemetry_files(

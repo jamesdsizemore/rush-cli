@@ -17,6 +17,7 @@ always executes.
 
 from __future__ import annotations
 
+import io
 import json
 import queue
 import threading
@@ -515,6 +516,7 @@ def _moved_registration(root: Path, data_root: Path | None) -> dict[str, Any] | 
         "reason": f"registered root missing: {recorded}",
         "project_id": project_id,
         "revision": entry.get("revision", 1),
+        "new_root": str(root),
     }
 
 
@@ -665,27 +667,6 @@ class ProjectState:
         return self.pending.get(key) == (generation, identity) and (
             identity == self.identity()
         )
-
-    def apply_delayed_result(
-        self,
-        result: Mapping[str, Any],
-        *,
-        generation: int | None,
-        key: Any = ("scans", "results"),
-    ) -> bool:
-        """Apply a background result only when `generation` is the current
-        outstanding request for `key` and the project identity is unchanged;
-        anything else (switched away, superseded, never requested) is dropped."""
-        outstanding = self.pending.get(key)
-        if (
-            generation is None
-            or outstanding is None
-            or not self.accepts(key, generation, outstanding[1])
-        ):
-            return False
-        del self.pending[key]
-        self.results.append(cast(ToolResult, dict(result)))
-        return True
 
     def flattened_findings(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -2550,6 +2531,23 @@ def _has_running_work(project: ProjectState) -> bool:
     return project.status in ("scanning", "cancelling")
 
 
+def _reload_after_finished_work(state: TuiState, seen: dict[int, str]) -> bool:
+    """True when any project's status changed since the last tick (the
+    screen must redraw, also under reduced motion). Work that just finished
+    reloads the views it changed: Overview, Tokens and scan history."""
+    changed = False
+    for project in state.projects:
+        before = seen.get(id(project))
+        if before == project.status:
+            continue
+        changed = True
+        seen[id(project)] = project.status
+        if before in ("scanning", "cancelling") and not _has_running_work(project):
+            for section in ("overview", "tokens", "scans"):
+                state.load_requests.add((project_key(project), section))
+    return changed
+
+
 def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
     """Send the cooperative-cancel marker for `project`'s active run.
     Shared by the plain 'cancel_scan' key and Cancel-run-and-stay (P69-06g) --
@@ -3288,7 +3286,8 @@ def _project_create_form(state: TuiState, actions: ScanActions) -> None:
 
 
 def _project_relink_form(state: TuiState, actions: ScanActions) -> None:
-    _open_form(state, "project_relink", {"new_root": ""})
+    known = (state.active_project.registration or {}).get("new_root")
+    _open_form(state, "project_relink", {"new_root": known or ""})
 
 
 def _choose_later(state: TuiState, actions: ScanActions) -> None:
@@ -3446,6 +3445,8 @@ ACTIONS: tuple[Action, ...] = (
 _ACTIONS_BY_ID = {action.id: action for action in ACTIONS}
 _MIN_COLUMNS, _MIN_ROWS = 60, 20
 _RESIZE_KEYS = ("q", "c", "f2", "escape")
+# q and F2 open these below the minimum size too; their own keys answer them.
+_RESIZE_MODALS = ("quit_confirm", "project_selector")
 _ACTION_CATEGORIES = ("Global", "Navigation", "Section", "Text input", "Running work")
 _KEYMAP = KeymapManager(_BINDINGS)
 
@@ -3461,7 +3462,11 @@ def _too_small(state: TuiState) -> bool:
 
 
 def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None:
-    if _too_small(state) and key not in _RESIZE_KEYS:
+    if (
+        _too_small(state)
+        and key not in _RESIZE_KEYS
+        and state.mode not in _RESIZE_MODALS
+    ):
         return  # resize_guidance: every other key waits; all state is kept
     if not state.projects:
         if state.overlay == "form":
@@ -3470,7 +3475,7 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
             state.should_quit = True
         elif key == "N":
             _project_create_form(state, actions)
-        elif key == "y" and state.pending_grant is not None:
+        elif state.pending_grant is not None and key in ("y", "n", "escape"):
             _handle_grant_review_key(state, key, actions)
         return
     modal: dict[str, Callable[[TuiState, str, ScanActions], None]] = {
@@ -4108,21 +4113,27 @@ def _set_footer(layout: Layout, state: TuiState, status: Text) -> None:
     keymap's wrapped height so `?:Help` is never cut off."""
     keymap = _keymap_footer(state)
     inner = max(1, state.terminal_size[0] - 4)
-    layout["footer"].size = 3 + -(-len(keymap.plain) // inner)
+    measure = Console(width=inner, file=io.StringIO())
+    rows = sum(max(1, len(text.wrap(measure, inner))) for text in (status, keymap))
+    layout["footer"].size = 2 + rows
     layout["footer"].update(Panel(Group(status, keymap), style=_FOOTER_STYLE))
 
 
 def _render_resize_guidance(state: TuiState) -> Panel:
     columns, rows = state.terminal_size
-    return Panel(
-        Group(
-            Text(f"Terminal {columns}x{rows} is too small.", style="bold yellow"),
-            Text(f"Resize to at least {_MIN_COLUMNS}x{_MIN_ROWS}."),
-            Text("q quit  c cancel  F2 projects  Esc back", style="bold"),
-        ),
-        title="Resize",
-        style=THEME["border"],
-    )
+    lines: list[Any] = [
+        Text(f"Terminal {columns}x{rows} is too small.", style="bold yellow"),
+        Text(f"Resize to at least {_MIN_COLUMNS}x{_MIN_ROWS}."),
+        Text("q quit  c cancel  F2 projects  Esc back", style="bold"),
+    ]
+    # What q, c or F2 just did stays visible: the open choice or the result.
+    if state.mode == "quit_confirm" and state.projects:
+        lines.append(_footer_status_line(state, state.active_project))
+    elif state.mode == "project_selector":
+        lines.append(_render_project_selector(state))
+    elif state.message:
+        lines.append(_safe(state.message, "bold magenta"))
+    return Panel(Group(*lines), title="Resize", style=THEME["border"])
 
 
 def _render_no_projects(state: TuiState) -> Layout:
@@ -4309,6 +4320,7 @@ def run_interactive_tui(
     _IDLE_REFRESH_INTERVAL = 1.0 / 4
     last_refresh = 0.0
     seen_setup_events = 0
+    seen_statuses = {id(p): p.status for p in state.projects}
 
     ticks = 0
     with raw_terminal():
@@ -4341,6 +4353,7 @@ def run_interactive_tui(
                 key = reader.read_key(tick_seconds)
                 if key is not None:
                     _dispatch_key(state, key, actions)
+                status_changed = _reload_after_finished_work(state, seen_statuses)
 
                 if live is not None:
                     setup_events = sum(
@@ -4351,6 +4364,7 @@ def run_interactive_tui(
                         or applied
                         or resized
                         or setup_events != seen_setup_events
+                        or status_changed
                         or any(
                             p.status in ("scanning", "cancelling")
                             for p in state.projects
