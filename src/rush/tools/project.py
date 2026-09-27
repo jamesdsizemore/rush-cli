@@ -229,23 +229,26 @@ class ProjectTool(ToolFn):
         data_root: Path | None = None,
     ) -> Any:
         if action == "list":
-            return {"projects": list_projects()}
+            return {"projects": list_projects(data_root=data_root)}
         if action == "show":
-            return resolve_project(project_id or path)
+            return resolve_project(project_id or path, data_root=data_root)
         if action == "add":
-            record = register_project(path, name=name)
-            return resolve_project(record.project_id)
+            record = register_project(path, name=name, data_root=data_root)
+            return resolve_project(record.project_id, data_root=data_root)
         if action == "create":
             if not name:
                 raise ValueError("create requires name")
             record = create_project(
-                Path(parent) if parent else path, name, init_git=init_git
+                Path(parent) if parent else path,
+                name,
+                init_git=init_git,
+                data_root=data_root,
             )
-            return resolve_project(record.project_id)
+            return resolve_project(record.project_id, data_root=data_root)
         if action == "select":
             if not project_id or not session_id:
                 raise ValueError("select requires project_id and session_id")
-            return select_project(session_id, project_id)
+            return select_project(session_id, project_id, data_root=data_root)
         if action == "configure":
             if not project_id:
                 raise ValueError("configure requires project_id")
@@ -273,7 +276,12 @@ class ProjectTool(ToolFn):
                 raise ValueError("relink requires project_id")
             if expected_revision is None:
                 raise ValueError("relink requires expected_revision")
-            return relink_project(project_id, path, expected_revision=expected_revision)
+            return relink_project(
+                project_id,
+                path,
+                expected_revision=expected_revision,
+                data_root=data_root,
+            )
         raise ValueError(f"unknown project action: {action}")
 
     def handle_request(

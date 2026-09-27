@@ -1357,6 +1357,17 @@ def _stdout_is_tty() -> bool:
     return sys.stdout.isatty()
 
 
+def _stdin_is_tty() -> bool:
+    """Test seam (T28-A), same contract as `_stdout_is_tty`: the raw-terminal
+    key loop reads stdin, so interactive mode requires it to be a TTY too."""
+    return sys.stdin.isatty()
+
+
+def _interactive_terminal() -> bool:
+    """T28-A: interactive mode requires both stdin and stdout to be TTYs."""
+    return _stdin_is_tty() and _stdout_is_tty()
+
+
 @cli.command(name="ui")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -1365,7 +1376,7 @@ def _stdout_is_tty() -> bool:
     is_flag=True,
     default=False,
     help=(
-        "Print each project's check-suite result as JSON and exit, "
+        "Print each project's read-only status (`rush status`) as JSON and exit, "
         "instead of opening the interactive interface."
     ),
 )
@@ -1385,11 +1396,11 @@ def ui_cmd(
 
     Accepts one or more project paths (`rush ui path1 path2 ...`) to open
     and switch between multiple projects; defaults to the current directory
-    when none are given. The interface starts immediately and runs each
-    project's initial check suite as a background job it attaches to,
-    rather than blocking startup on it. With `--json`, or when stdout is
-    not a terminal, prints each project's check-suite result and exits
-    instead of opening the interface.
+    when none are given. The interface starts immediately on a read-only
+    Overview; the initial analysis is an explicit Start action (F5 refreshes
+    the Overview). With `--json`, or when stdin or stdout is not a
+    terminal, prints each project's read-only status and exits instead of
+    opening the interface.
     """
     from .tui import ProjectSeed, default_scan_actions, run_interactive_tui
 
@@ -1418,31 +1429,38 @@ def ui_cmd(
             sys.exit(2)
         entries.append((typed, selected))
 
-    if json_output or not _stdout_is_tty():
-        from .workflows.suites import CHECK_SUITE, run_workflow_suite
+    if json_output or not _interactive_terminal():
+        # Phase 66 §3.8: without an interactive terminal `rush ui` reports the
+        # zero-write `rush status` of each project; it never runs checks.
+        from .tools.status import StatusTool
 
         snapshots = []
-        for raw, selection in entries:
-            res = run_workflow_suite(
-                suite=CHECK_SUITE,
-                path=selection.lexical,
-                permissions=perms,
-                original_requested_targets=None if raw is None else (raw,),
-                invocation_start_cwd=anchor,
-            )
+        summaries = []
+        for _raw, selection in entries:
+            status = StatusTool()(selection.target)
             snapshots.append(
                 {
                     "project": selection.target.name or str(selection.target),
                     "path": str(selection.target),
-                    "result": res,
+                    "status": status.get("raw"),
                 }
             )
+            summaries.append(status.get("summary", ""))
         if json_output:
             click.echo(json.dumps(snapshots))
         else:
-            for snap in snapshots:
-                result = snap["result"] if isinstance(snap["result"], dict) else {}
-                click.echo(f"{snap['project']}: {result.get('summary', 'done')}")
+            import shlex
+
+            from .theme import safe_terminal_text
+
+            for snap, summary in zip(snapshots, summaries, strict=True):
+                # Names and summaries come from the filesystem and producers:
+                # terminal-escaped; the paths in the commands are shell-quoted
+                # so a path with spaces or metacharacters stays copyable.
+                quoted = shlex.quote(str(snap["path"]))
+                click.echo(safe_terminal_text(f"{snap['project']}: {summary}"))
+                click.echo(safe_terminal_text(f"Next: rush status {quoted} --json"))
+                click.echo(safe_terminal_text(f"      rush check {quoted}"))
         return
 
     seeds = [
@@ -1454,7 +1472,9 @@ def ui_cmd(
         )
         for raw, selection in entries
     ]
-    run_interactive_tui(seeds, actions=default_scan_actions(permissions=perms))
+    run_interactive_tui(
+        seeds, actions=default_scan_actions(permissions=perms), permissions=perms
+    )
 
 
 def _dashboard_descriptor_path(server_id: str) -> Path:

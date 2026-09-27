@@ -54,7 +54,6 @@ from typing import Any, ClassVar
 from rush.config import load_config
 from rush.memory.store import (
     MemoryStoreUnreadableError,
-    TypedArtifactStore,
     is_internal_memory_source,
     read_sqlite_readonly,
     readonly_view_reason,
@@ -62,7 +61,7 @@ from rush.memory.store import (
 )
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
-from rush.token_economy.telemetry import TelemetryStore
+from rush.token_economy.telemetry import read_summary_readonly
 from rush.tools.routing import detect_project_languages
 
 REGISTRY_FILE = "projects.json"
@@ -1271,6 +1270,48 @@ _GIT_DIRTY_MAX = 200
 _GIT_DIFF_MAX_LINES = 500
 _GIT_LOG_FIELD_SEP = "\x1f"
 _GIT_REF_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
+# Read-only Git: never run a repository-configured fsmonitor hook, never take
+# the optional index lock (so a status read cannot rewrite `.git/index`), and
+# never show signatures (which runs the repository's `gpg.program`).
+_GIT_READ = (
+    "git",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "log.showSignature=false",
+    "--no-optional-locks",
+)
+
+
+def _git_read(root: Path) -> list[str]:
+    """`_GIT_READ` plus an empty clean/smudge/process command for every filter
+    driver the repository's own config defines (a hostile `.git/config` can
+    name any program there; `status` runs a clean filter on racily-clean
+    files). The user's global and system drivers (e.g. git-lfs) are trusted
+    and left active. Reading the config runs nothing."""
+    argv = list(_GIT_READ)
+    try:
+        listed = subprocess.run(
+            [
+                "git",
+                "config",
+                "--local",
+                "--includes",
+                "--name-only",
+                "--get-regexp",
+                r"^filter\..*\.(clean|smudge|process)$",
+            ],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        listed = ""
+    for name in sorted({line.strip() for line in listed.splitlines() if line.strip()}):
+        argv += ["-c", f"{name}="]
+    return argv
 
 
 def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
@@ -1281,8 +1322,9 @@ def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             [
-                "git",
+                *_git_read(root),
                 "log",
+                "--no-show-signature",
                 f"--format={fmt}",
                 f"-n{max(1, limit)}",
                 f"--skip={max(0, skip)}",
@@ -1315,7 +1357,7 @@ def _git_dirty_files(root: Path) -> list[dict[str, Any]]:
     line shape) -- never collapsed to a delete+add."""
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain=v1"],
+            [*_git_read(root), "status", "--porcelain=v1"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1354,7 +1396,7 @@ def _git_summary(root: Path) -> dict[str, Any]:
         }
     try:
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            [*_git_read(root), "rev-parse", "HEAD"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1362,7 +1404,7 @@ def _git_summary(root: Path) -> dict[str, Any]:
             timeout=5,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"],
+            [*_git_read(root), "status", "--porcelain"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1438,7 +1480,17 @@ def project_git_commit_diff(
         }
     try:
         patch = subprocess.run(
-            ["git", "show", "--find-renames", "--no-color", "--patch", commit],
+            [
+                *_git_read(root),
+                "show",
+                "--no-show-signature",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--no-color",
+                "--patch",
+                commit,
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1446,7 +1498,17 @@ def project_git_commit_diff(
             timeout=5,
         ).stdout
         name_status = subprocess.run(
-            ["git", "show", "--find-renames", "--name-status", "--format=", commit],
+            [
+                *_git_read(root),
+                "show",
+                "--no-show-signature",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--name-status",
+                "--format=",
+                commit,
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1489,7 +1551,7 @@ def _git_show_path_digest(root: Path, commit: str, path: str) -> str | None:
     engines use for `git_link["path_digests"]`."""
     try:
         result = subprocess.run(
-            ["git", "show", f"{commit}:{path}"],
+            [*_git_read(root), "show", "--no-textconv", f"{commit}:{path}"],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1523,6 +1585,55 @@ def git_link_matches_commit(
         _git_show_path_digest(root, commit, path) == digest
         for path, digest in digests.items()
     )
+
+
+def _readonly_memory_refs(
+    root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Live and tombstoned memory artifact refs over the zero-write reader --
+    the same SQL as `TypedArtifactStore.list_artifact_refs`/`list_deleted_refs`,
+    never reading `content`. No DB is no refs."""
+
+    def _read(
+        conn: sqlite3.Connection,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        conn.row_factory = sqlite3.Row
+        if not sqlite_has_table(conn, "memory_artifacts"):
+            return [], []
+        live = conn.execute(
+            "SELECT id, family, subject, trust_tier, source, created_at, "
+            "artifact_version FROM memory_artifacts ORDER BY id ASC"
+        ).fetchall()
+        deleted: list[sqlite3.Row] = []
+        if sqlite_has_table(conn, "memory_changes"):
+            deleted = conn.execute(
+                "SELECT artifact_id AS id, subject, "
+                "MAX(artifact_version) AS revision, MAX(created_at) AS deleted_at "
+                "FROM memory_changes WHERE tombstone = 1 "
+                "AND artifact_id NOT IN (SELECT id FROM memory_artifacts) "
+                "GROUP BY artifact_id ORDER BY artifact_id ASC"
+            ).fetchall()
+        return [dict(row) for row in live], [dict(row) for row in deleted]
+
+    refs = read_sqlite_readonly(Path(root).resolve() / ".rush" / "memory.db", _read)
+    return refs if refs is not None else ([], [])
+
+
+def _readonly_memory_event_totals(root: Path) -> dict[str, int]:
+    """Recorded memory-event token totals by kind, read without creating or
+    migrating `.rush/telemetry/tokens.db`. Missing DB/table is no events."""
+
+    def _read(conn: sqlite3.Connection) -> dict[str, int]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return {}
+        rows = conn.execute(
+            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events GROUP BY kind"
+        ).fetchall()
+        return {str(kind): int(total) for kind, total in rows}
+
+    db = Path(root).resolve() / ".rush" / "telemetry" / "tokens.db"
+    totals = read_sqlite_readonly(db, _read)
+    return totals or {}
 
 
 def list_project_artifacts(
@@ -1594,7 +1705,9 @@ def list_project_artifacts(
             }
         )
 
-    store = TypedArtifactStore(root)
+    # T28-A: zero-write reads (X1) -- a constructed store would create/migrate
+    # `.rush/memory.db` and `.rush/cache` during a read-only evidence view.
+    live_rows, deleted_rows = _readonly_memory_refs(root)
     memory_refs = [
         {
             "artifact_ref": f"memory:{row['id']}",
@@ -1606,7 +1719,7 @@ def list_project_artifacts(
             "trust_tier": row["trust_tier"],
             "deleted": False,
         }
-        for row in store.list_artifact_refs()
+        for row in live_rows
         if include_internal or not is_internal_memory_source(row["source"])
     ] + [
         {
@@ -1617,7 +1730,7 @@ def list_project_artifacts(
             "artifact_version": row.get("revision"),
             "deleted": True,
         }
-        for row in store.list_deleted_refs()
+        for row in deleted_rows
     ]
 
     return {
@@ -1698,11 +1811,10 @@ def project_token_usage(
             tokenizer_total += tokens
             tokenizer_packets += 1
 
-    telemetry = TelemetryStore(root)
+    # T28-A: read-only; `TelemetryStore(root)` creates/migrates tokens.db.
+    recorded = _readonly_memory_event_totals(root)
     cache_kinds = ("retrieval", "expansion", "packing", "handoff", "embedding")
-    cache_by_kind = {
-        kind: telemetry.get_memory_event_total(kind) for kind in cache_kinds
-    }
+    cache_by_kind = {kind: recorded.get(kind, 0) for kind in cache_kinds}
 
     return {
         "provider_reported": {
@@ -1719,7 +1831,7 @@ def project_token_usage(
             "total_tokens": sum(cache_by_kind.values()),
             "by_kind": cache_by_kind,
         },
-        "estimated_avoided": telemetry.get_summary(),
+        "estimated_avoided": read_summary_readonly(root),
     }
 
 
@@ -1765,6 +1877,39 @@ def _readonly_memory_counts(
     return {}, 0
 
 
+def _latest_run_summary(root: Path, project_id: str) -> dict[str, Any]:
+    """T23: the latest attempt by the shared read-only chronology (never UUID
+    order), and its own counts only -- never a sum across manifests. Shared by
+    `project_snapshot` and the TUI Overview (`project_overview_evidence`)."""
+    chronology = select_attempt_chronology(root, project_id)
+    manifest = chronology.latest.manifest if chronology.latest else None
+    aggregate = (manifest or {}).get("aggregate") or {}
+    run_state = manifest.get("run_state") if manifest else None
+    if chronology.state == "incomplete":
+        run_state = "incomplete"
+    return {
+        "count": chronology.run_count,
+        "latest_run_id": chronology.run_id,
+        "latest_run_state": run_state,
+        "coverage": (aggregate.get("metadata") or {}).get("coverage"),
+        "findings_count": (
+            len(aggregate.get("findings") or []) if manifest is not None else None
+        ),
+        "selection_state": chronology.state,
+    }
+
+
+def project_overview_evidence(root: Path, project_id: str | None) -> dict[str, Any]:
+    """T28-A Overview evidence beyond `rush status`: Git branch/worktree state,
+    detected stack and the latest attempt's coverage/finding counts. Read-only;
+    an unregistered project (`project_id is None`) has no run evidence."""
+    return {
+        "git": _git_summary(root),
+        "stack": sorted(detect_project_languages(root)),
+        "runs": _latest_run_summary(root, project_id) if project_id else None,
+    }
+
+
 def project_snapshot(
     project: str | Path,
     *,
@@ -1778,31 +1923,14 @@ def project_snapshot(
     record = resolve_project(project, data_root=data_root)
     root = Path(record["root"])
 
-    # T23: the latest attempt by the shared read-only chronology (never UUID
-    # order), and its own counts only -- never a sum across manifests.
-    chronology = select_attempt_chronology(root, record["project_id"])
-    manifest = chronology.latest.manifest if chronology.latest else None
-    aggregate = (manifest or {}).get("aggregate") or {}
-    run_state = manifest.get("run_state") if manifest else None
-    if chronology.state == "incomplete":
-        run_state = "incomplete"
-
+    runs = _latest_run_summary(root, record["project_id"])
     subject_counts, deleted_count = _readonly_memory_counts(
         root, include_internal=include_internal
     )
 
     return {
         "project": record,
-        "runs": {
-            "count": chronology.run_count,
-            "latest_run_id": chronology.run_id,
-            "latest_run_state": run_state,
-            "coverage": (aggregate.get("metadata") or {}).get("coverage"),
-            "findings_count": (
-                len(aggregate.get("findings") or []) if manifest is not None else None
-            ),
-            "selection_state": chronology.state,
-        },
+        "runs": runs,
         "memory": {
             "counts_by_subject": subject_counts,
             "deleted_count": deleted_count,
@@ -1854,6 +1982,7 @@ __all__ = [
     "list_projects_page",
     "project_git_commit_diff",
     "project_git_history",
+    "project_overview_evidence",
     "project_snapshot",
     "project_token_usage",
     "read_registry_state",

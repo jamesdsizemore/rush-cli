@@ -103,6 +103,11 @@ STAGE_GRANTS: dict[str, tuple[str, ...]] = {
     "identity_resolution": ("network",),
 }
 
+
+def _no_progress(stage: str, status: str) -> None:
+    """The `apply_setup_review` progress hook when no caller passes one."""
+
+
 _SKIP_REASONS = {"n": "declined", "eof": "eof", "interrupt": "interrupt"}
 
 # Phase 70 T26: the LLM CLI hosts `rush setup --agent` connects (Cursor is out
@@ -1001,8 +1006,13 @@ def apply_setup_review(
     host_runner: HostRunner | None = None,
     atomic_write_bytes: Callable[..., Any] | None = None,
     choices: dict[str, bool] | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     """Apply a setup review: config -> register -> configure -> engines.
+
+    ``on_progress(stage, status)``, when given, is called as each stage
+    starts (``"started"``) and ends (``"completed"`` or ``"failed"``); it
+    never changes the result or anything written to ``consent``.
 
     With ``consent`` the review is shown and confirmed first, and only the
     reviewed grants become permissions (``permissions`` is not consulted).
@@ -1025,6 +1035,7 @@ def apply_setup_review(
         "prober": prober,
         "which": which,
     }
+    emit = on_progress or _no_progress
     kind = review.get("kind") if isinstance(review, dict) else None
     if kind == "setup":
         return _apply_setup_envelope(
@@ -1034,9 +1045,12 @@ def apply_setup_review(
             fakes,
             host_fakes={"runner": host_runner, "writer": atomic_write_bytes},
             choices=choices,
+            on_progress=emit,
         )
     if kind == "provision":
-        return _apply_legacy_provision(review, permissions, consent, fakes)
+        return _apply_legacy_provision(
+            review, permissions, consent, fakes, on_progress=emit
+        )
     problem = _review_problem(review)
     if problem is not None:
         return problem
@@ -1054,7 +1068,7 @@ def apply_setup_review(
         }
     try:
         with _setup_lock(Path(review["project_root"])):
-            return _apply_locked(review, permissions, fakes)
+            return _apply_locked(review, permissions, fakes, on_progress=emit)
     except _StageConflict as exc:
         return {
             "status": "recovery_required",
@@ -1071,6 +1085,7 @@ def _apply_locked(
     fakes: dict[str, Any],
     *,
     resume: bool = False,
+    on_progress: Callable[[str, str], None] = _no_progress,
 ) -> dict[str, Any]:
     """The ordered stages, run while `.rush/setup.lock` is held: every
     precondition is rechecked under the lock before the first write."""
@@ -1078,16 +1093,26 @@ def _apply_locked(
     txn = _SetupTransaction(review)
     if stale is not None:
         return txn.compensate(*stale)
-    stage = "config"
+    stage, step = "config", "config"
     try:
+        on_progress(step, "started")
         txn.config()
-        stage = "registration"
+        on_progress(step, "completed")
+        stage, step = "registration", "register"
+        on_progress(step, "started")
         project_id, revision = txn.register()
+        on_progress(step, "completed")
+        step = "configure"
+        on_progress(step, "started")
         txn.configure(project_id, revision)
+        on_progress(step, "completed")
     except _StageConflict as exc:
+        on_progress(step, "failed")
         return txn.compensate(exc.component, exc.detail)
     except (OSError, registry.ProjectError) as exc:
+        on_progress(step, "failed")
         return txn.compensate(stage, str(exc))
+    on_progress("engines", "started")
     outcome = apply_provision_plan(
         plan_from_dict(review["provision"]),
         permissions,
@@ -1098,6 +1123,7 @@ def _apply_locked(
     )
     provision = _provision_summary(outcome)
     complete = not (outcome.failed or outcome.permission_blocked)
+    on_progress("engines", "completed" if complete else "failed")
     return {
         "status": "ok" if complete else "partial",
         "review_id": review["review_id"],
@@ -2092,6 +2118,7 @@ def _apply_setup_envelope(
     *,
     host_fakes: dict[str, Any],
     choices: dict[str, bool] | None,
+    on_progress: Callable[[str, str], None] = _no_progress,
 ) -> dict[str, Any]:
     """Apply a `{kind:"setup"}` envelope: T24's project stages, then host
     registration -> guidance -> hooks -> session selection -> probe.
@@ -2137,20 +2164,27 @@ def _apply_setup_envelope(
             "missing": missing,
             "review_id": review["review_id"],
         }
+    host_started = False
     try:
         with _setup_lock(Path(review["project_root"])):
-            result = _apply_locked(review, permissions, fakes, resume=True)
+            result = _apply_locked(
+                review, permissions, fakes, resume=True, on_progress=on_progress
+            )
             if "project_id" not in result:
                 return {
                     **result,
                     "raw": _pending_host_stages("project setup did not complete"),
                 }
+            on_progress("host", "started")
+            host_started = True
             raw = _apply_host_stages(
                 review, result["project_id"], chosen, host_fakes, permissions
             )
         if review.get("host") is not None:
             raw["check"] = _run_check_stage(review, chosen, permissions)
     except _StageConflict as exc:
+        if host_started:
+            on_progress("host", "failed")
         return {
             "status": "recovery_required",
             "conflict": exc.component,
@@ -2160,6 +2194,7 @@ def _apply_setup_envelope(
             "raw": _pending_host_stages("project setup did not complete"),
         }
     status, reason = _host_outcome_status(result["status"], raw)
+    on_progress("host", "completed" if reason is None else "failed")
     outcome = {
         **result,
         "status": status,
@@ -2187,6 +2222,8 @@ def _apply_legacy_provision(
     permissions: ExecutionPermissions | None,
     consent: ConsentIO | None,
     fakes: dict[str, Any],
+    *,
+    on_progress: Callable[[str, str], None] = _no_progress,
 ) -> dict[str, Any]:
     """A provision-only payload: its engine plan for an already-registered
     project, nothing else. Host, guidance, hooks and probe stay pending."""
@@ -2221,6 +2258,7 @@ def _apply_legacy_provision(
             }
         grants = {g for e in plan.entries for g in e.required_grants}
         permissions = ExecutionPermissions(**{g: True for g in grants})
+    on_progress("engines", "started")
     outcome = apply_provision_plan(
         plan,
         permissions,
@@ -2230,6 +2268,7 @@ def _apply_legacy_provision(
         **{k: v for k, v in fakes.items() if v is not None},
     )
     complete = not (outcome.failed or outcome.permission_blocked)
+    on_progress("engines", "completed" if complete else "failed")
     result: dict[str, Any] = {
         "status": "ok" if complete else "partial",
         "project_id": project_id,

@@ -12,6 +12,7 @@ Red is banned. Yellow is allowed (review-needed / warnings).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from rich.console import Console
@@ -165,3 +166,20 @@ def render_dashboard(results: list[dict[str, Any]]) -> None:
     c.print(
         f"[dim]Total tools executed: {len(results)} | Total duration: {total_duration}ms | Total findings: {total_findings}[/dim]"
     )
+
+
+# X3 (T28): ESC-introduced sequences (CSI, OSC to BEL/ST, and 2-byte ESC
+# forms), then any remaining C0/C1 control byte except tab/newline.
+_TERMINAL_SEQUENCE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?"
+    r"|\x1b[@-_]?"
+    r"|[\x00-\x08\x0b-\x1f\x7f-\x9f]"
+)
+
+
+def safe_terminal_text(value: object) -> str:
+    """X3: any dynamic value made safe for a terminal -- escape/control
+    sequences removed. Callers put the result in a `rich.text.Text` (never
+    markup), so `[...]` in the value is shown literally."""
+    return _TERMINAL_SEQUENCE.sub("", "" if value is None else str(value))
