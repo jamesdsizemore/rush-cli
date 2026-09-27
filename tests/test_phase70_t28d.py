@@ -947,7 +947,7 @@ def test_t28d_edit_conflict_offers_refresh_and_rereview(tmp_path: Path) -> None:
     state.memory_edit_buffer = "in-flight-edit"
     spy = _MemoryRunSpy(
         {
-            "edit": [{"raw": {"code": "VERSION_CONFLICT"}}],
+            "edit": [{"raw": {"code": "E_VERSION"}}],
             # A refresh/re-review re-fetches the row; its current version has
             # moved on from the stale `3` this edit started against.
             "list": [{"status": "ok", "raw": [{"id": "a1", "artifact_version": 4}]}],

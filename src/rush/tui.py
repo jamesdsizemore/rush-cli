@@ -766,6 +766,8 @@ class TuiState:
     memory_pending_delete: dict[str, Any] | None = None
     memory_expanded: dict[str, Any] | None = None
     memory_edit_buffer: str | None = None
+    memory_edit_field: str = "note"
+    memory_edit_conflict: dict[str, Any] | None = None
     memory_message: str = ""
     memory_filter_trust: str | None = None
     memory_filter_source: str | None = None
@@ -2439,41 +2441,108 @@ def _memory_delete_apply(
 def _memory_edit_commit(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
-    """ponytail: the keyboard editor commits one fixed `note` content field
-    rather than a full structured-content form -- a real, testable single-
-    field edit; upgrade to a multi-field form if admin content needs more
-    than one editable field."""
+    """T28-D: previews the edit (apply=False) carrying id, expected_version,
+    owner_scope and required_grants, and applies with exactly those
+    reviewed grants only when the preview returns OK. Any non-OK result
+    keeps the entered content; E_VERSION also records `memory_edit_conflict`
+    for `_memory_edit_refresh_and_rereview` -- never a blind retry."""
     item = _memory_selected_item(state)
     if item is None or state.memory_edit_buffer is None or actions.memory_run is None:
+        return
+    grants = ["cache_write"]
+    request = {
+        "scope": state.memory_subject,
+        "id": item["id"],
+        "expected_version": item["artifact_version"],
+        "content": {
+            **(item.get("content") or {}),
+            state.memory_edit_field: state.memory_edit_buffer,
+        },
+        "owner_scope": _memory_owner_scope(state, project),
+        "required_grants": grants,
+    }
+    try:
+        result = actions.memory_run(
+            project.root, operation="edit", request={**request, "apply": False}
+        )
+        raw = result.get("raw") or {}
+        if raw.get("code") == "OK":
+            result = actions.memory_run(
+                project.root,
+                operation="edit",
+                request={**request, "apply": True},
+                permissions=_permissions_of(grants),
+            )
+            raw = result.get("raw") or {}
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"edit failed: {exc}"
+        return
+    code = raw.get("code")
+    if code == "OK":
+        state.memory_message = "edit applied"
+        state.memory_edit_buffer = None
+        state.memory_edit_conflict = None
+        _memory_refresh(state, project, actions, announce=False)
+        return
+    if code == "E_VERSION":
+        state.memory_edit_conflict = {
+            "id": item["id"],
+            "expected_version": item["artifact_version"],
+        }
+        state.memory_message = (
+            f"edit conflict on {item['id']} v{item['artifact_version']} -- "
+            "[r] refresh and re-review"
+        )
+        return
+    state.memory_message = f"edit denied: {code}"
+
+
+def _memory_edit_refresh_and_rereview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D conflict recovery: re-fetch the conflicted row, replace the
+    stale copy in `memory_items`, and reopen the editor with the kept
+    content for review. Never re-submits."""
+    conflict = state.memory_edit_conflict
+    if conflict is None or actions.memory_run is None:
         return
     try:
         result = actions.memory_run(
             project.root,
-            operation="edit",
-            request={
-                "scope": state.memory_subject,
-                "id": item["id"],
-                "expected_version": item["artifact_version"],
-                "content": {
-                    **(item.get("content") or {}),
-                    "note": state.memory_edit_buffer,
-                },
-                "owner_scope": _memory_owner_scope(state, project),
-                "apply": True,
-            },
-            permissions=ExecutionPermissions(cache_write=True),
+            operation="list",
+            subject=state.memory_subject,
+            query=state.memory_query_buffer.strip(),
+            session_allowlist=_memory_known_sources(project),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
-        state.memory_message = f"edit failed: {exc}"
-        state.memory_edit_buffer = None
+        state.memory_message = f"refresh failed: {exc}"
         return
-    raw = result.get("raw") or {}
-    if raw.get("code") == "OK":
-        state.memory_message = "edit applied"
-        _memory_refresh(state, project, actions, announce=False)
+    rows = result.get("raw") if result.get("status") == "ok" else None
+    fresh = next(
+        (
+            row
+            for row in rows or []
+            if isinstance(row, dict) and row.get("id") == conflict["id"]
+        ),
+        None,
+    )
+    if fresh is None:
+        state.memory_message = f"{conflict['id']} not found on refresh"
+        return
+    ids = [row.get("id") for row in state.memory_items]
+    if conflict["id"] in ids:
+        index = ids.index(conflict["id"])
+        state.memory_items[index] = fresh
     else:
-        state.memory_message = f"edit denied: {raw.get('code')}"
-    state.memory_edit_buffer = None
+        state.memory_items.append(fresh)
+        index = len(state.memory_items) - 1
+    state.memory_selected_index = index
+    state.memory_edit_conflict = None
+    state.mode = "memory_edit"
+    state.memory_message = (
+        f"refreshed {conflict['id']} to v{fresh.get('artifact_version')} -- "
+        "review, then Enter to submit"
+    )
 
 
 def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:

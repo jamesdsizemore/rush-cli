@@ -832,7 +832,9 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
     assert [call["request"]["owner_scope"] for call in calls] == [
         {"kind": "user", "id": "alice"},
         {"kind": "user", "id": "alice"},
+        {"kind": "user", "id": "alice"},
     ]
+    assert [call["request"]["apply"] for call in calls] == [False, True, False]
 
 
 def test_tui_owner_scope_selector_cycles_all_four_kinds(tmp_path: Path) -> None:
