@@ -2,9 +2,9 @@
 # Generated deterministically by rush.governance.coverage_manifest
 
 [manifest]
-revision = "e3172ecc4dff342d8748081d41256a5ebe011692"
+revision = "d416bcd33b7e15f7d504a9c5976e28d850119fc0"
 generator_version = "1.0.0"
-total_records = 1486
+total_records = 1488
 
 [[records]]
 path = ".github/workflows/ci.yml"
@@ -5037,6 +5037,11 @@ classification = "source"
 inclusion_rule = "directory-tree:src/"
 
 [[records]]
+path = "src/rush/tools/status.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
 path = "src/rush/tools/strictify.py"
 classification = "source"
 inclusion_rule = "directory-tree:src/"
@@ -6838,6 +6843,11 @@ inclusion_rule = "directory-tree:tests/"
 
 [[records]]
 path = "tests/test_phase70_memory_visibility.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase70_onboarding.py"
 classification = "test"
 inclusion_rule = "directory-tree:tests/"
 

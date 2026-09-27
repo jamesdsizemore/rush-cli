@@ -79,6 +79,7 @@ from .semantic_drift import SemanticDriftTool
 from .slop import SlopTool
 from .snapshot import SnapshotTool
 from .sql import SqlTool
+from .status import StatusTool
 from .tdd_guard import TddGuardTool
 from .templates import TemplatesTool
 from .test import TestTool
@@ -143,6 +144,7 @@ ALL_TOOLS: list[ToolFn] = [
     DeadAssetTool(),
     PrSynthesizeTool(),
     CheckTool(),
+    StatusTool(),
 ]
 
 __all__ = [  # noqa: RUF022
@@ -184,6 +186,7 @@ __all__ = [  # noqa: RUF022
     "SessionContinuityTool",
     "Severity",
     "SlopTool",
+    "StatusTool",
     "TestTool",
     "ToolFn",
     "ToolName",

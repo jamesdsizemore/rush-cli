@@ -37,6 +37,7 @@ class PublicOperation:
 
 
 _CLI_ONLY_GROUP_LEAVES = frozenset({"memory"})
+_BARE_ROUTE_OPERATION = "tool.status"
 
 
 def build_operations_inventory() -> list[PublicOperation]:
@@ -610,6 +611,10 @@ def render_operations_toml(inventory: list[PublicOperation]) -> str:
     ]
 
     for op in inventory:
+        # T23 (X1): the root group's bare route is not a Click leaf, so the
+        # operation it runs carries the note.
+        if op.id == _BARE_ROUTE_OPERATION and cli.invoke_without_command:
+            lines.append("# Bare `rush` (no subcommand) runs this operation.")
         lines.append("[[operations]]")
         lines.append(f'id = "{op.id}"')
         lines.append(f'kind = "{op.kind}"')

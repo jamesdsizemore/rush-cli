@@ -1703,7 +1703,7 @@ def test_t08_registered_root_above_root_alias_spelling_is_not_ambiguous(
 
 def test_t08_every_path_taking_tool_declares_exactly_one_root_arg() -> None:
     """F: iterate the real FastMCP tools/list. The set of tools publishing a
-    declared-root argument is exactly the path-taking set (all 54 catalog
+    declared-root argument is exactly the path-taking set (all 55 catalog
     tools, the rush_attest_generate alias, and the 11 custom tools whose
     handler takes path/file/target, rush_test_heal included); each publishes
     exactly one of `project` or its own existing `project_id`, optional.
@@ -1713,7 +1713,7 @@ def test_t08_every_path_taking_tool_declares_exactly_one_root_arg() -> None:
 
     server = mcp.build_server()
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
-    assert len(tools) == 80
+    assert len(tools) == 81
 
     catalog = {f"rush_{t.name.replace('-', '_')}" for t in ALL_TOOLS}
     custom_path_taking = {
@@ -1730,7 +1730,7 @@ def test_t08_every_path_taking_tool_declares_exactly_one_root_arg() -> None:
         "rush_mesh_release_lock",
     }
     path_taking = catalog | {"rush_attest_generate"} | custom_path_taking
-    assert len(path_taking) == 67
+    assert len(path_taking) == 68
 
     # T8 5.2 / T6: `rush_project` and `rush_scan` are not path-taking; since T6
     # their published `project` field is operation data (a project reference

@@ -7,7 +7,7 @@ import inspect
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, cast, get_args
 
 from pydantic import Field
 
@@ -298,6 +298,23 @@ def _standard_context(
     )
 
 
+def _callable_signature(sig: inspect.Signature, tool: Any) -> inspect.Signature:
+    """T23: parameters a caller can never supply -- the invocation context
+    (`context`/`ctx` or an `InvocationContext` annotation, bound by the
+    executor) and a tool's declared `internal_parameters` -- are not
+    published."""
+    internal: frozenset[str] = getattr(tool, "internal_parameters", frozenset())
+    return sig.replace(
+        parameters=[
+            p
+            for p in sig.parameters.values()
+            if p.name not in ("context", "ctx")
+            and p.name not in internal
+            and InvocationContext not in (p.annotation, *get_args(p.annotation))
+        ]
+    )
+
+
 def make_tool_wrapper(
     tool: Any,
     executor: InvocationExecutor | None = None,
@@ -313,7 +330,9 @@ def make_tool_wrapper(
     exec_instance = executor
     real_sig = inspect.signature(tool.__call__, eval_str=True)
     declared_views = _declared_view_params(tool.name, real_sig)
-    public_sig = _with_view_params(_public_signature(real_sig))
+    public_sig = _with_view_params(
+        _public_signature(_callable_signature(real_sig, tool))
+    )
     inject = (
         "project_id" not in real_sig.parameters and "project" not in real_sig.parameters
     )

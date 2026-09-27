@@ -74,6 +74,23 @@ def _write_manifest(
     (manifest_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
+    # T23: the chronology reader orders attempts by a validated `attempt.json`
+    # header (identities, positive generation, UTC `started_at`), exactly the
+    # shape `project_run._write_attempt_header` persists.
+    descriptor = json.loads((root / ".rush" / "project.json").read_text("utf-8"))
+    (manifest_dir / "attempt.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "plan_id": f"plan-{run_id}",
+                "project_id": descriptor["project_id"],
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "attempt_generation": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _scheduled_item(

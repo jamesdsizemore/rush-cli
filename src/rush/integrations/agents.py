@@ -894,6 +894,25 @@ def read_agent_memory_state(
     return entries.get(_entry_key(session_id, agent_id))
 
 
+def read_agent_memory_state_strict(
+    *, project_root: Path | None = None, data_root: Path | None = None
+) -> dict[str, Any] | None:
+    """T23 (X5): one scope's readiness `entries` read with a plain JSON load,
+    never `CASMapTransaction` (whose constructor creates directories). `{}`
+    when the file is absent; `None` when it is unreadable or not the CAS
+    `{version, data: {entries}}` shape."""
+    path = agent_memory_store_path(project_root=project_root, data_root=data_root)
+    try:
+        payload = json.loads(path.read_bytes())
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    entries = data.get("entries", {}) if isinstance(data, dict) else None
+    return entries if isinstance(entries, dict) else None
+
+
 def record_tool_observation(
     agent_id: str,
     session_id: str,

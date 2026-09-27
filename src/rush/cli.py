@@ -77,7 +77,11 @@ class RushGroup(click.Group):
         return super().get_command(ctx, cmd_name)
 
 
-@click.group(cls=RushGroup, context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    cls=RushGroup,
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.version_option(__version__, "--version", "-V", message="%(version)s")
 @click.option(
     "--log-level",
@@ -86,7 +90,8 @@ class RushGroup(click.Group):
     type=click.Choice(["debug", "info", "warn", "error"], case_sensitive=False),
     help="Log verbosity (stderr NDJSON). Env: RUSH_LOG_LEVEL. Default: warn.",
 )
-def cli(log_level: str) -> None:
+@click.pass_context
+def cli(ctx: click.Context, log_level: str) -> None:
     """rush — agentic code-quality tools for coding agents.
 
     \b
@@ -94,6 +99,66 @@ def cli(log_level: str) -> None:
     Pairs well with `npx @nanonets/graft` for context-graph queries.
     """
     setup_logging(log_level)
+    # T23: bare `rush` is exactly `rush status` for the invocation cwd.
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(status_cmd)
+
+
+@cli.command(name="status")
+@click.argument("path", type=TargetPath(path_type=Path), required=False)
+@click.option(
+    "--session",
+    "session_id",
+    default=None,
+    help="Show the project bound to this interface session (explicit PATH wins).",
+)
+@click.option(
+    "--result",
+    "result_handle",
+    default=None,
+    help="Read a stored result by handle, as `rush context retrieve --view`.",
+)
+@click.option(
+    "--view",
+    type=click.Choice(["result", "bytes"]),
+    default=None,
+    help="With --result: a findings page (result, default) or a byte slice.",
+)
+@click.option("--cursor", default=None, help="With --result: next_cursor.")
+@click.option("--offset", type=int, default=None, help="With --result: start.")
+@click.option("--limit", type=int, default=None, help="With --result: 1-50.")
+@click.option("--max-bytes", "max_bytes", type=int, default=None, help="With --result.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def status_cmd(
+    path: Path | None,
+    session_id: str | None,
+    result_handle: str | None,
+    view: str | None,
+    cursor: str | None,
+    offset: int | None,
+    limit: int | None,
+    max_bytes: int | None,
+    as_json: bool,
+) -> None:
+    """Show the project's status without changing anything."""
+    from rush.tools.status import render_status, run_status_cli
+
+    result = run_status_cli(
+        path,
+        session_id=session_id,
+        result_handle=result_handle,
+        view=view,
+        cursor=cursor,
+        offset=offset,
+        limit=limit,
+        max_bytes=max_bytes,
+    )
+    if result_handle is not None:
+        _render_session_result(result, as_json)
+    if as_json:
+        exit_with_result(result, as_json=True)
+    click.echo(render_status(result), nl=False)
+    sys.exit(exit_code_for(result))
 
 
 @cli.command()
@@ -1904,6 +1969,7 @@ for _catalog_tool in ALL_TOOLS:
         "benchmark",
         "memory",
         "patch-apply",
+        "status",
     }:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 

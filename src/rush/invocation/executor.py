@@ -610,10 +610,11 @@ class InvocationExecutor:
         # result-cache write, only when opted in and host-granted cache_write.
         # Memory/telemetry operations never recursively record themselves.
         # Never converts or reruns the original result on any observation failure.
+        # T23: read-only status never records either.
         if (
             context.memory_record
             and "cache_write" in context.permissions
-            and context.operation_id != "memory"
+            and context.operation_id not in ("memory", "status")
         ):
             try:
                 from rush.memory.experience import record_observation
@@ -719,8 +720,13 @@ def with_default_scope(result: Any, context: InvocationContext) -> Any:
         return result
     if not isinstance(result, (dict, ToolResultV1)):
         return result
-    scope = _current_metadata(result).get("scope")
+    metadata = _current_metadata(result)
+    scope = metadata.get("scope")
     if isinstance(scope, dict) and scope.get("version") == 1:
+        return result
+    # T23: a T16 retrieval page (`result`/`bytes` view) is a stored result,
+    # returned as stored -- never this invocation's own analysis scope.
+    if (metadata.get("delivery") or {}).get("view") in ("result", "bytes"):
         return result
     fallback = default_scope(result, context)
     return _with_metadata(result, lambda metadata: metadata.update(scope=fallback))
