@@ -264,6 +264,15 @@ class ProjectRegistry:
             record = self._projects.get(project_id)
             return None if record is None else self._detached(record)
 
+    def get_published(self, project_id: str) -> ProjectRecord | None:
+        """The stored record itself, never copied -- for read-only callers
+        only (the map path). Safe under M01: a state change replaces the
+        stored record and its `snapshot` wholesale, so this object never
+        changes underneath its reader. Mutating it would corrupt the
+        registry; use `get()` for a caller-owned copy."""
+        with self._lock:
+            return self._projects.get(project_id)
+
     @contextmanager
     def mutation_lock(self, project_id: str) -> Iterator[None]:
         """S08 bullet 1: exclusion for one project's check-then-act window

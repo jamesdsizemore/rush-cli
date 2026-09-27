@@ -110,15 +110,15 @@ class _StubLint:
 
 
 def _isolate_data_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate the registry/data roots, and scan engines: a scan's engine-row
-    candidates execute only engines a test declares (none by default), so
-    each is a deterministic `unavailable` row instead of running whatever the
-    host has on PATH (aislop, detect-secrets, osv-scanner, ...) and making
-    scan duration, findings and cancel timing host-dependent."""
+    """Isolate the registry/data roots. A test that runs a scan also takes
+    the `hermetic_engine_path` fixture (conftest.py), so its engine rows
+    resolve only the engines pinned in this venv instead of whatever the
+    host has on PATH (aislop, detect-secrets, osv-scanner, a local LLM, ...)
+    -- the real engine route and catalog rows, without host-dependent scan
+    duration, findings and cancel timing."""
     data_root = tmp_path / "rush-data"
     monkeypatch.setattr(projects_module, "default_data_root", lambda: data_root)
     monkeypatch.setattr(provision_module, "default_data_root", lambda: data_root)
-    monkeypatch.setattr("rush.engines.ENGINES", {})
 
 
 def _register(tmp_path: Path) -> tuple[str, Path]:
@@ -143,7 +143,9 @@ def _empty_snapshot(project_id: str, root: Path) -> dict[str, Any]:
 
 
 def _serve(server: Any) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -672,6 +674,7 @@ def test_non_map_section_cursor_rejects_malformed_or_cross_snapshot_value(
 # dispatchers, and CHECK_SUITE's initial-launch scan) before P69-03.2 GREEN.
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_launch_populates_map_from_completed_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -701,6 +704,7 @@ def test_launch_populates_map_from_completed_scan(
     assert any(n["path"] == "app.py" for n in finding_nodes)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_check_suite_findings_carry_a_real_finding_id_and_are_visible_in_the_scans_section(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -729,6 +733,7 @@ def test_check_suite_findings_carry_a_real_finding_id_and_are_visible_in_the_sca
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_check_suite_manifest_summary_reports_its_real_finding_count_not_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -795,6 +800,7 @@ def test_scan_result_published_atomically_not_partially_visible(
     assert ctx.projects.get(project_id).sequence == 201
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_initial_launch_scan_publishes_via_same_path_as_rescan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -849,6 +855,7 @@ def test_initial_launch_scan_publishes_via_same_path_as_rescan(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_scan_resume_publishes_result_not_discarded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -958,6 +965,7 @@ def test_pre_execution_guard_detects_equal_length_content_replacement_via_ctime_
     assert project_run_module._source_signature(root) != before
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_resume_pre_execution_guard_is_a_separate_cheap_check_not_the_consumption_aggregate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1002,6 +1010,7 @@ def test_resume_pre_execution_guard_is_a_separate_cheap_check_not_the_consumptio
     assert "old-format" in str(excinfo.value)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_retained_candidates_on_resume_carry_forward_their_original_per_file_digests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1073,6 +1082,7 @@ def test_retained_candidates_on_resume_carry_forward_their_original_per_file_dig
     )
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_persisted_inventory_survives_restart_and_file_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1108,6 +1118,7 @@ def test_persisted_inventory_survives_restart_and_file_changes(
     assert snapshot["files"] != server_module._scan_file_inventory(root)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_legacy_attempt_without_inventory_reports_missing_provenance_not_current_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1143,6 +1154,7 @@ def test_legacy_attempt_without_inventory_reports_missing_provenance_not_current
     assert snapshot["file_inventory_missing"] is True
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_present_but_empty_inventory_is_not_treated_as_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1612,6 +1624,7 @@ def test_git_state_dependent_engines_git_guard_diff_cover_undercover_run_against
 # --- P69-03.3 RED (subsections k/l/n): publication paths, sequence/identity -
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_rescan_with_unchanged_source_bumps_sequence_not_source_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1710,6 +1723,7 @@ def test_memory_mutation_bumps_sequence_without_touching_source_identity(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_initial_launch_scan_captures_provenance_before_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1933,6 +1947,7 @@ def test_publication_pointer_update_is_a_compare_and_swap_a_lower_generation_nev
     assert ledger.published_pointer("project-a")["run_id"] == "run-newest"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_hydration_racing_a_newer_local_publish_loses_via_the_existing_generation_check_not_a_separate_mechanism(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2050,6 +2065,7 @@ def test_hydrating_server_discovers_the_current_published_run_and_attempt_from_t
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_a_second_server_reading_a_published_run_it_never_executed_hydrates_its_own_map_from_the_manifest_not_just_its_publication_field(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2089,6 +2105,7 @@ def test_a_second_server_reading_a_published_run_it_never_executed_hydrates_its_
             server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_a_restarted_server_rehydrates_its_map_from_the_latest_published_manifest_on_first_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2353,6 +2370,7 @@ def test_historical_snapshot_survives_cache_eviction_and_restart_identically(
         server_b.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_per_run_publication_record_answers_independent_of_newest_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2407,6 +2425,7 @@ def test_unpublished_run_id_reports_not_yet(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_a_completion_that_loses_the_generation_race_reports_superseded_not_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2450,6 +2469,7 @@ def test_a_completion_that_loses_the_generation_race_reports_superseded_not_abse
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_publication_query_resolves_the_correct_attempt_not_whichever_attempt_id_is_omitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2826,6 +2846,7 @@ def test_detach_force_exit_escalates_to_sigkill_when_a_descendant_ignores_sigter
             os.killpg(pgid, signal.SIGKILL)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_recovery_required_is_never_ttl_pruned_like_pending(tmp_path: Path) -> None:
     ledger = MutationLedger(db_path=tmp_path / "ledger.db")
     reservation = ledger.reserve(
@@ -2910,6 +2931,7 @@ def test_recovery_claims_a_recovery_required_row_through_the_same_ownership_lock
     assert ledger.get_operation_status(op_id)["status"] == "terminal"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_recovery_required_is_reconciled_by_a_later_invocations_recovery_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2959,6 +2981,7 @@ def test_recovery_required_is_reconciled_by_a_later_invocations_recovery_path(
     assert ledger.get_operation_status(op_id)["status"] == "terminal"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_reconcile_admissions_recovers_a_prepared_handoff_left_by_a_dead_owner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3067,6 +3090,7 @@ def test_reconcile_admissions_recovers_a_prepared_handoff_left_by_a_dead_owner(
     assert reloaded["state"] == "delivered"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_reconcile_admissions_revokes_and_records_recovery_required_for_a_dead_owner_handoff_with_a_mismatched_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3260,6 +3284,7 @@ def _write_run_dead_manifest(root: Path) -> None:
     )
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_crash_after_artifact_receipt_before_session_receipt_is_recoverable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3367,6 +3392,7 @@ def test_crash_after_artifact_receipt_before_session_receipt_is_recoverable(
     assert status["payload"]["code"] == "handoff_leaked_before_descriptor"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_crash_after_session_receipt_before_prepared_descriptor_is_recoverable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3478,6 +3504,7 @@ def test_crash_after_session_receipt_before_prepared_descriptor_is_recoverable(
     assert status["payload"]["code"] == "handoff_leaked_before_descriptor"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_crash_after_delivered_descriptor_before_acknowledgment_does_not_auto_acknowledge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3629,6 +3656,7 @@ def test_cancel_timeout_marks_recovery_required_not_silent_loss(
     gate.set()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_dashboard_owned_scan_then_rescan_stays_dashboard_owned_not_silently_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3672,6 +3700,7 @@ def test_quit_after_dashboard_owned_rescan_cancels_the_correct_run_not_a_stale_l
     )
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_scan_start_with_live_dashboard_server_dispatches_through_its_http_action_not_a_local_thread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3808,6 +3837,7 @@ def test_paused_scan_publication_and_concurrent_memory_refresh_both_survive(
     assert record.snapshot["findings"] == [{"id": "f1"}]
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_scan_bytes_a_changed_to_b_then_hydrate_still_reports_a(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3841,6 +3871,7 @@ def test_scan_bytes_a_changed_to_b_then_hydrate_still_reports_a(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_check_suite_manifest_carries_content_identity_inventory_generation_and_git_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

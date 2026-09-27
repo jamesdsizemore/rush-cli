@@ -59,7 +59,9 @@ def _isolated_dashboard_data_root(tmp_path, monkeypatch):
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 

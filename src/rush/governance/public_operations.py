@@ -12,7 +12,7 @@ from enum import Enum
 
 from rush.catalog import TOOL_SPECS
 from rush.cli import cli
-from rush.mcp import build_server
+from rush.mcp import mcp_server
 from rush.tools import ALL_TOOLS
 
 
@@ -63,10 +63,10 @@ def build_operations_inventory() -> list[PublicOperation]:
         else:
             click_leaves.append(name)
 
-    # 2. Discover all FastMCP registered tools
+    # 2. Discover all FastMCP registered tools (the module-level server
+    # `rush mcp serve` runs; building a second one costs about a second)
     async def get_mcp_tools():
-        server = build_server()
-        return [t.name for t in await server.list_tools()]
+        return [t.name for t in await mcp_server.list_tools()]
 
     mcp_tools: list[str] = asyncio.run(get_mcp_tools())
 

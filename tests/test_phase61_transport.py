@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import multiprocessing.connection
 import os
 import signal
 import sys
@@ -173,6 +174,23 @@ def test_native_startup_timeout_reaps_child(monkeypatch, tmp_path, stage):
         sdk,
         "ClaudeAgentOptions",
         lambda **kwargs: options_type(**kwargs, cli_path=str(peer)),
+    )
+    # The peer never answers, so `_send_native`'s wait on its result pipe
+    # always ends in the timeout. Once the pidfile shows the peer is parked
+    # at `stage`, report that deadline as expired instead of sleeping out
+    # the rest of it; before then, the real wait runs in 50ms steps.
+    real_poll = multiprocessing.connection.Connection.poll
+
+    def _poll_until_peer_parked(self, timeout=0.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            if real_poll(self, min(0.05, max(0.0, deadline - time.monotonic()))):
+                return True
+            if pidfile.is_file() or time.monotonic() >= deadline:
+                return False
+
+    monkeypatch.setattr(
+        multiprocessing.connection.Connection, "poll", _poll_until_peer_parked
     )
     start = time.monotonic()
     result = transport.dispatch(

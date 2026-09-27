@@ -929,7 +929,9 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         ),
     ):
         server, ctx, token = create_dashboard_server({})
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         try:
             base_url = ctx.launch_origin

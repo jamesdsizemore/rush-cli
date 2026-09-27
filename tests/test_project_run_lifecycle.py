@@ -1177,7 +1177,7 @@ def test_disappeared_inventory_file_during_staging_forces_incomplete_attempt_sta
 
 
 def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_executing(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """M21 bullet 2/3: a genuine attempt run with a staging failure
     (a disappeared inventory file) must persist that failure into the
@@ -1191,6 +1191,11 @@ def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_
     data_root = tmp_path / "rush-data"
     record = register_project(root, data_root=data_root)
     project_id = record.project_id
+    # One instant candidate, so the staging failure alone decides the
+    # outcome (real-catalog `unavailable` rows would force `incomplete`
+    # even without it) and no host engine runs.
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("quick-a")])
 
     real_scan_inventory = project_run._scan_inventory
     try:
@@ -1210,7 +1215,7 @@ def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_
 
 
 def test_staging_failure_never_falls_back_to_a_live_read_and_never_publishes_a_clean_result(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """M21 bullet 2: same scenario, phrased as the acceptance property --
     the run never reports `completed` when a required source could not be
@@ -1224,6 +1229,11 @@ def test_staging_failure_never_falls_back_to_a_live_read_and_never_publishes_a_c
     data_root = tmp_path / "rush-data"
     record = register_project(root, data_root=data_root)
     project_id = record.project_id
+    # One instant candidate, so the staging failure alone decides the
+    # outcome (real-catalog `unavailable` rows would force `incomplete`
+    # even without it) and no host engine runs.
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("quick-a")])
 
     real_scan_inventory = project_run._scan_inventory
     try:

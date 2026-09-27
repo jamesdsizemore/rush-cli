@@ -39,6 +39,8 @@ from rush.workflows.project_run import (
 )
 from rush.workflows.projects import register_project
 
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
+
 
 def _fixture_root(tmp_path: Path) -> Path:
     root = tmp_path / "project"
