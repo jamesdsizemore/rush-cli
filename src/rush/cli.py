@@ -3784,6 +3784,15 @@ def agent_list_cmd(as_json: bool) -> None:
     is_flag=True,
     help="Confirm the agent actually picked up the connection; required for connected=true.",
 )
+@click.option(
+    "--install-guidance",
+    is_flag=True,
+    help=(
+        "Write the Rush instruction block into the project's CLAUDE.md/AGENTS.md "
+        "without prompting. Without it, a terminal asks [y/N] and a "
+        "non-interactive run leaves guidance pending."
+    ),
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def agent_connect_cmd(
@@ -3793,6 +3802,7 @@ def agent_connect_cmd(
     rush_binary: str | None,
     consent: bool,
     acknowledge: bool,
+    install_guidance: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -3804,10 +3814,13 @@ def agent_connect_cmd(
 ) -> None:
     """Register Rush with AGENT_ID and activate its scoped memory.
 
-    Requires --allow-cache-write and --allow-artifact-write.
+    Requires --allow-cache-write and --allow-artifact-write. The project
+    instruction block is written only with --install-guidance or an explicit
+    "y" at the terminal prompt; --consent and --acknowledge never imply it.
     """
     from .tools.agent_connection import AgentConnectionTool
 
+    interactive = not as_json and os.isatty(0) and _is_terminal(sys.stdout)
     result = AgentConnectionTool().run(
         agent_id,
         action="connect",
@@ -3815,6 +3828,8 @@ def agent_connect_cmd(
         rush_binary=rush_binary,
         consent=consent,
         acknowledge=acknowledge,
+        install_guidance=install_guidance,
+        confirm_guidance=_confirm_guidance if interactive else None,
         project_root=project_path,
         permissions=_extract_permissions(
             allow_network=allow_network,
@@ -3825,6 +3840,69 @@ def agent_connect_cmd(
             allow_artifact_write=allow_artifact_write,
             allow_browser=allow_browser,
         ),
+    )
+    guidance = (result.get("raw") or {}).get("guidance")
+    if not as_json and isinstance(guidance, dict):
+        click.echo(f"guidance: {guidance['state']}")
+    _render_session_result(dict(result), as_json)
+
+
+def _is_terminal(stream: Any) -> bool:
+    try:
+        return os.isatty(stream.fileno())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _confirm_guidance(plan: Any) -> bool:
+    """Show the exact target and diff, then ask [y/N]; only y/yes applies.
+
+    The answer is read straight from the terminal on fd 0 (the stream the
+    TTY check above inspected), so a replaced `sys.stdin` object cannot
+    answer for the user. EOF (Ctrl-D) or Ctrl-C declines.
+    """
+    click.echo(f"Rush instruction block for {plan.target_path}:")
+    click.echo(plan.diff)
+    click.echo("Write this Rush instruction block? [y/N]: ", nl=False)
+    answer = b""
+    try:
+        while not answer.endswith(b"\n"):
+            chunk = os.read(0, 1024)
+            if not chunk:
+                break
+            answer += chunk
+    except KeyboardInterrupt:
+        answer = b""
+    if not answer.endswith(b"\n"):
+        click.echo("")
+        return False  # EOF or Ctrl-C before a complete answer line
+    return answer.decode("utf-8", errors="replace").strip().lower() in ("y", "yes")
+
+
+@agent_group.command(name="disconnect")
+@click.argument("agent_id")
+@click.option(
+    "--project",
+    "project_path",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Project whose connection to remove; omit for the user-scope connection.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def agent_disconnect_cmd(
+    agent_id: str, project_path: Path | None, as_json: bool
+) -> None:
+    """Remove Rush's own, unchanged components for AGENT_ID.
+
+    Removes the MCP entry, the instruction block (or this agent from a
+    shared block), and Rush skill/hook resources recorded as Rush-owned.
+    Anything changed since Rush wrote it is kept and reported as a conflict.
+    Running it again is a no-op.
+    """
+    from .tools.agent_connection import AgentConnectionTool
+
+    result = AgentConnectionTool().run(
+        agent_id, action="disconnect", project_root=project_path
     )
     _render_session_result(dict(result), as_json)
 
@@ -3905,6 +3983,14 @@ def agent_doctor_cmd(
     default=None,
     help="Pin an exact release version instead of latest.",
 )
+@click.option(
+    "--install-guidance",
+    is_flag=True,
+    help=(
+        "Write the Rush instruction block into the selected project's "
+        "CLAUDE.md/AGENTS.md; without it the block is only previewed."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def install_cmd(
     agents: str,
@@ -3915,6 +4001,7 @@ def install_cmd(
     init_git: bool,
     session_id: str,
     version: str | None,
+    install_guidance: bool,
     as_json: bool,
 ) -> None:
     """Download/verify/install the release binary, connect agents, and optionally set up a project."""
@@ -3929,6 +4016,7 @@ def install_cmd(
         init_git=init_git,
         session_id=session_id,
         version=version,
+        install_guidance=install_guidance,
         permissions=ExecutionPermissions(
             network=True, download=True, cache_write=True, artifact_write=True
         ),

@@ -50,9 +50,11 @@ import certifi
 
 from rush.integrations.agents import (
     ADAPTERS,
+    INSTRUCTION_TARGETS,
     AgentConnectionError,
     discover_agents,
     read_agent_memory_state,
+    reconcile_agent_instructions,
     resolve_rush_binary,
 )
 from rush.permissions import ExecutionPermissions
@@ -274,6 +276,7 @@ class InstallTool(ToolFn):
         downloader: Downloader | None = None,
         prober: Prober | None = None,
         permissions: ExecutionPermissions | None = None,
+        install_guidance: bool = False,
     ) -> ToolResult:
         started = monotonic()
         granted = permissions or ExecutionPermissions()
@@ -365,6 +368,14 @@ class InstallTool(ToolFn):
                 f"install: project setup failed: {exc}",
                 raw={"binary": {"path": str(binary_path)}, "agents": agent_reports},
             )
+
+        self._reconcile_guidance(
+            agent_reports,
+            agents_flag=agents,
+            project_root=Path(project_view["root"]) if project_view else None,
+            data_root=resolved_data_root,
+            consent=install_guidance and granted.cache_write and granted.artifact_write,
+        )
 
         raw = {
             "schema_version": 1,
@@ -476,6 +487,8 @@ class InstallTool(ToolFn):
             # project choice. An agent already connected+acknowledged is left
             # completely untouched: no re-registration, no duplicate memory
             # write, no disruption to whatever live session it already has.
+            # Its instruction-block preview is still attached afterwards by
+            # `_reconcile_guidance` (Phase 70 T3), so no reconnect is needed.
             existing_memory = read_agent_memory_state(
                 status.agent_id, session_id, project_root=None, data_root=data_root
             )
@@ -526,6 +539,36 @@ class InstallTool(ToolFn):
             reports.append(self._agent_report(status, adapter, state))
 
         return reports
+
+    def _reconcile_guidance(
+        self,
+        reports: list[dict[str, Any]],
+        *,
+        agents_flag: AgentsFlag,
+        project_root: Path | None,
+        data_root: Path,
+        consent: bool,
+    ) -> None:
+        """Attach the instruction-block preview to every connected-or-kept agent.
+
+        Runs for already-active agents too (the early-continue branch in
+        `_process_agents`), so existing connections receive guidance without
+        a reconnect. It writes only with explicit guidance consent.
+        """
+        if agents_flag != "all":
+            return
+        for report in reports:
+            if not report["detected"] or report["agent_id"] not in INSTRUCTION_TARGETS:
+                continue
+            try:
+                report["guidance"] = reconcile_agent_instructions(
+                    report["agent_id"],
+                    project_root=project_root,
+                    data_root=data_root,
+                    consent=consent,
+                )
+            except AgentConnectionError as exc:
+                report["guidance"] = {"state": "error", "error": str(exc)}
 
     def _agent_report(
         self, status: Any, adapter: Any, state: str, *, error: str | None = None
