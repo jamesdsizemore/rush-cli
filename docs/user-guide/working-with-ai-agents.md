@@ -51,6 +51,8 @@ Add Rush to your assistant's MCP configuration (`settings.json` or `claude_deskt
 
 Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Automatic client connection is **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42).**
 
+Add `--profile core|full` to `mcp serve` to pick the registered tool set (Phase 70 T4): `core` registers exactly `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory`; `full` (the default) registers every tool, and a call outside the running profile's set returns "Unknown tool". `rush agent connect AGENT_ID --session ID --profile core|full --yes` migrates an existing agent's Rush MCP entry between profiles, always previewing the change first; a new registration always launches `mcp serve --profile core`.
+
 ### Installing the native Claude Code or Codex CLI plugin
 
 Instead of a manual MCP entry, Claude Code and Codex CLI can install Rush through their own plugin CLI:

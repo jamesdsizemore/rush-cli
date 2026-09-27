@@ -12,7 +12,7 @@ Rush integrates cleanly into your existing developer workflows, AI coding assist
 
 Rush acts as a local Model Context Protocol (MCP) server over standard input/output (`stdio`), providing assistants with 34 deterministic verification tools:
 
-- **Claude Desktop & Claude Code**: Configure `rush mcp serve` in `claude_desktop_config.json`.
+- **Claude Desktop & Claude Code**: Configure `rush mcp serve --profile core|full` (default `full`) in `claude_desktop_config.json`.
 - **Cursor & Windsurf**: Configure `rush mcp serve` in `.cursor/mcp.json` or editor settings.
 - **Zed & Hermes**: Connect directly using stdio context server definitions.
 

@@ -59,9 +59,14 @@ resolves the *installed* Rush executable's absolute path (never this repo's own 
 project-local `.venv`/uv dependency) and writes exactly that path as `command`. Every unrelated key,
 comment, and sibling server entry already in the file is left byte-for-byte untouched -- only the
 `rush` entry's own value is added or replaced. A timestamped backup of the original file is written
-next to it before any edit. The examples below show the config each supported client ends up with;
-if you are still on the manual editable-source install described in §1, use `uv run --directory
-<path-to-checkout> rush mcp serve` as `command`/`args` instead of the absolute installed path.
+next to it before any edit. A new registration (no prior `rush` entry) launches `mcp serve --profile
+core` (Phase 70 T4), registering only the seven agent tools (`rush_status`, `rush_check`, `rush_lint`,
+`rush_review`, `rush_security`, `rush_test`, `rush_memory`); pass `agent connect --profile full` to
+register every tool instead, or `--profile core|full --yes` later to migrate an existing entry (always
+previewed first). The examples below show the config each supported client ends up with; if you are
+still on the manual editable-source install described in §1, use `uv run --directory
+<path-to-checkout> rush mcp serve --profile core` as `command`/`args` instead of the absolute installed
+path.
 
 ### Claude Desktop (`claude_desktop_config.json`)
 ```json
@@ -69,7 +74,7 @@ if you are still on the manual editable-source install described in §1, use `uv
   "mcpServers": {
     "rush": {
       "command": "/usr/local/bin/rush",
-      "args": ["mcp", "serve"]
+      "args": ["mcp", "serve", "--profile", "core"]
     }
   }
 }
@@ -84,7 +89,7 @@ Claude Desktop must be **restarted** to pick up a config change.
   "mcpServers": {
     "rush": {
       "command": "/usr/local/bin/rush",
-      "args": ["mcp", "serve"]
+      "args": ["mcp", "serve", "--profile", "core"]
     }
   }
 }
@@ -100,7 +105,7 @@ invocation.
   "mcpServers": {
     "rush": {
       "command": "/usr/local/bin/rush",
-      "args": ["mcp", "serve"]
+      "args": ["mcp", "serve", "--profile", "core"]
     }
   }
 }
@@ -113,7 +118,7 @@ Restart Cursor after connecting.
   "mcpServers": {
     "rush": {
       "command": "/usr/local/bin/rush",
-      "args": ["mcp", "serve"]
+      "args": ["mcp", "serve", "--profile", "core"]
     }
   }
 }
@@ -128,7 +133,7 @@ Restart Windsurf after connecting.
     "rush": {
       "command": {
         "path": "/usr/local/bin/rush",
-        "args": ["mcp", "serve"]
+        "args": ["mcp", "serve", "--profile", "core"]
       }
     }
   }
@@ -141,7 +146,7 @@ byte range so existing comments elsewhere survive. Restart Zed after connecting.
 ```toml
 [mcp_servers.rush]
 command = "/usr/local/bin/rush"
-args = ["mcp", "serve"]
+args = ["mcp", "serve", "--profile", "core"]
 ```
 No restart needed -- Codex CLI re-reads `config.toml` per invocation.
 
@@ -183,7 +188,7 @@ No restart needed -- Codex CLI re-reads `config.toml` per invocation.
 
 Readiness progresses through explicit states: `configured` (host config written) → `restart_required` (if the host needs a reload) → `authenticated` → `connected` → `capability_verified`. Reaching `capability_verified` requires `--verify-host`, which launches the host once and asks it to call `rush_status`, confirming the model itself can actually reach Rush (this uses the host's network and consumes model tokens on your account); without `--verify-host` the state stays `pending`, reason `not authorized: pass --verify-host`.
 
-`rush mcp serve --project ID_OR_PATH --session SOURCE` is what a project-bound registration actually launches: `--project` anchors every relative path to that one registered project (an unknown project fails at startup), and `--session` supplies the default `session_id` for project/scan tools when a caller omits it.
+`rush mcp serve --project ID_OR_PATH --session SOURCE --profile core` is what a project-bound registration actually launches: `--project` anchors every relative path to that one registered project (an unknown project fails at startup), `--session` supplies the default `session_id` for project/scan tools when a caller omits it, and this path always registers the core (seven-tool) profile.
 
 ---
 

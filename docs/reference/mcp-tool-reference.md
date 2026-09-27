@@ -8,7 +8,7 @@ The `provider_resume` operation accepts a checkpoint name and supported provider
 
 Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional checkpoint `name`, `files`, and `allow_cache_write`. The result is canonical JSON, with denied writes and absent checkpoints represented by `status: "skipped"`.
 
-`uv run rush mcp serve` registers each catalog tool through the shared invocation executor. Catalog hyphens become underscores in MCP names, for example `rush_semantic_drift` and `rush_ai_eval`.
+`uv run rush mcp serve` registers each catalog tool through the shared invocation executor. Catalog hyphens become underscores in MCP names, for example `rush_semantic_drift` and `rush_ai_eval`. `rush mcp serve --profile core|full` (Phase 70) registers only `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory` for `core`, or every tool below for `full` (the default); a call naming a tool outside the running profile returns "Unknown tool".
 
 ## Common result
 

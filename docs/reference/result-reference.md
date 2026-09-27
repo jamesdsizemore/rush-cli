@@ -102,6 +102,12 @@ In legacy TypedDicts, severities were `"info"`, `"warn"`, `"error"`. Under **Pha
 
 `rush cache clean` prints `Purged N cached result(s).` (`N` is `0` when the cache database does not exist, without creating one).
 
+## Phase 70 T19: Memory Receipts
+
+`metadata.memory` (legacy) / `extensions.metadata.memory` (ToolResultV1) attributes exactly which memory artifacts a result actually read or wrote -- identity and verb only, never content: `{"version": 1, "used": [...], "written": [...]}`. Each entry in `used` (a recall/ask/restore-style read) and `written` (a write/promote/observation-style commit) has the same shape: `{"id": "<artifact_id>", "revision": <int>, "source": "<string>", "operation": "<string>"}`. Both arrays are deduplicated to one entry per `(id, revision, operation)`, first use first; a citation of the same artifact from two different targets in one result still yields one receipt. The `memory` member is omitted entirely (not an empty object) when a tool touches no memory at all. A multi-child aggregate result unions its children's receipts the same way, first use first. Observed `operation` values include `recall`, `ask`, `write`, `promote`, `observation`, and `restore`; a checkpoint restore that falls back to a migrated checkpoint-journal row (rather than a fresh write) reports it as a `used` entry with `operation: "restore"`.
+
+On `rush scan resume`, `metadata.cache.original_memory` holds the retained (unre-executed) children's own receipts from the prior run, in the same `{"version": 1, "used": [...], "written": [...]}` shape; `metadata.memory` holds only the current resume attempt's own receipts, never blended with the retained children's.
+
 ## Phase 50a Result Shapes
 
 - `error-catalog`: `metadata.catalog` contains normalized RFC 7807 problem details dictionaries (`code`, `status`, `title`, `type`, `occurrences`). Exported markdown appears in `artifacts`.
