@@ -23,6 +23,7 @@ from pathlib import Path
 
 from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
+from ..tools.routing import deduplicate_findings
 from .base import Engine, EngineResult, ownership_kwargs
 
 
@@ -144,10 +145,22 @@ class RuffEngine(Engine):
                     "severity": _ruff_severity(f.get("code", "")),
                     "message": f.get("message", ""),
                     "fix": f.get("fix"),
+                    # T13 (finding 22, fix round 1): carried on the SAME raw
+                    # record `normalize_findings` reads everything else from,
+                    # so it survives redaction/sorting/dropping by identity,
+                    # never by re-deriving and zipping a separate ordering.
+                    **(
+                        {"extensions": {"end_location": f["end_location"]}}
+                        if f.get("end_location")
+                        else {}
+                    ),
                 }
                 for f in raw.get("findings", [])
             ]
         )
+        # T13 (finding 22): collapse identical repeated emissions within this
+        # engine's own output before lint aggregation ever sees them.
+        findings = deduplicate_findings(findings)
 
         # ruff exit 0 = clean, 1 = findings, 2+ = config/crash
         if exit_code not in (0, 1):
