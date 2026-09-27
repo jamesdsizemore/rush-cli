@@ -950,10 +950,9 @@ def test_current_generation_accepts_an_existing_connection_and_does_not_open_a_s
     store._connect = _counting_connect
 
     with store._connect() as conn:
-        pass
-    connect_calls["n"] = 0
-    store.current_generation(conn)
-    assert connect_calls["n"] == 0
+        connect_calls["n"] = 0
+        store.current_generation(conn)
+        assert connect_calls["n"] == 0
 
     store.current_generation()
     assert connect_calls["n"] == 1

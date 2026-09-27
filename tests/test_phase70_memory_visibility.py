@@ -37,6 +37,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -160,7 +161,7 @@ def _build_fixture(tmp_path: Path, data_root: Path) -> dict[str, Any]:
     )["applied"]
     _write(store, EXPIRED_ID, "failure", "review:finding")
     now = time.time()
-    with sqlite3.connect(store.db_path) as conn:
+    with closing(sqlite3.connect(store.db_path)) as conn, conn:
         conn.execute(
             "UPDATE memory_artifacts SET expires_at = ?, expired_at = ?, "
             "expired_by = 'test' WHERE id = ?",
@@ -179,7 +180,7 @@ def _build_fixture(tmp_path: Path, data_root: Path) -> dict[str, Any]:
     )
     assert deleted["applied"] is True
 
-    with sqlite3.connect(store.db_path) as conn:
+    with closing(sqlite3.connect(store.db_path)) as conn, conn:
         rows = conn.execute(
             "SELECT id, source, subject FROM memory_artifacts"
         ).fetchall()
@@ -208,7 +209,7 @@ def _build_fixture(tmp_path: Path, data_root: Path) -> dict[str, Any]:
 
 
 def _content_rows(db_path: Path) -> list[tuple[str, str, dict[str, Any]]]:
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         return [
             (r[0], r[1], json.loads(r[2]))
             for r in conn.execute(

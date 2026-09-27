@@ -28,6 +28,7 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,7 @@ def artifact_exists(
     store: TypedArtifactStore, origin_kind: str, origin_id: str
 ) -> bool:
     """Idempotency key check (T-61.22, T-61.37): True if this origin was already migrated."""
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         row = conn.execute(
             "SELECT 1 FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ? LIMIT 1",
             (origin_kind, origin_id),
@@ -104,7 +105,7 @@ def replace_origin_content(
     `artifact_version`.
     """
     clean_content = sanitize_value(content).value
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -146,7 +147,7 @@ def read_origin(
 ) -> dict[str, Any] | None:
     """Compatibility-view read fallback: a migrated row's content by its exact origin key."""
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ? LIMIT 1",
@@ -159,7 +160,7 @@ def read_origin_kind(project_root: Path, origin_kind: str) -> list[dict[str, Any
     """Compatibility-view read fallback: every migrated row's content for one `origin_kind`,
     ordered by `created_at` (session_memory.py's `format_for_mcp` needs chronological order)."""
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT content FROM memory_artifacts WHERE origin_kind = ? ORDER BY created_at",
@@ -173,7 +174,7 @@ def read_origin_kind_by_symbol(
 ) -> list[dict[str, Any]]:
     """Compatibility-view read fallback scoped to a shared `symbol_ref` (e.g. a flight session id)."""
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND symbol_ref = ? "
@@ -379,7 +380,7 @@ def migrate_failure_ledger(project_root: Path) -> int:
     if not db_path.exists():
         return 0
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(db_path)) as conn:
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(

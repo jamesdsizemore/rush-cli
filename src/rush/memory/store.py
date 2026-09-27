@@ -17,6 +17,7 @@ import urllib.parse
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Literal
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
@@ -76,6 +77,24 @@ def useful_memory_count(conn: sqlite3.Connection) -> int:
         params,
     ).fetchone()
     return int(row[0])
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """`with` commits or rolls back, then closes. A bare `sqlite3.Connection`
+    stays open after `with` until garbage collection (its statement cache is a
+    reference cycle), holding committed pages in `-wal` until then."""
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+        /,
+    ) -> Literal[False]:
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
 
 
 class TrustTierError(ValueError):
@@ -785,12 +804,12 @@ def read_sqlite_readonly[T](
     `MemoryStoreUnreadableError` with `readonly_state_code`. Nothing is ever migrated.
     """
     if Path(f"{db}-wal").exists():
-        # ponytail: this process's own leaked writers (`with self._connect()` commits
-        # but never closes) are collected first, so they checkpoint and remove their
-        # WAL now, not mid-read -- a read-only connection that closes last cannot
-        # checkpoint and would strand committed pages in the `-wal`. Ceiling: a
-        # writer in another process can still close first; closing every writer
-        # connection deterministically is the upgrade.
+        # ponytail: store writers close on `with` exit (`_ClosingConnection`); any
+        # other writer this process leaked (a bare `with sqlite3.connect()` stays
+        # open until collected) is collected first, so it checkpoints and removes
+        # its WAL now, not mid-read -- a read-only connection that closes last
+        # cannot checkpoint and would strand committed pages in the `-wal`.
+        # Ceiling: a writer in another process can still close first.
         gc.collect()
     for _ in range(attempts):
         before = _sqlite_fingerprint(db)
@@ -853,7 +872,9 @@ class TypedArtifactStore:
     def _connect(self) -> sqlite3.Connection:
         if self._readonly_conn is not None:
             return self._readonly_conn
-        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        conn = sqlite3.connect(
+            str(self.db_path), timeout=10.0, factory=_ClosingConnection
+        )
         conn.row_factory = sqlite3.Row
         return conn
 

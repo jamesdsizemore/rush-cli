@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,7 +84,7 @@ def sweep_expired(
             (policy.trust_tier, policy.subject, policy.subject, policy.ttl_seconds)
         )
     ttl_sql = "CASE " + " ".join(ttl_cases) + " END"
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
