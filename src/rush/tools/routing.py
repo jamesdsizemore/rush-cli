@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from pathlib import Path
@@ -162,6 +163,52 @@ def aggregate_status(statuses: Iterable[str]) -> ToolStatus:
 def combine_status(left: ToolStatus, right: ToolStatus) -> ToolStatus:
     """S16.3: `aggregate_status` of exactly two statuses."""
     return aggregate_status([left, right])
+
+
+def finding_provenance(tool: str, engine: str | None) -> str:
+    """T13 (finding 22, R13.1): the shared `<tool>/<engine>` producer label.
+    `aggregate_results` and lint aggregation both reuse this one helper so
+    a finding's `provenance` is never formatted twice."""
+    return f"{tool}/{engine or 'no-engine'}"
+
+
+def _finding_identity(path: str) -> tuple[Any, ...]:
+    """T13: physical identity `(st_dev, st_ino)` when the path resolves on
+    disk (symlinked-parent aliases to the same file merge); the normalized
+    lexical path otherwise (a since-deleted file, or one that never existed
+    -- `pkg/./mod.py` and `pkg/mod.py` name the same location)."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return ("lexical", os.path.normpath(path))
+    return ("physical", st.st_dev, st.st_ino)
+
+
+def deduplicate_findings(findings: Sequence[Finding]) -> list[Finding]:
+    """T13: collapse identical repeated emissions from the same producer;
+    the stable first occurrence wins. A finding that differs in column,
+    message, severity, producer (`provenance`) or anything else (its `fix`,
+    `evidence`, `extensions.end_location`, ...) stays distinct, and a
+    producer is never merged into another's. The key is the producer, the
+    path's identity, and the canonical JSON of every other field."""
+    seen: set[tuple[Any, ...]] = set()
+    deduped: list[Finding] = []
+    for finding in findings:
+        rest = {
+            key: value
+            for key, value in finding.items()
+            if key not in ("path", "fingerprint", "provenance")
+        }
+        key = (
+            finding.get("provenance"),
+            _finding_identity(str(finding.get("path", ""))),
+            json.dumps(rest, sort_keys=True, default=str),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(finding)
+    return deduped
 
 
 def _child_metadata(result: ToolResult) -> dict[str, Any]:
@@ -341,7 +388,7 @@ def aggregate_results(
         engine = result.get("engine")
         if engine and engine not in engines:
             engines.append(engine)
-        source = f"{result.get('tool', tool)}/{engine or 'no-engine'}"
+        source = finding_provenance(str(result.get("tool", tool)), engine)
         for finding in result.get("findings", []):
             normalized = Finding(**finding)
             normalized["provenance"] = normalized.get("provenance") or source
@@ -481,6 +528,8 @@ __all__ = [
     "collect_files",
     "combine_status",
     "concat_engine_entries",
+    "deduplicate_findings",
     "detect_project_languages",
+    "finding_provenance",
     "no_target_scope",
 ]

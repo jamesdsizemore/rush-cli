@@ -29,7 +29,9 @@ from .routing import (
     aggregate_status,
     collect_files,
     concat_engine_entries,
+    deduplicate_findings,
     detect_project_languages,
+    finding_provenance,
     no_target_scope,
 )
 
@@ -283,9 +285,19 @@ def _assemble_lint_result(
     each engine's own reason (e.g. `ruff not on PATH`) and the scope records
     that nothing was consumed (`engine_unavailable`). T16 (S16.3): the status
     aggregates every child once (mixed ok+skipped is warn)."""
-    findings_all: list[Finding] = [
-        finding for child in children for finding in child.get("findings", [])
-    ]
+    tagged: list[Finding] = []
+    for child in children:
+        engine_name = child.get("engine")
+        for original in child.get("findings", []):
+            tagged_finding: Finding = Finding(**original)
+            tagged_finding["provenance"] = tagged_finding.get(
+                "provenance"
+            ) or finding_provenance("lint", engine_name)
+            tagged.append(tagged_finding)
+    # T13 (finding 22): collapse identical repeated emissions from the same
+    # producer; never merge across producers (each producer's `provenance`
+    # is part of the dedupe key).
+    findings_all: list[Finding] = deduplicate_findings(tagged)
     status: ToolStatus = aggregate_status(
         str(child.get("status", "ok")) for child in children
     )

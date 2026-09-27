@@ -149,6 +149,14 @@ def normalize_findings(
             patch=raw_finding.get("patch"),
             suggested_fix=raw_finding.get("suggested_fix"),
         )
+        # T13 (finding 22, fix round 1): carry a caller-supplied `extensions`
+        # dict through by identity (the same record it came in on), not
+        # re-derived after the fact from a recomputed sort/zip -- a caller
+        # like ruff's `end_location` needs this to survive the redaction and
+        # sorting below without ever risking misalignment.
+        extensions = raw_finding.get("extensions")
+        if extensions:
+            normalized["extensions"] = extensions
         normalized["fingerprint"] = finding_fingerprint(
             normalized["path"],
             normalized["line"],
