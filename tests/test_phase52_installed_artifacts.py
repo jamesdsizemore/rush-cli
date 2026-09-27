@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from scripts.probe_installed_artifacts import (
     probe_installed_artifact,
     probe_native_artifact,
@@ -54,29 +52,17 @@ def test_verify_package_origin_flags_checkout_root() -> None:
     assert verify_package_origin(out_of_tree, PROJECT_ROOT) is True
 
 
-def test_wheel_and_sdist_pass_every_safe_probe(tmp_path: Path) -> None:
-    """Verify that both built wheel and sdist pass clean installation and external-CWD probes."""
-    import tomllib
-
-    pyproject_data = tomllib.loads(
-        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    expected_version = pyproject_data["project"]["version"]
-
-    dist_dir = PROJECT_ROOT / "dist"
-    wheels = sorted(dist_dir.glob(f"rush_cli-{expected_version}*.whl"))
-    sdists = sorted(dist_dir.glob(f"rush_cli-{expected_version}*.tar.gz"))
-
-    assert wheels, (
-        f"No wheel for v{expected_version} found in {dist_dir}. Build artifacts first."
-    )
-    assert sdists, (
-        f"No sdist for v{expected_version} found in {dist_dir}. Build artifacts first."
-    )
+def test_wheel_and_sdist_pass_every_safe_probe(
+    tmp_path: Path, distribution_artifacts: tuple[Path, Path]
+) -> None:
+    """Verify that both built wheel and sdist pass clean installation and external-CWD
+    probes. `distribution_artifacts` (conftest.py) builds both from the current source
+    once per session."""
+    wheel, sdist = distribution_artifacts
 
     # Probe wheel
     wheel_result = probe_installed_artifact(
-        wheels[0], PROJECT_ROOT, tmp_path / "wheel_test"
+        wheel, PROJECT_ROOT, tmp_path / "wheel_test"
     )
     assert wheel_result.status == "passed", f"Wheel probe failed: {wheel_result.stderr}"
     assert wheel_result.origin_verified is True
@@ -84,7 +70,7 @@ def test_wheel_and_sdist_pass_every_safe_probe(tmp_path: Path) -> None:
 
     # Probe sdist
     sdist_result = probe_installed_artifact(
-        sdists[0], PROJECT_ROOT, tmp_path / "sdist_test"
+        sdist, PROJECT_ROOT, tmp_path / "sdist_test"
     )
     assert sdist_result.status == "passed", f"Sdist probe failed: {sdist_result.stderr}"
     assert sdist_result.origin_verified is True
@@ -117,7 +103,9 @@ def test_artifact_imports_never_resolve_to_checkout_or_src(tmp_path: Path) -> No
     assert verify_package_origin(external_site_packages, PROJECT_ROOT) is True
 
 
-def test_artifact_version_matches_distribution_metadata() -> None:
+def test_artifact_version_matches_distribution_metadata(
+    distribution_artifacts: tuple[Path, Path],
+) -> None:
     """Verify that built wheel distribution metadata version matches pyproject.toml."""
     import tomllib
     import zipfile
@@ -127,11 +115,10 @@ def test_artifact_version_matches_distribution_metadata() -> None:
     )
     expected_version = pyproject_data["project"]["version"]
 
-    dist_dir = PROJECT_ROOT / "dist"
-    wheels = sorted(dist_dir.glob(f"rush_cli-{expected_version}*.whl"))
-    assert wheels, f"No wheel found for v{expected_version} in dist/"
+    wheel, _sdist = distribution_artifacts
+    assert wheel.name.startswith(f"rush_cli-{expected_version}-")
 
-    with zipfile.ZipFile(wheels[0]) as zf:
+    with zipfile.ZipFile(wheel) as zf:
         metadata_content = zf.read(
             f"rush_cli-{expected_version}.dist-info/METADATA"
         ).decode("utf-8")
@@ -173,10 +160,13 @@ def test_windows_and_posix_jobs_cover_both_artifacts() -> None:
     )
 
 
-def test_native_artifact_needs_no_checkout_python_or_uv(tmp_path: Path) -> None:
+def test_native_artifact_needs_no_checkout_python_or_uv(
+    tmp_path: Path, native_release_archive: Path
+) -> None:
     """Verify the extracted native release archive proves origin, version and a real MCP
     initialize handshake from a clean external directory with checkout/Python/uv absent
-    from PATH (Phase 65: P65-01.3)."""
+    from PATH (Phase 65: P65-01.3). `native_release_archive` (conftest.py) builds the
+    archive from the current source once per session."""
     import platform
     import tomllib
 
@@ -185,17 +175,11 @@ def test_native_artifact_needs_no_checkout_python_or_uv(tmp_path: Path) -> None:
     )
     expected_version = pyproject_data["project"]["version"]
 
-    asset_name = select_platform_asset(platform.system(), platform.machine())
-    archive_path = PROJECT_ROOT / "dist" / asset_name
-    checksums_path = PROJECT_ROOT / "dist" / "SHA256SUMS"
-
-    if not archive_path.is_file():
-        pytest.skip(
-            f"No native release archive at {archive_path} for this platform. CI does not "
-            "build PyInstaller archives yet; build one first with "
-            "scripts.probe_installed_artifacts.build_release_archive to exercise this "
-            "probe locally."
-        )
+    archive_path = native_release_archive
+    checksums_path = archive_path.parent / "SHA256SUMS"
+    assert archive_path.name == select_platform_asset(
+        platform.system(), platform.machine()
+    )
 
     assert verify_archive_checksum(archive_path, checksums_path) is True, (
         "Native archive bytes do not match its recorded SHA256SUMS entry."

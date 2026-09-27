@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -55,11 +56,15 @@ from rush.workflows.projects import (
     register_project,
 )
 
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
+
 # --- shared HTTP helpers (mirrors tests/test_dashboard_memory_tokens.py) -----
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -206,6 +211,46 @@ def _commit_file(root: Path, rel_path: str, content: str, message: str) -> str:
     target.write_text(content, encoding="utf-8")
     _run_git(root, "add", rel_path)
     _run_git(root, "commit", "--quiet", "-m", message)
+    return _run_git(root, "rev-parse", "HEAD")
+
+
+def _commit_files(root: Path, commits: list[tuple[str, str, str]]) -> str:
+    """`_commit_file` for each `(rel_path, content, message)` in order, as
+    one `git fast-import` stream instead of three git spawns per commit:
+    same author/committer, subjects and files, each commit on top of the
+    current branch. The work tree and index are then synced to the result.
+    Returns the final HEAD."""
+    branch = _run_git(root, "symbolic-ref", "HEAD")
+    parent = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+        cwd=root,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    identity = f"{_GIT_ENV['GIT_AUTHOR_NAME']} <{_GIT_ENV['GIT_AUTHOR_EMAIL']}> now"
+    stream = io.BytesIO()
+    for rel_path, content, message in commits:
+        data = content.encode("utf-8")
+        subject = message.encode("utf-8")
+        stream.write(f"commit {branch}\n".encode())
+        stream.write(f"author {identity}\ncommitter {identity}\n".encode())
+        stream.write(f"data {len(subject)}\n".encode() + subject + b"\n")
+        if parent:
+            stream.write(f"from {parent}\n".encode())
+            parent = ""
+        stream.write(f"M 100644 inline {rel_path}\n".encode())
+        stream.write(f"data {len(data)}\n".encode() + data + b"\n")
+    subprocess.run(
+        ["git", "fast-import", "--quiet", "--date-format=now"],
+        cwd=root,
+        env=_GIT_ENV,
+        input=stream.getvalue(),
+        check=True,
+        capture_output=True,
+    )
+    _run_git(root, "reset", "--quiet", "--hard", "HEAD")
     return _run_git(root, "rev-parse", "HEAD")
 
 
@@ -704,11 +749,14 @@ def test_git_history_uses_50_commit_cursor_not_offset_pagination(
     default 20-entry `skip`/`limit` offset pagination."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path, "cursor-repo")
-    expected_subjects = []
-    for i in range(25):
-        subject = f"commit number {i}"
-        _commit_file(root, f"f{i}.txt", f"{i}\n", subject)
-        expected_subjects.append(subject)
+    expected_subjects = [f"commit number {i}" for i in range(25)]
+    _commit_files(
+        root,
+        [
+            (f"f{i}.txt", f"{i}\n", subject)
+            for i, subject in enumerate(expected_subjects)
+        ],
+    )
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:

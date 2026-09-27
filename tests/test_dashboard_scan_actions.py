@@ -39,11 +39,15 @@ from rush.workflows import projects as projects_module
 from rush.workflows import suites as suites_module
 from rush.workflows.projects import register_project
 
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
+
 # --- shared HTTP helpers (mirrors tests/test_dashboard_http_contract.py) ---
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -129,19 +133,37 @@ def _wait_until(predicate, *, timeout: float = 60.0, interval: float = 0.02) -> 
     assert predicate(), "condition never became true within timeout"
 
 
+def _wait_operation_terminal(
+    base_url: str, project_id: str, cookie: str, operation_id: str
+) -> None:
+    """Wait for the operation's own terminal status. A run becomes visible
+    in `section=scans` before its admission row is released and its result
+    published (both land with the terminal transition), so an action fired
+    on "run visible" alone races the still-held admission."""
+
+    def _terminal() -> bool:
+        resp = _get(
+            f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+            headers={"Cookie": cookie},
+        )
+        return json.loads(resp.read())["data"]["status"] == "terminal"
+
+    _wait_until(_terminal)
+
+
 # --- fixture project (real registry, no network) ----------------------------
 
 
 def _isolate_data_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate the registry/data roots, and scan engines: a scan's engine-row
-    candidates execute only engines a test declares (none by default), so
-    each is a deterministic `unavailable` row instead of running whatever the
-    host has on PATH (aislop, detect-secrets, osv-scanner, ...) and making
-    scan duration, findings and cancel timing host-dependent."""
+    """Isolate the registry/data roots. Scan engines are isolated by this
+    module's `hermetic_engine_path` mark (conftest.py): engine rows resolve
+    only the engines pinned in this venv instead of whatever the host has on
+    PATH (aislop, detect-secrets, osv-scanner, a local LLM, ...) -- the real
+    engine route and catalog rows, without host-dependent scan duration,
+    findings and cancel timing."""
     data_root = tmp_path / "rush-data"
     monkeypatch.setattr(projects_module, "default_data_root", lambda: data_root)
     monkeypatch.setattr(provision_module, "default_data_root", lambda: data_root)
-    monkeypatch.setattr("rush.engines.ENGINES", {})
 
 
 def _register(tmp_path: Path) -> tuple[str, Path]:
@@ -270,11 +292,11 @@ def test_provision_then_scan_uses_reviewed_plan(
         # `review` candidate itself must have actually executed.
         assert scans["data"]["run"]["run_state"] in ("completed", "incomplete")
         assert scans["data"]["run"]["executed_count"] >= 1
-        # M17: unowned-but-genuinely-installed engines (e.g. detect-secrets)
-        # now actually execute, so the real, un-curated catalog surfaces
-        # their findings too -- but CACHEDIR.TAG's fixed signature string is
-        # excluded as a textbook entropy-scanner false positive, so the
-        # total is just the review tool's 2 seeded findings.
+        # Engine rows resolve only from this venv (the module's hermetic
+        # PATH), so no host engine (detect-secrets, a local LLM, ...) adds
+        # findings, and M17's CACHEDIR.TAG exclusion keeps an installed
+        # entropy scanner off that fixed signature string: the total is just
+        # the review tool's 2 seeded findings.
         assert scans["data"]["findings"]["total"] == 2
     finally:
         server.shutdown()
@@ -311,17 +333,19 @@ def _seed_baseline_and_rescan(
     )
     assert status == 202
     baseline_run_id = body["data"]["run_id"]
+    baseline_operation_id = body["data"]["operation_id"]
 
     def _baseline_done() -> bool:
         status, scans = _scans(base_url, project_id, cookie, run_id=baseline_run_id)
         return status == 200 and scans["data"].get("run") is not None
 
     _wait_until(_baseline_done)
+    _wait_operation_terminal(base_url, project_id, cookie, baseline_operation_id)
     status, scans = _scans(base_url, project_id, cookie, run_id=baseline_run_id)
-    # M17: unowned-but-genuinely-installed engines (e.g. detect-secrets) now
-    # actually execute, but CACHEDIR.TAG's fixed signature string is excluded
-    # as a textbook entropy-scanner false positive, so the total is just the
-    # 3 seeded findings.
+    # Engine rows resolve only from this venv (the module's hermetic PATH),
+    # and M17's CACHEDIR.TAG exclusion keeps an installed entropy scanner off
+    # that fixed signature string, so the total is just the 3 seeded
+    # findings.
     assert scans["data"]["findings"]["total"] == 3
 
     # Fix one finding, introduce a new one, leave the persisting one alone.
@@ -637,12 +661,14 @@ def test_handoff_preview_hash_changes_when_evidence_artifact_version_changes(
             grants=_grant_all(),
         )
         run_id = body["data"]["run_id"]
+        operation_id = body["data"]["operation_id"]
 
         def _done() -> bool:
             status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
             return status == 200 and scans["data"].get("run") is not None
 
         _wait_until(_done)
+        _wait_operation_terminal(base_url, project_id, cookie, operation_id)
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         finding_id = scans["data"]["findings"]["items"][0]["finding_id"]
         attempt_id_v1 = project_run_module.latest_attempt_id(project_id, run_id)
@@ -1081,12 +1107,14 @@ def test_baseline_attempt_id_differs_from_executing_attempt_id_for_resume(
             grants=_grant_all(),
         )
         run_id = body["data"]["run_id"]
+        operation_id = body["data"]["operation_id"]
 
         def _done() -> bool:
             status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
             return status == 200 and scans["data"].get("run") is not None
 
         _wait_until(_done)
+        _wait_operation_terminal(base_url, project_id, cookie, operation_id)
         baseline_attempt_id = project_run_module.latest_attempt_id(project_id, run_id)
         assert baseline_attempt_id
 
@@ -1141,12 +1169,14 @@ def test_fresh_execution_after_release_receives_a_new_attempt_id(
             grants=_grant_all(),
         )
         run_id = body["data"]["run_id"]
+        baseline_operation_id = body["data"]["operation_id"]
 
         def _baseline_done() -> bool:
             status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
             return status == 200 and scans["data"].get("run") is not None
 
         _wait_until(_baseline_done)
+        _wait_operation_terminal(base_url, project_id, cookie, baseline_operation_id)
         baseline_attempt_id = project_run_module.latest_attempt_id(project_id, run_id)
 
         status, resume_body = _action(
@@ -1316,6 +1346,7 @@ def test_scan_cancel_on_terminal_target_returns_stored_result_not_a_fresh_cancel
             return status == 200 and scans["data"].get("run") is not None
 
         _wait_until(_done)
+        _wait_operation_terminal(base_url, project_id, cookie, operation_id)
 
         status, cancel_body = _action(
             base_url,
@@ -1748,10 +1779,10 @@ def test_handoff_and_rescan_keep_evidence_identity(
             by_status.setdefault(item["status"], []).append(item)
 
         assert len(by_status.get("resolved", [])) == 1
-        # M17: the unowned-but-genuinely-installed `detect-secrets` engine
-        # now actually executes, but CACHEDIR.TAG's fixed signature string
-        # is excluded as a textbook entropy-scanner false positive, so only
-        # the seeded `stays_broken` review finding persists across rescan.
+        # Engine rows resolve only from this venv (the module's hermetic
+        # PATH), and M17's CACHEDIR.TAG exclusion keeps an installed entropy
+        # scanner off that fixed signature string, so only the seeded
+        # `stays_broken` review finding persists across rescan.
         assert len(by_status.get("persisting", [])) == 1
         assert len(by_status.get("new", [])) == 1
         assert len(by_status.get("unverified", [])) == 1
@@ -1917,6 +1948,7 @@ def test_cancel_retains_partial_results(
         )
         assert status == 202
         run_id = body["data"]["run_id"]
+        operation_id = body["data"]["operation_id"]
 
         assert started.wait(timeout=5)
         status, body = _action(
@@ -1936,15 +1968,16 @@ def test_cancel_retains_partial_results(
             return status == 200 and scans["data"].get("run") is not None
 
         _wait_until(_run_finished)
+        _wait_operation_terminal(base_url, project_id, cookie, operation_id)
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         assert scans["data"]["run"]["run_state"] == "cancelled"
         # review already finished before cancellation landed -- its finding
         # is retained as real partial evidence.
         items = scans["data"]["findings"]["items"]
-        # M17: unowned-but-genuinely-installed engines (e.g. detect-secrets)
-        # now actually execute, but CACHEDIR.TAG's fixed signature string is
-        # excluded as a textbook entropy-scanner false positive, so only the
-        # review tool's own retained finding is present.
+        # Engine rows resolve only from this venv (the module's hermetic
+        # PATH), and M17's CACHEDIR.TAG exclusion keeps an installed entropy
+        # scanner off that fixed signature string, so only the review tool's
+        # own retained finding is present.
         assert len(items) == 1
         by_rule = {item["rule"]: item for item in items}
         assert "seeded-review-rule" in by_rule

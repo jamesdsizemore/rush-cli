@@ -311,6 +311,43 @@ def _measure_page(
     return len(text.encode("utf-8")), _count_tokens(text, encoding)
 
 
+def _contains_special_token(text: str, encoding: str) -> bool:
+    """Whether tiktoken's default `encode` would refuse `text` (it raises
+    `ValueError` on any special-token string)."""
+    return any(token in text for token in _encoder(encoding).special_tokens_set)
+
+
+def _trial_page_bytes(
+    items: list[dict[str, Any]],
+    items_bytes: int,
+    item: dict[str, Any],
+    *,
+    max_bytes: int,
+    max_tokens: int,
+    encoding: str,
+) -> int | None:
+    """Byte size of the `_measure_page(items + [item], None, True, ...)` page,
+    or `None` when that page exceeds either budget -- the same decision as
+    measuring the whole trial page, without retokenizing it per candidate.
+
+    `items_bytes` is the running byte size of the current page. Appending an
+    item adds its compact JSON plus one separating comma. Tiktoken's
+    encodings are byte-level, so a text never has more tokens than bytes:
+    while the trial page's bytes are within `max_tokens` its tokens are too,
+    and only a larger page is fully tokenized. An item carrying a
+    special-token string is always fully tokenized so tiktoken raises its
+    `ValueError` exactly as it did when every trial page was tokenized."""
+    item_text = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+    trial_bytes = items_bytes + len(item_text.encode("utf-8")) + (1 if items else 0)
+    if trial_bytes > max_tokens or _contains_special_token(item_text, encoding):
+        _bytes, trial_tokens = _measure_page([*items, item], None, True, encoding)
+        if trial_tokens > max_tokens:
+            return None
+    if trial_bytes > max_bytes:
+        return None
+    return trial_bytes
+
+
 def _page(
     code: str,
     *,
@@ -414,6 +451,7 @@ def recall_page(
         return _page("E_BUDGET", encoding=encoding)
 
     items: list[dict[str, Any]] = []
+    items_bytes = floor_bytes
     scanned = 0
     hit_cap = False
     exhausted = False
@@ -436,13 +474,19 @@ def recall_page(
             item = _candidate_to_item(row)
             if item is None:
                 continue
-            trial_bytes, trial_tokens = _measure_page(
-                [*items, item], None, True, encoding
+            trial_bytes = _trial_page_bytes(
+                items,
+                items_bytes,
+                item,
+                max_bytes=max_bytes,
+                max_tokens=max_tokens,
+                encoding=encoding,
             )
-            if trial_bytes > max_bytes or trial_tokens > max_tokens:
+            if trial_bytes is None:
                 budget_full = True
                 break
             items.append(item)
+            items_bytes = trial_bytes
             if len(items) >= limit:
                 break
         scan_offset += len(batch)
@@ -935,14 +979,23 @@ def hybrid_page(
         return fallback
 
     items: list[dict[str, Any]] = []
+    items_bytes, _tokens = _measure_page([], None, True, encoding)
     for row in fused["rows"]:
         item = _candidate_to_item(row)
         if item is None:
             continue
-        trial_bytes, trial_tokens = _measure_page([*items, item], None, True, encoding)
-        if trial_bytes > max_bytes or trial_tokens > max_tokens:
+        trial_bytes = _trial_page_bytes(
+            items,
+            items_bytes,
+            item,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            encoding=encoding,
+        )
+        if trial_bytes is None:
             break
         items.append(item)
+        items_bytes = trial_bytes
         if len(items) >= limit:
             break
 

@@ -36,6 +36,7 @@ EXCLUDED_DIRS = {
     "dist",
     "build",
     ".worktrees",
+    ".scratch",
     ".rush",
     ".hermes",
     "graft",

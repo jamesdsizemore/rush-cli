@@ -57,6 +57,8 @@ from tests.test_dashboard_scan_actions import (
     _wait_until,
 )
 
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
+
 
 def _get_operation(
     base_url: str, project_id: str, operation_id: str, *, cookie: str | None
@@ -119,12 +121,22 @@ def _seed_one_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     assert status == 202
     run_id = body["data"]["run_id"]
+    operation_id = body["data"]["operation_id"]
 
     def _done() -> bool:
         status, scans = _scans(base_url, project_id, cookie, run_id=run_id)
         return status == 200 and scans["data"].get("run") is not None
 
+    def _terminal() -> bool:
+        status, operation = _get_operation(
+            base_url, project_id, operation_id, cookie=cookie
+        )
+        return status == 200 and operation["data"]["status"] == "terminal"
+
     _wait_until(_done, timeout=30.0)
+    # The run is visible before its admission is released and its result
+    # published; the callers' next actions need both.
+    _wait_until(_terminal, timeout=30.0)
     return server, base_url, cookie, csrf, project_id, root, run_id
 
 
@@ -1166,8 +1178,9 @@ def test_events_route_surfaces_real_candidate_progress_events(
     _isolate_data_roots(tmp_path, monkeypatch)
     monkeypatch.setattr(project_run_module, "ALL_TOOLS", [ReviewTool()])
     project_id, root = _register(tmp_path)
-    server, _ctx, base_url, cookie, csrf = _start_dashboard_with_ctx(project_id, root)
+    server, ctx, base_url, cookie, csrf = _start_dashboard_with_ctx(project_id, root)
     try:
+        published_before = ctx.projects.get(project_id).sequence
         status, body = _action(
             base_url, project_id, cookie, csrf, operation="provision_plan"
         )
@@ -1191,6 +1204,9 @@ def test_events_route_surfaces_real_candidate_progress_events(
             return status == 200 and scans["data"].get("run") is not None
 
         _wait_until(_done)
+        # The candidate events reach `/events` with the run's publication,
+        # which lands after the run is visible.
+        _wait_until(lambda: ctx.projects.get(project_id).sequence > published_before)
 
         status, events_body = _events(base_url, project_id, cookie)
         assert status == 200

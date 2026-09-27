@@ -44,6 +44,8 @@ from rush.workflows.project_run import (
 )
 from rush.workflows.projects import register_project
 
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
+
 
 class _BrokenTypecheck:
     """Reuses the real `typecheck` catalog name so classification (category
@@ -728,12 +730,14 @@ def test_gitguard_candidate_executes_through_execute_scan_with_a_real_or_fixture
     assert by_id["git-guard"].repository_state_evidence
 
 
+@pytest.mark.usefixtures("host_engine_path")
 def test_full_scan_surfaces_python_dependency_audit_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """T14: a project scan's real `security` candidate carries
     `metadata.scope.dependencies` all the way through `execute_scan` --
-    not just when `SecurityTool` is called directly."""
+    not just when `SecurityTool` is called directly. It audits with the
+    host's real osv-scanner, so it runs on the host PATH."""
     monkeypatch.setattr(project_run, "ALL_TOOLS", [SecurityTool()])
     root = _fixture_root(tmp_path)
     (root / "uv.lock").write_text(

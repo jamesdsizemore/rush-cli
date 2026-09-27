@@ -229,7 +229,9 @@ def _load_fixture(name: str) -> dict:
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -3723,6 +3725,7 @@ def test_check_suite_control_command_calls_start_or_attach_before_dispatching(
         assert admission["owner_instance_id"] == ctx.owner_instance_id
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3766,6 +3769,7 @@ def test_concurrent_full_scan_and_check_suite_against_same_project_resolve_throu
         assert len(probe.calls) == 1, "an attach must not dispatch a second suite run"
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3815,6 +3819,7 @@ def test_check_suite_control_command_and_a_concurrent_full_scan_never_silently_a
         assert "check_suite:check" in body["error"]["message"]
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3843,6 +3848,7 @@ def test_check_suite_control_command_actually_dispatches_inside_the_dashboard_pr
         assert probe.calls[0]["run_id"]
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3882,6 +3888,7 @@ def test_check_suite_control_command_rejects_browser_session_credentials(
 
         assert probe.calls == [], "a rejected request must never dispatch"
     finally:
+        server.shutdown()
         server.server_close()
 
 
@@ -3908,6 +3915,7 @@ def test_check_suite_startup_job_does_not_fabricate_a_scan_start_plan_id_or_gran
         assert permissions.artifact_write is False
         assert permissions.network is False
     finally:
+        server.shutdown()
         server.server_close()
 
 
@@ -3940,4 +3948,5 @@ def test_check_suite_startup_job_uses_its_own_real_tool_selection_not_a_full_sca
         )
         assert Path(call["path"]) == root
     finally:
+        server.shutdown()
         server.server_close()

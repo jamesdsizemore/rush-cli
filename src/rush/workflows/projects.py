@@ -49,11 +49,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from rush.capabilities import inspect_capabilities
+from rush.config import load_config
 from rush.memory.store import TypedArtifactStore, is_internal_memory_source
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import TelemetryStore
+from rush.tools.routing import detect_project_languages
 
 REGISTRY_FILE = "projects.json"
 SESSION_SELECTION_FILE = "session_projects.json"
@@ -343,7 +344,13 @@ def _write_project_descriptor(root: Path, record: ProjectRecord) -> None:
 def _project_view(project_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     root = Path(entry["root"])
     exists = root.is_dir()
-    languages: list[str] = inspect_capabilities(root)["languages"] if exists else []
+    languages: list[str] = []
+    if exists:
+        # Config is still loaded so an invalid rush.toml fails the view
+        # closed; the languages are exactly what `inspect_capabilities`
+        # reports, without its per-tool engine PATH scan.
+        load_config(start=root)
+        languages = detect_project_languages(root)
     installed = exists
     applicable = bool(languages)
     configured = bool(entry.get("configured", False))

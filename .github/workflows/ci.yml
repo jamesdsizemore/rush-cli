@@ -48,7 +48,7 @@ jobs:
           if __name__ == "__main__":
               cli()
           PYEOF
-          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
           uv run --no-sync python -c "
           from pathlib import Path
           from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
@@ -199,7 +199,7 @@ jobs:
           if __name__ == "__main__":
               cli()
           PYEOF
-          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
           uv run --no-sync python -c "
           from pathlib import Path
           from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
@@ -210,6 +210,9 @@ jobs:
 
       - name: Verify Windows contracts
         run: uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py -q
+
+      - name: Verify Windows dashboard data-directory ACL contract
+        run: uv run pytest "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability" -q
 
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})

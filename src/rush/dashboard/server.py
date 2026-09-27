@@ -679,6 +679,9 @@ class DashboardContext:
             else None
         )
         self.scan_runs = ScanRunTracker()
+        # (key, snapshot) of the last reusable historical map view; see
+        # `_historical_map_snapshot_reused`.
+        self.historical_map_memo: tuple[tuple[Any, ...], dict[str, Any]] | None = None
         self.bound_host = bound_host
         self.bound_port = bound_port
         self.launch_origin = f"http://{bound_host}:{bound_port}"
@@ -1441,7 +1444,7 @@ def _hydrate_published_scan(ctx: DashboardContext, project_id: str) -> None:
     through, and republishes locally via `publish_scan_result`. A hydration
     that has fallen behind a newer local publish loses that publish's own
     existing generation check -- no separate staleness mechanism."""
-    record = ctx.projects.get(project_id)
+    record = ctx.projects.get_published(project_id)
     if record is None:
         return
     pointer = ctx.mutations.published_pointer(project_id)
@@ -1487,7 +1490,7 @@ def _sync_current_map(ctx: DashboardContext, project_id: str) -> None:
     with suppress(Exception):
         _hydrate_published_scan(ctx, project_id)
     with suppress(Exception):
-        record = ctx.projects.get(project_id)
+        record = ctx.projects.get_published(project_id)
         if record is None:
             return
         root = Path(resolve_project(project_id)["root"])
@@ -1510,6 +1513,65 @@ def _historical_map_snapshot(
     run_id: str,
     attempt_id: str | None,
 ) -> dict[str, Any] | None:
+    """`_build_historical_map_snapshot`'s snapshot alone."""
+    snapshot, _reusable = _build_historical_map_snapshot(
+        root, project_id, record, run_id, attempt_id
+    )
+    return snapshot
+
+
+def _historical_map_snapshot_reused(
+    ctx: DashboardContext,
+    root: Path,
+    project_id: str,
+    record: ProjectRecord,
+    run_id: str,
+    attempt_id: str | None,
+) -> dict[str, Any] | None:
+    """`_historical_map_snapshot`, reusing this server's last reusable view
+    while its manifest file is unchanged (same mtime/size) and the record's
+    root is the same -- so paging a historical group does not reload and
+    rebuild the attempt on every page. The key is taken after the build,
+    which may itself persist the frozen memory/agent data into the manifest.
+    The reused snapshot is shared: map callers only read it."""
+    manifest_path = root / _MANIFEST_RELATIVE.format(
+        run_id=run_id, attempt_id=attempt_id
+    )
+
+    def _key() -> tuple[Any, ...] | None:
+        try:
+            stat = manifest_path.stat()
+        except OSError:
+            return None
+        return (
+            project_id,
+            run_id,
+            attempt_id,
+            stat.st_mtime_ns,
+            stat.st_size,
+            record.snapshot.get("root"),
+        )
+
+    memo = ctx.historical_map_memo
+    key = _key()
+    if memo is not None and key is not None and memo[0] == key:
+        return memo[1]
+    snapshot, reusable = _build_historical_map_snapshot(
+        root, project_id, record, run_id, attempt_id
+    )
+    key = _key()
+    if snapshot is not None and reusable and key is not None:
+        ctx.historical_map_memo = (key, snapshot)
+    return snapshot
+
+
+def _build_historical_map_snapshot(
+    root: Path,
+    project_id: str,
+    record: ProjectRecord,
+    run_id: str,
+    attempt_id: str | None,
+) -> tuple[dict[str, Any] | None, bool]:
     """P69-03r/s: a caller-selected historical run, pinned to that run's
     exact attempt (subsection r -- never bare `run_id`, since a later resume
     mints a new attempt under the same `run_id`), with memory/agent data
@@ -1520,10 +1582,15 @@ def _historical_map_snapshot(
     into the attempt's own manifest (the same cross-process-readable record
     subsection v's publication outcome uses), so a restart or cache eviction
     reconstructs the identical graph rather than freezing a second, later
-    moment. `None` if the run/attempt is unknown."""
+    moment. `(None, False)` if the run/attempt is unknown.
+
+    The flag says whether the view may be reused while the manifest file is
+    unchanged: a present but empty `file_inventory` is rewalked from the
+    live tree on every build (`_manifest_file_inventory`), so it never is."""
     manifest = load_run_manifest(root, run_id, attempt_id=attempt_id)
     if manifest is None:
-        return None
+        return None, False
+    reusable = "file_inventory" not in manifest or bool(manifest["file_inventory"])
     frozen = manifest.get("historical_memory_agent_snapshot")
     if frozen is None:
         # First request for this exact attempt: freeze whatever this
@@ -1561,7 +1628,7 @@ def _historical_map_snapshot(
     snapshot["agents"] = frozen["agents"]
     snapshot["root"] = record.snapshot.get("root")
     snapshot["file_inventory_missing"] = inventory_missing
-    return snapshot
+    return snapshot, reusable
 
 
 def capture_initial_scan_provenance(root: Path, project_id: str) -> tuple[str, str]:
@@ -4124,15 +4191,21 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             RST, which can destroy the error response before the client reads
             it -- a client still sending an oversized body typically sees
             ECONNRESET/EPIPE instead of the 413. Half-close, then discard at
-            most `_LINGER_MAX_BYTES` for at most `_LINGER_SECONDS`."""
+            most `_LINGER_MAX_BYTES` for at most `_LINGER_SECONDS` in total:
+            the deadline bounds the whole drain, not each read, so a client
+            trickling its body cannot hold the handler thread open."""
             self.close_connection = True
             try:
                 self.wfile.flush()
                 self.connection.shutdown(socket.SHUT_WR)
-                self.connection.settimeout(_LINGER_SECONDS)
+                deadline = time.monotonic() + _LINGER_SECONDS
                 read = getattr(self.rfile, "read1", self.rfile.read)
                 remaining = _LINGER_MAX_BYTES
                 while remaining > 0:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        break
+                    self.connection.settimeout(left)
                     chunk = read(min(64 * 1024, remaining))
                     if not chunk:
                         break
@@ -4786,7 +4859,9 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 # left showing stale data until this dashboard happens to run
                 # its own scan.
                 _sync_current_map(ctx, project_id)
-                record = ctx.projects.get(project_id) or record
+                # Read-only from here on: the map is built from the stored
+                # record itself, never a per-request deep copy of it.
+                record = ctx.projects.get_published(project_id) or record
                 requested_run_id = query.get("run_id", [None])[0]
                 requested_attempt_id = query.get("attempt_id", [None])[0]
                 map_snapshot = record.snapshot
@@ -4814,7 +4889,8 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     # P69-03r/s: a caller-selected historical run, pinned to
                     # its exact attempt with frozen memory/agent data --
                     # never the live current snapshot.
-                    historical = _historical_map_snapshot(
+                    historical = _historical_map_snapshot_reused(
+                        ctx,
                         Path(resolve_project(project_id)["root"]),
                         project_id,
                         record,

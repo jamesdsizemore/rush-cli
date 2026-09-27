@@ -63,7 +63,9 @@ def _start_test_server(results: list[ToolResult], token: str) -> tuple[HTTPServe
     server = HTTPServer(("127.0.0.1", 0), handler_cls)
     port = server.server_address[1]
 
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return server, port
 
@@ -162,7 +164,9 @@ def _load_fixture(name: str) -> dict:
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 

@@ -145,21 +145,19 @@ def test_archive_matches_manifest_and_checksum(tmp_path: Path) -> None:
     assert matrix_assets == set(PLATFORM_ASSET_MATRIX.values())
 
 
-def test_installed_binary_needs_no_checkout_or_python(tmp_path: Path) -> None:
-    """A real self-contained archive runs with checkout/Python/uv absent from PATH."""
+def test_installed_binary_needs_no_checkout_or_python(
+    tmp_path: Path, native_release_archive: Path
+) -> None:
+    """A real self-contained archive runs with checkout/Python/uv absent from PATH.
+    `native_release_archive` (conftest.py) builds it from the current source once per
+    session."""
     import platform
 
-    asset_name = select_platform_asset(platform.system(), platform.machine())
-    archive_path = PROJECT_ROOT / "dist" / asset_name
-    checksums_path = PROJECT_ROOT / "dist" / "SHA256SUMS"
-
-    if not archive_path.is_file():
-        pytest.skip(
-            f"No native archive at {archive_path}. CI does not build PyInstaller "
-            "archives yet; build one first with "
-            "scripts.probe_installed_artifacts.build_release_archive from a PyInstaller "
-            "--onefile executable to exercise this probe locally."
-        )
+    archive_path = native_release_archive
+    checksums_path = archive_path.parent / "SHA256SUMS"
+    assert archive_path.name == select_platform_asset(
+        platform.system(), platform.machine()
+    )
 
     assert verify_archive_checksum(archive_path, checksums_path) is True
 

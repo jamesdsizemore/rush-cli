@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import math
+import threading
 from typing import Any
 
 RENDER_NODE_LIMIT = 200
@@ -791,6 +792,74 @@ def build_project_map(
     }
 
 
+# One-entry memo of `expand_group`'s filtered group membership, so paging a
+# group does not rebuild the whole graph for every page. Relies on M01
+# (`ProjectRecord`, dashboard/state.py): a published snapshot is replaced,
+# never mutated in place, so the snapshot object's identity pins its content.
+# `_snapshot_guard` additionally catches a direct caller appending to or
+# replacing one of its lists.
+# ponytail: one global entry under one lock; key per project if concurrent
+# paging of several projects' maps ever matters.
+_MEMBERSHIP_LOCK = threading.Lock()
+_MEMBERSHIP_CACHE: dict[str, Any] = {}
+
+
+def _snapshot_guard(snapshot: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        snapshot.get("sequence", 1),
+        snapshot.get("source_identity", snapshot["project_id"]),
+        tuple(
+            (id(snapshot.get(key)), len(snapshot.get(key) or ()))
+            for key in ("files", "findings", "memories", "agents")
+        ),
+    )
+
+
+def _group_members(
+    snapshot: dict[str, Any],
+    group_id: str,
+    *,
+    source_identity: str,
+    filter_hash: str,
+    node_types: tuple[str, ...],
+    severity: tuple[str, ...],
+    status: tuple[str, ...],
+    query: str,
+) -> list[dict[str, Any]]:
+    """The sorted members of `group_id` under these filters. The returned
+    nodes are shared with the memo: callers copy before handing them out."""
+    key = (_snapshot_guard(snapshot), filter_hash)
+    with _MEMBERSHIP_LOCK:
+        entry = _MEMBERSHIP_CACHE.get("entry")
+        if entry is None or entry[0] is not snapshot or entry[1] != key:
+            all_nodes, _all_edges = _build_full_graph(snapshot, source_identity)
+            filtered_nodes = _apply_filters(
+                all_nodes,
+                node_types=node_types,
+                severity=severity,
+                status=status,
+                query=query,
+            )
+            entry = (snapshot, key, filtered_nodes, {})
+            _MEMBERSHIP_CACHE["entry"] = entry
+        groups: dict[str, list[dict[str, Any]]] = entry[3]
+        members = groups.get(group_id)
+        if members is None:
+            top = group_id.removeprefix("group:")
+            if top in ("file", "finding", "memory", "agent"):
+                selected = [n for n in entry[2] if n["kind"] == top]
+            else:
+                selected = [
+                    n
+                    for n in entry[2]
+                    if n.get("path")
+                    and _normalize_path(n["path"]).split("/", 1)[0] == top
+                ]
+            members = sorted(selected, key=_sort_key)
+            groups[group_id] = members
+        return members
+
+
 def expand_group(
     snapshot: dict[str, Any],
     group_id: str,
@@ -826,21 +895,16 @@ def expand_group(
         filter_hash=filter_hash,
         view_id=view_id,
     )
-    all_nodes, _all_edges = _build_full_graph(snapshot, source_identity)
-    filtered_nodes = _apply_filters(
-        all_nodes, node_types=node_types, severity=severity, status=status, query=query
+    members = _group_members(
+        snapshot,
+        group_id,
+        source_identity=source_identity,
+        filter_hash=filter_hash,
+        node_types=node_types,
+        severity=severity,
+        status=status,
+        query=query,
     )
-
-    top = group_id.removeprefix("group:")
-    if top in ("file", "finding", "memory", "agent"):
-        members = [n for n in filtered_nodes if n["kind"] == top]
-    else:
-        members = [
-            n
-            for n in filtered_nodes
-            if n.get("path") and _normalize_path(n["path"]).split("/", 1)[0] == top
-        ]
-    members = sorted(members, key=_sort_key)
 
     offset = 0
     if cursor:
@@ -851,7 +915,7 @@ def expand_group(
         if decoded.get("group") != group_id:
             raise CursorRejected(f"cursor does not belong to group {group_id!r}")
         offset = int(decoded.get("offset", 0))
-    page = members[offset : offset + page_size]
+    page = [dict(node) for node in members[offset : offset + page_size]]
     next_offset = offset + page_size
     next_cursor = (
         _cursor_encode({"group": group_id, "offset": next_offset}, tuple_key=tuple_key)

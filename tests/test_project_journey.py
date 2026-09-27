@@ -31,9 +31,13 @@ _NAMING = "naming"
 
 
 @pytest.fixture(scope="module")
-def journey(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def journey(
+    tmp_path_factory: pytest.TempPathFactory, hermetic_engine_path_module: None
+) -> dict[str, Any]:
     """Runs the whole real pipeline exactly once; every test below asserts
-    a different facet of this single, shared execution."""
+    a different facet of this single, shared execution. Engines resolve
+    only from this venv (`hermetic_engine_path_module`, conftest.py), never
+    the host's PATH."""
     tmp_root = tmp_path_factory.mktemp("project-journey")
     return run_project_journey(tmp_root)
 
@@ -102,10 +106,10 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
 ) -> None:
     findings_a = journey["run_a"].aggregate.get("findings")
     assert findings_a is not None
-    # M17: unowned-but-genuinely-installed engines (e.g. detect-secrets) now
-    # actually execute. CACHEDIR.TAG's fixed cache-directory-tagging
-    # signature string is excluded from the scan (a textbook entropy-scanner
-    # false positive, not a genuine finding), so only the 3 seeded review
+    # Engines resolve only from this venv (the hermetic PATH above), so no
+    # host engine (detect-secrets, a local LLM, ...) adds findings. M17's
+    # CACHEDIR.TAG exclusion still keeps an installed entropy scanner from
+    # flagging that fixed signature string, so only the 3 seeded review
     # findings are present.
     assert len(findings_a) == 3
     review_findings = [
@@ -122,8 +126,8 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
 
     findings_b = journey["run_b"].aggregate.get("findings")
     assert findings_b is not None
-    # M17: same real detect-secrets execution runs here too, with the same
-    # CACHEDIR.TAG exclusion, so no extra finding is added.
+    # Same hermetic engine set and CACHEDIR.TAG exclusion here, so no extra
+    # finding is added.
     assert len(findings_b) == 1
     review_findings_b = [
         f for f in findings_b if f["provenance"] == "review/heuristic-v1"
