@@ -101,6 +101,10 @@ class StatusTool(ToolFn):
             started=started,
         )
 
+    def run(self, path: Path) -> ToolResult:
+        """The `run(path)` entry every `ALL_TOOLS` member shares."""
+        return self(path)
+
 
 # --- selection -------------------------------------------------------------------
 
