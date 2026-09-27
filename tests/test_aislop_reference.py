@@ -163,6 +163,9 @@ def test_slop_passes_no_file_positionals_to_the_aislop_binary(
     (project / "pkg" / "a.py").write_text(SLOPPY_SOURCE)
     (project / "b.py").write_text("def ok() -> int:\n    return 1\n")
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    # The runtime venv bin is searched before PATH; CI installs the real
+    # aislop there, which would shadow the fake.
+    monkeypatch.setattr(common, "_venv_scripts_dir", lambda: None)
     clear_binary_cache()
     try:
         result = SlopTool().run(project)
