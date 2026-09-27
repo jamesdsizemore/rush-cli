@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from rush.permissions import ExecutionPermissions
+from rush.tools.base import ToolResult
 from rush.tools.security import SecurityTool
 
 # ---------------------------------------------------------------------------
@@ -48,6 +49,16 @@ _UV_LOCK_MALFORMED = "this is not [ valid toml\n"
 
 def _fail_if_spawned(*_args: Any, **_kwargs: Any) -> Any:
     pytest.fail("no subprocess should have been spawned")
+
+
+def _deps(result: ToolResult) -> list[dict[str, Any]]:
+    metadata = result.get("metadata")
+    assert metadata is not None
+    return metadata["scope"]["dependencies"]
+
+
+def _evidence_input(finding: Any) -> str:
+    return finding["evidence"]["input"]
 
 
 def _denied_permissions() -> ExecutionPermissions:
@@ -101,13 +112,13 @@ def test_t14_python_dependency_inventory(monkeypatch, tmp_path: Path) -> None:
     assert "--offline" in argv
     assert any(str(lockfile) in part for part in argv)
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     uv_entry = next(d for d in deps if d["path"] == str(lockfile))
     assert uv_entry["kind"] == "uv_lock"
     assert uv_entry["state"] == "audited"
 
     finding = next(f for f in result["findings"] if "requests==2.6.0" in f["message"])
-    assert finding["evidence"]["input"] == str(lockfile)
+    assert _evidence_input(finding) == str(lockfile)
 
 
 def test_t14_requirements_dev_via_parser_prefix(monkeypatch, tmp_path: Path) -> None:
@@ -140,7 +151,7 @@ def test_t14_requirements_dev_via_parser_prefix(monkeypatch, tmp_path: Path) -> 
     expected_prefix = f"requirements.txt:{req_dev}"
     assert any(expected_prefix in part for part in argv)
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(req_dev))
     assert entry["kind"] == "requirements"
     assert entry["state"] == "audited"
@@ -184,7 +195,7 @@ def test_t14_multiple_manifests_preserve_input_provenance_including_duplicates(
 
     matching = [f for f in result["findings"] if "requests==2.6.0" in f["message"]]
     assert len(matching) == 2, "duplicate finding across two inputs must not be deduped"
-    inputs = {f["evidence"]["input"] for f in matching}
+    inputs = {_evidence_input(f) for f in matching}
     assert inputs == {str(lockfile), str(requirements)}
 
 
@@ -231,7 +242,7 @@ def test_t14_pyproject_pinned_dependency_resolves_via_granted_project_mode(
     assert "--no-deps" not in argv
     assert "--disable-pip" not in argv
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["kind"] == "pyproject")
     assert entry["state"] == "resolved-for-this-audit"
 
@@ -248,7 +259,7 @@ def test_t14_pyproject_dynamic_dependencies_reported_as_explicit_exclusion(
         tmp_path, permissions=_granted_project_mode_permissions()
     )
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["kind"] == "pyproject")
     exclusions = entry.get("exclusions") or []
     assert "dynamic" in exclusions
@@ -263,7 +274,7 @@ def test_t14_malformed_uv_lock_is_an_error_child(monkeypatch, tmp_path: Path) ->
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(lockfile))
     assert entry["state"] == "malformed"
     assert result["status"] == "error"
@@ -279,7 +290,7 @@ def test_t14_editable_local_dependency_is_unresolved(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(requirements))
     assert entry["state"] == "unresolved"
 
@@ -299,7 +310,7 @@ def test_t14_requirements_include_outside_root_is_malformed(
 
     result = SecurityTool().run(project, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(requirements))
     assert entry["state"] == "malformed"
     assert entry["reason"] == "include_outside_root"
@@ -321,7 +332,7 @@ def test_t14_absent_osv_engine_gives_scanner_unavailable(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(lockfile))
     assert entry["state"] == "scanner_unavailable"
 
@@ -340,10 +351,100 @@ def test_t14_old_osv_version_gives_scanner_unavailable(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(lockfile))
     assert entry["state"] == "scanner_unavailable"
     assert "1.9.0" in entry["reason"] or "2.0.0" in entry["reason"]
+
+
+def _osv_vanished(argv: list[str], **_kwargs: Any) -> Any:
+    raise FileNotFoundError(argv[0])
+
+
+def _osv_spawn_denied(argv: list[str], **_kwargs: Any) -> Any:
+    raise PermissionError(13, "Permission denied", argv[0])
+
+
+def _osv_engine_error(argv: list[str], **_kwargs: Any) -> Any:
+    import subprocess
+
+    return subprocess.CompletedProcess(
+        args=argv, returncode=2, stdout="not json", stderr="osv-scanner: boom"
+    )
+
+
+@pytest.mark.parametrize(
+    ("scan_subprocess", "expected_reason"),
+    [
+        (_osv_vanished, "osv-scanner disappeared from PATH mid-run"),
+        (_osv_spawn_denied, "engine crashed: PermissionError"),
+        (_osv_engine_error, "osv-scanner error (exit 2)"),
+    ],
+    ids=["binary_missing_at_exec", "spawn_failure", "engine_error"],
+)
+def test_t14_osv_scan_failure_after_gate_is_never_audited(
+    monkeypatch, tmp_path: Path, scan_subprocess: Any, expected_reason: str
+) -> None:
+    """The gate passes, then the real scan fails: each input's state comes
+    from that scan outcome (`scanner_unavailable` with the scan's own
+    reason), never `audited`."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'fixture'\n")
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_text(_UV_LOCK_VULNERABLE)
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("requests==2.6.0\n")
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
+    monkeypatch.setattr("rush.engines.osv.run_subprocess", scan_subprocess)
+
+    result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
+
+    deps = _deps(result)
+    for path in (lockfile, requirements):
+        entry = next(d for d in deps if d["path"] == str(path))
+        assert entry["state"] == "scanner_unavailable", entry
+        assert expected_reason in entry["reason"], entry
+
+
+def test_t14_zero_package_lockfile_is_audited_not_an_engine_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """osv-scanner exits 128 with "No package sources found" when the inputs
+    hold zero packages (host osv-scanner 2.x, verified). The scan ran and
+    found nothing to audit: `audited` with an `ok` child, not an error."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'fixture'\n")
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_text('version = 1\nrequires-python = ">=3.12"\n')
+
+    def zero_packages(argv: list[str], **_kwargs: Any) -> Any:
+        import subprocess
+
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=128,
+            stdout="",
+            stderr=(
+                f"Scanned {lockfile} file and found 0 packages\n"
+                "No package sources found, --help for usage information.\n"
+            ),
+        )
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    monkeypatch.setattr("rush.engines.osv.resolve_binary", lambda binary: binary)
+    monkeypatch.setattr(
+        "rush.engines.osv.OsvScannerEngine.version", lambda self, **_kw: "2.4.0"
+    )
+    monkeypatch.setattr("rush.engines.osv.run_subprocess", zero_packages)
+
+    result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
+
+    deps = _deps(result)
+    entry = next(d for d in deps if d["path"] == str(lockfile))
+    assert entry["state"] == "audited", entry
+    assert result["status"] != "error", result["summary"]
 
 
 def test_t14_offline_db_missing_gives_db_unavailable_zero_network(
@@ -375,7 +476,7 @@ def test_t14_offline_db_missing_gives_db_unavailable_zero_network(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(lockfile))
     assert entry["state"] == "db_unavailable"
     for argv in spawned_argv:
@@ -397,7 +498,7 @@ def test_t14_denied_project_mode_gives_zero_spawns_and_exact_flag_list(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["kind"] == "pyproject")
     assert entry["state"] != "resolved-for-this-audit"
     for flag in ("network", "download", "cache_write", "build"):
@@ -430,7 +531,7 @@ def test_t14_granted_project_mode_labels_resolved_with_exclusions(
         tmp_path, permissions=_granted_project_mode_permissions()
     )
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["kind"] == "pyproject")
     assert entry["state"] == "resolved-for-this-audit"
     assert "optional" in (entry.get("exclusions") or [])
@@ -512,7 +613,7 @@ def test_t14_nested_requirements_include_resolves_relative_to_including_file(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(dev))
     assert entry["state"] == "audited"
 
@@ -535,7 +636,7 @@ def test_t14_nested_requirements_include_escaping_root_is_malformed(
 
     result = SecurityTool().run(project, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(dev))
     assert entry["state"] == "malformed"
     assert entry["reason"] == "include_outside_root"
@@ -568,7 +669,7 @@ def test_t14_discovers_nested_requirements_directory_files(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(nested))
     assert entry["kind"] == "requirements"
     assert entry["state"] == "audited"
@@ -632,7 +733,7 @@ def test_t14_denied_project_mode_zero_spawn_at_popen_level(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["kind"] == "pyproject")
     assert entry["state"] != "resolved-for-this-audit"
 
@@ -684,7 +785,7 @@ def test_t14_missing_offline_db_zero_network_at_popen_level(
 
     result = SecurityTool().run(tmp_path, permissions=_denied_permissions())
 
-    deps = result["metadata"]["scope"]["dependencies"]
+    deps = _deps(result)
     entry = next(d for d in deps if d["path"] == str(lockfile))
     assert entry["state"] == "db_unavailable"
     assert spawned_argv, "osv-scanner should have been invoked"

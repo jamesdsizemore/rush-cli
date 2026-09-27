@@ -71,6 +71,10 @@ output), so each one that isn't `capability="workflow"` gets disposition
 `applicable` and execution outcome `unavailable`/`ENGINE_ROUTE_MISSING` --
 never silently dropped, never counted as executed (plan §6.4: "missing
 executable route is unavailable/ENGINE_ROUTE_MISSING, not excluded").
+An engine-only entry with catalog `project_markers`, none of which exists at
+the project root, is `not_applicable` with reason
+`project_marker_absent:<markers>` instead, so it never runs on a project of
+another type.
 """
 
 from __future__ import annotations
@@ -156,6 +160,7 @@ RunState = Literal[
 ]
 
 _NON_SCAN_REASON = "non_scan_workflow_operation"
+_MARKER_ABSENT_REASON = "project_marker_absent"
 _REPORT_INPUT_REASON = "requires_report_input"
 _DYNAMIC_TARGET_REASON = "requires_dynamic_target_and_grants"
 _STATIC_REASON = "comprehensive_static_analysis"
@@ -441,6 +446,19 @@ def _classify_engine(name: str) -> tuple[Disposition, str]:
     return "applicable", _STATIC_REASON
 
 
+def _absent_project_markers(candidate: ScanCandidate, root: Path) -> str | None:
+    """The applicability reason for an engine-only candidate whose catalog
+    `project_markers` are all absent from `root`, else `None`: an engine with
+    no owning tool is otherwise planned whatever the project type (pitest's
+    `mvn` on a Python project)."""
+    if candidate.kind != "engine" or candidate.disposition != "applicable":
+        return None
+    markers = ENGINE_SPECS[candidate.candidate_id].project_markers
+    if not markers or any((root / marker).exists() for marker in markers):
+        return None
+    return f"{_MARKER_ABSENT_REASON}:{','.join(markers)}"
+
+
 def _candidate_category(name: str) -> str:
     spec = TOOL_SPECS.get(name)
     return spec.category if spec is not None else "unknown"
@@ -579,6 +597,10 @@ def plan_scan(
                     "applicable",
                     _EXPLICIT_TARGET_REASON,
                 )
+            )
+        elif (marker_reason := _absent_project_markers(candidate, root)) is not None:
+            resolved.append(
+                replace(candidate, disposition="not_applicable", reason=marker_reason)
             )
         else:
             resolved.append(candidate)

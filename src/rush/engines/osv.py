@@ -146,12 +146,18 @@ class OsvScannerEngine(Engine):
         db_unavailable = (
             "no offline version of the OSV database is available" in stderr_text
         )
+        # osv-scanner exits 128 when its inputs hold zero packages: the scan
+        # ran and there is nothing to audit, not an engine error.
+        no_packages = exit_code == 128 and "No package sources found" in stderr_text
         if findings:
             status: ToolStatus = "fail"
             summary = f"osv-scanner: {len(findings)} known vulnerabilit{'y' if len(findings) == 1 else 'ies'}"
         elif db_unavailable:
             status = "skipped"
             summary = "osv-scanner: no offline vulnerability database available"
+        elif no_packages:
+            status = "ok"
+            summary = "osv-scanner: no packages found in the scanned inputs"
         elif exit_code == 0 and parsed is not None:
             status = "ok"
             summary = "osv-scanner: no known vulnerabilities"
