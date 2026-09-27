@@ -98,6 +98,17 @@ class ToolSpec:
     experimental: bool = False
     maturity: ToolMaturity = "catalog_only"
     option_specs: tuple[ToolOptionSpec, ...] = ()
+    # T9/R9.1: `None` means "by category" (see `validates_target`).
+    target_validation: bool | None = None
+
+    @property
+    def validates_target(self) -> bool:
+        """T9/R9.1: whether the executor refuses to run this tool against an
+        explicitly requested target that does not exist. Defaults to true for
+        quality, security and test tools; set explicitly otherwise."""
+        if self.target_validation is not None:
+            return self.target_validation
+        return self.category in ("quality", "security", "test")
 
 
 @dataclass(frozen=True)
@@ -485,6 +496,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Verify Test-Driven Development (TDD) compliance and test existence.",
         "Verify TDD compliance at <path>. Returns {status, findings[], summary}.",
         ("tdd-guard",),
+        # W2 finding 20: a missing tdd target is TARGET_NOT_FOUND, never the
+        # name-based "test suite verified" `ok`.
+        target_validation=True,
     ),
     "fix": ToolSpec(
         "fix",

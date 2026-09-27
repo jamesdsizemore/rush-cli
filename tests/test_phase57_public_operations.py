@@ -201,8 +201,8 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 190
-    assert manifest_data.get("manifest", {}).get("total_operations") == 190
+    assert len(operations) == 192
+    assert manifest_data.get("manifest", {}).get("total_operations") == 192
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -236,18 +236,18 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         else:
             declared_transports[op_id] = "mcp"
 
-    assert len(declared_transports) == 190
-    # 62 dual-transport, 110 cli-only, 18 mcp-only
+    assert len(declared_transports) == 192
+    # 62 dual-transport, 112 cli-only, 18 mcp-only
     assert sum(1 for t in declared_transports.values() if t == "both") == 62
-    assert sum(1 for t in declared_transports.values() if t == "cli") == 110
+    assert sum(1 for t in declared_transports.values() if t == "cli") == 112
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 190
+    assert report["total"] == 192
     assert report["tool_count"] == 79
-    assert report["admin_count"] == 93
+    assert report["admin_count"] == 95
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
     assert len(report["errors"]) == 0
@@ -417,7 +417,7 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     #    routed through the shared "rush_memory" MCP tool per its RawResult contract)
     #    are allowed both transports, unlike every other admin operation.
     admin_ops = [op for op in operations if op["kind"] == "admin"]
-    assert len(admin_ops) == 93
+    assert len(admin_ops) == 95
     _dual_transport_admin_ids = {"admin.memory_promote", "admin.memory_write"}
     for op in admin_ops:
         if op["id"] not in _dual_transport_admin_ids:
@@ -518,7 +518,7 @@ def test_unprobed_route_is_not_advertised() -> None:
             f"Advertised MCP tool '{tool_name}' is unprobed / unmanifested in governance/public-operations.toml"
         )
 
-    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 172
+    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 174
     assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 79
 
 

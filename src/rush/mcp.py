@@ -8,7 +8,12 @@ avoids collisions with other MCP servers in multi-server agent sessions).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, TextContent
 
 from .catalog import TOOL_SPECS
 from .contracts.results import ToolResultV1
@@ -42,10 +47,63 @@ def build_server_instructions() -> str:
     )
 
 
+class RushFastMCP(FastMCP):
+    """Phase 70 T6: the ordinary server. `rush_project`/`rush_scan`/`rush_memory`
+    publish their request-model schemas and validate every call against those same
+    models before dispatch (so before the T8 wrapper resolves a project, reserves,
+    locks, or writes anything). A rejection is the tool's own error envelope
+    (`isError: false`, like every other validation envelope). The SDK's tool
+    manager is untouched; only the public `list_tools`/`call_tool` differ."""
+
+    async def list_tools(self) -> list[Any]:
+        from .mcp_support.request_models import REQUEST_MODEL_TOOLS, published_schema
+
+        tools = await super().list_tools()
+        for tool in tools:
+            if tool.name in REQUEST_MODEL_TOOLS:
+                tool.inputSchema = published_schema(tool.name)
+        return tools
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        from .mcp_support.request_models import (
+            REQUEST_MODEL_TOOLS,
+            validate_and_normalize,
+        )
+
+        if name not in REQUEST_MODEL_TOOLS:
+            return await super().call_tool(name, arguments)
+        outcome = validate_and_normalize(name, arguments or {})
+        if outcome.rejected:
+            envelope = outcome.result
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(envelope, indent=2))],
+                structuredContent=envelope,
+                isError=False,
+            )
+        result = await super().call_tool(name, outcome.arguments or {})
+        if isinstance(result, CallToolResult):
+            return result
+        if isinstance(result, tuple):
+            content, structured = result
+            return CallToolResult(
+                content=list(content), structuredContent=structured, isError=False
+            )
+        if isinstance(result, dict):
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(result, indent=2))],
+                structuredContent=result,
+                isError=False,
+            )
+        return CallToolResult(content=list(result), isError=False)
+
+
 def build_server(memory_session: str | None = None):
     """Construct and return the FastMCP server with all catalog tools registered.
 
     Does NOT start serving — caller decides transport. See ``run_stdio``.
+
+    T6: the ordinary server is a `RushFastMCP`; the restricted memory-session
+    receiver below stays a plain `FastMCP` with its original schema and checks.
 
     MC11: when `memory_session` is given, this is a *restricted receiver* -- it registers
     only the single `rush_memory` bridge tool (receive/expand/related/resume) bound to that
@@ -54,8 +112,6 @@ def build_server(memory_session: str | None = None):
     path that ever narrows the server below its full catalog; the default (`memory_session
     =None`) is unchanged and still registers every catalog tool.
     """
-    from mcp.server.fastmcp import FastMCP
-
     if memory_session is not None:
         import os
 
@@ -82,7 +138,7 @@ def build_server(memory_session: str | None = None):
     # process cwd change after server creation cannot retarget a later
     # relative call.
     anchor_cwd = Path.cwd().resolve()
-    server = FastMCP(SERVER_NAME, instructions=build_server_instructions())
+    server = RushFastMCP(SERVER_NAME, instructions=build_server_instructions())
     _register_tools(server, anchor_cwd)
     return server
 
@@ -521,7 +577,8 @@ def _validate_scan_direct_request(
     request: dict[str, object], operation: str
 ) -> tuple[str, str] | None:
     """Returns an `(code, message)` error pair, or `None` if valid."""
-    if request.get("schema_version") != 1:
+    version = request.get("schema_version")
+    if type(version) is not int or version != 1:
         return "INVALID_REQUEST", "schema_version must be 1"
     project = request.get("project")
     run_id = request.get("run_id")
@@ -532,12 +589,16 @@ def _validate_scan_direct_request(
     unknown = set(request) - _scan_direct_allowed_fields(operation)
     if unknown:
         return "INVALID_REQUEST", f"unknown request field(s): {sorted(unknown)}"
+    for key, value in request.items():
+        if key.startswith("allow_") and not isinstance(value, bool):
+            return "INVALID_REQUEST", f"{key} must be a boolean"
     return None
 
 
 def _permissions_from_scan_direct_request(
     request: dict[str, object],
 ) -> ExecutionPermissions:
+    # T6: grant types are already strict-checked by `_validate_scan_direct_request`.
     return ExecutionPermissions(
         network=bool(request.get("allow_network", False)),
         download=bool(request.get("allow_download", False)),

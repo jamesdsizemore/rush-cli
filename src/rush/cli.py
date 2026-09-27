@@ -27,6 +27,7 @@ from . import __version__
 from .cli_support.catalog_commands import build_catalog_path_command
 from .cli_support.options import _extract_permissions, permission_options
 from .cli_support.rendering import (
+    TargetPath,
     _path_param_defaulted,
     _render_session_result,
     _run_tool,
@@ -288,7 +289,7 @@ def benchmark_status(output: Path) -> None:
 
 
 @benchmark.command("check")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--threshold", default=5.0, type=float, help="Percentage threshold for regression."
 )
@@ -335,7 +336,7 @@ def benchmark_check_cmd(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--llm",
     "use_llm",
@@ -389,7 +390,7 @@ def review(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--check", "check_only", is_flag=True, help="Only check; don't modify files."
 )
@@ -470,7 +471,7 @@ def commit_msg_cmd(
 
 
 @cli.command(name="sbom")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--output",
     "-o",
@@ -838,7 +839,7 @@ def _run_suite_cli(
 
 
 @cli.command(name="check")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
 )
@@ -873,7 +874,7 @@ def check_cmd(
 
 
 @cli.command(name="audit")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=False, help="Stop on first tool failure."
 )
@@ -908,7 +909,7 @@ def audit_cmd(
 
 
 @cli.command(name="gate")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
 )
@@ -2612,9 +2613,110 @@ def session_resume_cmd(
 # -----------------------------------------------------------------------------
 
 
-@cli.group(name="memory")
-def memory_group() -> None:
-    """Query, write, and promote cross-tool memory artifacts."""
+def _memory_logical_root() -> Path:
+    """R20.2: the one project root every `rush memory` command (overview and
+    subcommands) reads and writes, chosen by T8's `select_root` walk from the
+    cwd (deepest marked or registered directory, else the deepest existing
+    one), so a write from a subdirectory lands in the store the project-root
+    overview shows."""
+    from .invocation.targets import resolve_logical_root
+
+    return resolve_logical_root(".", anchor=Path(os.path.abspath(Path.cwd())))
+
+
+_MEMORY_OVERVIEW_OPTIONS = ("offset", "generation", "include_internal", "as_json")
+
+
+def _echo_memory_overview(result: dict[str, Any]) -> None:
+    """T20 plain-line rendering (not `render_result`, which drops `raw.data` rows)."""
+    from datetime import UTC, datetime
+
+    raw = result.get("raw") or {}
+    data = raw.get("data") or {}
+    if raw.get("code") != "OK":
+        click.echo(f"memory: {raw.get('code')}: {data.get('message')}")
+        return
+    rows = data["rows"]
+    label = "record(s)" if data["include_internal"] else "useful record(s)"
+    shown = (
+        f"showing {data['offset'] + 1}-{data['offset'] + len(rows)}"
+        if rows
+        else "showing none"
+    )
+    click.echo(f"memory: {data['total']} {label} in {data['project_root']} ({shown})")
+    for row in rows:
+        owner = row["owner_scope"]
+        created = datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat()
+        click.echo(
+            f"{row['id']}  {row['subject']}  {row['source']}  "
+            f"owner {owner['kind']}:{owner['id']}  {created}  {row['trust_tier']}"
+        )
+    if data["next_offset"] is not None:
+        click.echo(
+            f"next: rush memory --offset {data['next_offset']} "
+            f"--generation {data['generation_token']}"
+        )
+    if data.get("reason"):
+        click.echo(data["reason"])
+
+
+@cli.group(name="memory", invoke_without_command=True)
+@click.option(
+    "--offset",
+    type=click.IntRange(min=0),
+    default=0,
+    help="Overview only: skip this many rows (requires --generation when > 0).",
+)
+@click.option(
+    "--generation",
+    default=None,
+    help="Overview only: the continuation token the previous page printed.",
+)
+@click.option(
+    "--include-internal",
+    is_flag=True,
+    help="Overview only: also show internal bookkeeping rows.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Overview only: print raw JSON.")
+@click.pass_context
+def memory_group(
+    ctx: click.Context,
+    offset: int,
+    generation: str | None,
+    include_internal: bool,
+    as_json: bool,
+) -> None:
+    """Query, write, and promote cross-tool memory artifacts.
+
+    With no subcommand, shows this project's 20 most recent useful memory records
+    (newest first, read-only; archived, expired and internal rows hidden)."""
+    if ctx.invoked_subcommand is not None:
+        given = [
+            name
+            for name in _MEMORY_OVERVIEW_OPTIONS
+            if ctx.get_parameter_source(name) != click.core.ParameterSource.DEFAULT
+        ]
+        if given:
+            raise click.UsageError(
+                "--offset/--generation/--include-internal/--json before a memory "
+                "subcommand apply only to the bare `rush memory` overview"
+            )
+        return
+    from .tools.memory import memory_overview
+
+    result = dict(
+        memory_overview(
+            _memory_logical_root(),
+            offset=offset,
+            generation=generation,
+            include_internal=include_internal,
+        )
+    )
+    if as_json:
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        _echo_memory_overview(result)
+    raise click.exceptions.Exit(exit_code_for(result))
 
 
 @memory_group.command(name="ask")
@@ -2637,7 +2739,7 @@ def memory_ask_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="ask",
         subject=subject,
         query=query,
@@ -2666,7 +2768,7 @@ def memory_recall_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="recall",
         subject=subject,
         query=query,
@@ -2701,7 +2803,7 @@ def memory_list_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="list",
         subject=subject,
         query=query,
@@ -2747,7 +2849,7 @@ def memory_write_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="write",
         subject=subject,
         content=_json.loads(content),
@@ -2815,7 +2917,7 @@ def memory_promote_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="promote",
         subject=subject,
         content=_json.loads(content),
@@ -2881,7 +2983,7 @@ def memory_maintain_cmd(
     from .tools.memory import MemoryTool
     from .workflows.projects import ProjectNotFoundError, resolve_project
 
-    root = Path.cwd()
+    root = _memory_logical_root()
     if owner_kind is not None:
         if not owner_id:
             raise click.UsageError("--owner-kind requires --owner-id")
@@ -2990,7 +3092,7 @@ def _build_memory_operation_command(operation: str):
         request = _memory_input_request(input_file)
         _run_tool(
             "memory",
-            Path.cwd(),
+            _memory_logical_root(),
             as_json=as_json,
             permissions=_extract_permissions(
                 allow_network=allow_network,
@@ -3988,6 +4090,24 @@ def agent_disconnect_cmd(
     _render_session_result(dict(result), as_json)
 
 
+@agent_group.command(name="hook")
+@click.argument("host", type=click.Choice(["claude", "codex"]))
+def agent_hook_cmd(host: str) -> None:
+    """Post-edit hook entrypoint the Rush Claude Code/Codex plugins run.
+
+    Reads the host's JSON event on stdin. Prints nothing and runs no check
+    unless agent hooks are enabled for this host and project; always exits 0
+    so a hook never changes the edit's result.
+    """
+    from .integrations.agent_hooks import MAX_PAYLOAD_BYTES, run_agent_hook
+
+    stdin = click.get_binary_stream("stdin")
+    payload = b"" if stdin.isatty() else stdin.read(MAX_PAYLOAD_BYTES + 1)
+    output = run_agent_hook(host, payload)
+    if output:
+        click.echo(output)
+
+
 @agent_group.command(name="doctor")
 @click.option(
     "--session", "session_id", default=None, help="Include this session's memory state."
@@ -4072,6 +4192,25 @@ def agent_doctor_cmd(
         "CLAUDE.md/AGENTS.md; without it the block is only previewed."
     ),
 )
+@click.option(
+    "--agent-plugin",
+    "agent_plugins",
+    multiple=True,
+    type=click.Choice(["claude", "codex"]),
+    help=(
+        "Install (or upgrade) the native Rush plugin for this host through "
+        "its own plugin CLI instead of a manual MCP entry. Repeatable."
+    ),
+)
+@click.option(
+    "--convert-manual-entry",
+    is_flag=True,
+    help=(
+        "With --agent-plugin: consent to removing an existing 'rush' MCP entry "
+        "Rush did not record (shown as a diff in the result) so the plugin is "
+        "the only Rush server. Without it that host is left unchanged."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def install_cmd(
     agents: str,
@@ -4083,6 +4222,8 @@ def install_cmd(
     session_id: str,
     version: str | None,
     install_guidance: bool,
+    agent_plugins: tuple[str, ...],
+    convert_manual_entry: bool,
     as_json: bool,
 ) -> None:
     """Download/verify/install the release binary, connect agents, and optionally set up a project."""
@@ -4098,6 +4239,8 @@ def install_cmd(
         session_id=session_id,
         version=version,
         install_guidance=install_guidance,
+        agent_plugins=agent_plugins,
+        convert_manual_entry=convert_manual_entry,
         permissions=ExecutionPermissions(
             network=True, download=True, cache_write=True, artifact_write=True
         ),
@@ -4720,7 +4863,7 @@ def simulate_ci_cmd(workflow: str) -> None:
 @cli.command(name="attest")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
@@ -4811,7 +4954,7 @@ def attest_cmd(
 @cli.command(name="license-matrix")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
@@ -4849,7 +4992,7 @@ def license_matrix_cmd(
 @cli.command(name="iam-audit")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )

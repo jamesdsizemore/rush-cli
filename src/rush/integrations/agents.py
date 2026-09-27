@@ -42,6 +42,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -2321,7 +2322,12 @@ def disconnect_agent(
             for row in ledger.values()
         )
 
-        for eid, row in sorted(mine.items()):
+        # A native plugin is uninstalled from its host before the files it
+        # runs from are removed.
+        for eid, row in sorted(
+            mine.items(),
+            key=lambda item: (item[1].get("kind") != "native_plugin", item[0]),
+        ):
             kind = str(row.get("kind"))
             recorded_path = str(row.get("path"))
             try:
@@ -2398,6 +2404,8 @@ def _disconnect_component(
     written = row.get("written_sha256")
     if kind == "instruction_block":
         return _disconnect_instruction_block(row, agent_id, remaining)
+    if kind == "native_plugin":
+        return _uninstall_native_plugin(agent_id, recorded_path)
     if kind in _FILE_KINDS:
         path = _entry_physical_path(row)
         if _references(remaining, str(kind), path):
@@ -2517,9 +2525,503 @@ def _disconnect_legacy_registration(
     return "removed"
 
 
+# --- Native host plugin packages (Phase 70 T2) --------------------------------------
+
+# Package host name (also its CLI binary) -> the adapter id its ledger rows use.
+PLUGIN_HOSTS: dict[str, str] = {"claude": "claude-code", "codex": "codex"}
+PLUGIN_MARKETPLACE = "rush-local"
+PLUGIN_ID = f"rush@{PLUGIN_MARKETPLACE}"
+_PLUGIN_MANIFESTS: dict[str, tuple[str, str]] = {
+    "claude": (".claude-plugin", "plugin.json"),
+    "codex": (".codex-plugin", "plugin.json"),
+}
+# One marketplace manifest serves both hosts: Codex also reads a marketplace
+# root's `.claude-plugin/marketplace.json` (design brief X8, proven locally).
+_MARKETPLACE_REL = Path(".claude-plugin") / "marketplace.json"
+_VERSION_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}")
+_TEMPLATE_MARK = "@RUSH_"
+
+
+def _plugin_host(host: str) -> str:
+    if host not in PLUGIN_HOSTS:
+        raise UnknownAgentError(
+            f"unknown plugin host {host!r}; expected one of {sorted(PLUGIN_HOSTS)}"
+        )
+    return PLUGIN_HOSTS[host]
+
+
+def plugin_uninstall_commands(host: str) -> list[tuple[str, ...]]:
+    """The host's own commands that uninstall the plugin and its marketplace."""
+    _plugin_host(host)
+    if host == "claude":
+        return [
+            ("claude", "plugin", "uninstall", PLUGIN_ID, "--scope", "user"),
+            ("claude", "plugin", "marketplace", "remove", PLUGIN_MARKETPLACE),
+        ]
+    return [
+        ("codex", "plugin", "remove", PLUGIN_ID),
+        ("codex", "plugin", "marketplace", "remove", PLUGIN_MARKETPLACE),
+    ]
+
+
+def _uninstall_native_plugin(agent_id: str, recorded_path: str) -> str | dict[str, Any]:
+    """Disconnect step for a `native_plugin` row: the host's own uninstall."""
+    host = next(name for name, aid in PLUGIN_HOSTS.items() if aid == agent_id)
+    if shutil.which(host) is None:
+        return _conflict_row("native_plugin", recorded_path, None, None, "host_missing")
+    for argv in plugin_uninstall_commands(host):
+        try:
+            proc = subprocess.run(
+                argv, capture_output=True, text=True, timeout=60, check=False
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return _conflict_row(
+                "native_plugin",
+                recorded_path,
+                None,
+                None,
+                f"native_uninstall_failed: {exc}",
+            )
+        detail = (proc.stderr or proc.stdout or "").strip()
+        # Both hosts report an already-removed plugin/marketplace this way
+        # (claude 2.1.283: "not found"; codex 0.155.1: "is not configured
+        # or installed"), so a repeated disconnect stays a no-op.
+        already_gone = "not found" in detail or "not configured" in detail
+        if proc.returncode != 0 and not already_gone:
+            detail = detail or f"exit {proc.returncode}"
+            return _conflict_row(
+                "native_plugin",
+                recorded_path,
+                None,
+                None,
+                f"native_uninstall_failed: {detail}",
+            )
+    return "removed"
+
+
+@dataclass(frozen=True)
+class ManualEntryRemoval:
+    """Removing a host's manual `rush` MCP entry before its plugin installs."""
+
+    path: Path
+    original: bytes
+    new_bytes: bytes
+    entry_sha256: str
+    owned: bool
+    diff: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": str(self.path),
+            "entry_sha256": self.entry_sha256,
+            "owned": self.owned,
+            "consent_required": not self.owned,
+            "diff": self.diff,
+        }
+
+
+def _read_ledger_rows(data_root: Path | None) -> dict[str, dict[str, Any]]:
+    """Ledger rows read without creating anything (design brief X5)."""
+    try:
+        payload = json.loads(_read_regular(ownership_ledger_path(data_root)) or b"{}")
+    except (OSError, ValueError, CASConflictError):
+        return {}
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, dict):
+        return {}
+    return {eid: row for eid, row in rows.items() if isinstance(row, dict)}
+
+
+def plan_manual_entry_removal(
+    agent_id: str, config_path: Path, *, data_root: Path | None = None
+) -> ManualEntryRemoval | None:
+    """Preview removing `agent_id`'s manual `rush` entry; None when there is none.
+
+    The entry is Rush-owned only when the ownership ledger records exactly
+    its digest at this path (T3 contract). Anything else, including an
+    entry that merely looks like Rush's own output, is the user's and needs
+    their consent before it is converted.
+    """
+    adapter = ADAPTERS.get(agent_id)
+    if adapter is None:
+        raise UnknownAgentError(f"unknown agent: {agent_id!r}")
+    raw = _read_regular(config_path)
+    if raw is None:
+        return None
+    text = raw.decode("utf-8")
+    entry = _read_rush_entry(text, adapter)
+    if entry is None:
+        return None
+    if adapter.config_format == "toml":
+        new_text = _remove_toml_table(text, (*adapter.servers_key, "rush"))
+    else:
+        new_text = _remove_json_like_entry(text, adapter.servers_key)
+    if new_text is None:
+        return None
+    diff = "".join(
+        difflib.unified_diff(
+            text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=str(config_path),
+            tofile=str(config_path),
+        )
+    )
+    digest = _entry_digest(entry)
+    owned = any(
+        row.get("kind") == "mcp_entry"
+        and row.get("host") == agent_id
+        and row.get("path") == str(config_path)
+        and row.get("written_sha256") == digest
+        for row in _read_ledger_rows(data_root).values()
+    )
+    return ManualEntryRemoval(
+        config_path, raw, new_text.encode("utf-8"), digest, owned, diff
+    )
+
+
+def _render_template(value: Any, substitutions: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        for token, replacement in substitutions.items():
+            value = value.replace(token, replacement)
+        return value
+    if isinstance(value, list):
+        return [_render_template(item, substitutions) for item in value]
+    if isinstance(value, dict):
+        return {k: _render_template(v, substitutions) for k, v in value.items()}
+    return value
+
+
+def _copy_rendered(src: Path, dst: Path, substitutions: dict[str, str]) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    if dst.suffix == ".json":
+        data = json.loads(dst.read_text(encoding="utf-8"))
+        rendered = _render_template(data, substitutions)
+        dst.write_text(json.dumps(rendered, indent=2) + "\n", encoding="utf-8")
+
+
+def _stage_host_root(
+    host: str, assets: Path, target: Path, substitutions: dict[str, str]
+) -> None:
+    """Build one host's marketplace root: the marketplace manifest plus `rush/`."""
+    source = assets / host
+    marketplace_source = assets / "claude" / _MARKETPLACE_REL
+    for dirpath, dirnames, filenames in os.walk(source):
+        dirnames.sort()
+        for name in sorted(filenames):
+            src = Path(dirpath) / name
+            if src == marketplace_source:
+                continue
+            _copy_rendered(
+                src, target / "rush" / src.relative_to(source), substitutions
+            )
+    _copy_rendered(marketplace_source, target / _MARKETPLACE_REL, substitutions)
+
+
+def _validate_host_root(host: str, root: Path) -> None:
+    """JSON parse, no unrendered token, and closure of every manifest reference."""
+    for path in sorted(root.rglob("*.json")):
+        try:
+            text = path.read_text(encoding="utf-8")
+            json.loads(text)
+        except (OSError, ValueError) as exc:
+            raise AgentConnectionError(f"invalid plugin JSON {path}: {exc}") from exc
+        if _TEMPLATE_MARK in text:
+            raise AgentConnectionError(f"unrendered template token in {path}")
+    marketplace = json.loads((root / _MARKETPLACE_REL).read_text(encoding="utf-8"))
+    for plugin in marketplace.get("plugins", []):
+        if not (root / str(plugin.get("source", ""))).is_dir():
+            raise AgentConnectionError(f"marketplace source missing: {plugin!r}")
+    plugin_dir = root / "rush"
+    manifest_path = plugin_dir.joinpath(*_PLUGIN_MANIFESTS[host])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest.get("mcpServers"), str):
+        raise AgentConnectionError(f"{manifest_path}: no mcpServers reference")
+    for value in manifest.values():
+        if (
+            isinstance(value, str)
+            and value.startswith("./")
+            and not (plugin_dir / value).exists()
+        ):
+            raise AgentConnectionError(f"{manifest_path}: missing {value}")
+    for required in ("skills/rush/SKILL.md", "hooks/hooks.json"):
+        if not (plugin_dir / required).is_file():
+            raise AgentConnectionError(f"{plugin_dir}: missing {required}")
+
+
+def _plugin_version_of(row: dict[str, Any], base: Path) -> str | None:
+    """The version directory a plugin ledger row lives in, or None."""
+    try:
+        rel = Path(str(row.get("path"))).resolve().relative_to(base.resolve())
+    except ValueError:
+        return None
+    return rel.parts[0] if len(rel.parts) == 2 else None
+
+
+def materialize_agent_plugins(
+    *,
+    rush_binary: str,
+    rush_version: str | None = None,
+    data_root: Path | None = None,
+) -> dict[str, Path]:
+    """Write `<data_root>/agent-plugins/<version>/{claude,codex}/` marketplace roots.
+
+    Each root holds `.claude-plugin/marketplace.json` (marketplace
+    `rush-local`) and the `rush/` plugin, with the absolute Rush executable
+    substituted into its MCP file and hooks. Sources resolve through
+    `importlib.resources`, never the cwd. The version directory is built in
+    a stage directory, validated, then renamed into place, so a failure
+    leaves no partial version. An existing version directory is kept when
+    identical and replaced only while it is still exactly what Rush
+    recorded. Every host root is recorded as a `file_resource` ledger row.
+    """
+    from importlib.resources import as_file, files
+
+    from rush import __version__
+
+    binary = str(rush_binary)
+    if not Path(binary).is_absolute():
+        raise AgentConnectionError(f"rush binary must be an absolute path: {binary}")
+    version = rush_version or __version__
+    if not _VERSION_RE.fullmatch(version):
+        raise AgentConnectionError(f"unsafe plugin version name: {version!r}")
+    resolved_data_root = data_root or default_data_root()
+    base = resolved_data_root / "agent-plugins"
+    final = base / version
+    substitutions = {
+        "@RUSH_BINARY_SH@": shlex.quote(binary),
+        "@RUSH_BINARY@": binary,
+        "@RUSH_VERSION@": version,
+    }
+    with _ledger_lock(resolved_data_root):
+        base.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix=f".stage-{version}-", dir=base))
+        try:
+            with as_file(files("rush.integrations") / "agent_assets") as assets:
+                for host in PLUGIN_HOSTS:
+                    _stage_host_root(host, Path(assets), stage / host, substitutions)
+            for host in PLUGIN_HOSTS:
+                _validate_host_root(host, stage / host)
+            ledger, ledger_version = _load_ledger(resolved_data_root)
+            if final.exists():
+                _replace_version_dir(final, stage, ledger)
+            else:
+                os.rename(stage, final)
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+        before = json.dumps(ledger, sort_keys=True)
+        roots: dict[str, Path] = {}
+        for host, agent_id in PLUGIN_HOSTS.items():
+            root = final / host
+            roots[host] = root
+            entry_id = f"{agent_id}:file_resource:{root}:user"
+            digest = owned_path_digest(root)
+            if digest is None:
+                raise AgentConnectionError(f"materialized root vanished: {root}")
+            recorded = ledger.get(entry_id)
+            if recorded is None or recorded.get("written_sha256") != digest:
+                ledger[entry_id] = _ledger_entry(
+                    entry_id, "file_resource", agent_id, None, str(root), digest, None
+                )
+        if json.dumps(ledger, sort_keys=True) != before:
+            _save_ledger(resolved_data_root, ledger, ledger_version)
+    return roots
+
+
+def _replace_version_dir(
+    final: Path, stage: Path, ledger: dict[str, dict[str, Any]]
+) -> None:
+    """Swap `stage` in for an existing version dir that is still Rush's own."""
+    current = {host: owned_path_digest(final / host) for host in PLUGIN_HOSTS}
+    if all(current[host] == owned_path_digest(stage / host) for host in PLUGIN_HOSTS):
+        return  # already identical; the caller discards the stage
+    recorded = {
+        str(row.get("path")): row.get("written_sha256")
+        for row in ledger.values()
+        if row.get("kind") == "file_resource"
+    }
+    for host in PLUGIN_HOSTS:
+        path = final / host
+        if current[host] is not None and recorded.get(str(path)) != current[host]:
+            raise CASConflictError(
+                path, recorded.get(str(path)), current[host], reason="not_owned"
+            )
+    extra = {entry.name for entry in final.iterdir()} - set(PLUGIN_HOSTS)
+    if extra:
+        raise CASConflictError(
+            final, None, None, reason=f"unowned_entries:{sorted(extra)}"
+        )
+    trash = final.with_name(f".trash-{final.name}-{os.getpid()}")
+    os.rename(final, trash)
+    try:
+        os.rename(stage, final)
+    except OSError:
+        os.rename(trash, final)
+        raise
+    shutil.rmtree(trash)
+
+
+def record_native_plugin_install(
+    *,
+    data_root: Path,
+    host: str,
+    plugin_root: Path,
+    removed_entry: ManualEntryRemoval | None = None,
+) -> dict[str, Any]:
+    """Record that `host` now runs the plugin from `plugin_root`.
+
+    Adds a `native_plugin` ledger row (the host installation; the files
+    stay owned by the materializer's `file_resource` row). When the install
+    converted a manual `rush` entry -- Rush's own, or the user's after they
+    consented -- the row records that entry's path and digest under
+    `replaced_entry`, and the host's `mcp_entry` rows for it are dropped.
+    """
+    removed_entry_path = removed_entry.path if removed_entry is not None else None
+    agent_id = _plugin_host(host)
+    digest = owned_path_digest(plugin_root)
+    if digest is None:
+        raise AgentConnectionError(f"plugin root is missing: {plugin_root}")
+    with _ledger_lock(data_root):
+        ledger, ledger_version = _load_ledger(data_root)
+        if removed_entry_path is not None:
+            for eid, row in list(ledger.items()):
+                if (
+                    row.get("kind") == "mcp_entry"
+                    and row.get("host") == agent_id
+                    and row.get("path") == str(removed_entry_path)
+                ):
+                    del ledger[eid]
+        entry_id = f"{agent_id}:native_plugin:{plugin_root}:user"
+        row = _ledger_entry(
+            entry_id, "native_plugin", agent_id, None, str(plugin_root), digest, None
+        )
+        if removed_entry is not None:
+            row["replaced_entry"] = {
+                "path": str(removed_entry.path),
+                "sha256": removed_entry.entry_sha256,
+                "owned_before": removed_entry.owned,
+            }
+        ledger[entry_id] = row
+        _save_ledger(data_root, ledger, ledger_version)
+    return row
+
+
+def installed_plugin_roots(host: str, data_root: Path | None = None) -> list[Path]:
+    """Plugin roots `host` is recorded as installed from (read-only, no mkdir)."""
+    agent_id = _plugin_host(host)
+    return [
+        Path(str(row.get("path")))
+        for row in _read_ledger_rows(data_root).values()
+        if row.get("kind") == "native_plugin" and row.get("host") == agent_id
+    ]
+
+
+def finalize_agent_plugin_upgrade(
+    *, host: str, confirmed_version: str, data_root: Path | None = None
+) -> dict[str, Any]:
+    """Retire older plugin versions once `host` reports `confirmed_version`.
+
+    `host`'s own `native_plugin` rows for other versions are dropped. An
+    older version directory is then removed only when no host is still
+    recorded as installed from it and every host root in it is still
+    byte-for-byte what Rush materialized; otherwise it is kept (or reported
+    as a conflict), never deleted on a guess.
+    """
+    agent_id = _plugin_host(host)
+    resolved_data_root = data_root or default_data_root()
+    base = resolved_data_root / "agent-plugins"
+    if (
+        not _VERSION_RE.fullmatch(confirmed_version)
+        or not (base / confirmed_version).is_dir()
+    ):
+        raise AgentConnectionError(
+            f"confirmed plugin version is not materialized: {confirmed_version!r}"
+        )
+    removed: list[str] = []
+    kept: list[str] = []
+    conflicts: list[dict[str, Any]] = []
+    with _ledger_lock(resolved_data_root):
+        ledger, ledger_version = _load_ledger(resolved_data_root)
+        before = json.dumps(ledger, sort_keys=True)
+        for eid, row in list(ledger.items()):
+            version = _plugin_version_of(row, base)
+            if (
+                row.get("kind") == "native_plugin"
+                and row.get("host") == agent_id
+                and version not in (None, confirmed_version)
+            ):
+                del ledger[eid]
+        for version_dir in sorted(base.iterdir()):
+            name = version_dir.name
+            if (
+                name == confirmed_version
+                or name.startswith(".")
+                or not version_dir.is_dir()
+            ):
+                continue
+            rows = {
+                eid: row
+                for eid, row in ledger.items()
+                if _plugin_version_of(row, base) == name
+            }
+            file_rows = {
+                eid: row
+                for eid, row in rows.items()
+                if row.get("kind") == "file_resource"
+            }
+            if len(file_rows) != len(rows) or not file_rows:
+                kept.append(name)  # a host still runs it, or Rush never recorded it
+                continue
+            changed = []
+            for row in file_rows.values():
+                actual = owned_path_digest(Path(str(row["path"])))
+                if actual != row.get("written_sha256"):
+                    changed.append(
+                        _conflict_row(
+                            "file_resource",
+                            str(row["path"]),
+                            row.get("written_sha256"),
+                            actual,
+                            "changed",
+                        )
+                    )
+            owned_names = {Path(str(row["path"])).name for row in file_rows.values()}
+            extra = {entry.name for entry in version_dir.iterdir()} - owned_names
+            if extra:
+                changed.append(
+                    _conflict_row(
+                        "file_resource",
+                        str(version_dir),
+                        None,
+                        None,
+                        f"unowned_entries:{sorted(extra)}",
+                    )
+                )
+            if changed:
+                conflicts.extend(changed)
+                continue
+            shutil.rmtree(version_dir)
+            for eid in file_rows:
+                del ledger[eid]
+            removed.append(name)
+        if json.dumps(ledger, sort_keys=True) != before:
+            _save_ledger(resolved_data_root, ledger, ledger_version)
+    return {
+        "state": "conflict" if conflicts else "ok",
+        "host": host,
+        "confirmed_version": confirmed_version,
+        "removed": removed,
+        "kept": kept,
+        "conflicts": conflicts,
+    }
+
+
 __all__ = [
     "ADAPTERS",
     "INSTRUCTION_TARGETS",
+    "PLUGIN_HOSTS",
+    "PLUGIN_ID",
+    "PLUGIN_MARKETPLACE",
     "AgentAdapter",
     "AgentApplyResult",
     "AgentConnectionError",
@@ -2533,6 +3035,7 @@ __all__ = [
     "LedgerBusyError",
     "LedgerCorruptError",
     "MalformedConfigError",
+    "ManualEntryRemoval",
     "OwnedResource",
     "ReadOnlyConfigError",
     "RegistrationStep",
@@ -2549,15 +3052,21 @@ __all__ = [
     "connect_agent",
     "disconnect_agent",
     "discover_agents",
+    "finalize_agent_plugin_upgrade",
     "initialize_agent_memory",
+    "installed_plugin_roots",
+    "materialize_agent_plugins",
     "owned_path_digest",
     "ownership_ledger_path",
     "plan_agent_instructions",
     "plan_agent_registration",
+    "plan_manual_entry_removal",
+    "plugin_uninstall_commands",
     "probe_agent_connection",
     "read_agent_memory_state",
     "read_registration_entry",
     "reconcile_agent_instructions",
+    "record_native_plugin_install",
     "record_tool_observation",
     "registration_undo",
     "resolve_rush_binary",

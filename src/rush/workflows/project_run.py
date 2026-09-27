@@ -106,6 +106,8 @@ from rush.engines.staging import (
     staging_scope,
 )
 from rush.invocation import InvocationExecutor, resolve_invocation
+from rush.invocation.models import InvocationError
+from rush.invocation.targets import registered_root_index, select_member
 from rush.memory.handoff import (
     HandoffError,
     prepare_handoff,
@@ -115,6 +117,7 @@ from rush.memory.handoff import (
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.runtime.filesystem import atomic_write_bytes
+from rush.safety.redactor import sanitize_value
 from rush.tools import ALL_TOOLS
 from rush.tools.base import Finding, ToolResult
 from rush.tools.common import (
@@ -449,6 +452,35 @@ def _build_candidates(tools: list[Any]) -> list[ScanCandidate]:
     return candidates
 
 
+_TARGET_PATH_KEYS = ("path", "file", "filename", "files", "paths")
+
+
+def _validate_scan_targets(
+    root: Path, targets: dict[str, dict[str, Any]], data_root: Path | None
+) -> None:
+    """T9/R9.5: every path-valued plan target is normalized with the T8 walk
+    against `root`, must stay contained in it, and must exist -- before the
+    plan is staged, so an invalid request never becomes a durable plan."""
+    index = registered_root_index(data_root)
+    for payload in targets.values():
+        for key in _TARGET_PATH_KEYS:
+            value = payload.get(key)
+            members = value if isinstance(value, (list, tuple)) else [value]
+            for member in members:
+                if isinstance(member, (str, Path)):
+                    _require_scan_target(root, str(member), index)
+
+
+def _require_scan_target(root: Path, raw: str, index: dict[str, str]) -> None:
+    shown = str(sanitize_value(raw).value)
+    try:
+        relative = select_member(raw, anchor=root, root=root, index=index)
+    except InvocationError as exc:
+        raise ScanInvalidRequestError(f"target invalid: {shown}: {exc}") from None
+    if not os.path.lexists(root / relative):
+        raise ScanInvalidRequestError(f"target not found: {shown}")
+
+
 def plan_scan(
     project: str | Path,
     *,
@@ -495,6 +527,7 @@ def plan_scan(
     for tool_id, payload in targets.items():
         if not isinstance(payload, dict):
             raise ScanInvalidRequestError(f"targets[{tool_id!r}] must be an object")
+    _validate_scan_targets(root, targets, data_root)
 
     unknown_exclude = sorted(set(exclude) - known_ids)
     if unknown_exclude:

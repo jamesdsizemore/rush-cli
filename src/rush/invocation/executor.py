@@ -18,10 +18,12 @@ from typing import Any, Literal
 
 from rush.contracts.results import ToolResultV1
 from rush.invocation.models import (
+    InvalidTargetError,
     InvocationContext,
     InvocationError,
     SignatureAdaptationError,
 )
+from rush.safety.redactor import sanitize_value
 
 _SENTINEL = object()
 
@@ -444,6 +446,76 @@ def adapt_signature_at_registration(
     return general_signature_adapter
 
 
+def _redacted(text: str) -> str:
+    return str(sanitize_value(text).value)
+
+
+def target_error_result(
+    tool: str,
+    code: str,
+    message: str,
+    *,
+    target: str,
+    reason: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """T9: the canonical not-run ToolResult for a target that cannot be
+    analyzed -- `status:"error"`, no findings, no engine, no cache entry."""
+    from rush.permissions import build_execution_metadata
+    from rush.runtime.result_helpers import error_result
+    from rush.tools.routing import no_target_scope
+
+    return dict(
+        error_result(
+            tool,
+            None,
+            _redacted(message),
+            metadata={
+                "error": {"code": code, "target": _redacted(target), **(extra or {})},
+                "execution": build_execution_metadata(
+                    "executed", extra={"disposition": "not_run", "cause": reason}
+                ),
+                "scope": no_target_scope(reason),
+            },
+        )
+    )
+
+
+def invalid_target_result(tool: str, exc: InvalidTargetError) -> dict[str, Any]:
+    """T9/R9.2: a malformed target (`TARGET_INVALID`), never a traceback."""
+    return target_error_result(
+        tool, exc.code, str(exc), target=exc.target, reason="target_invalid"
+    )
+
+
+def missing_explicit_target(context: InvocationContext) -> dict[str, Any] | None:
+    """T9/R9.1: the shared validation point for every transport. A catalog
+    tool that validates its target (`ToolSpec.validates_target`) never runs
+    against an explicitly requested target that does not exist. A `deleted`
+    target with any other provenance (e.g. a staged deletion) stays legal."""
+    from rush.catalog import TOOL_SPECS
+
+    spec = TOOL_SPECS.get(context.operation_id)
+    if spec is None or not spec.supports_path or not spec.validates_target:
+        return None
+    originals = context.original_requested_targets
+    for index, target in enumerate(context.targets):
+        if target.state == "deleted" and target.provenance == "explicit":
+            shown = (
+                originals[index]
+                if index < len(originals)
+                else target.relative_path.as_posix()
+            )
+            return target_error_result(
+                context.operation_id,
+                "TARGET_NOT_FOUND",
+                f"target not found: {shown}",
+                target=shown,
+                reason="target_not_found",
+            )
+    return None
+
+
 class InvocationExecutor:
     """Single execution boundary with registration-time signature adaptation and cache gating."""
 
@@ -492,6 +564,10 @@ class InvocationExecutor:
             raise InvocationError(
                 f"Operation '{context.operation_id}' is not registered in InvocationExecutor"
             )
+
+        missing = missing_explicit_target(context)
+        if missing is not None:
+            return missing
 
         from rush.invocation.cache_policy import decide_cache
 
@@ -583,5 +659,8 @@ __all__ = [
     "current_execution_root",
     "current_invocation_root",
     "format_signature_error_diagnostic",
+    "invalid_target_result",
     "invocation_arguments",
+    "missing_explicit_target",
+    "target_error_result",
 ]

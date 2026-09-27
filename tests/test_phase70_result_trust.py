@@ -1716,11 +1716,17 @@ def test_t08_every_path_taking_tool_declares_exactly_one_root_arg() -> None:
     path_taking = catalog | {"rush_attest_generate"} | custom_path_taking
     assert len(path_taking) == 66
 
+    # T8 5.2 / T6: `rush_project` and `rush_scan` are not path-taking; since T6
+    # their published `project` field is operation data (a project reference
+    # for the operation), never a declared-root argument.
+    operation_data_project = {"rush_project", "rush_scan"}
+    assert operation_data_project <= set(tools)
+    assert not (operation_data_project & path_taking)
     with_declared = {
         name
         for name, t in tools.items()
         if {"project", "project_id"} & set(t.inputSchema.get("properties", {}))
-    }
+    } - operation_data_project
     assert with_declared == path_taking
 
     for name in sorted(path_taking):

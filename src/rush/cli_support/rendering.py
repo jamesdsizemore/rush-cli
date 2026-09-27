@@ -13,6 +13,8 @@ import click
 from rush.config import RushConfigError, load_config
 from rush.contracts.results import ToolResultV1
 from rush.invocation import InvocationContext, InvocationExecutor, resolve_invocation
+from rush.invocation.executor import invalid_target_result
+from rush.invocation.models import InvalidTargetError
 from rush.invocation.targets import (
     RootSelection,
     assert_contained,
@@ -22,6 +24,22 @@ from rush.invocation.targets import (
 from rush.permissions import ExecutionPermissions
 from rush.theme import render_result
 from rush.tools import ALL_TOOLS
+
+
+class TargetPath(click.Path):
+    """T9: an analysis target argument, parsed lexically. Existence is never
+    checked here -- a missing target reaches the shared executor validation
+    (`TARGET_NOT_FOUND`) -- and input `os.stat` rejects outright (an embedded
+    NUL raises `ValueError`, which `click.Path` does not catch) is passed on
+    to `select_root`, which reports it as `TARGET_INVALID`."""
+
+    def convert(
+        self, value: Any, param: click.Parameter | None, ctx: click.Context | None
+    ) -> Any:
+        try:
+            return super().convert(value, param, ctx)
+        except ValueError:
+            return self.coerce_path_result(value)
 
 
 def exit_code_for(result: Any) -> int:
@@ -132,6 +150,43 @@ def cli_invocation_context(
     )
 
 
+def execute_cli_tool(
+    tool_name: str,
+    path: Path,
+    *,
+    original: tuple[str, ...] | None,
+    extra_kwargs: dict[str, Any] | None = None,
+    permissions: ExecutionPermissions | None = None,
+) -> Any:
+    """Run one catalog tool for one CLI target and return its result.
+
+    T9/R9.2: a malformed target (`InvalidTargetError`) is a `TARGET_INVALID`
+    result -- zero engine calls, no traceback. Containment errors keep T8's
+    raise contract. A missing target reaches the executor's shared
+    validation (`TARGET_NOT_FOUND`)."""
+    tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
+    if tool is None:
+        click.echo(f"unknown tool: {tool_name}", err=True)
+        sys.exit(2)
+    try:
+        selection = select_cli_target(path, anchor=Path.cwd())
+        context = cli_invocation_context(
+            tool_name,
+            selection,
+            original=original,
+            extra_kwargs=extra_kwargs,
+            permissions=permissions,
+        )
+    except InvalidTargetError as exc:
+        return invalid_target_result(tool_name, exc)
+    except RushConfigError as e:
+        click.echo(str(e), err=True)
+        sys.exit(2)
+    executor = InvocationExecutor()
+    executor.register(tool_name, tool.__call__)
+    return executor.execute(context)
+
+
 def _run_tool(
     tool_name: str,
     path: Path,
@@ -143,26 +198,13 @@ def _run_tool(
     export_html: Path | None = None,
 ) -> None:
     """Shared helper: find the tool, call it via InvocationExecutor, sanitize, render, exit."""
-    tool = next((t for t in ALL_TOOLS if t.name == tool_name), None)
-    if tool is None:
-        click.echo(f"unknown tool: {tool_name}", err=True)
-        sys.exit(2)
-    selection = select_cli_target(path, anchor=Path.cwd())
-    try:
-        context = cli_invocation_context(
-            tool_name,
-            selection,
-            original=None if _path_param_defaulted() else (str(path),),
-            extra_kwargs=extra_kwargs,
-            permissions=permissions,
-        )
-    except RushConfigError as e:
-        click.echo(str(e), err=True)
-        sys.exit(2)
-    executor = InvocationExecutor()
-    executor.register(tool_name, tool.__call__)
-    result = executor.execute(context)
-
+    result = execute_cli_tool(
+        tool_name,
+        path,
+        original=None if _path_param_defaulted() else (str(path),),
+        extra_kwargs=extra_kwargs,
+        permissions=permissions,
+    )
     exit_with_result(
         result,
         as_json=as_json,

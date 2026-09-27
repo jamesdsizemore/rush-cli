@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterator, Sequence
 from pathlib import Path
+from typing import Any
 
 from rush.discovery.stack import PYTHON_MARKERS
 
@@ -42,6 +43,19 @@ def detect_project_languages(path: Path) -> list[str]:
         for language, markers in _LANGUAGE_MARKERS
         if any(any(root.glob(marker)) for marker in markers)
     ]
+
+
+def no_target_scope(reason: str, **counts: int) -> dict[str, Any]:
+    """T9: the `metadata.scope` of a result that examined nothing, with the
+    exact reason (e.g. `target_not_found`, `no_supported_targets`,
+    `engine_unavailable`) and any known file counts."""
+    return {
+        "version": 1,
+        "kind": "files",
+        "coverage": "none",
+        "reason": reason,
+        **counts,
+    }
 
 
 def combine_status(left: ToolStatus, right: ToolStatus) -> ToolStatus:
@@ -270,4 +284,5 @@ __all__ = [
     "collect_files",
     "combine_status",
     "detect_project_languages",
+    "no_target_scope",
 ]

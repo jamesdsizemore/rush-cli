@@ -131,16 +131,31 @@ class MemoryMigrationRequiredError(Exception):
     """
 
 
-class MemoryStoreUnreadableError(OSError):
-    """Raised when a read-only SQLite read cannot complete without writing.
-    `.code` is `readonly_state_code(...)`: `E_STORE_CORRUPT` or `E_STORE_BUSY`.
-
-    T10: an `OSError`, so compatibility readers' existing `OSError` handling
-    (for example coordination's flight replay) reports it as unavailable."""
+class MemoryStoreUnreadableError(Exception):
+    """Raised by a read-only preview when `open_readonly()` reports a non-`None` `state`.
+    `.code` is `readonly_state_code(...)`: `E_STORE_CORRUPT` or `E_STORE_BUSY`."""
 
     def __init__(self, message: str, *, code: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+_READONLY_VIEW_REASONS = {
+    "migration_required": (
+        "memory.db predates the current schema; reads never migrate it -- run any "
+        "`rush memory` write command (for example `rush memory write`) to migrate"
+    ),
+    "corrupt": "memory.db could not be read: the database file is corrupt",
+    "busy": (
+        "memory.db could not be read without creating files while a writer is "
+        "active; retry"
+    ),
+}
+
+
+def readonly_view_reason(state: str) -> str:
+    """Human reason for an `open_readonly_view()` state."""
+    return _READONLY_VIEW_REASONS[state]
 
 
 def readonly_state_code(state: str, db: Path) -> str:
@@ -727,6 +742,21 @@ def open_sqlite_readonly(db: Path) -> ReadOnlyOpenResult:
     )
 
 
+def store_generation(conn: sqlite3.Connection) -> int:
+    """MC02 §9.0 "store generation" over an already-open connection: the latest
+    `memory_changes` sequence number, or 0 when that table does not exist yet (an
+    older read-compatible DB opened read-only, which no migration has touched)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_changes'"
+    ).fetchone()
+    if exists is None:
+        return 0
+    row = conn.execute(
+        "SELECT COALESCE(MAX(sequence), 0) FROM memory_changes"
+    ).fetchone()
+    return int(row[0])
+
+
 def _sqlite_fingerprint(db: Path) -> tuple[int, int, int] | None:
     try:
         st = db.stat()
@@ -818,7 +848,11 @@ class TypedArtifactStore:
         self._merkle = MerkleInvalidator(project_root=self.project_root)
         self._init_db()
 
+    _readonly_conn: sqlite3.Connection | None = None
+
     def _connect(self) -> sqlite3.Connection:
+        if self._readonly_conn is not None:
+            return self._readonly_conn
         conn = sqlite3.connect(str(self.db_path), timeout=10.0)
         conn.row_factory = sqlite3.Row
         return conn
@@ -914,15 +948,9 @@ class TypedArtifactStore:
         transaction instead of opening a second connection -- required by
         `snapshot_memories()`'s atomic (memories, generation) read."""
         if conn is not None:
-            row = conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) FROM memory_changes"
-            ).fetchone()
-            return int(row[0])
+            return store_generation(conn)
         with self._connect() as own_conn:
-            row = own_conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) FROM memory_changes"
-            ).fetchone()
-        return int(row[0])
+            return store_generation(own_conn)
 
     def snapshot_memories(
         self, owner_filter: str | None = None, *, include_internal: bool = False
@@ -1663,6 +1691,50 @@ class TypedArtifactStore:
             conn.close()
             return dataclasses.replace(opened, migration_required=True, connection=None)
         return opened
+
+    @classmethod
+    def open_readonly_view(
+        cls, project_root: Path
+    ) -> tuple[TypedArtifactStore | None, str | None]:
+        """R20.G8: a query-only store for local read surfaces (dashboard, TUI). Its read
+        methods (`list_artifact_refs`, `scope_artifacts`, `recall`, `current_generation`,
+        ...) run over one `open_readonly()` connection, so reading never creates `.rush/`,
+        a DB, a sidecar, a cursor key, or a migrated schema; any write method raises.
+
+        Returns `(view, None)` on success and `(None, None)` when no DB exists (a genuinely
+        empty store). Otherwise `(None, state)` with `state` one of `migration_required`
+        (no `artifact_version`, or no `archived_at`/`expired_at` yet), `corrupt`, or
+        `busy`; `readonly_view_reason(state)` explains it. Callers must show that state,
+        never an empty store. Call `close()` on the view when done."""
+        root = Path(project_root).resolve()
+        opened = cls.open_readonly(root)
+        if opened.state is not None:
+            code = readonly_state_code(opened.state, root / ".rush" / "memory.db")
+            return None, "corrupt" if code == "E_STORE_CORRUPT" else "busy"
+        if opened.migration_required:
+            return None, "migration_required"
+        conn = opened.connection
+        if conn is None:
+            return None, None
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+        }
+        if not {"archived_at", "expired_at"} <= columns:
+            conn.close()
+            return None, "migration_required"
+        view = cls.__new__(cls)
+        view.project_root = Path(project_root).resolve()
+        view.db_path = view.project_root / ".rush" / "memory.db"
+        view._owner_scope_default = legacy_owner_scope(view.project_root)
+        view._readonly_conn = conn
+        return view, None
+
+    def close(self) -> None:
+        """Close an `open_readonly_view()` connection; a no-op on a writable store."""
+        conn = getattr(self, "_readonly_conn", None)
+        if conn is not None:
+            conn.close()
+            self._readonly_conn = None
 
     @classmethod
     def preview_mutation(
@@ -2462,9 +2534,12 @@ class TypedArtifactStore:
                 path_part = artifact.symbol_ref.split("::", 1)[0]
                 file_path = (self.project_root / path_part).resolve()
                 try:
-                    current_hash = self._merkle.hash_content(
-                        file_path.read_text(encoding="utf-8")
-                    )
+                    # Same sha256 as `MerkleInvalidator.hash_content`, computed
+                    # directly so a read-only view (which has no invalidator; its
+                    # construction mkdirs `.rush/cache`) can recall too.
+                    current_hash = hashlib.sha256(
+                        file_path.read_text(encoding="utf-8").encode("utf-8")
+                    ).hexdigest()
                 except (OSError, UnicodeError):
                     current_hash = None
                 if current_hash != artifact.content_hash:

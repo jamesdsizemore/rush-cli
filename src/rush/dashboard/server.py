@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import os
@@ -51,8 +52,11 @@ from rush.memory.maintenance import MaintenanceTask
 from rush.memory.store import (
     MemorySubject,
     OwnerScope,
+    SignatureMismatchError,
+    TrojanSourceFoundError,
     TypedArtifactStore,
     is_internal_memory_source,
+    readonly_view_reason,
 )
 from rush.permissions import ExecutionPermissions
 from rush.review.collection import SKIP_DIRS
@@ -62,7 +66,7 @@ from rush.setup.provision import build_provision_plan
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tools.agent_connection import AgentConnectionTool
 from rush.tools.base import ToolResult
-from rush.tools.memory import MemoryTool
+from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.tools.project import ProjectTool
 from rush.tools.setup_wizard import run_setup_wizard
 from rush.workflows.project_run import (
@@ -1487,8 +1491,15 @@ def _sync_current_map(ctx: DashboardContext, project_id: str) -> None:
         if record is None:
             return
         root = Path(resolve_project(project_id)["root"])
-        store = TypedArtifactStore(root)
-        if store.current_generation() > record.memory_generation:
+        # R20.G8: a drift check reads only; it never creates or migrates memory.db.
+        view, _state = TypedArtifactStore.open_readonly_view(root)
+        if view is None:
+            return
+        try:
+            generation = view.current_generation()
+        finally:
+            view.close()
+        if generation > record.memory_generation:
             _refresh_project_memories(ctx, project_id, root)
 
 
@@ -3490,17 +3501,19 @@ def _build_memory_section(
 ) -> dict[str, Any]:
     """`section=memory` (plan Sec 3.1): scope/type/trust/source/freshness
     filters, text search, and exact expansion/relationship navigation. A
-    non-empty `query` searches via `MemoryTool`'s own `list` dispatch --
-    the same `TypedArtifactStore.recall()` path the CLI/MCP use, including
+    non-empty `query` searches via the same `TypedArtifactStore.recall()`
+    path `MemoryTool`'s `list` and the CLI/MCP use (over a read-only view), including
     its dynamic per-row staleness re-check (a memory whose cited symbol
     changed since it was written surfaces `stale: true` here). An empty
     `query` browses via `TypedArtifactStore.scope_artifacts()` instead
     (`dynamic_freshness_checked: false` -- only the persisted `stale`
     column, no live re-check)."""
     root = Path(resolve_project(project_id)["root"])
-    store = TypedArtifactStore(root)
-    all_sources = _all_known_sources(store)
-    browse_revision = str(store.current_generation())
+    # R20.G8: a GET never creates or migrates memory.db. No DB = empty; an
+    # unreadable one (old schema, corrupt, busy) is reported as `store_state`.
+    store, store_state = TypedArtifactStore.open_readonly_view(root)
+    all_sources = _all_known_sources(store) if store is not None else []
+    browse_revision = str(store.current_generation() if store is not None else 0)
 
     requested_subjects = _split_csv(query.get("subject", []))
     subjects = [s for s in requested_subjects if s in _MEMORY_SUBJECTS] or list(
@@ -3539,6 +3552,8 @@ def _build_memory_section(
     if cached_items is not None:
         _MEMORY_BROWSE_CACHE.move_to_end(browse_cache_key)
         items = list(cached_items)
+    elif store is None:
+        items = []
     else:
         items = _fetch_memory_browse_items(
             store,
@@ -3590,36 +3605,68 @@ def _build_memory_section(
         "subjects": list(_MEMORY_SUBJECTS),
         "known_sources": browse_sources,
     }
+    if store_state is not None:
+        section_data["store_state"] = store_state
+        section_data["store_reason"] = readonly_view_reason(store_state)
 
-    expand_id = query.get("expand_id", [None])[0]
-    if expand_id:
+    # R20.G8: expand/related read through the same read-only view (never a
+    # writable store); R18.2: both keep the UNFILTERED `all_sources` allowlist.
+    for operation, id_key, version_key in (
+        ("expand", "expand_id", "expand_version"),
+        ("related", "related_id", "related_version"),
+    ):
+        target_id = query.get(id_key, [None])[0]
+        if not target_id:
+            continue
         try:
-            expand_version = int(query.get("expand_version", ["0"])[0])
+            target_version = int(query.get(version_key, ["0"])[0])
         except ValueError:
-            expand_version = 0
-        expand_result = MemoryTool().run(
-            root,
-            operation="expand",
-            request={"id": expand_id, "version": expand_version},
-            session_allowlist=all_sources,
+            target_version = 0
+        if store is None:
+            section_data[operation] = dict(
+                _unreadable_memory_envelope(operation, store_state)
+            )
+            continue
+        section_data[operation] = dict(
+            MemoryTool(readonly_store=store).run(
+                root,
+                operation=cast(MemoryOperation, operation),
+                request={"id": target_id, "version": target_version},
+                session_allowlist=all_sources,
+            )
         )
-        section_data["expand"] = dict(expand_result)
 
-    related_id = query.get("related_id", [None])[0]
-    if related_id:
-        try:
-            related_version = int(query.get("related_version", ["0"])[0])
-        except ValueError:
-            related_version = 0
-        related_result = MemoryTool().run(
-            root,
-            operation="related",
-            request={"id": related_id, "version": related_version},
-            session_allowlist=all_sources,
-        )
-        section_data["related"] = dict(related_result)
-
+    # ponytail: an exception above leaves the view to GC; it is read-only (no
+    # sidecars, no locks held past the statement), so that only delays the close.
+    if store is not None:
+        store.close()
     return section_data
+
+
+_UNREADABLE_STORE_CODES = {
+    "migration_required": "E_MIGRATION",
+    "corrupt": "E_STORE_CORRUPT",
+    "busy": "E_STORE_BUSY",
+}
+
+
+def _unreadable_memory_envelope(operation: str, store_state: str | None) -> ToolResult:
+    """expand/related when no readable store exists: no DB at all is `E_NOT_VISIBLE`
+    (nothing to see, same code a missing id returns), an unreadable one carries its
+    state's code and reason. Never constructs a store."""
+    if store_state is None:
+        return MemoryTool()._envelope_result(
+            time.monotonic(),
+            operation,
+            "E_NOT_VISIBLE",
+            {"message": "no memory store exists for this project"},
+        )
+    return MemoryTool()._envelope_result(
+        time.monotonic(),
+        operation,
+        _UNREADABLE_STORE_CODES[store_state],
+        {"message": readonly_view_reason(store_state), "state": store_state},
+    )
 
 
 def _fetch_memory_browse_items(
@@ -3639,16 +3686,21 @@ def _fetch_memory_browse_items(
     items: list[dict[str, Any]] = []
     if query_text and all_sources:
         for subject in subjects:
-            result = MemoryTool().run(
-                root,
-                operation="list",
-                subject=subject,
-                query=query_text,
-                session_allowlist=all_sources,
-                include_archived=include_archived,
-            )
-            for artifact in result.get("raw") or []:
-                item = dict(artifact)
+            # R20.G8: the same `recall()` (signature, Trojan-source and live
+            # staleness checks) `MemoryTool`'s `list` runs, but over this
+            # read-only view -- a GET never constructs a writable store. A
+            # rejected subject yields no rows, exactly as `list`'s error did.
+            try:
+                artifacts = store.recall(
+                    cast(MemorySubject, subject),
+                    query_text,
+                    all_sources,
+                    include_archived=include_archived,
+                )
+            except (SignatureMismatchError, TrojanSourceFoundError):
+                continue
+            for artifact in artifacts:
+                item = dataclasses.asdict(artifact)
                 item["dynamic_freshness_checked"] = True
                 items.append(item)
         if trust_filter:
@@ -3713,26 +3765,50 @@ def _build_tokens_section(
     ledger never observes a provider-billed usage report, so `provider_usage`
     stays explicitly `available: false` rather than fabricating a number."""
     root = Path(resolve_project(project_id)["root"])
-    telemetry = TelemetryStore(root)
     # M10: one selection, parsed once, applied identically to token totals,
     # memory-event-by-kind totals, and handoff rows -- never filtering only
     # the handoff rows while leaving the displayed totals project-wide.
     run_filter = query.get("run_id", [None])[0]
     agent_filter = query.get("agent_id", [None])[0]
     session_filter = query.get("session_id", [None])[0]
-    summary = telemetry.get_summary(
-        run_id=run_filter, agent_id=agent_filter, session_id=session_filter
-    )
-    by_kind = {
-        kind: telemetry.get_memory_event_total(
-            kind, run_id=run_filter, agent_id=agent_filter, session_id=session_filter
+    # R20.G8: a GET never springs `.rush/telemetry/tokens.db` into existence;
+    # a project with no ledger yet reports the ledger's own all-zero totals.
+    if (root / ".rush" / "telemetry" / "tokens.db").exists():
+        telemetry = TelemetryStore(root)
+        summary = telemetry.get_summary(
+            run_id=run_filter, agent_id=agent_filter, session_id=session_filter
         )
-        for kind in _MEMORY_EVENT_KINDS
-    }
-    store = TypedArtifactStore(root)
-    cache_fill_count = sum(
-        1 for row in store.list_artifact_refs() if row["source"] == "context_pack"
-    )
+        by_kind = {
+            kind: telemetry.get_memory_event_total(
+                kind,
+                run_id=run_filter,
+                agent_id=agent_filter,
+                session_id=session_filter,
+            )
+            for kind in _MEMORY_EVENT_KINDS
+        }
+    else:
+        summary = {
+            "events_count": 0,
+            "total_raw_tokens": 0,
+            "total_compressed_tokens": 0,
+            "net_tokens_saved": 0,
+            "compression_ratio": 0.0,
+            "dollar_savings_est": 0.0,
+        }
+        by_kind = dict.fromkeys(_MEMORY_EVENT_KINDS, 0)
+    # R20.G8: read-only view; never creates or migrates memory.db.
+    store, _store_state = TypedArtifactStore.open_readonly_view(root)
+    cache_fill_count = 0
+    if store is not None:
+        try:
+            cache_fill_count = sum(
+                1
+                for row in store.list_artifact_refs()
+                if row["source"] == "context_pack"
+            )
+        finally:
+            store.close()
 
     handoffs = _list_project_handoffs(root)
     if run_filter:
