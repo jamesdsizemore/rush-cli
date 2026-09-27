@@ -311,7 +311,7 @@ def run_setup_wizard(
     results["unsupported_engines"] = sorted(set(suggested) - set(known_engine_ids))
     resolved_data_root = data_root or default_data_root()
     plan: ProvisionPlan = build_provision_plan(
-        root, known_engine_ids, data_root=resolved_data_root
+        root, known_engine_ids, data_root=resolved_data_root, runner=runner
     )
     results["plan_id"] = plan.plan_id
     if permissions is None:
@@ -2720,15 +2720,18 @@ def render_setup_result(payload: dict[str, Any]) -> str:
         lines.append(f"  engine {engine} failed: {failure['message']}")
     for engine, path in sorted((provision.get("recovery_required") or {}).items()):
         lines.append(f"  engine {engine}: recover {path} manually, then rerun setup")
-    for engine, flags in sorted((provision.get("permission_blocked") or {}).items()):
-        # Round-2 M1: a reused engine whose npm runtime must be fetched
-        # needs the fetch grants; one exact recovery command names them.
-        grant_flags = " ".join(f"--allow-{flag.replace('_', '-')}" for flag in flags)
+    # Round-2 M1: a reused engine whose npm runtime must be fetched needs the
+    # fetch grants (already CLI flags); one exact recovery command names them
+    # and replaces the generic resume line.
+    blocked = provision.get("permission_blocked") or {}
+    grant_flags: list[str] = []
+    for engine, flags in sorted(blocked.items()):
         lines.append(f"  engine {engine} needs {' '.join(flags)}")
-        if payload.get("resume_command"):
-            lines.append(f"  recover: {payload['resume_command']} {grant_flags}")
+        grant_flags.extend(flag for flag in flags if flag not in grant_flags)
     lines.extend(_render_host_outcome(payload.get("raw") or {}))
-    if payload.get("resume_command") and not payload.get("ready"):
+    if payload.get("resume_command") and grant_flags:
+        lines.append(f"  recover: {payload['resume_command']} {' '.join(grant_flags)}")
+    elif payload.get("resume_command") and not payload.get("ready"):
         lines.append(f"  resume: {payload['resume_command']}")
     return "\n".join(lines)
 

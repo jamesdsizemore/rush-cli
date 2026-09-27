@@ -611,7 +611,7 @@ def test_setup_hooks_conflict_is_partial_with_blocker_and_one_recovery(
     from rush.tools import setup_wizard
 
     def conflicted(*args: object, **kwargs: object) -> dict[str, Any]:
-        return {"state": "conflict", "reason": reason}
+        return {"state": "conflict", "conflict": reason}
 
     monkeypatch.setattr(setup_wizard, "set_hook_activation", conflicted)
     root = tmp_path / "project"
@@ -622,7 +622,7 @@ def test_setup_hooks_conflict_is_partial_with_blocker_and_one_recovery(
     assert (result["status"], result["reason"]) == ("partial", "hooks_conflict")
     hooks = result["raw"]["hooks"]
     assert hooks["state"] == "conflict"
-    assert hooks["reason"] == reason
+    assert hooks["conflict"] == reason
     assert hooks["blocker"] == "hook_activation_conflict"
     assert hooks["recovery_actions"] == [
         f"{review['resume_command']} --enable-agent-hooks"
@@ -825,13 +825,42 @@ def test_setup_result_renders_permission_blocked_engine_with_one_recovery() -> N
         {
             "status": "partial",
             "resume_command": "rush setup /p --agent claude",
-            "provision": {
-                "permission_blocked": {"aislop": ["network", "download", "cache_write"]}
-            },
+            "provision": {"permission_blocked": {"aislop": list(_FETCH_FLAGS)}},
         }
     )
-    assert "engine aislop needs network download cache_write" in text
+    assert (
+        "engine aislop needs --allow-network --allow-download --allow-cache-write"
+    ) in text
     assert (
         "recover: rush setup /p --agent claude "
         "--allow-network --allow-download --allow-cache-write"
     ) in text
+    assert "--allow---" not in text
+    assert text.count("rush setup /p --agent claude") == 1, text
+
+
+def test_run_setup_wizard_passes_its_runner_to_the_provision_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review: the caller's runner reaches `build_provision_plan`, so a
+    reused engine is verified with the same runner that applies the plan."""
+    from rush.tools import setup_wizard
+
+    seen: dict[str, Any] = {}
+    real = setup_wizard.build_provision_plan
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    def runner(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("plan building runs nothing here")
+
+    monkeypatch.setattr(setup_wizard, "build_provision_plan", spy)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "p"\n')
+    setup_wizard.run_setup_wizard(
+        root, install=True, data_root=tmp_path / "data", runner=runner
+    )
+    assert seen["runner"] is runner
