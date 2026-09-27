@@ -1713,7 +1713,7 @@ def publish_check_suite_scan(
         "schema_version": 1,
         "run_id": run_id,
         "attempt_id": attempt_id,
-        "run_state": "completed",
+        "run_state": _check_suite_run_state(aggregate),
         "created_at": datetime.now(UTC).isoformat(),
         "aggregate": dict(aggregate),
         "totals": {"finding_count": len(aggregate.get("findings") or [])},
@@ -1748,6 +1748,20 @@ def publish_check_suite_scan(
         attempt_id=attempt_id,
     )
     return run_id, attempt_id
+
+
+def _check_suite_run_state(aggregate: ToolResult) -> str:
+    """T17 R17.4: `cancelled` for a cancelled run, `incomplete` when any step
+    did not execute (not_run/cancelled) or ended skipped or error, else
+    `completed` -- never a clean completion for partial work."""
+    metadata = aggregate.get("metadata") or {}
+    if metadata.get("cancelled"):
+        return "cancelled"
+    for child in metadata.get("children") or []:
+        disposition = (child.get("execution") or {}).get("disposition", "executed")
+        if disposition != "executed" or child.get("status") in ("skipped", "error"):
+            return "incomplete"
+    return "completed"
 
 
 def _dispatch_check_suite(
@@ -1810,6 +1824,10 @@ def _dispatch_check_suite(
                     "suite": CHECK_SUITE.name,
                     "tool": child.get("tool"),
                     "status": child.get("status"),
+                    # T17: executed, or cancelled mid-step.
+                    "disposition": (
+                        (child.get("metadata") or {}).get("execution") or {}
+                    ).get("disposition", "executed"),
                 },
             )
         tool_name = str(child.get("tool") or "")

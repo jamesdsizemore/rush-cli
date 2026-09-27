@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from rush.config import ReviewConfig, RushConfig
+from rush.permissions import ExecutionPermissions
 from rush.tools import (
     FormatTool,
     LintTool,
@@ -416,7 +417,9 @@ def test_ruff_format_parser_handles_current_diagnostics(tmp_path: Path):
 def test_test_runs_pytest_on_python_repo(py_repo: Path):
     """A repo without tests → pytest collects nothing → ok (exit 5)."""
     tool = TestTool()
-    result = tool.run(py_repo)
+    # Phase 70 T17 S17.3: the runner executes project code only under a
+    # build grant.
+    result = tool.run(py_repo, permissions=ExecutionPermissions(build=True))
     assert result["tool"] == "test"
     assert result["status"] in ("ok", "fail")
     assert "pytest" in (result.get("engine") or "")

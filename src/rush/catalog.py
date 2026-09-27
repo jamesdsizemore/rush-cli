@@ -901,6 +901,23 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         scope_kind="operation",
     ),
+    # Phase 70 T17 (R17.1): a workflow tool -- full scans classify it
+    # not_applicable and its steps validate their own targets.
+    "check": ToolSpec(
+        name="check",
+        category="workflow",
+        description=(
+            "Run the six-step check suite: format (check-only), lint, "
+            "typecheck, dead, slop and test."
+        ),
+        mcp_description=(
+            "Run the check suite at <path>; every step is reported, and the "
+            "test step needs allow_build."
+        ),
+        engine_names=(),
+        maturity="real_adapter",
+        scope_kind="file",
+    ),
 }
 
 
@@ -959,6 +976,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "provenance-ai": "real_adapter",
     "dead-asset": "real_adapter",
     "pr-synthesize": "real_adapter",
+    "check": "real_adapter",
 }
 if set(_TOOL_MATURITY) != set(TOOL_SPECS):
     raise RuntimeError("catalog maturity map must classify every tool exactly once")

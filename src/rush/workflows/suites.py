@@ -15,11 +15,12 @@ from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.invocation.models import InvocationError
 from rush.invocation.targets import RootSelection, assert_contained, select_root
 from rush.logging import get_logger, log_subsystem
-from rush.permissions import ExecutionPermissions
+from rush.permissions import ExecutionPermissions, build_execution_metadata
+from rush.runtime.subprocesses import SubprocessCancelled, cancel_scope
 from rush.tools import ALL_TOOLS
 from rush.tools.base import ToolResult
 from rush.tools.common import error_result, skipped_result
-from rush.tools.routing import aggregate_results, child_entry
+from rush.tools.routing import aggregate_results, aggregate_status, child_entry
 
 logger = get_logger("workflows.suites")
 
@@ -32,11 +33,14 @@ class WorkflowSuite:
     fail_fast_default: bool = False
 
 
+# Phase 70 T17 (D5): six steps, run-all by default; `test` stays build-gated.
 CHECK_SUITE = WorkflowSuite(
     name="check",
-    description="Fast inner-loop sanity check (format, lint, typecheck, dead, slop).",
-    tool_sequence=("format", "lint", "typecheck", "dead", "slop"),
-    fail_fast_default=True,
+    description=(
+        "Fast inner-loop sanity check (format, lint, typecheck, dead, slop, test)."
+    ),
+    tool_sequence=("format", "lint", "typecheck", "dead", "slop", "test"),
+    fail_fast_default=False,
 )
 
 AUDIT_SUITE = WorkflowSuite(
@@ -69,6 +73,36 @@ def _suite_metadata(
     return metadata
 
 
+def _step_outcome(
+    tool_name: str, disposition: str, cause: str, summary: str
+) -> ToolResult:
+    """T17 S17.2: a step that never ran (`not_run`) or was stopped mid-run
+    (`cancelled`) -- `skipped`, with the disposition and its cause."""
+    return skipped_result(
+        tool_name,
+        None,
+        summary,
+        metadata={
+            "execution": build_execution_metadata(
+                "executed", extra={"disposition": disposition, "cause": cause}
+            )
+        },
+    )
+
+
+def _mark_cancelled(result: ToolResult, cause: str) -> ToolResult:
+    """T17: a step whose engine child was cancelled mid-run keeps its partial
+    result, recorded as `cancelled` rather than executed."""
+    metadata = dict(result.get("metadata") or {})
+    metadata["execution"] = {
+        **(metadata.get("execution") or {}),
+        "disposition": "cancelled",
+        "cause": cause,
+    }
+    result["metadata"] = metadata
+    return result
+
+
 def run_workflow_suite(
     suite: WorkflowSuite,
     path: Path,
@@ -77,6 +111,7 @@ def run_workflow_suite(
     fail_fast: bool = False,
     *,
     cancel_check: Callable[[], bool] | None = None,
+    cancel_cause: str = "cancelled",
     on_tool_complete: Callable[[ToolResult], None] | None = None,
     owner_instance_id: str = "",
     run_id: str = "",
@@ -99,9 +134,14 @@ def run_workflow_suite(
     nothing to interrupt and leaves nothing durable behind mid-flight, so the
     capabilities live here instead:
 
-    * `cancel_check` is polled *between* tools -- the suite returns promptly
-      with whatever completed, marked `metadata["cancelled"] = True`, rather
-      than only after the whole sequence has run.
+    * `cancel_check` is polled *between* tools, and (T17, finding 17) is
+      ambient inside each step, so a step's in-flight engine child is
+      terminated mid-step. The stopped step is a `cancelled` child, every
+      later step a `not_run` child with `cause=cancel_cause`, and the result
+      is marked `metadata["cancelled"] = True` with a status of at least
+      `warn` -- never a clean success.
+    * T17 S17.2: every step yields exactly one child. After a fail-fast stop
+      the remaining steps are `not_run` with `cause="fail_fast_after:<step>"`.
     * `on_tool_complete` receives each finished child's `ToolResult` as it
       completes, so the caller can persist it under the job's own operation
       id and reconstruct a real partial aggregate from whatever landed
@@ -137,23 +177,28 @@ def run_workflow_suite(
     children: list[ToolResult] = []
     executed_tools: list[str] = []
     cancelled = False
+    # T17 S17.2: once set, every remaining step is a `not_run` child.
+    stop_cause: str | None = None
 
     for tool_name in suite.tool_sequence:
-        if cancel_check is not None and cancel_check():
+        if stop_cause is None and cancel_check is not None and cancel_check():
             cancelled = True
+            stop_cause = cancel_cause
             log_subsystem(
                 "workflow",
                 "WARN",
                 f"Workflow suite '{suite.name}' cancelled before '{tool_name}'",
             )
-            break
+        if stop_cause is not None:
+            children.append(_step_outcome(tool_name, "not_run", stop_cause, "not run"))
+            continue
         tool = tools_by_name.get(tool_name)
         if tool is None:
             children.append(
                 skipped_result(tool_name, None, "not registered in ALL_TOOLS")
             )
             if fail_fast:
-                break
+                stop_cause = f"fail_fast_after:{tool_name}"
             continue
 
         log_subsystem("workflow", "INFO", f"[{suite.name}] Running step: {tool_name}")
@@ -181,18 +226,24 @@ def run_workflow_suite(
                 original_requested_targets=original_requested_targets,
                 invocation_start_cwd=anchor,
             )
-            res: ToolResult = executor.execute(context)
+            with cancel_scope(cancel_check, cancel_cause) as scope:
+                res: ToolResult = executor.execute(context)
+            if scope is not None and scope.hit:
+                cancelled = True
+                stop_cause = cancel_cause
+                res = _mark_cancelled(res, cancel_cause)
             children.append(res)
             # T9: a step the executor refused to run (e.g. a missing target)
-            # is a retained child, never counted as executed.
+            # is a retained child, never counted as executed; nor is a step
+            # cancelled before it finished (T17).
             execution = (res.get("metadata") or {}).get("execution") or {}
-            ran = execution.get("disposition") != "not_run"
+            ran = execution.get("disposition") not in ("not_run", "cancelled")
             if ran:
                 executed_tools.append(tool_name)
             if on_tool_complete is not None:
                 on_tool_complete(res)
 
-            if fail_fast and res["status"] in {"fail", "error"}:
+            if stop_cause is None and fail_fast and res["status"] in {"fail", "error"}:
                 # T9: a refused step is an input error, not a tool failure --
                 # recorded in the result, not warned about as one.
                 log_subsystem(
@@ -202,16 +253,36 @@ def run_workflow_suite(
                     if ran
                     else f"Workflow suite '{suite.name}' stopped: '{tool_name}' was not run",
                 )
-                break
+                stop_cause = f"fail_fast_after:{tool_name}"
+        except SubprocessCancelled:
+            # T17 (finding 17): the step's own child was terminated mid-run.
+            log_subsystem(
+                "workflow",
+                "WARN",
+                f"Workflow suite '{suite.name}' cancelled during '{tool_name}'",
+            )
+            cancelled = True
+            stop_cause = cancel_cause
+            children.append(
+                _step_outcome(
+                    tool_name,
+                    "cancelled",
+                    cancel_cause,
+                    f"cancelled before {tool_name} finished",
+                )
+            )
         except Exception as exc:  # noqa: BLE001 -- one real child result, zero retry
             log_subsystem(
                 "workflow", "ERROR", f"Tool {tool_name} failed with error: {exc}"
             )
             children.append(error_result(tool_name, None, str(exc)))
             if fail_fast:
-                break
+                stop_cause = f"fail_fast_after:{tool_name}"
 
     aggregate = aggregate_results(suite.name, children)
+    if cancelled:
+        # T17 S17.2: a cancelled run is never a clean result -- at least warn.
+        aggregate["status"] = aggregate_status([aggregate["status"], "warn"])
     aggregate["summary"] = (
         f"{suite.name}: executed {len(executed_tools)} tool(s) "
         f"with status '{aggregate['status']}'"

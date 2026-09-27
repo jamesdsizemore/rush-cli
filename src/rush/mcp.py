@@ -162,9 +162,16 @@ class RushFastMCP(FastMCP):
 
 
 def build_server(
-    memory_session: str | None = None, *, binding: ServerBinding | None = None
+    memory_session: str | None = None,
+    *,
+    binding: ServerBinding | None = None,
+    profile: str | None = None,
 ):
     """Construct and return the FastMCP server with all catalog tools registered.
+
+    `profile` (Phase 70; `None` means `"full"`) names the registered tool set.
+    `"full"` is every catalog tool, including T17's `rush_check`. An unknown
+    profile raises `ValueError` before any server is constructed.
 
     T26: with ``binding`` (`rush mcp serve --project ID --session SID`) the
     registered project root, not the process cwd, anchors every relative
@@ -183,6 +190,8 @@ def build_server(
     path that ever narrows the server below its full catalog; the default (`memory_session
     =None`) is unchanged and still registers every catalog tool.
     """
+    if profile not in (None, "full"):
+        raise ValueError(f"unknown MCP profile {profile!r}; valid profiles: full")
     if memory_session is not None:
         import os
 

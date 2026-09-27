@@ -3945,6 +3945,7 @@ def test_check_suite_startup_job_uses_its_own_real_tool_selection_not_a_full_sca
             "typecheck",
             "dead",
             "slop",
+            "test",
         )
         assert Path(call["path"]) == root
     finally:

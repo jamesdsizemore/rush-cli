@@ -72,10 +72,16 @@ _PROJECT_DESCRIPTION = (
 
 
 def _public_signature(sig: inspect.Signature) -> inspect.Signature:
-    """The published MCP signature: no `_`-prefixed internal parameter, and
-    exactly one optional declared-root argument -- the tool's own
-    `project_id` (re-described), or an injected keyword-only `project`."""
-    params = [p for p in sig.parameters.values() if not p.name.startswith("_")]
+    """The published MCP signature: no `_`-prefixed internal parameter, no
+    `context`/`ctx` (the executor binds the InvocationContext itself, e.g.
+    `CheckTool`, T17), and exactly one optional declared-root argument -- the
+    tool's own `project_id` (re-described), or an injected keyword-only
+    `project`."""
+    params = [
+        p
+        for p in sig.parameters.values()
+        if not p.name.startswith("_") and p.name not in ("context", "ctx")
+    ]
     if "project_id" in sig.parameters:
         params = [
             p.replace(

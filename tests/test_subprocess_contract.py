@@ -943,14 +943,53 @@ def test_format_tool_run_engine_call_carries_owner_instance_id_and_run_id(
 def test_test_tool_run_engine_call_carries_owner_instance_id_and_run_id(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """S17.3: once TestTool is build-gated, the real spawn this ownership
+    check depends on only happens with an explicit build grant."""
+    from rush.permissions import ExecutionPermissions
     from rush.tools.test import TestTool
 
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
 
     _assert_ambient_ownership_reaches_run_subprocess(
-        monkeypatch, "rush.engines.pytest", lambda: TestTool().run(tmp_path)
+        monkeypatch,
+        "rush.engines.pytest",
+        lambda: TestTool().run(tmp_path, permissions=ExecutionPermissions(build=True)),
     )
+
+
+def test_test_tool_direct_call_without_build_grant_gives_zero_runner_spawns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """S17.3 (Phase 70 T17): TestTool is build-gated before any runner
+    subprocess spawn -- denial gives 0 calls to the real pytest engine's
+    bound `run_subprocess`, counted per this module's own established
+    convention (spy on the engine module's own attribute, not a shared
+    name -- see `_assert_ambient_ownership_reaches_run_subprocess` above
+    and design-gate finding 26)."""
+    import importlib
+
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.test import TestTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+
+    module = importlib.import_module("rush.engines.pytest")
+    calls: list[object] = []
+
+    def _spy(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "run_subprocess", _spy)
+
+    result = TestTool().run(tmp_path, permissions=ExecutionPermissions())
+
+    assert calls == [], (
+        f"expected 0 runner spawns without --allow-build, got {len(calls)}"
+    )
+    assert result["status"] == "skipped"
 
 
 def test_coverage_tool_run_engine_call_carries_owner_instance_id_and_run_id(

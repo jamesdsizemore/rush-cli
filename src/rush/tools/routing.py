@@ -225,12 +225,20 @@ def aggregate_scope(results: Sequence[ToolResult]) -> dict[str, Any]:
 
 def child_entry(result: ToolResult) -> dict[str, Any]:
     """§3 item 3: one suite/scan child as `{tool, status, summary, reason,
-    engines, scope, execution}`."""
+    engines, scope, execution, metadata:{execution}}`, plus `memory` when the
+    child carries it (T17 S17.4). A child that reports its own top-level
+    `scope` keeps it verbatim; otherwise the scope is its `metadata.scope`
+    coverage and reason."""
+    raw: dict[str, Any] = dict(result)
     metadata = _child_metadata(result)
     scope = metadata.get("scope") or {}
     execution = metadata.get("execution") or {}
     error = metadata.get("error") or {}
-    return {
+    disposition = {
+        "disposition": execution.get("disposition") or "executed",
+        "cause": execution.get("cause"),
+    }
+    entry: dict[str, Any] = {
         "tool": result.get("tool"),
         "status": result.get("status"),
         "summary": result.get("summary"),
@@ -240,15 +248,19 @@ def child_entry(result: ToolResult) -> dict[str, Any]:
             for entry in metadata.get("engines") or []
             if entry.get("engine")
         ],
-        "scope": {
+        "scope": raw["scope"]
+        if raw.get("scope") is not None
+        else {
             "coverage": scope.get("coverage") or "unavailable",
             "reason": scope.get("reason"),
         },
-        "execution": {
-            "disposition": execution.get("disposition") or "executed",
-            "cause": execution.get("cause"),
-        },
+        "execution": disposition,
+        "metadata": {"execution": dict(disposition)},
     }
+    memory = raw.get("memory", metadata.get("memory"))
+    if memory is not None:
+        entry["memory"] = memory
+    return entry
 
 
 def collect_files(
