@@ -44,19 +44,34 @@ class PipAuditEngine(Engine):
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
 
-        # Never inspect the interpreter's installed environment: that would
-        # make a target-path request report unrelated local dependencies.
-        # The bounded Phase 03 route accepts only an explicit requirements
-        # file within the requested project.
-        requirements = path if path.is_file() else path / "requirements.txt"
-        argv = [
-            binary_path,
-            "--format=json",
-            "--strict",  # treat non-zero exit from underlying pip as failure
-            "--requirement",
-            str(requirements),
-            *args,
-        ]
+        if "--project-mode" in args:
+            # T14 (R14.1): pyproject-declared dependencies, gated behind
+            # network/download/cache_write/build grants. No --requirement:
+            # pip-audit resolves the project's own declared dependencies from
+            # `path` (the audited project's root), never Rush's interpreter.
+            extra = [a for a in args if a != "--project-mode"]
+            argv = [
+                binary_path,
+                "--format=json",
+                "--strict",
+                "--progress-spinner=off",
+                str(path),
+                *extra,
+            ]
+        else:
+            # Never inspect the interpreter's installed environment: that would
+            # make a target-path request report unrelated local dependencies.
+            # The bounded Phase 03 route accepts only an explicit requirements
+            # file within the requested project.
+            requirements = path if path.is_file() else path / "requirements.txt"
+            argv = [
+                binary_path,
+                "--format=json",
+                "--strict",  # treat non-zero exit from underlying pip as failure
+                "--requirement",
+                str(requirements),
+                *args,
+            ]
         proc = run_subprocess(
             argv,
             cwd=cwd,

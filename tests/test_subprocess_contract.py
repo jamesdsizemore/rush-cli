@@ -919,8 +919,11 @@ def test_security_tool_all_four_run_engine_sites_carry_owner_instance_id_and_run
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
     (tmp_path / "requirements.txt").write_text("")
 
+    # T14: requirements.txt now routes through osv-scanner (offline), not
+    # pip-audit -- pip-audit's security-dispatch route is gated project mode
+    # for pyproject-declared dependencies only (R14.1).
     _assert_ambient_ownership_reaches_run_subprocess(
-        monkeypatch, "rush.engines.pip_audit", lambda: SecurityTool().run(tmp_path)
+        monkeypatch, "rush.engines.osv", lambda: SecurityTool().run(tmp_path)
     )
 
 
@@ -1016,3 +1019,35 @@ def test_windows_job_name_is_namespaced_and_pid_scoped() -> None:
 # in full, in this task's own receipt as an explicit, unverified platform
 # gap for a future Windows session to create and run for real -- never
 # silently omitted, never claimed as checked on that platform.
+
+
+def test_t14_denied_pyproject_project_mode_spawns_no_real_subprocess(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """T14 zero-spawn correction: a permission-denied pyproject project-mode
+    audit must never reach the OS process boundary -- patch
+    `subprocess.Popen`/`subprocess.run` directly (what `run_subprocess` and
+    any future engine ultimately call), not only the `run_subprocess` seam."""
+    from rush.tools.security import SecurityTool
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='x'\ndependencies=['requests==2.6.0']\n"
+    )
+    monkeypatch.setattr(
+        "rush.tools.common.engine_on_path", lambda binary: binary != "medusa"
+    )
+
+    def _fail_popen(*_args, **_kwargs):
+        pytest.fail("no real subprocess.Popen should have been spawned")
+
+    def _fail_run(*_args, **_kwargs):
+        pytest.fail("no real subprocess.run should have been spawned")
+
+    monkeypatch.setattr(subprocess, "Popen", _fail_popen)
+    monkeypatch.setattr(subprocess, "run", _fail_run)
+
+    result = SecurityTool().run(tmp_path)
+
+    deps = result["metadata"]["scope"]["dependencies"]
+    entry = next(d for d in deps if d["kind"] == "pyproject")
+    assert entry["state"] != "resolved-for-this-audit"

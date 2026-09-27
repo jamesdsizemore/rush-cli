@@ -33,6 +33,7 @@ from rush.permissions import ExecutionPermissions
 from rush.tools.ai_eval import AiEvalTool
 from rush.tools.review import ReviewTool
 from rush.tools.scan import ScanTool
+from rush.tools.security import SecurityTool
 from rush.workflows import project_run
 from rush.workflows.project_run import (
     ScanInvalidRequestError,
@@ -725,3 +726,27 @@ def test_gitguard_candidate_executes_through_execute_scan_with_a_real_or_fixture
     by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
     assert by_id["git-guard"].outcome == "executed"
     assert by_id["git-guard"].repository_state_evidence
+
+
+def test_full_scan_surfaces_python_dependency_audit_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T14: a project scan's real `security` candidate carries
+    `metadata.scope.dependencies` all the way through `execute_scan` --
+    not just when `SecurityTool` is called directly."""
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [SecurityTool()])
+    root = _fixture_root(tmp_path)
+    (root / "uv.lock").write_text(
+        'version = 1\nrequires-python = ">=3.12"\n', encoding="utf-8"
+    )
+    data_root = _data_root(tmp_path)
+    record = register_project(root, data_root=data_root)
+
+    plan = plan_scan(record.project_id, data_root=data_root)
+    run = execute_scan(plan, permissions=ExecutionPermissions(), data_root=data_root)
+
+    by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
+    security_result = by_id["security"].result
+    deps = security_result["metadata"]["scope"]["dependencies"]
+    uv_entry = next(d for d in deps if d["kind"] == "uv_lock")
+    assert uv_entry["state"] == "audited"

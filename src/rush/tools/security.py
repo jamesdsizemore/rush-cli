@@ -5,15 +5,23 @@ Architecture §4.3 + §10. Detects project type:
   - package.json → npm audit
 
 Returns skipped if neither marker is present.
+
+Phase 70 T14: Python dependency inputs (`uv.lock`, `requirements*.txt`,
+`pyproject.toml`) are inventoried explicitly and audited offline through
+osv-scanner (uv.lock/requirements*) or gated pip-audit project mode
+(pyproject-declared dependencies). Binding brief:
+`.scratch/phase-70-design-gate/W2-T9-T17.md` §T14.
 """
 
 from __future__ import annotations
 
+import os
+import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .base import ToolFn, ToolName, ToolResult
-from .common import elapsed_ms, now_ms, run_engine
+from .common import elapsed_ms, error_result, now_ms, run_engine, skipped_result
 from .routing import aggregate_results
 
 if TYPE_CHECKING:
@@ -25,11 +33,16 @@ if TYPE_CHECKING:
 
 _OSV_LOCKFILES = (
     "poetry.lock",
-    "requirements.txt",
     "package-lock.json",
     "Cargo.lock",
     "go.sum",
 )
+
+_MIN_OSV_VERSION = (2, 0, 0)
+
+_INCLUDE_PREFIXES = ("-r", "--requirement", "-c", "--constraint")
+_VCS_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
+_URL_PREFIXES = ("http://", "https://")
 
 
 class SecurityTool(ToolFn):
@@ -102,16 +115,14 @@ class SecurityTool(ToolFn):
             {"permissions": permissions} if permissions is not None else {}
         )
         results: list[ToolResult] = []
-        if (project_root / "requirements.txt").is_file():
-            results.append(
-                run_engine(
-                    ENGINES["pip-audit"],
-                    project_root,
-                    [],
-                    tool_name="security",
-                    **engine_kwargs,
-                )
-            )
+        dependencies: list[dict[str, Any]] = []
+
+        _audit_python_dependency_inputs(
+            project_root, engine_kwargs, results, dependencies
+        )
+        _audit_pyproject_project_mode(
+            project_root, permissions, engine_kwargs, results, dependencies
+        )
 
         if (project_root / "package-lock.json").is_file():
             results.append(
@@ -158,24 +169,31 @@ class SecurityTool(ToolFn):
             )
 
         if results:
-            return aggregate_results(self.name, results)
+            final = aggregate_results(self.name, results)
+        else:
+            final = ToolResult(
+                tool="security",
+                engine=None,
+                engine_version=None,
+                status="skipped",
+                duration_ms=elapsed_ms(start),
+                summary=f"security: unrecognized project type at {project_root}",
+                findings=[],
+                raw=None,
+                metadata={
+                    "execution": build_execution_metadata(
+                        "executed",
+                        granted=permissions,
+                    )
+                },
+            )
 
-        return ToolResult(
-            tool="security",
-            engine=None,
-            engine_version=None,
-            status="skipped",
-            duration_ms=elapsed_ms(start),
-            summary=f"security: unrecognized project type at {project_root}",
-            findings=[],
-            raw=None,
-            metadata={
-                "execution": build_execution_metadata(
-                    "executed",
-                    granted=permissions,
-                )
-            },
-        )
+        metadata = final.get("metadata")
+        if metadata is None:
+            metadata = {}
+        metadata["scope"] = {"version": 1, "dependencies": dependencies}
+        final["metadata"] = metadata
+        return final
 
 
 def _find_project_root(path: Path) -> Path | None:
@@ -199,6 +217,10 @@ def _find_project_root(path: Path) -> Path | None:
             return d
         if (d / "package.json").exists():
             return d
+        if (d / "uv.lock").is_file():
+            return d
+        if any(d.glob("requirements*.txt")):
+            return d
         if any((d / name).is_file() for name in _OSV_LOCKFILES):
             return d
         if (d / ".git").exists():
@@ -206,3 +228,289 @@ def _find_project_root(path: Path) -> Path | None:
         if d.parent == d:
             return None  # filesystem root
     return None
+
+
+# ---------------------------------------------------------------------------
+# T14: uv.lock / requirements* discovery, classification, and offline audit
+# ---------------------------------------------------------------------------
+
+
+def _discover_dependency_files(project_root: Path) -> list[Path]:
+    """Every uv.lock/requirements* input this project declares.
+
+    Root-level `requirements*.txt` (requirements.txt, requirements-dev.txt, ...)
+    plus any nested `requirements*.txt` under a `requirements/` directory.
+    """
+    found: list[Path] = []
+    uv_lock = project_root / "uv.lock"
+    if uv_lock.is_file():
+        found.append(uv_lock)
+    found.extend(sorted(project_root.glob("requirements*.txt")))
+    requirements_dir = project_root / "requirements"
+    if requirements_dir.is_dir():
+        found.extend(sorted(requirements_dir.rglob("*.txt")))
+    # de-dupe while preserving order (nested globs can overlap)
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for candidate in found:
+        if candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    return ordered
+
+
+def _resolve_include_target(
+    including_file: Path, raw_target: str, root: Path
+) -> tuple[Path, bool]:
+    """Resolve a `-r`/`-c` include relative to its including file's directory.
+
+    Lexical join + normalize (no filesystem access, the target need not
+    exist), then containment-check the normalized path against the logical
+    root. Returns (normalized_path, contained_in_root).
+    """
+    candidate = including_file.parent / raw_target
+    normalized = Path(os.path.normpath(str(candidate)))
+    root_normalized = Path(os.path.normpath(str(root)))
+    try:
+        contained = normalized.is_relative_to(root_normalized)
+    except ValueError:
+        contained = False
+    return normalized, contained
+
+
+def _classify_requirements(path: Path, root: Path) -> tuple[str, str | None]:
+    """Return (state, reason) for a requirements*.txt input.
+
+    `unresolved`: editable/VCS/URL references osv-scanner cannot pin.
+    `malformed`/`include_outside_root`: a `-r`/`-c` include escapes root.
+    `pending`: safe to send to osv-scanner offline.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return "malformed", "unreadable"
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(_INCLUDE_PREFIXES):
+            parts = line.split(maxsplit=1)
+            target = parts[1].strip() if len(parts) > 1 else ""
+            if not target:
+                continue
+            _normalized, contained = _resolve_include_target(path, target, root)
+            if not contained:
+                return "malformed", "include_outside_root"
+            continue
+        if line.startswith(("-e", "--editable")):
+            return "unresolved", "editable_local_dependency"
+        if line.startswith(_VCS_PREFIXES):
+            return "unresolved", "vcs_reference"
+        if line.startswith(_URL_PREFIXES):
+            return "unresolved", "url_reference"
+    return "pending", None
+
+
+def _classify_uv_lock(path: Path) -> tuple[str, str | None]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return "malformed", "unreadable"
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return "malformed", "invalid_toml"
+    return "pending", None
+
+
+def _osv_parser_prefix(path: Path) -> str | None:
+    """osv-scanner's explicit `<parser>:<path>` prefix for a non-canonical
+    requirements filename (e.g. `requirements-dev.txt`)."""
+    if path.name == "requirements.txt":
+        return None
+    return "requirements.txt:"
+
+
+def _osv_gate(engine: Any) -> tuple[bool, str | None]:
+    from .common import engine_on_path
+
+    if not engine_on_path(engine.binary):
+        return False, f"{engine.binary} not on PATH"
+    version = engine.version()
+    if version is None:
+        return False, "osv-scanner version could not be determined"
+    parts = version.split(".")[:3]
+    try:
+        numeric = tuple(int(p) for p in parts)
+    except ValueError:
+        return False, f"osv-scanner version {version} could not be parsed"
+    numeric = numeric + (0,) * (3 - len(numeric))
+    if numeric < _MIN_OSV_VERSION:
+        return (
+            False,
+            f"osv-scanner {version} is older than the required 2.0.0",
+        )
+    return True, None
+
+
+def _audit_python_dependency_inputs(
+    project_root: Path,
+    engine_kwargs: _EnginePermissions,
+    results: list[ToolResult],
+    dependencies: list[dict[str, Any]],
+) -> None:
+    from ..engines import ENGINES
+
+    entries: list[dict[str, Any]] = []
+    for input_path in _discover_dependency_files(project_root):
+        if input_path.name == "uv.lock":
+            state, reason = _classify_uv_lock(input_path)
+            kind = "uv_lock"
+        else:
+            state, reason = _classify_requirements(input_path, project_root)
+            kind = "requirements"
+        entry: dict[str, Any] = {"path": str(input_path), "kind": kind, "state": state}
+        if reason is not None:
+            entry["reason"] = reason
+        entries.append(entry)
+        dependencies.append(entry)
+
+        if state == "malformed":
+            results.append(
+                error_result(
+                    "security",
+                    None,
+                    f"malformed dependency input {input_path}: {reason}",
+                )
+            )
+
+    pending = [e for e in entries if e["state"] == "pending"]
+    if not pending:
+        return
+
+    engine = ENGINES["osv-scanner"]
+    ok, gate_reason = _osv_gate(engine)
+    if not ok:
+        for entry in pending:
+            entry["state"] = "scanner_unavailable"
+            entry["reason"] = gate_reason
+        return
+
+    lockfile_args: list[str] = []
+    for entry in pending:
+        input_path = Path(entry["path"])
+        prefix = (
+            _osv_parser_prefix(input_path) if entry["kind"] == "requirements" else None
+        )
+        value = f"{prefix}{input_path}" if prefix else str(input_path)
+        lockfile_args.extend(["--lockfile", value])
+
+    osv_result = run_engine(
+        engine,
+        project_root,
+        lockfile_args,
+        tool_name="security",
+        **engine_kwargs,
+    )
+    results.append(osv_result)
+
+    summary = str(osv_result.get("summary") or "")
+    if "no offline vulnerability database available" in summary:
+        for entry in pending:
+            entry["state"] = "db_unavailable"
+    else:
+        for entry in pending:
+            entry["state"] = "audited"
+
+
+def _audit_pyproject_project_mode(
+    project_root: Path,
+    permissions: ExecutionPermissions | None,
+    engine_kwargs: _EnginePermissions,
+    results: list[ToolResult],
+    dependencies: list[dict[str, Any]],
+) -> None:
+    from ..engines import ENGINES
+    from ..permissions import ExecutionPermissions as _ExecutionPermissions
+    from ..permissions import check_permissions
+
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return
+
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8", errors="ignore"))
+    except tomllib.TOMLDecodeError:
+        dependencies.append(
+            {
+                "path": str(pyproject),
+                "kind": "pyproject",
+                "state": "malformed",
+                "reason": "invalid_toml",
+            }
+        )
+        results.append(
+            error_result("security", None, f"malformed pyproject.toml: {pyproject}")
+        )
+        return
+
+    project = data.get("project", {}) if isinstance(data, dict) else {}
+    declared_deps = project.get("dependencies") if isinstance(project, dict) else None
+    dynamic = project.get("dynamic") if isinstance(project, dict) else None
+    dynamic_list = dynamic if isinstance(dynamic, list) else []
+
+    if "dependencies" in dynamic_list:
+        dependencies.append(
+            {
+                "path": str(pyproject),
+                "kind": "pyproject",
+                "state": "unresolved",
+                "reason": "dynamic dependencies cannot be resolved without a build",
+                "exclusions": ["dynamic"],
+            }
+        )
+        return
+
+    if not declared_deps:
+        return
+
+    entry: dict[str, Any] = {
+        "path": str(pyproject),
+        "kind": "pyproject",
+        "state": "unresolved",
+    }
+    optional_deps = (
+        project.get("optional-dependencies") if isinstance(project, dict) else None
+    )
+    if optional_deps:
+        entry["exclusions"] = ["optional"]
+    dependencies.append(entry)
+
+    required = _ExecutionPermissions(
+        network=True, download=True, cache_write=True, build=True
+    )
+    ok, _missing = check_permissions(required, permissions)
+    if not ok:
+        entry["state"] = "denied"
+        entry["reason"] = "requires permissions: network, download, cache_write, build"
+        results.append(
+            skipped_result(
+                "security",
+                "pip-audit",
+                "pyproject project-mode audit requires permissions: "
+                "network, download, cache_write, build",
+            )
+        )
+        return
+
+    pip_result = run_engine(
+        ENGINES["pip-audit"],
+        project_root,
+        ["--project-mode"],
+        tool_name="security",
+        required_permissions=required,
+        **engine_kwargs,
+    )
+    results.append(pip_result)
+    entry["state"] = "resolved-for-this-audit"
