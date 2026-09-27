@@ -130,7 +130,8 @@ def test_tool_typeerror_runs_once(tmp_path: Path, monkeypatch) -> None:
     assert calls == 1
     assert result["status"] == "error"
     # Phase 70 T16 §3 item 3: each child keeps summary, reason, engines,
-    # scope and execution next to tool/status.
+    # scope and execution next to tool/status; T17 S17.4 mirrors the
+    # disposition in the entry's metadata.
     assert result["metadata"]["children"] == [
         {
             "tool": "broken",
@@ -140,6 +141,7 @@ def test_tool_typeerror_runs_once(tmp_path: Path, monkeypatch) -> None:
             "engines": [],
             "scope": {"coverage": "unavailable", "reason": None},
             "execution": {"disposition": "executed", "cause": None},
+            "metadata": {"execution": {"disposition": "executed", "cause": None}},
         }
     ]
     assert result["metadata"]["executed_tools"] == ()
@@ -182,3 +184,35 @@ def test_config_reaches_each_child(tmp_path: Path, monkeypatch) -> None:
     assert len(seen_configs) == 2
     assert seen_configs[0] is sentinel_config
     assert seen_configs[1] is sentinel_config
+
+
+def test_t17_check_suite_watch_and_initial_check_consumers_get_six_steps(
+    tmp_path: Path,
+) -> None:
+    """Phase 70 T17 S17.5: `rush watch`'s `on_change_handler` and the TUI's
+    `_start_initial_check_thread` both call `run_workflow_suite(suite=
+    CHECK_SUITE, ...)` with no per-consumer overrides -- they get whatever
+    step count/semantics `CHECK_SUITE` itself carries "through the existing
+    runner", with no caller auto-granting test execution. This runs the
+    exact same call these consumers make, against the real (unmocked)
+    `ALL_TOOLS`, and asserts they see 6 step outcomes, not 5."""
+    result = run_workflow_suite(
+        suite=CHECK_SUITE,
+        path=tmp_path,
+        permissions=ExecutionPermissions(),
+        fail_fast=False,
+    )
+
+    children = result["metadata"]["children"]
+    assert len(children) == 6, (
+        f"watch/initial-check consumers must see 6 step outcomes through "
+        f"CHECK_SUITE, got {len(children)}"
+    )
+    assert {c["tool"] for c in children} == {
+        "format",
+        "lint",
+        "typecheck",
+        "dead",
+        "slop",
+        "test",
+    }

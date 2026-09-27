@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import warnings
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -936,30 +937,93 @@ def _run_suite_cli(
     if as_json:
         click.echo(json.dumps(result, indent=2))
     else:
-        status_color = (
-            "green"
-            if result["status"] == "ok"
-            else ("yellow" if result["status"] == "warn" else "red")
-        )
-        click.secho(
-            f"[{suite.name.upper()}] Status: {result['status']}",
-            fg=status_color,
-            bold=True,
-        )
-        click.echo(result["summary"])
-        for finding in result.get("findings") or []:
-            click.echo(
-                f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
-            )
+        _echo_suite_human(result, suite.name)
     sys.exit(exit_code_for(result["status"]))
+
+
+def _echo_suite_human(result: Mapping[str, Any], suite_name: str) -> None:
+    """The status line and summary, then one line per step (T17 S17.4):
+    number, step, status and summary, plus the cause of a step that did not
+    execute (not_run/cancelled)."""
+    status = result.get("status")
+    status_color = (
+        "green" if status == "ok" else ("yellow" if status == "warn" else "red")
+    )
+    click.secho(f"[{suite_name.upper()}] Status: {status}", fg=status_color, bold=True)
+    click.echo(result.get("summary", ""))
+    children = (result.get("metadata") or {}).get("children") or []
+    for index, child in enumerate(children, start=1):
+        line = (
+            f"  {index}. {child.get('tool')!s:<9} {child.get('status')!s:<7} "
+            f"{child.get('summary') or ''}"
+        )
+        cause = (child.get("execution") or {}).get("cause")
+        click.echo(f"{line} ({cause})" if cause else line)
+    for finding in result.get("findings") or []:
+        click.echo(
+            f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
+        )
+
+
+def _run_check_cli(
+    path: Path,
+    permissions: ExecutionPermissions,
+    fail_fast: bool,
+    view: ViewOptions,
+    as_json: bool,
+) -> None:
+    """T17: `rush check` runs the shared `CheckTool`. The suite walks `path`
+    once from the invocation cwd (T8), so a rejected input is each step's
+    error child; only the compact view selects the root first, to store the
+    full result under it."""
+    from .delivery import compact
+    from .safety.redactor import sanitize_value
+    from .tools.check import CheckTool
+
+    anchor = Path.cwd()
+    original = None if _path_param_defaulted() else (str(path),)
+
+    def run() -> Any:
+        return CheckTool().run(
+            path,
+            permissions=permissions,
+            fail_fast=fail_fast,
+            original_requested_targets=original,
+            invocation_start_cwd=anchor,
+        )
+
+    def prepare() -> compact.Prepared | dict[str, Any]:
+        if not view.compact:
+            return anchor, run
+        try:
+            return select_cli_target(path, anchor=anchor).root, run
+        except InvocationError:
+            return run()
+
+    result = compact.deliver(
+        "check",
+        view,
+        cache_write=permissions.cache_write,
+        prepare=prepare,
+        serialize=compact.cli_size,
+    )
+    clean = sanitize_value(result).value
+    if as_json:
+        click.echo(json.dumps(clean, indent=2, default=str))
+    else:
+        _echo_suite_human(clean, "check")
+    sys.exit(exit_code_for(result))
 
 
 @cli.command(name="check")
 @click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
-    "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
+    "--fail-fast/--no-fail-fast",
+    default=False,
+    help="Stop at the first failing step; later steps are reported as not run.",
 )
 @permission_options
+@result_view_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def check_cmd(
     path: Path,
@@ -971,21 +1035,26 @@ def check_cmd(
     allow_slow: bool,
     allow_artifact_write: bool,
     allow_browser: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
     as_json: bool,
 ) -> None:
-    """Run fast inner-loop quality check suite (format, lint, typecheck, dead, slop)."""
-    _run_suite_cli(
-        "check",
-        path,
-        as_json,
-        fail_fast,
-        allow_network,
-        allow_download,
-        allow_cache_write,
-        allow_build,
-        allow_slow,
-        allow_artifact_write,
-        allow_browser,
+    """Run the check suite: format (check-only), lint, typecheck, dead, slop, test.
+
+    Every step runs and is reported by default; the test step runs project
+    test code and needs --allow-build."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_check_cli(
+        path, perms, fail_fast, ViewOptions(result_view, limit, max_bytes), as_json
     )
 
 
@@ -1824,7 +1893,9 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
 
 
 for _catalog_tool in ALL_TOOLS:
+    # T17 R17.2: `check` keeps its handwritten command (fail-fast flags).
     if _catalog_tool.name not in {
+        "check",
         "review",
         "format",
         "commit-msg",

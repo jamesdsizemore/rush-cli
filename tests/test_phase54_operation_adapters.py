@@ -121,8 +121,9 @@ def test_every_manifest_operation_has_one_adapter() -> None:
     report = registry.reconcile_manifest(MANIFEST_PATH)
 
     assert report["total"] == 192
-    assert report["tool_count"] == 79
-    assert report["admin_count"] == 95
+    # Phase 70 T17: tool 79->80, admin 95->94 (rush_check added; finding 13).
+    assert report["tool_count"] == 80
+    assert report["admin_count"] == 94
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
     assert len(report["errors"]) == 0

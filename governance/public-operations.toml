@@ -395,16 +395,6 @@ effect_class = "read-only"
 safe_probe = "rush capabilities --help"
 
 [[operations]]
-id = "cli.check"
-kind = "admin"
-canonical_impl = "rush.cli:check"
-cli_command = "check"
-input_contract = "ClickArguments"
-output_contract = "ClickExitCode"
-effect_class = "read-only"
-safe_probe = "rush check --help"
-
-[[operations]]
 id = "cli.ci_init"
 kind = "admin"
 canonical_impl = "rush.cli:ci"
@@ -1308,6 +1298,17 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush benchmark check --help"
+
+[[operations]]
+id = "tool.check"
+kind = "tool"
+canonical_impl = "rush.tools.check:CheckTool"
+cli_command = "check"
+mcp_tool = "rush_check"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush check --help"
 
 [[operations]]
 id = "tool.codeql"

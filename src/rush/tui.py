@@ -1150,7 +1150,12 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
             )
             if isinstance(res, dict):
                 project.results = [cast(ToolResult, res)]
-            project.status = "complete"
+            # T17: a cancelled suite is a terminal cancelled state, never
+            # a clean completion.
+            cancelled = isinstance(res, dict) and bool(
+                (res.get("metadata") or {}).get("cancelled")
+            )
+            project.status = "cancelled" if cancelled else "complete"
         except Exception as exc:  # noqa: BLE001 -- same contract as
             # `_start_rescan_thread._worker` above: `actions.run_check_suite`
             # is an injectable seam whose failure space this background

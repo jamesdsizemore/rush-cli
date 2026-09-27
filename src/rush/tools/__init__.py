@@ -26,6 +26,7 @@ from .base import (
     validate_tool_result,
 )
 from .benchmark import BenchmarkTool
+from .check import CheckTool
 from .ci import CiTool
 from .codeql import CodeqlTool
 from .cold_start import ColdStartTool
@@ -141,6 +142,7 @@ ALL_TOOLS: list[ToolFn] = [
     ProvenanceAiTool(),
     DeadAssetTool(),
     PrSynthesizeTool(),
+    CheckTool(),
 ]
 
 __all__ = [  # noqa: RUF022
@@ -149,6 +151,7 @@ __all__ = [  # noqa: RUF022
     "AiEvalTool",
     "AttestationTool",
     "BenchmarkTool",
+    "CheckTool",
     "ColdStartTool",
     "ComplexityTool",
     "DeadAssetScanner",

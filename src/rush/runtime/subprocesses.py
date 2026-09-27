@@ -18,6 +18,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -321,6 +322,41 @@ def _windows_confirm_terminated(record: dict[str, Any]) -> bool:  # pragma: no c
 _OWNED_EXECUTION: contextvars.ContextVar[tuple[str, str] | None] = (
     contextvars.ContextVar("rush_owned_execution", default=None)
 )
+
+
+@dataclass
+class CancelScope:
+    """Phase 70 T17 (finding 17): one ambient cancellation request. `hit`
+    records that a dispatch inside the scope was actually cut short."""
+
+    check: Callable[[], bool]
+    cause: str = "cancelled"
+    hit: bool = False
+
+
+_CANCEL_CHECK: contextvars.ContextVar[CancelScope | None] = contextvars.ContextVar(
+    "rush_cancel_check", default=None
+)
+
+
+@contextmanager
+def cancel_scope(
+    cancel_check: Callable[[], bool] | None, cause: str = "cancelled"
+) -> Iterator[CancelScope | None]:
+    """Make `cancel_check` ambient for one workflow step (T17, finding 17):
+    every `run_subprocess` call inside it that passes no explicit
+    `cancel_check` polls this one, so cancelling stops the step's in-flight
+    child mid-step, not only at the next step boundary. Context-local, like
+    `owned_execution_scope`."""
+    if cancel_check is None:
+        yield None
+        return
+    scope = CancelScope(cancel_check, cause)
+    token = _CANCEL_CHECK.set(scope)
+    try:
+        yield scope
+    finally:
+        _CANCEL_CHECK.reset(token)
 
 
 @contextmanager
@@ -814,6 +850,10 @@ def run_subprocess(
         ambient = _OWNED_EXECUTION.get()
         if ambient is not None:
             owner_instance_id, run_id = ambient
+    if cancel_check is None:
+        # T17 (finding 17): an enclosing `cancel_scope` reaches this child.
+        scope = _CANCEL_CHECK.get()
+        cancel_check = scope.check if scope is not None else None
     exec_argv = _resolve_exec_argv(argv)
     _record_spawn(exec_argv, cwd)
 
@@ -1204,7 +1244,12 @@ def run_engine(
     spawns: list[dict[str, Any]] = []
     token = _SPAWNS.set(spawns)
     listed: list[str] | None = None
+    cancel = _CANCEL_CHECK.get()
     try:
+        if cancel is not None and cancel.check():
+            # T17: a cancelled step starts no further engine child; the same
+            # cancelled mapping as a child terminated mid-run (no pid ran).
+            raise SubprocessCancelled([engine.binary], pid=0)
         with analysis_scope(_engine_analysis_scope(engine, path, project_root)):
             result = _run_engine_in_scope(
                 engine,
@@ -1229,6 +1274,10 @@ def run_engine(
                     owner_instance_id=owner_instance_id,
                     run_id=run_id,
                 )
+    except SubprocessCancelled:
+        result = _cancelled_engine_result(
+            engine, tool_name, cancel, required_permissions, permissions
+        )
     finally:
         _SPAWNS.reset(token)
     metadata = result.get("metadata")
@@ -1239,6 +1288,35 @@ def run_engine(
         build_engine_entry(engine.name, result, spawns, consumed_paths, listed)
     ]
     return result
+
+
+def _cancelled_engine_result(
+    engine: Engine,
+    tool_name: str | None,
+    cancel: CancelScope | None,
+    required_permissions: ExecutionPermissions | None,
+    permissions: ExecutionPermissions | None,
+) -> ToolResult:
+    """T17 (finding 17): a dispatch stopped by cancellation is a cancelled
+    child -- `skipped` with `disposition:"cancelled"` -- never a crash. Its
+    process group is already terminated by `run_subprocess`."""
+    cause = cancel.cause if cancel is not None else "cancelled"
+    if cancel is not None:
+        cancel.hit = True
+    return skipped_result(
+        tool_name or engine.name,
+        engine.name,
+        f"cancelled ({cause}) before {engine.name} finished",
+        metadata={
+            "execution": build_execution_metadata(
+                "executed",
+                requested=required_permissions,
+                granted=permissions,
+                producer=engine.name,
+                extra={"disposition": "cancelled", "cause": cause},
+            )
+        },
+    )
 
 
 # -- T16 §3 item 2: the per-engine entry --------------------------------------
@@ -1558,6 +1636,8 @@ def _run_engine_in_scope(
                 cwd=run_cwd,
                 **_engine_run_ownership(engine, owner_instance_id, run_id),
             )
+    except SubprocessCancelled:
+        raise  # T17: mapped to a cancelled child by `run_engine`
     except subprocess.TimeoutExpired:
         return _error(
             tool_name,
@@ -1634,9 +1714,11 @@ def _run_engine_in_scope(
 __all__ = [
     "MAX_SUBPROCESS_OUTPUT_CHARS",
     "OWNED_TERMINATION_TIMEOUT_SECONDS",
+    "CancelScope",
     "SubprocessCancelled",
     "_bounded_redacted_output",
     "_install_hint",
+    "cancel_scope",
     "owned_execution_scope",
     "read_owned_process_records",
     "reap_owner_processes",

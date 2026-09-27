@@ -1445,7 +1445,7 @@ def _invoke(
 
 def _refused_child(tool: str, summary: str) -> dict:
     """Phase 70 T16 §3 item 3: a suite child refused before it ran, as the
-    full child entry (T17 later adds the not_run disposition)."""
+    full child entry; T17 S17.4 mirrors the disposition in its metadata."""
     return {
         "tool": tool,
         "status": "error",
@@ -1454,6 +1454,7 @@ def _refused_child(tool: str, summary: str) -> dict:
         "engines": [],
         "scope": {"coverage": "unavailable", "reason": None},
         "execution": {"disposition": "executed", "cause": None},
+        "metadata": {"execution": {"disposition": "executed", "cause": None}},
     }
 
 
@@ -1705,13 +1706,14 @@ def test_t08_every_path_taking_tool_declares_exactly_one_root_arg() -> None:
     declared-root argument is exactly the path-taking set (all 54 catalog
     tools, the rush_attest_generate alias, and the 11 custom tools whose
     handler takes path/file/target, rush_test_heal included); each publishes
-    exactly one of `project` or its own existing `project_id`, optional."""
+    exactly one of `project` or its own existing `project_id`, optional.
+    Phase 70 T17: 55 catalog tools with `rush_check` (80 tools, 67 path-taking)."""
     from rush import mcp
     from rush.tools import ALL_TOOLS
 
     server = mcp.build_server()
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
-    assert len(tools) == 79
+    assert len(tools) == 80
 
     catalog = {f"rush_{t.name.replace('-', '_')}" for t in ALL_TOOLS}
     custom_path_taking = {
@@ -1728,7 +1730,7 @@ def test_t08_every_path_taking_tool_declares_exactly_one_root_arg() -> None:
         "rush_mesh_release_lock",
     }
     path_taking = catalog | {"rush_attest_generate"} | custom_path_taking
-    assert len(path_taking) == 66
+    assert len(path_taking) == 67
 
     # T8 5.2 / T6: `rush_project` and `rush_scan` are not path-taking; since T6
     # their published `project` field is operation data (a project reference
@@ -3351,11 +3353,27 @@ def test_t08_suite_walks_once(
     fast = run_workflow_suite(
         suite, Path("vendor/secret.py"), ExecutionPermissions(), fail_fast=True
     )
-    (fast_child,) = fast["metadata"]["children"]
+    fast_child, *_later = fast["metadata"]["children"]
     assert fast_child["summary"].startswith("error: [SYMLINK_DISALLOWED]")
+    # Phase 70 T17 S17.2: fail-fast records every later step as not run.
+    not_run = {"disposition": "not_run", "cause": "fail_fast_after:t8-step0"}
     assert fast["metadata"]["children"] == [
-        _refused_child("t8-step0", fast_child["summary"])
+        _refused_child("t8-step0", fast_child["summary"]),
+        *(
+            {
+                "tool": p.name,
+                "status": "skipped",
+                "summary": "skipped: not run",
+                "reason": "fail_fast_after:t8-step0",
+                "engines": [],
+                "scope": {"coverage": "unavailable", "reason": None},
+                "execution": not_run,
+                "metadata": {"execution": not_run},
+            }
+            for p in probes[1:]
+        ),
     ]
+    assert all(p.calls == [] for p in probes)
 
 
 def _std_probe_wrapper(

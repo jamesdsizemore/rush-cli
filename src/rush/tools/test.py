@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..permissions import ExecutionPermissions
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
 from .routing import detect_project_languages
@@ -26,12 +27,27 @@ class TestTool(ToolFn):
             "Engines: pytest (Python), vitest/npm (JS/TS). status='skipped' means engine not on PATH."
         )
 
-    def __call__(self, path: Path) -> ToolResult:
-        return self.run(path)
+    def __call__(self, path: Path, allow_build: bool = False) -> ToolResult:
+        # T17 S17.3: the explicit build grant of every transport (CLI, MCP,
+        # suites, scans); `run` gates on it.
+        return self.run(path, permissions=ExecutionPermissions(build=allow_build))
 
-    def run(self, path: Path, *, config=None) -> ToolResult:
+    def run(
+        self,
+        path: Path,
+        *,
+        config=None,
+        permissions: ExecutionPermissions | None = None,
+    ) -> ToolResult:
+        """Run the selected test runner. With `permissions` (T17 S17.3) the
+        runner executes project test code only under a build grant: without
+        one no runner or version subprocess starts and the result is a
+        `skipped` child naming `--allow-build`. `permissions=None` is no
+        grant."""
         from ..engines import ENGINES
 
+        permissions = permissions or ExecutionPermissions()
+        required = ExecutionPermissions(build=True)
         start = now_ms()
         project_root = _find_project_root(path)
 
@@ -53,12 +69,26 @@ class TestTool(ToolFn):
             project_root / "setup.py"
         ).exists():
             # Python project
-            r = run_engine(ENGINES["pytest"], project_root, [], tool_name="test")
+            r = run_engine(
+                ENGINES["pytest"],
+                project_root,
+                [],
+                tool_name="test",
+                permissions=permissions,
+                required_permissions=required,
+            )
             return r
 
         if (project_root / "package.json").exists():
             # JS/TS project — try vitest first, fall back to npm test
-            r = run_engine(ENGINES["vitest"], project_root, ["run"], tool_name="test")
+            r = run_engine(
+                ENGINES["vitest"],
+                project_root,
+                ["run"],
+                tool_name="test",
+                permissions=permissions,
+                required_permissions=required,
+            )
             if r.get("status") == "skipped":
                 # vitest not installed — try npm test (but npm test has no JSON)
                 # Fall back to skipping; v0.2 may add a generic npm-test fallback
