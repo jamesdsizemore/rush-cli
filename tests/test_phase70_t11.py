@@ -58,7 +58,10 @@ def _real_dependency_project(tmp_path: Path) -> Path:
         timeout=60,
     )
     site_packages = next(venv_dir.rglob("site-packages"))
-    (site_packages / "onlyinvenv.py").write_text("VALUE: int = 1\n")
+    # A typed package (PEP 561), so mypy follows it under any cwd's config.
+    (site_packages / "onlyinvenv").mkdir()
+    (site_packages / "onlyinvenv" / "__init__.py").write_text("VALUE: int = 1\n")
+    (site_packages / "onlyinvenv" / "py.typed").write_text("")
     (project / "consumer.py").write_text(
         "import onlyinvenv\n\nVALUE2 = onlyinvenv.VALUE\n"
     )
@@ -623,6 +626,9 @@ def _dispatch_tsc(monkeypatch, path: Path) -> list[tuple[list[str], object]]:
 
     monkeypatch.setattr(tsc, "run_subprocess", fake_run)
     monkeypatch.setattr(TscEngine, "version", lambda _self: "5.0.0")
+    # T12: tsc only spawns when there is a TypeScript file to analyze.
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "main.ts").write_text("export const x = 1;\n")
     common.run_engine(TscEngine(), path, [], tool_name="typecheck")
     return seen
 

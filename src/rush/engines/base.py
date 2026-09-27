@@ -42,6 +42,12 @@ class EngineResult(TypedDict, total=False):
     findings: list[RawFinding]  # engine-native records; normalize before ToolResult
     summary: str
     duration_ms: int
+    # T12 finding 10: the cwd the engine actually ran in, so normalize joins
+    # relative output paths with it (and staging remaps the absolute result).
+    cwd: str
+    # T12 A13: the scoped tsc run (groups, exclusions, temp directory). It
+    # holds no `path`/`file` key, so staging's generic remap leaves it alone.
+    tsc: dict[str, Any]
 
 
 class Engine(ABC):

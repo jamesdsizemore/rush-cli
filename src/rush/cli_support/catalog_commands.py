@@ -248,6 +248,21 @@ _TOOL_CLI_OPTIONS: dict[str, tuple[click.Option, ...]] = {
                 "back to isolated without --allow-build."
             ),
         ),
+        click.Option(
+            ["--typecheck-config"],
+            type=click.Path(dir_okay=False),
+            default=None,
+            # S12.7/finding 7: anchored to the invocation cwd, exactly once.
+            callback=lambda _ctx, _param, value: (
+                None if value is None else os.path.abspath(value)
+            ),
+            help=(
+                "Owning config that wins over auto-detection: a tsconfig (.json) "
+                "for tsc, or a mypy/pyrefly config for Python. Must lie within "
+                "the project root; relative paths resolve against the current "
+                "directory."
+            ),
+        ),
     ),
 }
 

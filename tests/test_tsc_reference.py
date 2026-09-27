@@ -11,27 +11,32 @@ from rush.tools import common
 
 
 def test_tsc_runs_noemit_argv(monkeypatch, tmp_path: Path) -> None:
-    calls: list[list[str]] = []
+    """T12 A9.5: one `tsc -p <scoped> --noEmit --listFiles --pretty false`
+    per owner, cwd the owner directory (no-config: the root), with the
+    scoped config in the owned temporary directory, removed afterwards."""
+    root = tmp_path.resolve()
+    (root / "main.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    calls: list[tuple[list[str], object]] = []
 
-    def fake_run(
-        argv: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        calls.append(argv)
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs.get("cwd")))
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(tsc, "resolve_binary", lambda _binary: "C:/bin/tsc")
     monkeypatch.setattr(tsc, "run_subprocess", fake_run)
 
-    raw = TscEngine().run(tmp_path, [str(tmp_path / "main.ts")], cwd=tmp_path)
+    raw = TscEngine().run(root / "main.ts", [])
 
     assert raw["exit_code"] == 0
-    assert calls == [
-        [
-            "C:/bin/tsc",
-            "--noEmit",
-            str(tmp_path / "main.ts"),
-        ]
-    ]
+    [(argv, cwd)] = calls
+    assert argv[:2] == ["C:/bin/tsc", "-p"]
+    assert argv[3:] == ["--noEmit", "--listFiles", "--pretty", "false"]
+    scoped = Path(argv[2])
+    assert scoped.name == "g0.tsconfig.json"
+    assert scoped.parent.parent == root / ".rush" / "tmp"
+    assert scoped.parent.name.startswith("tsc-")
+    assert cwd == root
+    assert list((root / ".rush" / "tmp").iterdir()) == []
 
 
 def test_tsc_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> None:
@@ -66,6 +71,8 @@ def test_tsc_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_tsc_missing_and_timeout(monkeypatch, tmp_path: Path) -> None:
+    # T12: tsc only spawns when there is a TypeScript file to analyze.
+    (tmp_path / "main.ts").write_text("export const x = 1;\n", encoding="utf-8")
     engine = TscEngine()
     monkeypatch.setattr(common, "engine_on_path", lambda _binary: False)
     missing = common.run_engine(engine, tmp_path, tool_name="typecheck")
@@ -83,3 +90,4 @@ def test_tsc_missing_and_timeout(monkeypatch, tmp_path: Path) -> None:
     assert missing["status"] == "skipped"
     assert timeout["status"] == "error"
     assert timeout["metadata"]["terminal_reason"] == "timeout"
+    assert list((tmp_path / ".rush" / "tmp").iterdir()) == []

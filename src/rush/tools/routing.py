@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Collection, Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,92 @@ from rush.discovery.stack import PYTHON_MARKERS
 
 from .base import Finding, ToolResult, ToolStatus
 from .common import finding_fingerprint
+
+#: Python checker configuration files: a finding in one is configuration.
+PYTHON_CONFIG_NAMES = frozenset(
+    {"mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg", "pyrefly.toml"}
+)
+
+
+def classify_finding_scopes(
+    findings: Sequence[Finding],
+    requested: Collection[str],
+    configuration: Collection[str] = (),
+) -> list[str]:
+    """T12 S12.2: tag each finding `extensions.scope` as `requested` (its
+    file is a requested target), `configuration` (no path, or a checker
+    config file) or `dependency` (anything else the engine consumed). Every
+    finding is kept; returns the sorted dependency files."""
+    wanted = {os.path.realpath(p) for p in requested}
+    configs = {os.path.realpath(p) for p in configuration}
+    dependencies: set[str] = set()
+    for finding in findings:
+        path = finding.get("path")
+        real = os.path.realpath(path) if path else None
+        if real is None or real in configs or Path(real).name in PYTHON_CONFIG_NAMES:
+            scope = "configuration"
+        elif real in wanted:
+            scope = "requested"
+        else:
+            scope = "dependency"
+            dependencies.add(str(path))
+        finding["extensions"] = {**(finding.get("extensions") or {}), "scope": scope}
+    return sorted(dependencies)
+
+
+def _merge_counts(values: list[Any]) -> int | None:
+    if any(value is None for value in values):
+        return None
+    return sum(values)
+
+
+def merge_scopes(
+    children: Sequence[tuple[str, dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """T12 A13: one tool scope from its engines' scopes -- lists unioned and
+    sorted, booleans OR-ed, counts summed (unknown if any child's is), and
+    groups concatenated with their engine."""
+    if not children:
+        return None
+    scopes = [scope for _, scope in children]
+    coverages = {scope.get("coverage") for scope in scopes}
+    merged: dict[str, Any] = {
+        "version": 1,
+        "kind": "file",
+        "logical_root": scopes[0].get("logical_root"),
+        "coverage": coverages.pop() if len(coverages) == 1 else "partial",
+        "reason": next((s["reason"] for s in scopes if s.get("reason")), None),
+    }
+    for key in (
+        "requested_targets",
+        "dependency_files",
+        "ambient_files",
+        "configuration_files",
+        "unclassifiable_files",
+    ):
+        merged[key] = sorted(
+            {item for scope in scopes for item in scope.get(key) or []}
+        )
+    for key in (
+        "requested_file_count",
+        "matched_file_count",
+        "consumed_file_count",
+        "engine_library_file_count",
+    ):
+        merged[key] = _merge_counts([scope.get(key) for scope in scopes])
+    for key in ("unclassifiable", "explicit_override"):
+        merged[key] = any(bool(scope.get(key)) for scope in scopes)
+    merged["excluded_files"] = sorted(
+        (item for scope in scopes for item in scope.get("excluded_files") or []),
+        key=lambda item: (str(item.get("path")), str(item.get("reason"))),
+    )
+    merged["groups"] = [
+        {**group, "engine": engine}
+        for engine, scope in children
+        for group in scope.get("groups") or []
+    ]
+    return merged
+
 
 _STATUS_RANK = {"skipped": 0, "ok": 1, "warn": 2, "fail": 3, "error": 4}
 _SKIP_DIRS = frozenset(
