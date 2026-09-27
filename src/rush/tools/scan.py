@@ -266,24 +266,40 @@ class ScanTool(ToolFn):
         `{"schema_version": 1, "operation": ..., <operation fields>}`."""
         started = monotonic()
         operation = request.get("operation") if isinstance(request, dict) else None
+        compatibility = _compatibility(request) if isinstance(request, dict) else None
 
         try:
             data = self._handle_request_unsafe(request)
         except ScanError as exc:
             return self._envelope_result(
-                started, str(operation), status="error", error=exc
+                started,
+                str(operation),
+                status="error",
+                error=exc,
+                compatibility=compatibility,
             )
         except ProjectError as exc:
             return self._envelope_result(
-                started, str(operation), status="error", error=exc
+                started,
+                str(operation),
+                status="error",
+                error=exc,
+                compatibility=compatibility,
             )
 
-        return self._envelope_result(started, str(operation), status="ok", data=data)
+        return self._envelope_result(
+            started,
+            str(operation),
+            status="ok",
+            data=data,
+            compatibility=compatibility,
+        )
 
     def _handle_request_unsafe(self, request: dict[str, Any]) -> Any:
         if not isinstance(request, dict):
             raise ScanInvalidRequestError("request must be an object")
-        if request.get("schema_version") != 1:
+        version = request.get("schema_version")
+        if type(version) is not int or version != 1:
             raise ScanInvalidRequestError("schema_version must be 1")
 
         operation = request.get("operation")
@@ -294,6 +310,15 @@ class ScanTool(ToolFn):
             raise ScanInvalidRequestError(f"unknown operation: {operation!r}")
 
         unknown_keys = set(request) - allowed_fields
+        # T6: `metadata` is accepted only as the exact compatibility disclosure the
+        # MCP request models attach for these same deprecated fields.
+        compatibility = _compatibility(request)
+        if (
+            "metadata" in unknown_keys
+            and compatibility is not None
+            and request["metadata"] == {"compatibility": compatibility}
+        ):
+            unknown_keys.discard("metadata")
         if unknown_keys:
             raise ScanInvalidRequestError(
                 f"unknown request field(s): {sorted(unknown_keys)}"
@@ -313,8 +338,8 @@ class ScanTool(ToolFn):
                 exclude=tuple(request.get("exclude") or ()),
                 targets=request.get("targets"),
                 severity=request.get("severity", "warn"),
-                concurrency=int(request.get("concurrency", 2)),
-                timeout_seconds=int(request.get("timeout_seconds", 300)),
+                concurrency=request.get("concurrency", 2),
+                timeout_seconds=request.get("timeout_seconds", 300),
             )
             return plan.to_dict()
 
@@ -363,6 +388,7 @@ class ScanTool(ToolFn):
         status: ToolStatus,
         data: Any = None,
         error: Exception | None = None,
+        compatibility: dict[str, Any] | None = None,
     ) -> ToolResult:
         error_payload: dict[str, Any] | None = None
         if error is not None:
@@ -382,7 +408,10 @@ class ScanTool(ToolFn):
         summary = (
             f"scan {operation}: ok" if error is None else f"scan {operation}: {error}"
         )
-        return self._result(started, status, summary, raw=raw)
+        result = self._result(started, status, summary, raw=raw)
+        if compatibility is not None:
+            result["metadata"] = {"compatibility": compatibility}
+        return result
 
     def _result(
         self, started: float, status: ToolStatus, summary: str, *, raw: Any = None
@@ -400,13 +429,27 @@ class ScanTool(ToolFn):
         )
 
 
+# T6: accepted-but-ignored legacy fields. They never change a scan; any call that
+# carries them discloses that in `metadata.compatibility` (no silent no-op).
+_COMPATIBILITY_FIELDS = ("full", "install", "after_sequence")
+
+
+def _compatibility(request: dict[str, Any]) -> dict[str, Any] | None:
+    ignored = [name for name in _COMPATIBILITY_FIELDS if name in request]
+    if not ignored:
+        return None
+    return {"version": 1, "ignored_fields": ignored, "effect": "none"}
+
+
 def _permissions_from_request(request: dict[str, Any]) -> ExecutionPermissions:
-    return ExecutionPermissions(
-        **{
-            field.removeprefix("allow_"): bool(request.get(field, False))
-            for field in _PERMISSION_FIELDS
-        }
-    )
+    """T6: strict booleans -- absent is False, a non-bool grant is rejected."""
+    granted: dict[str, bool] = {}
+    for field in _PERMISSION_FIELDS:
+        value = request.get(field, False)
+        if not isinstance(value, bool):
+            raise ScanInvalidRequestError(f"{field} must be a boolean")
+        granted[field.removeprefix("allow_")] = value
+    return ExecutionPermissions(**granted)
 
 
 def _check_scope(required: ExecutionPermissions, granted: ExecutionPermissions) -> None:

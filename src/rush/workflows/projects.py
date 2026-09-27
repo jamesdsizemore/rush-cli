@@ -772,14 +772,25 @@ def _validate_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
     unknown = set(settings) - _SETTINGS_KEYS
     if unknown:
         raise ProjectInvalidRequestError(f"unknown settings keys: {sorted(unknown)}")
-    if "concurrency" in settings and not (1 <= int(settings["concurrency"]) <= 8):
-        raise ProjectInvalidRequestError("concurrency out of range 1-8")
-    if "timeout_seconds" in settings and not (
-        1 <= int(settings["timeout_seconds"]) <= 3600
-    ):
-        raise ProjectInvalidRequestError("timeout_seconds out of range 1-3600")
+    # T6: strict types, no `int()` coercion (`"3"` and `True` are rejected).
+    for key, maximum in (("concurrency", 8), ("timeout_seconds", 3600)):
+        if key not in settings:
+            continue
+        value = settings[key]
+        if type(value) is not int:
+            raise ProjectInvalidRequestError(f"{key} must be an integer")
+        if not 1 <= value <= maximum:
+            raise ProjectInvalidRequestError(f"{key} out of range 1-{maximum}")
     if "severity" in settings and settings["severity"] not in ("info", "warn", "error"):
         raise ProjectInvalidRequestError("severity must be info|warn|error")
+    if "memory_record" in settings and not isinstance(settings["memory_record"], bool):
+        raise ProjectInvalidRequestError("memory_record must be a boolean")
+    for key in ("exclude_tools", "agent_ids"):
+        if key in settings and not (
+            isinstance(settings[key], list)
+            and all(isinstance(item, str) for item in settings[key])
+        ):
+            raise ProjectInvalidRequestError(f"{key} must be a list of strings")
     return settings
 
 
