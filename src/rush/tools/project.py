@@ -74,7 +74,10 @@ _REQUEST_FIELDS: dict[str, frozenset[str]] = {
         {"schema_version", "operation", "path", "name"} | _PERMISSION_FIELDS
     ),
     "show": frozenset({"schema_version", "operation", "project", "session_id"}),
-    "select": frozenset({"schema_version", "operation", "project", "session_id"}),
+    # T6: select grants cache-write through the envelope like every mutation.
+    "select": frozenset(
+        {"schema_version", "operation", "project", "session_id"} | _PERMISSION_FIELDS
+    ),
     "create": frozenset(
         {"schema_version", "operation", "parent", "name", "git_init"}
         | _PERMISSION_FIELDS
@@ -314,7 +317,7 @@ class ProjectTool(ToolFn):
     ) -> Any:
         if not isinstance(request, dict):
             raise ProjectInvalidRequestError("request must be an object")
-        if request.get("schema_version") != 1:
+        if not _is_schema_version_1(request.get("schema_version")):
             raise ProjectInvalidRequestError("schema_version must be 1")
 
         operation = request.get("operation")
@@ -334,16 +337,18 @@ class ProjectTool(ToolFn):
         if operation in _UUID_ONLY_PROJECT_OPS and project is not None:
             _require_valid_uuid(project)
 
+        # T6: grants/apply/git_init are strict booleans, checked before any
+        # scope check or effect (never `bool()`-coerced: `"false"` is truthy).
         granted = ExecutionPermissions(
             **{
-                field.removeprefix("allow_"): bool(request.get(field, False))
+                field.removeprefix("allow_"): _strict_bool(request, field)
                 for field in _PERMISSION_FIELDS
             }
         )
+        apply = _strict_bool(request, "apply")
+        git_init = _strict_bool(request, "git_init")
 
-        if operation in _ARTIFACT_WRITE_ACTIONS or (
-            operation == "configure" and request.get("apply", False)
-        ):
+        if operation in _ARTIFACT_WRITE_ACTIONS or (operation == "configure" and apply):
             _check_scope(_ARTIFACT_WRITE_PERMISSION, granted)
         elif operation == "select":
             _check_scope(_WRITE_PERMISSION, granted)
@@ -397,9 +402,7 @@ class ProjectTool(ToolFn):
             name = request.get("name")
             if not parent or not name:
                 raise ProjectInvalidRequestError("create requires parent and name")
-            record = create_project(
-                parent, name, init_git=bool(request.get("git_init", False))
-            )
+            record = create_project(parent, name, init_git=git_init)
             return resolve_project(record.project_id)
         if operation == "relink":
             path = request.get("path")
@@ -430,7 +433,7 @@ class ProjectTool(ToolFn):
                     project,
                     request.get("settings"),
                     expected_revision=expected_revision,
-                    apply=bool(request.get("apply", False)),
+                    apply=apply,
                     plan_id=request.get("plan_id"),
                     lock_timeout=lock_timeout,
                     data_root=data_root,
@@ -498,6 +501,19 @@ def _check_scope(required: ExecutionPermissions, granted: ExecutionPermissions) 
     allowed, missing = check_permissions(required, granted)
     if not allowed:
         raise _ScopeDenied(f"missing permission(s): {', '.join(missing)}")
+
+
+def _is_schema_version_1(value: Any) -> bool:
+    """X3: exactly the integer 1 -- `True == 1` and `1.0 == 1` are rejected."""
+    return type(value) is int and value == 1
+
+
+def _strict_bool(request: dict[str, Any], field: str) -> bool:
+    """Absent -> False; a non-bool value is INVALID_REQUEST, never coerced."""
+    value = request.get(field, False)
+    if not isinstance(value, bool):
+        raise ProjectInvalidRequestError(f"{field} must be a boolean")
+    return value
 
 
 def _require_valid_uuid(value: Any) -> None:

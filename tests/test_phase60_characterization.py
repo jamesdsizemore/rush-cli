@@ -6,6 +6,7 @@ maintainability hotspots (T-60.01 through T-60.06).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from rush.contracts.results import ToolResultV1
 from rush.discovery.workspace import discover_workspaces
 from rush.engines import ENGINES
 from rush.mcp import ALL_TOOLS, _register_tools, mcp_server
+from rush.mcp_support.request_models import published_schema
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolResult
 from rush.tools.blast_radius import BlastRadiusAnalyzer
@@ -231,6 +233,20 @@ def test_mcp_registration_characterization() -> None:
         assert custom_tool.description == desc
         actual_params = sorted(custom_tool.parameters.get("properties", {}).keys())
         assert actual_params == sorted(params), f"Parameter mismatch for {name}"
+
+    # Phase 70 T6 (X9): `tools/list` publishes the request-model schema for
+    # rush_project/rush_scan -- the legacy `request` envelope next to the named
+    # operation fields -- not the SDK manager's `{request}`-only parameters.
+    published = {
+        tool.name: tool.inputSchema for tool in asyncio.run(mcp_server.list_tools())
+    }
+    for name in ("rush_project", "rush_scan"):
+        assert published[name] == published_schema(name)
+        assert published[name]["type"] == "object"
+        assert published[name]["required"] == []
+        assert {"request", "operation", "schema_version"} <= set(
+            published[name]["properties"]
+        )
 
     # 3. Test _register_tools on an isolated server
     fresh_server = FastMCP("test-mcp-server")
