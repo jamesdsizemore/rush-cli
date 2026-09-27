@@ -29,6 +29,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -157,6 +158,22 @@ def _isolated_and_zero_spawn(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", _no_spawn)
 
 
+def _everyday_rows(output: str) -> dict[str, str]:
+    """Parse the `Commands:` section of --help output into
+    {first token: rest-of-line stripped} rows, so an assertion checking a
+    name is absent from the everyday listing cannot false-positive on a
+    substring match inside another command's description."""
+    lines = output.splitlines()
+    start = lines.index("Commands:") + 1
+    rows: dict[str, str] = {}
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        name, _, rest = line.strip().partition(" ")
+        rows[name] = rest.strip()
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Sanity: the enumeration itself is real and complete (arrange assertion,
 # must PASS today -- proves the fixtures below aren't hand-picked samples).
@@ -196,7 +213,7 @@ def test_t25_help_discovery():
     # A name that exists in the real registry but is not in the everyday
     # set must not appear in the default listing (X9: "the default --help
     # no longer lists format").
-    assert "format" not in result.output
+    assert "format" not in _everyday_rows(result.output)
 
     for category in _ALL_CATEGORIES:
         assert category in result.output, f"category {category} missing from index"
@@ -206,7 +223,21 @@ def test_t25_help_discovery():
 def test_default_help_omits_noneveryday_probe_names():
     result = _invoke(["--help"])
     for probe in ("typecheck", "gain", "lock"):
-        assert probe not in result.output
+        assert probe not in _everyday_rows(result.output)
+
+
+def test_default_help_keeps_one_line_descriptions():
+    result = _invoke(["--help"])
+    rows = _everyday_rows(result.output)
+    assert list(rows) == [n for n in _EVERYDAY_SET]
+    for name in _EVERYDAY_SET:
+        desc = rows[name]
+        assert desc
+        cmd = cli.get_command(click.Context(cli), name)
+        assert cmd is not None, f"{name} not resolvable via cli.get_command"
+        assert cmd.get_short_help_str(1000).startswith(
+            desc.removesuffix("...").rstrip()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +350,16 @@ def test_command_category_set_equality_with_live_registry():
 # ---------------------------------------------------------------------------
 
 
-def test_keep_green_narrow_terminal_help_stays_legible():
-    result = _invoke(["--help"], env={"COLUMNS": "40"})
-    assert result.exit_code == 0
+def test_keep_green_narrow_terminal_help_stays_legible(monkeypatch):
+    """In-process, real terminal-width path (not CliRunner's forced 80
+    columns): a genuinely narrow terminal must still produce legible
+    (<=40 char) help lines, with the Commands section still present."""
+    monkeypatch.setenv("COLUMNS", "40")
+    ctx = click.Context(cli, info_name="rush", terminal_width=None)
+    help_text = cli.get_help(ctx)
+    lines = help_text.splitlines()
+    assert all(len(line) <= 40 for line in lines), lines
+    assert "Commands:" in help_text
 
 
 def test_keep_green_no_color_help_has_no_escape_bytes():

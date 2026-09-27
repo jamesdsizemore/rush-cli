@@ -524,14 +524,16 @@ def format_everyday_commands(
 ) -> None:
     """Default `--help` body: the everyday set, then a category index
     (`rush help CATEGORY` for the rest) -- never the full flat command list.
-    No per-command descriptions here: a command's own help text is free to
-    mention any other command name (e.g. `check` mentions `format` and
-    `typecheck`), which would leak names the everyday set must not show --
-    `rush COMMAND --help` is the place for that detail."""
-    rows: list[tuple[str, str]] = [
-        (name, "")
+    Each everyday row keeps its one-line description, truncated the way
+    click.Group.format_commands does."""
+    commands = [
+        (name, cmd)
         for name in EVERYDAY_SET
         if (cmd := group.get_command(ctx, name)) is not None and not cmd.hidden
+    ]
+    limit = formatter.width - 6 - max((len(name) for name, _ in commands), default=0)
+    rows: list[tuple[str, str]] = [
+        (name, cmd.get_short_help_str(limit)) for name, cmd in commands
     ]
     if rows:
         with formatter.section("Commands"):
