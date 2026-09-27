@@ -33,10 +33,12 @@ from time import monotonic
 from typing import Any, Literal
 
 from rush.integrations.agents import (
+    MCP_PROFILES,
     AgentConnectionError,
     AgentTransactionError,
     GuidanceConsent,
     OwnedResource,
+    ProfileConsent,
     agent_readiness,
     connect_agent,
     disconnect_agent,
@@ -117,6 +119,8 @@ class AgentConnectionTool(ToolFn):
         home: Path | None = None,
         data_root: Path | None = None,
         resources: Sequence[OwnedResource] = (),
+        profile: str | None = None,
+        confirm_profile: ProfileConsent = False,
     ) -> ToolResult:
         started = monotonic()
         granted = permissions or ExecutionPermissions()
@@ -143,6 +147,8 @@ class AgentConnectionTool(ToolFn):
                 home=home,
                 data_root=data_root,
                 resources=resources,
+                profile=profile,
+                confirm_profile=confirm_profile,
             )
         except AgentTransactionError as exc:
             return self._result(
@@ -157,13 +163,7 @@ class AgentConnectionTool(ToolFn):
             return self._result(started, "error", f"agent {action}: {exc}")
 
         if action == "connect":
-            guidance_state = raw["guidance"]["state"]
-            return self._result(
-                started,
-                "ok",
-                f"agent connect: ok; guidance: {guidance_state}",
-                raw=raw,
-            )
+            return self._connect_result(started, raw)
         if action == "disconnect":
             status: ToolStatus = "ok" if raw["status"] == "ok" else "warn"
             return self._result(
@@ -174,6 +174,50 @@ class AgentConnectionTool(ToolFn):
                 raw=raw,
             )
         return self._result(started, "ok", f"agent {action}: ok", raw=raw)
+
+    def _connect_result(self, started: float, raw: dict[str, Any]) -> ToolResult:
+        """T4: a profile migration that wrote nothing is `skipped` (preview
+        only, declined, conflict, or a failed native add whose prior entry was
+        restored); one needing a manual restore is `error`."""
+        migration = raw.get("migration")
+        if migration is None:
+            guidance_state = raw["guidance"]["state"]
+            return self._result(
+                started, "ok", f"agent connect: ok; guidance: {guidance_state}", raw=raw
+            )
+        state = migration["state"]
+        if state == "applied":
+            return self._result(
+                started,
+                "ok",
+                f"agent connect: ok; profile migration applied "
+                f"({migration['profile']}); guidance: {raw['guidance']['state']}",
+                raw=raw,
+            )
+        if state in ("pending", "declined"):
+            summary = (
+                f"agent connect: profile migration {state}; preview only, nothing "
+                "written. Rerun with --yes (MCP: confirm_profile_migration) to apply."
+            )
+        elif state == "conflict":
+            summary = (
+                f"agent connect: profile migration conflict: {migration['config_path']} "
+                "changed since the preview; nothing written."
+            )
+        elif state == "failed":
+            summary = (
+                "agent connect: profile migration failed and the previous entry "
+                f"is unchanged: {raw['apply']['error']}"
+            )
+        else:
+            return self._result(
+                started,
+                "error",
+                "agent connect: profile migration failed and restoring the previous "
+                f"entry failed too; recovery_required: {raw['apply']['recovery_required']}",
+                raw=raw,
+            )
+        return self._result(started, "skipped", summary, raw=raw)
 
     def _dispatch(
         self,
@@ -189,6 +233,8 @@ class AgentConnectionTool(ToolFn):
         home: Path | None,
         data_root: Path | None,
         resources: Sequence[OwnedResource] = (),
+        profile: str | None = None,
+        confirm_profile: ProfileConsent = False,
     ) -> Any:
         if action == "list":
             return agent_readiness(home=home, rush_binary=rush_binary)
@@ -209,6 +255,8 @@ class AgentConnectionTool(ToolFn):
                 home=home,
                 data_root=data_root,
                 resources=resources,
+                profile=profile,
+                profile_consent=confirm_profile,
             )
 
         if action == "disconnect":
@@ -274,6 +322,7 @@ class AgentConnectionTool(ToolFn):
         install_guidance = request.get("install_guidance", False)
         if type(install_guidance) is not bool:
             raise _AgentInvalidRequestError("install_guidance must be a boolean")
+        profile, confirm_profile = _profile_fields(request, operation)
 
         if operation == "connect":
             granted = ExecutionPermissions(
@@ -297,6 +346,8 @@ class AgentConnectionTool(ToolFn):
             else None,
             home=None,
             data_root=None,
+            profile=profile,
+            confirm_profile=confirm_profile,
         )
 
     def _handle_disconnect_request(self, request: dict[str, Any]) -> Any:
@@ -381,6 +432,28 @@ class AgentConnectionTool(ToolFn):
             findings=findings,
             raw=raw,
         )
+
+
+def _profile_fields(request: dict[str, Any], operation: str) -> tuple[str | None, bool]:
+    """T4: strict `profile` (null, "core" or "full") and
+    `confirm_profile_migration` (bool), accepted only on connect."""
+    profile = request.get("profile")
+    confirm = request.get("confirm_profile_migration", False)
+    if type(confirm) is not bool:
+        raise _AgentInvalidRequestError("confirm_profile_migration must be a boolean")
+    if profile is not None and (
+        type(profile) is not str or profile not in MCP_PROFILES
+    ):
+        raise _AgentInvalidRequestError(
+            f"profile must be null or one of: {', '.join(MCP_PROFILES)}"
+        )
+    if operation != "connect" and (profile is not None or confirm):
+        raise _AgentInvalidRequestError(
+            "profile and confirm_profile_migration are only valid for connect"
+        )
+    if confirm and profile is None:
+        raise _AgentInvalidRequestError("confirm_profile_migration requires profile")
+    return profile, confirm
 
 
 class _AgentInvalidRequestError(AgentConnectionError):

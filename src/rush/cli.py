@@ -10,7 +10,7 @@ import json
 import os
 import sys
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -703,7 +703,22 @@ def mcp() -> None:
     default=None,
     help="Default session_id for project and scan tools when a caller omits it.",
 )
-def serve(memory_session: str | None, project: str | None, session: str | None) -> None:
+@click.option(
+    "--profile",
+    default=None,
+    metavar="[core|full]",
+    callback=lambda _ctx, _param, value: _validate_mcp_profile(value),
+    help=(
+        "Tool set: core (status, check, lint, review, security, test, memory) or "
+        "full (every tool). Default: full. Ignored with --memory-session."
+    ),
+)
+def serve(
+    memory_session: str | None,
+    project: str | None,
+    session: str | None,
+    profile: str | None,
+) -> None:
     """Start the rush MCP server on stdio (for coding agents)."""
     import asyncio
 
@@ -714,7 +729,20 @@ def serve(memory_session: str | None, project: str | None, session: str | None) 
     except ServerBindingError as exc:
         click.echo(f"rush mcp serve: {exc}", err=True)
         sys.exit(1)
-    asyncio.run(run_stdio(memory_session, binding=binding))
+    asyncio.run(run_stdio(memory_session, binding=binding, profile=profile))
+
+
+# Mirrors `rush.mcp.PROFILES`; checked here so a bad value never imports
+# (and so never constructs) any server.
+_MCP_PROFILES = ("core", "full")
+
+
+def _validate_mcp_profile(value: str | None) -> str | None:
+    if value is not None and value not in _MCP_PROFILES:
+        raise click.BadParameter(
+            f"{value!r} is not a profile; valid profiles: {', '.join(_MCP_PROFILES)}"
+        )
+    return value
 
 
 # --- Cache CLI commands ---------------------------------------------------
@@ -4247,6 +4275,22 @@ def agent_list_cmd(as_json: bool) -> None:
         "non-interactive run leaves guidance pending."
     ),
 )
+@click.option(
+    "--profile",
+    default=None,
+    metavar="[core|full]",
+    callback=lambda _ctx, _param, value: _validate_mcp_profile(value),
+    help=(
+        "Migrate this agent's existing Rush MCP entry to a server profile. "
+        "Always prints a preview; applies only after an explicit y or --yes."
+    ),
+)
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    help="Apply the previewed --profile migration without prompting.",
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def agent_connect_cmd(
@@ -4257,6 +4301,8 @@ def agent_connect_cmd(
     consent: bool,
     acknowledge: bool,
     install_guidance: bool,
+    profile: str | None,
+    assume_yes: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -4271,6 +4317,11 @@ def agent_connect_cmd(
     Requires --allow-cache-write and --allow-artifact-write. The project
     instruction block is written only with --install-guidance or an explicit
     "y" at the terminal prompt; --consent and --acknowledge never imply it.
+
+    Without --profile an existing Rush entry keeps its args (only a stale
+    command path is repaired) and a new one runs `mcp serve --profile core`.
+    With --profile the entry's migration is previewed first and applied only
+    after "y" at the terminal prompt or --yes.
     """
     from .tools.agent_connection import AgentConnectionTool
 
@@ -4285,6 +4336,8 @@ def agent_connect_cmd(
         install_guidance=install_guidance,
         confirm_guidance=_confirm_guidance if interactive else None,
         project_root=project_path,
+        profile=profile,
+        confirm_profile=_profile_consent(assume_yes, interactive, as_json),
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,
@@ -4295,10 +4348,47 @@ def agent_connect_cmd(
             allow_browser=allow_browser,
         ),
     )
-    guidance = (result.get("raw") or {}).get("guidance")
+    raw = result.get("raw") or {}
+    migration = raw.get("migration")
+    if (
+        not as_json
+        and isinstance(migration, dict)
+        and migration.get("state") == "pending"
+    ):
+        _echo_migration_preview(migration)  # not shown by a consent prompt
+    guidance = raw.get("guidance")
     if not as_json and isinstance(guidance, dict):
         click.echo(f"guidance: {guidance['state']}")
     _render_session_result(dict(result), as_json)
+
+
+def _profile_consent(
+    assume_yes: bool, interactive: bool, as_json: bool
+) -> bool | Callable[[dict[str, Any]], bool]:
+    """T4: `--yes` applies and a terminal asks [y/N], each after printing the
+    preview; any other run answers no, leaving the migration pending."""
+    if not (assume_yes or interactive):
+        return False
+
+    def consent(preview: dict[str, Any]) -> bool:
+        if not as_json:
+            _echo_migration_preview(preview)
+        if assume_yes:
+            return True
+        return _ask_yes("Apply this MCP profile migration? [y/N]: ")
+
+    return consent
+
+
+def _echo_migration_preview(preview: dict[str, Any]) -> None:
+    click.echo(f"Rush MCP profile migration for {preview['agent_id']}:")
+    click.echo(f"  config: {preview['config_path']} ({preview['method']})")
+    click.echo(
+        f"  current: {preview['current_command']} {preview['current_args']} "
+        f"(profile: {preview['current_profile']})"
+    )
+    click.echo(f"  new:     {preview['new_command']} {preview['new_args']}")
+    click.echo(f"  current sha256: {preview['current_sha256']}")
 
 
 def _is_terminal(stream: Any) -> bool:
@@ -4317,7 +4407,12 @@ def _confirm_guidance(plan: Any) -> bool:
     """
     click.echo(f"Rush instruction block for {plan.target_path}:")
     click.echo(plan.diff)
-    click.echo("Write this Rush instruction block? [y/N]: ", nl=False)
+    return _ask_yes("Write this Rush instruction block? [y/N]: ")
+
+
+def _ask_yes(question: str) -> bool:
+    """Ask `question` on the terminal; only y/yes read from fd 0 is a yes."""
+    click.echo(question, nl=False)
     answer = b""
     try:
         while not answer.endswith(b"\n"):

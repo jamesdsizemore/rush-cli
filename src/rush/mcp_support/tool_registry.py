@@ -493,17 +493,26 @@ def register_all_tools(
     executor: InvocationExecutor,
     tools: Sequence[Any],
     anchor_cwd: Path | None = None,
+    include: frozenset[str] | None = None,
 ) -> None:
-    """Register all catalog tools and legacy compatibility aliases onto FastMCP server."""
+    """Register all catalog tools and legacy compatibility aliases onto FastMCP server.
+
+    `include` (Phase 70 T4 profiles): when given, only tools whose MCP name
+    is in it are registered, on the server and the executor alike."""
     for tool in tools:
+        name = f"rush_{tool.name.replace('-', '_')}"
+        if include is not None and name not in include:
+            continue
         executor.register(tool.name, tool.__call__)
         server.add_tool(
             fn=make_tool_wrapper(tool, executor, anchor_cwd=anchor_cwd),
-            name=f"rush_{tool.name.replace('-', '_')}",
+            name=name,
             description=tool.mcp_description,
         )
 
     # Backward compatibility alias for rush_attest
+    if include is not None and "rush_attest_generate" not in include:
+        return
     for tool in tools:
         if tool.name == "attest":
             server.add_tool(
@@ -576,9 +585,13 @@ def register_custom_tools(
     executor: InvocationExecutor,
     custom_tools: Sequence[tuple[Any, str, str]],
     anchor_cwd: Path | None = None,
+    include: frozenset[str] | None = None,
 ) -> None:
-    """Register domain/phase custom tools onto FastMCP server."""
+    """Register domain/phase custom tools onto FastMCP server (only `include`d
+    names when given)."""
     for fn, name, desc in custom_tools:
+        if include is not None and name not in include:
+            continue
         executor.register(name, _make_handler(fn))
         server.add_tool(
             fn=make_custom_wrapper(fn, name, executor, anchor_cwd=anchor_cwd),

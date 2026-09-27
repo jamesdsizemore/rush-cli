@@ -81,6 +81,8 @@ def test_review_cli_passes_only_explicit_changed_files_to_shared_tool(
 
 
 def test_mcp_instructions_are_generated_from_catalog(monkeypatch) -> None:
+    import rush.mcp as mcp_module
+
     monkeypatch.setitem(
         TOOL_SPECS,
         "example",
@@ -92,6 +94,10 @@ def test_mcp_instructions_are_generated_from_catalog(monkeypatch) -> None:
             engine_names=(),
         ),
     )
+    # Phase 70 T4: instructions name the tools a server registers, so the
+    # probe is a registered catalog tool, not only a spec.
+    probe = type("ExampleTool", (), {"name": "example"})()
+    monkeypatch.setattr(mcp_module, "ALL_TOOLS", [*mcp_module.ALL_TOOLS, probe])
 
     assert "rush_example" in build_server_instructions()
 
