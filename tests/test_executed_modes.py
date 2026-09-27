@@ -726,10 +726,9 @@ def test_required_atheris_module_absence_fails(monkeypatch) -> None:
         _require_real_module("atheris")
 
 
+@pytest.mark.atheris_only
 def test_fuzz_real_workload(tmp_path: Path) -> None:
     _require_real_module("atheris")
-    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
-        pytest.skip("real fuzz engine acceptance disabled")
 
     harness = tmp_path / "harness.py"
     corpus = tmp_path / "corpus"

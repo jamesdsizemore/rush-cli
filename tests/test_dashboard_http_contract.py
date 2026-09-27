@@ -1556,7 +1556,7 @@ def test_reconnect_selects_newest_confirmed_live_descriptor_not_newest_by_mtime(
         live_server.server_close()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows-only data directory ACL check")
+@pytest.mark.windows_only
 def test_windows_data_dir_acl_checked_before_persisting_capability(
     tmp_path, monkeypatch
 ) -> None:

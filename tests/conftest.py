@@ -35,6 +35,33 @@ def _serving_threads() -> set[threading.Thread]:
     return {t for t in threading.enumerate() if "(serve_forever)" in t.name}
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
+    """Platform-only markers are deselected (never skipped) off their
+    platform: the owner rule is zero SKIPPED tests anywhere.
+
+    `windows_only`: only Windows can run it; the Windows CI job still
+    collects and runs it (`os.name == "nt"` there).
+    `atheris_only`: the real atheris fuzz engine has no macOS/Windows wheel,
+    only Linux x86_64; CI's engine-contracts job (ubuntu x86_64) still
+    collects and runs it."""
+    is_windows = os.name == "nt"
+    is_linux_x86_64 = platform.system() == "Linux" and platform.machine() == "x86_64"
+    keep, deselected = [], []
+    for item in items:
+        if (
+            item.get_closest_marker("windows_only")
+            and not is_windows
+            or item.get_closest_marker("atheris_only")
+            and not is_linux_x86_64
+        ):
+            deselected.append(item)
+        else:
+            keep.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = keep
+
+
 @pytest.fixture(autouse=True)
 def _stop_dashboard_background_threads():
     """T028: every DashboardContext spawns recovery/outcome background
