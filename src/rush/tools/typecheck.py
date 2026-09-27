@@ -16,8 +16,20 @@ from ..runtime.binaries import (
     AnalysisEnvironment,
     AnalysisScope,
     analysis_scope,
+    current_analysis_scope,
     select_analysis_environment,
 )
+
+
+def _resolution_root(root: Path) -> Path:
+    """The logical root engine executables resolve from: an active outer
+    analysis scope's (as every other tool inherits it -- e.g. setup's
+    representative check on its probe fixture resolves the project's
+    setup-provisioned engines), else this call's own root."""
+    outer = current_analysis_scope()
+    return outer.logical_root if outer is not None else root
+
+
 from .base import ToolFn, ToolResult
 from .common import (
     elapsed_ms,
@@ -333,7 +345,9 @@ class TypecheckTool(ToolFn):
         if not isinstance(engine, PyreflyEngine):
             return None
         with analysis_scope(
-            AnalysisScope(root, engine_id=engine.name, binary=engine.binary)
+            AnalysisScope(
+                _resolution_root(root), engine_id=engine.name, binary=engine.binary
+            )
         ):
             if not engine_on_path(engine.binary):
                 return None
@@ -380,7 +394,7 @@ class TypecheckTool(ToolFn):
             required_permissions=(
                 None if env.mode == "isolated" else ExecutionPermissions(build=True)
             ),
-            project_root=root,
+            project_root=_resolution_root(root),
         )
 
     def _python_child(
@@ -529,7 +543,7 @@ class TypecheckTool(ToolFn):
                         permissions=granted,
                         required_permissions=ExecutionPermissions(cache_write=True),
                         consumed_paths=[str(path)],
-                        project_root=root,
+                        project_root=_resolution_root(root),
                     ),
                 )
             )

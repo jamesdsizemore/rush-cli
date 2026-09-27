@@ -32,7 +32,9 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +69,33 @@ def _isolated_home(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     return home
+
+
+@pytest.fixture(scope="session")
+def warm_npm_cache() -> Iterator[str]:
+    """An npm cache in which aislop's npm runtime runs offline: the
+    already-warm `npm_config_cache` when set (CI warms it after sync), else a
+    temp cache warmed once per session -- never one download per test."""
+    from rush.setup.provision import prefetch_npm_runtime
+    from rush.tools.common import clear_binary_cache, resolve_binary
+
+    def warm(cache: str) -> str:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setenv("npm_config_cache", cache)
+            patch.delenv("npm_config_offline", raising=False)
+            clear_binary_cache()
+            executable = resolve_binary("aislop")
+            clear_binary_cache()
+            assert executable is not None, "aislop is not installed (dev extra)"
+            prefetch_npm_runtime("aislop", Path(executable))
+        return cache
+
+    configured = os.environ.get("npm_config_cache")
+    if configured:
+        yield warm(configured)  # already warm: one offline run, no fetch
+        return
+    with tempfile.TemporaryDirectory() as cache:
+        yield warm(cache)
 
 
 def _fake_host_which(name: str) -> str:
@@ -1474,16 +1503,16 @@ def test_t17_setup_check_without_consent_previews_and_runs_nothing(
 
 @pytest.mark.needs_aislop
 def test_t17_setup_check_with_consent_runs_rush_check_and_reports_real_result(
-    tmp_path: Path, _isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    _isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    warm_npm_cache: str,
 ) -> None:
     """--run-check plus "y": setup runs the shared six-step check on its own
     fixture (never the user's root) with the check stage's grants, so every
     step runs, and reports the fixture's real statuses and findings."""
-    import tempfile
-
-    from rush.setup.provision import prefetch_npm_runtime
     from rush.tools.check import CheckTool
-    from rush.tools.common import clear_binary_cache, resolve_binary
+    from rush.tools.common import clear_binary_cache
     from rush.tools.setup_wizard import apply_setup_review, render_setup_review
 
     root = tmp_path / "project"
@@ -1492,7 +1521,9 @@ def test_t17_setup_check_with_consent_runs_rush_check_and_reports_real_result(
     (root / "bad.py").write_text("import os\n")
     review = _check_review(root, tmp_path / "data", run_check=True)
     assert review["check"]["state"] == "pending"
-    assert "10. Check: run `rush check" in render_setup_review(review)
+    rendered_review = render_setup_review(review)
+    assert "10. Check: run the representative `rush check" in rendered_review
+    assert "on a Rush-owned fixture" in rendered_review
 
     checked: list[Path] = []
     real_run = CheckTool.run
@@ -1503,22 +1534,18 @@ def test_t17_setup_check_with_consent_runs_rush_check_and_reports_real_result(
 
     monkeypatch.setattr(CheckTool, "run", spy)
     consent = _AnswerByPrompt(("Verify the connection",))
-    # HOME is a temp dir, so aislop's npm cache is cold: warm a temp one the
-    # way setup's engine stage does, so the ungranted slop step runs offline.
-    with tempfile.TemporaryDirectory() as cache:
-        monkeypatch.setenv("npm_config_cache", cache)
-        monkeypatch.delenv("npm_config_offline", raising=False)
-        clear_binary_cache()
-        executable = resolve_binary("aislop")
-        assert executable is not None
-        prefetch_npm_runtime("aislop", Path(executable))
-        result = apply_setup_review(
-            {"kind": "setup", "schema_version": 1, "review": review},
-            _FULL_PERMISSIONS,
-            consent,
-            host_runner=_fake_claude_runner(_isolated_home, []),
-        )
-        clear_binary_cache()
+    # HOME is a temp dir, so aislop's default npm cache is cold: use the
+    # session's warm one, so the ungranted slop step runs offline.
+    monkeypatch.setenv("npm_config_cache", warm_npm_cache)
+    monkeypatch.delenv("npm_config_offline", raising=False)
+    clear_binary_cache()
+    result = apply_setup_review(
+        {"kind": "setup", "schema_version": 1, "review": review},
+        _FULL_PERMISSIONS,
+        consent,
+        host_runner=_fake_claude_runner(_isolated_home, []),
+    )
+    clear_binary_cache()
 
     check = result.get("raw", result)["check"]
     assert check["state"] == "ran", check

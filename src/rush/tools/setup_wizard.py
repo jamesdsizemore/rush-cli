@@ -206,6 +206,7 @@ def _run_check_stage(
             "reason": "not authorized: pass --run-check",
             "command": command,
         }
+    from rush.runtime.binaries import AnalysisScope, analysis_scope
     from rush.tools.check import CheckTool
 
     granted = permissions or ExecutionPermissions()
@@ -220,16 +221,19 @@ def _run_check_stage(
         )
     deadline = time.monotonic() + _CHECK_DEADLINE_SECONDS
     try:
-        result: dict[str, Any] = dict(
-            CheckTool().run(
-                fixture,
-                # Only this stage's grants: the test step's build, no more.
-                permissions=ExecutionPermissions(build=granted.build),
-                cancel_check=lambda: time.monotonic() >= deadline,
-                cancel_cause="setup_check_deadline",
-                invocation_start_cwd=fixture,
+        # Engines resolve as for the project's own check: from the
+        # toolchains manifests setup provisioned for the project root.
+        with analysis_scope(AnalysisScope(Path(review["project_root"]))):
+            result: dict[str, Any] = dict(
+                CheckTool().run(
+                    fixture,
+                    # Only this stage's grants: the test step's build, no more.
+                    permissions=ExecutionPermissions(build=granted.build),
+                    cancel_check=lambda: time.monotonic() >= deadline,
+                    cancel_cause="setup_check_deadline",
+                    invocation_start_cwd=fixture,
+                )
             )
-        )
     except Exception as exc:  # noqa: BLE001 -- a failed check is reported, setup completes
         removed = _remove_probe_fixture(fixture, nonce)
         return {
@@ -1444,7 +1448,8 @@ def _render_host_stages(review: dict[str, Any]) -> list[str]:
         lines.append("  9. Capability probe: not requested (--verify-host)")
     check = review["check"]
     lines.append(
-        f"  10. Check: run `{check['command']}` after setup, with this setup's grants"
+        f"  10. Check: run the representative `{check['command']}` on a "
+        "Rush-owned fixture after setup, with the build and cache_write grants"
         if check["requested"]
         else f"  10. Check: not requested (--run-check); run `{check['command']}` yourself"
     )
@@ -1624,8 +1629,9 @@ def _host_questions(review: dict[str, Any]) -> list[tuple[str, str]]:
             (
                 "check",
                 (
-                    f"Run `{review['check']['command']}` now (format, lint, "
-                    "typecheck, dead, slop and test, with this setup's grants)? [y/N] "
+                    f"Run the representative check `{review['check']['command']}` "
+                    "now on a Rush-owned fixture (format, lint, typecheck, dead, "
+                    "slop and test, with the build and cache_write grants)? [y/N] "
                 ),
             )
         )
@@ -1763,6 +1769,14 @@ def _run_hooks_stage(
             "state": "failed",
             "blocker": "hook_activation_failed",
             "detail": str(exc),
+            "recovery_actions": [f"{review['resume_command']} --enable-agent-hooks"],
+        }
+    if result.get("state") == "conflict":
+        # not_owned, unreadable, or a CAS conflict on the activation ledger:
+        # the hook is not active, so setup is never reported ok.
+        return {
+            **result,
+            "blocker": "hook_activation_conflict",
             "recovery_actions": [f"{review['resume_command']} --enable-agent-hooks"],
         }
     return result
@@ -1972,8 +1986,9 @@ def _host_outcome_status(status: str, raw: dict[str, Any]) -> tuple[str, str | N
         # A stage that failed is never an ok setup: its stage result names
         # the blocker and the one recovery command.
         for stage in ("hooks", "check"):
-            if (raw.get(stage) or {}).get("state") == "failed":
-                return "partial", f"{stage}_failed"
+            state = (raw.get(stage) or {}).get("state")
+            if state in ("failed", "conflict"):
+                return "partial", f"{stage}_{state}"
     return status, None
 
 
@@ -2705,6 +2720,13 @@ def render_setup_result(payload: dict[str, Any]) -> str:
         lines.append(f"  engine {engine} failed: {failure['message']}")
     for engine, path in sorted((provision.get("recovery_required") or {}).items()):
         lines.append(f"  engine {engine}: recover {path} manually, then rerun setup")
+    for engine, flags in sorted((provision.get("permission_blocked") or {}).items()):
+        # Round-2 M1: a reused engine whose npm runtime must be fetched
+        # needs the fetch grants; one exact recovery command names them.
+        grant_flags = " ".join(f"--allow-{flag.replace('_', '-')}" for flag in flags)
+        lines.append(f"  engine {engine} needs {' '.join(flags)}")
+        if payload.get("resume_command"):
+            lines.append(f"  recover: {payload['resume_command']} {grant_flags}")
     lines.extend(_render_host_outcome(payload.get("raw") or {}))
     if payload.get("resume_command") and not payload.get("ready"):
         lines.append(f"  resume: {payload['resume_command']}")

@@ -655,6 +655,7 @@ def _plan_entry(
     os_name: str,
     arch: str,
     which: Callable[[str], str | None],
+    runner: Runner,
 ) -> ProvisionPlanEntry:
     entry = ProvisionPlanEntry(
         engine_id=engine.engine_id,
@@ -676,9 +677,14 @@ def _plan_entry(
     )
     if reusable is not None:
         manifest, dest = reusable
+        # A reused npm-runtime engine whose package is not usable offline
+        # (a new machine, a cleared cache) needs the fetch grants again.
+        cold = engine.engine_id in NPM_RUNTIME_FETCH and not _npm_runtime_offline(
+            engine.engine_id, Path(manifest.executable), runner
+        )
         return replace(
             entry,
-            required_grants=(),
+            required_grants=NPM_RUNTIME_FETCH_GRANTS if cold else (),
             destination=str(dest),
             identity=ResolvedIdentity(manifest.version, None, None, None),
             identity_state="reuse_verified",
@@ -697,13 +703,16 @@ def build_provision_plan(
     arch: str | None = None,
     data_root: Path | None = None,
     which: Callable[[str], str | None] = shutil.which,
+    runner: Runner | None = None,
 ) -> ProvisionPlan:
     """Build an immutable provision plan for exactly the requested engines.
 
     Raises `UnknownEngineError` immediately for any id outside the declared
     `ENGINE_PACKAGES` allowlist -- no arbitrary package is ever planned.
     Read-only and offline: an engine whose project selection already has a
-    verified manifest is `reuse_verified`; every other applicable engine
+    verified manifest is `reuse_verified` (an npm-runtime engine among them
+    is probed offline with `runner` and, when its package is not usable
+    offline, requires `NPM_RUNTIME_FETCH_GRANTS`); every other applicable engine
     stays `unresolved` until `resolve_provision_identities` runs under the
     network grant. A missing package manager is reported as
     `blocked_reason="SYSTEM_PREREQUISITE_REQUIRED"` so the preview shows it.
@@ -715,7 +724,15 @@ def build_provision_plan(
     data = data_root if data_root is not None else default_data_root()
     engines = [resolve_engine_package(e) for e in engine_ids]  # UnknownEngineError
     entries = tuple(
-        _plan_entry(engine, root, data, resolved_os, resolved_arch, which)
+        _plan_entry(
+            engine,
+            root,
+            data,
+            resolved_os,
+            resolved_arch,
+            which,
+            runner or _default_runner,
+        )
         for engine in engines
     )
     return _make_plan(str(root), str(data), resolved_os, resolved_arch, entries)
@@ -977,13 +994,22 @@ _MANAGER_BINARIES: dict[str, str] = {
 # works with npm offline and needs no download grant.
 NPM_RUNTIME_FETCH: dict[str, tuple[str, ...]] = {"aislop": ("--version",)}
 
+# The online npm fetch contacts the registry, downloads packages, and writes
+# the npm cache.
+NPM_RUNTIME_FETCH_GRANTS: tuple[str, ...] = ("network", "download", "cache_write")
+
 
 def prefetch_npm_runtime(
-    engine_id: str, executable: Path, runner: Runner = _default_runner
+    engine_id: str,
+    executable: Path,
+    runner: Runner = _default_runner,
+    *,
+    allow_fetch: bool = True,
 ) -> str:
     """Make `engine_id`'s npm runtime available offline: `already_cached`
     when an offline run already works, else `fetched` after one online run
-    that a second offline run then verifies. Raises ProvisionError."""
+    that a second offline run then verifies. Without `allow_fetch` there is
+    no online run: `fetch_not_granted`. Raises ProvisionError."""
     from ..engines.aislop import AISLOP_NO_TELEMETRY_ENV
 
     args = NPM_RUNTIME_FETCH.get(engine_id)
@@ -1004,6 +1030,8 @@ def prefetch_npm_runtime(
 
     if run("true").returncode == 0:
         return "already_cached"
+    if not allow_fetch:
+        return "fetch_not_granted"
     fetched = run("false")
     if fetched.returncode != 0:
         raise ProvisionError(
@@ -1017,6 +1045,16 @@ def prefetch_npm_runtime(
             f"{engine_id}'s npm package is still not usable offline after fetching",
         )
     return "fetched"
+
+
+def _npm_runtime_offline(engine_id: str, executable: Path, runner: Runner) -> bool:
+    """True when `engine_id`'s npm package already runs offline (one offline
+    run, no network); an executable that cannot run counts as not usable."""
+    try:
+        state = prefetch_npm_runtime(engine_id, executable, runner, allow_fetch=False)
+    except ProvisionError:
+        return False
+    return state == "already_cached"
 
 
 def _check_manager_available(
@@ -1138,6 +1176,7 @@ class _ApplyContext:
     runner: Runner
     prober: Prober
     which: Callable[[str], str | None]
+    permissions: ExecutionPermissions | None
 
 
 def _update_selection(project_root: Path, engine_id: str, manifest_path: Path) -> None:
@@ -1176,11 +1215,10 @@ def _plan_rejection(
         engine = ENGINE_PACKAGES.get(e.engine_id)
         if engine is None:
             return "PLAN_TAMPERED", f"{e.engine_id} is not an allowlisted engine"
-        grants = (
-            ()
-            if e.identity_state == "reuse_verified"
-            else _SOURCE_GRANTS.get(engine.source, ())
-        )
+        grants = _SOURCE_GRANTS.get(engine.source, ())
+        if e.identity_state == "reuse_verified":
+            fetch = NPM_RUNTIME_FETCH_GRANTS if e.engine_id in NPM_RUNTIME_FETCH else ()
+            grants = fetch if tuple(e.required_grants) == fetch else ()
         if (
             e.package_id,
             e.source,
@@ -1375,8 +1413,21 @@ def _apply_entry(
                 "verifies; review setup again",
             )
         # A warm npm cache answers `already_cached` at once; a cold one (a new
-        # machine, a cleared cache) is fetched again so slop runs offline.
-        prefetch_npm_runtime(entry.engine_id, Path(reused.executable), ctx.runner)
+        # machine, a cleared cache) is fetched again so slop runs offline --
+        # only under the fetch grants, else the engine needs them.
+        granted, flags = check_permissions(
+            ExecutionPermissions(**{g: True for g in NPM_RUNTIME_FETCH_GRANTS}),
+            ctx.permissions,
+        )
+        state = prefetch_npm_runtime(
+            entry.engine_id,
+            Path(reused.executable),
+            ctx.runner,
+            allow_fetch=granted,
+        )
+        if state == "fetch_not_granted":
+            result.permission_blocked[entry.engine_id] = flags
+            return
         result.reused[entry.engine_id] = reused
         return
     if engine.source != "github":
@@ -1509,6 +1560,7 @@ def apply_provision_plan(
         runner=runner,
         prober=prober,
         which=which,
+        permissions=permissions,
     )
     for entry in plan.entries:
         if entry.disposition != "applicable":

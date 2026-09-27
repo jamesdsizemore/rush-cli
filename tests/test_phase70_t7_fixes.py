@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -26,6 +27,12 @@ from tests.test_phase70_t26 import (
     _fake_claude_runner,
     _fake_host_which,
 )
+from tests.test_phase70_t26 import (
+    warm_npm_cache as _shared_warm_npm_cache,
+)
+
+# The session fixture shared with t26: one warm npm cache per session.
+warm_npm_cache = _shared_warm_npm_cache
 
 _AISLOP_REPORT = (
     '{"diagnostics": [{"filePath": "mod.py", "line": 1, "engine": "ai-slop",'
@@ -74,15 +81,25 @@ def _fake_aislop_runner(
     return runner
 
 
-def _provision_aislop(project: Path, data_root: Path, runner):
+def _provision_aislop(
+    project: Path,
+    data_root: Path,
+    runner,
+    platform: tuple[str, str] = ("linux", "x86_64"),
+):
     plan = build_provision_plan(
-        project, ["aislop"], os_name="linux", arch="x86_64", data_root=data_root
+        project,
+        ["aislop"],
+        os_name=platform[0],
+        arch=platform[1],
+        data_root=data_root,
+        runner=runner,
     )
     return resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True, build=True),
         project_id="proj-a",
-        current_platform=("linux", "x86_64"),
+        current_platform=platform,
         data_root=data_root,
         http_get=_aislop_pypi,
         runner=runner,
@@ -140,13 +157,160 @@ def test_reused_aislop_with_cold_npm_cache_fetches_its_runtime(tmp_path: Path) -
     )
 
     assert "aislop" in second.reused, second.failed
+    # The plan's offline probe, then apply's offline check, the granted
+    # online fetch, and the offline verification.
     assert [
         ((env or {}).get("npm_config_offline"), argv[1:]) for argv, env in calls
     ] == [
         ("true", ["--version"]),
+        ("true", ["--version"]),
         ("false", ["--version"]),
         ("true", ["--version"]),
     ]
+
+
+_FETCH_FLAGS = ["--allow-network", "--allow-download", "--allow-cache-write"]
+
+
+def _offline_modes(calls: list[tuple[list[str], dict[str, str] | None]]) -> list:
+    return [(env or {}).get("npm_config_offline") for _, env in calls]
+
+
+def test_reused_aislop_with_cold_cache_plans_fetch_grants_and_never_fetches_without(
+    tmp_path: Path,
+) -> None:
+    """A reused aislop whose npm runtime is not usable offline lists the
+    fetch grants in the plan; with no grant, apply fetches nothing and
+    reports the engine as needing them."""
+    from rush.setup.provision import apply_provision_plan
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    data_root = tmp_path / "data"
+    first = _provision_aislop(
+        project, data_root, _fake_aislop_runner([], {"npm": False})
+    )
+    assert "aislop" in first.applied, first.failed
+
+    calls: list[tuple[list[str], dict[str, str] | None]] = []
+    runner = _fake_aislop_runner(calls, {"npm": False})
+    plan = build_provision_plan(
+        project,
+        ["aislop"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=data_root,
+        runner=runner,
+    )
+    (entry,) = plan.entries
+    assert entry.identity_state == "reuse_verified"
+    assert entry.required_grants == ("network", "download", "cache_write")
+
+    result = apply_provision_plan(
+        plan,
+        ExecutionPermissions(),
+        project_id="proj-a",
+        data_root=data_root,
+        reviewed_plan_id=plan.plan_id,
+        runner=runner,
+        current_platform=("linux", "x86_64"),
+    )
+    assert result.permission_blocked == {"aislop": _FETCH_FLAGS}
+    assert "aislop" not in result.reused
+    assert _offline_modes(calls) == ["true"]
+
+
+def test_reused_aislop_cache_cold_after_review_is_not_fetched_without_grant(
+    tmp_path: Path,
+) -> None:
+    """Cache warm at review, cold at apply, no grant: no online run; the
+    engine is reported as needing the fetch grants."""
+    from rush.setup.provision import apply_provision_plan
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    data_root = tmp_path / "data"
+    first = _provision_aislop(
+        project, data_root, _fake_aislop_runner([], {"npm": False})
+    )
+    assert "aislop" in first.applied, first.failed
+
+    plan = build_provision_plan(
+        project,
+        ["aislop"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=data_root,
+        runner=_fake_aislop_runner([], {"npm": True}),
+    )
+    assert plan.entries[0].required_grants == ()
+
+    calls: list[tuple[list[str], dict[str, str] | None]] = []
+    result = apply_provision_plan(
+        plan,
+        ExecutionPermissions(),
+        project_id="proj-a",
+        data_root=data_root,
+        reviewed_plan_id=plan.plan_id,
+        runner=_fake_aislop_runner(calls, {"npm": False}),
+        current_platform=("linux", "x86_64"),
+    )
+    assert result.permission_blocked == {"aislop": _FETCH_FLAGS}
+    assert "aislop" not in result.reused
+    assert _offline_modes(calls) == ["true"]
+
+
+def test_setup_review_lists_fetch_grants_for_reused_aislop_with_cold_cache(
+    tmp_path: Path,
+) -> None:
+    """The real setup review probes the reused aislop offline (a real
+    subprocess, no network) and lists the fetch grants; without them setup
+    applies nothing."""
+    from rush.setup.provision import current_os_arch
+    from rush.tools.setup_wizard import (
+        apply_setup_review,
+        build_setup_review,
+        render_setup_review,
+    )
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "pyproject.toml").write_text('[project]\nname = "p"\n')
+    data_root = tmp_path / "data"
+    warm = tmp_path / "npm-cache-warm"
+
+    def runner(
+        argv: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        if argv[:3] == ["uv", "tool", "install"]:
+            assert env is not None
+            exe = Path(env["UV_TOOL_BIN_DIR"]) / "aislop"
+            # A real offline run succeeds only while the cache is warm.
+            exe.write_text(
+                "#!/bin/sh\n"
+                f'if [ "$npm_config_offline" = true ] && [ ! -f "{warm}" ]; '
+                "then exit 1; fi\n"
+            )
+            exe.chmod(0o755)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if (env or {}).get("npm_config_offline") == "false":
+            warm.touch()
+        ok = warm.exists()
+        return subprocess.CompletedProcess(argv, 0 if ok else 1, "", "")
+
+    first = _provision_aislop(project, data_root, runner, current_os_arch())
+    assert "aislop" in first.applied, first.failed
+    warm.unlink()  # the npm cache goes cold
+
+    review = build_setup_review(project, data_root)
+    (entry,) = [e for e in review["provision"]["entries"] if e["engine_id"] == "aislop"]
+    assert entry["identity_state"] == "reuse_verified"
+    assert list(entry["required_grants"]) == ["network", "download", "cache_write"]
+    assert "--allow-download" in render_setup_review(review)
+
+    result = apply_setup_review(review, ExecutionPermissions(), None)
+    assert result["status"] == "permission_denied", result
+    assert result["missing"]["engine:aislop"] == _FETCH_FLAGS
 
 
 @pytest.mark.parametrize(
@@ -434,6 +598,37 @@ def test_setup_hooks_oserror_is_partial_with_blocker_and_one_recovery(
     ]
 
 
+@pytest.mark.parametrize("reason", ["not_owned", "unreadable", "cas_conflict"])
+def test_setup_hooks_conflict_is_partial_with_blocker_and_one_recovery(
+    tmp_path: Path,
+    isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+) -> None:
+    """Round-2 M3: a hooks stage `conflict` (foreign, unreadable or CAS-raced
+    activation ledger) leaves the hook inactive, so setup is partial with a
+    blocker and one recovery command, never ok."""
+    from rush.tools import setup_wizard
+
+    def conflicted(*args: object, **kwargs: object) -> dict[str, Any]:
+        return {"state": "conflict", "reason": reason}
+
+    monkeypatch.setattr(setup_wizard, "set_hook_activation", conflicted)
+    root = tmp_path / "project"
+    root.mkdir()
+    review = _host_review(root, tmp_path / "data", hooks=True)
+    result = _apply(review, isolated_home, _HOST_PERMISSIONS)
+
+    assert (result["status"], result["reason"]) == ("partial", "hooks_conflict")
+    hooks = result["raw"]["hooks"]
+    assert hooks["state"] == "conflict"
+    assert hooks["reason"] == reason
+    assert hooks["blocker"] == "hook_activation_conflict"
+    assert hooks["recovery_actions"] == [
+        f"{review['resume_command']} --enable-agent-hooks"
+    ]
+
+
 def test_setup_check_crash_is_partial_with_blocker_and_one_recovery(
     tmp_path: Path, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -498,6 +693,98 @@ def test_setup_hooks_need_artifact_write_and_store_recovery_from_the_grant(
     assert [r["recovery_cache_write"] for r in records] == [True]
 
 
+def _bind_setup_engines(root: Path, data_root: Path) -> None:
+    """What setup's engine stage leaves behind: a verified manifest per
+    engine, scoped to ``root`` under ``data_root``'s toolchains, and the
+    project's `.rush/toolchains.json` selection naming them."""
+    from rush.runtime.binaries import (
+        MANIFEST_SCHEMA_VERSION,
+        ProvisionManifest,
+        compute_file_sha256,
+        write_manifest,
+    )
+    from rush.setup.provision import current_os_arch
+    from rush.tools.common import clear_binary_cache, resolve_binary
+
+    os_name, arch = current_os_arch()
+    selection: dict[str, dict[str, str]] = {}
+    clear_binary_cache()
+    for engine_id in ("ruff", "mypy", "vulture", "aislop", "pytest"):
+        executable = resolve_binary(engine_id)
+        assert executable is not None, engine_id
+        manifest = ProvisionManifest(
+            schema_version=MANIFEST_SCHEMA_VERSION,
+            engine_id=engine_id,
+            package_id=engine_id,
+            version="0",
+            source="pypi",
+            manager="uv",
+            executable=executable,
+            executable_sha256=compute_file_sha256(executable),
+            os_name=os_name,
+            arch=arch,
+            project_id="proj",
+            project_root=str(root.resolve()),
+            runtime_identity="",
+            plan_id="",
+            created_at="",
+        )
+        dest = data_root / "toolchains" / engine_id / "0" / f"{os_name}-{arch}"
+        selection[engine_id] = {"manifest": str(write_manifest(dest, manifest))}
+    clear_binary_cache()
+    (root / ".rush").mkdir()
+    (root / ".rush" / "toolchains.json").write_text(json.dumps(selection))
+
+
+def test_setup_check_runs_the_engines_setup_provisioned_for_the_project(
+    tmp_path: Path,
+    isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    warm_npm_cache: str,
+) -> None:
+    """The fixture check resolves engines from the project's setup-written
+    toolchains manifests: with no engine on PATH and the Rush venv's bin
+    excluded, every one of the six steps still executes."""
+    import shutil
+
+    from rush.runtime import binaries
+    from rush.tools import common
+    from rush.tools.common import clear_binary_cache
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.0.1"\n')
+    data_root = tmp_path / "data"
+    _bind_setup_engines(root, data_root)
+    review = _host_review(root, data_root, run_check=True)
+
+    # PATH holds only node/npx (aislop's own runtime) and /bin (sh), no engine.
+    node_bin = tmp_path / "node-bin"
+    node_bin.mkdir()
+    for name in ("node", "npx"):
+        found = shutil.which(name)
+        assert found is not None, name
+        (node_bin / name).symlink_to(found)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(node_bin), "/bin"]))
+    monkeypatch.setattr(common, "_venv_scripts_dir", lambda: None)
+    monkeypatch.setattr(binaries, "_venv_scripts_dir", lambda: None, raising=False)
+    monkeypatch.setenv("npm_config_cache", warm_npm_cache)
+    monkeypatch.delenv("npm_config_offline", raising=False)
+    clear_binary_cache()
+    try:
+        result = _apply(review, isolated_home, _HOST_PERMISSIONS, {"check": True})
+    finally:
+        clear_binary_cache()
+
+    check = result.get("raw", result)["check"]
+    assert check["state"] == "ran", check
+    steps = {step["tool"]: step for step in check["steps"]}
+    assert list(steps) == ["format", "lint", "typecheck", "dead", "slop", "test"]
+    assert all(s["disposition"] == "executed" for s in steps.values()), steps
+    assert not any(s["status"] == "skipped" for s in steps.values()), steps
+    assert "F401" in check["finding_rules"]
+
+
 def test_every_ci_job_with_aislop_warms_its_npm_runtime_after_sync() -> None:
     """Item 9: every job that syncs the dev extra (which installs aislop)
     warms aislop's npm runtime into a runner-temp cache exported to later
@@ -527,3 +814,24 @@ def test_every_ci_job_with_aislop_warms_its_npm_runtime_after_sync() -> None:
         assert step["env"] == {"AISLOP_NO_TELEMETRY": "1", "DO_NOT_TRACK": "1"}
         assert not any("needs_aislop" in run for run in runs), name
     assert len(synced) == 5, synced
+
+
+def test_setup_result_renders_permission_blocked_engine_with_one_recovery() -> None:
+    """Round-2 M1: a reused engine blocked on its fetch grants is shown with
+    the missing grants and one exact recovery command naming them."""
+    from rush.tools.setup_wizard import render_setup_result
+
+    text = render_setup_result(
+        {
+            "status": "partial",
+            "resume_command": "rush setup /p --agent claude",
+            "provision": {
+                "permission_blocked": {"aislop": ["network", "download", "cache_write"]}
+            },
+        }
+    )
+    assert "engine aislop needs network download cache_write" in text
+    assert (
+        "recover: rush setup /p --agent claude "
+        "--allow-network --allow-download --allow-cache-write"
+    ) in text

@@ -885,8 +885,10 @@ def _logical_cache_db() -> Path:
     "--run-check",
     is_flag=True,
     help=(
-        "With --agent: after setup, run `rush check` on the project with this "
-        "setup's grants and report its result."
+        "With --agent: after setup, run a representative `rush check` on a "
+        "Rush-owned fixture (a known faulty file) using the engines setup "
+        "installed for this project, with the build and cache_write grants, "
+        "and report its result."
     ),
 )
 @permission_options
