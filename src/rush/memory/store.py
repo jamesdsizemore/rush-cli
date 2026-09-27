@@ -34,6 +34,48 @@ MemorySubject = Literal[
 ]
 TrustTier = Literal["STATED", "DERIVED", "EXTERNAL_WRITE", "IMPORTED"]
 
+# T18: bookkeeping sources -- internal plumbing that writes memory rows as a
+# side effect (flight-recorder/checkpoint-journal producers and their one-time
+# migration backfills), never something a project owner asked to remember.
+# Exact membership only, no prefix matching: a similarly-named source
+# (`flight_recorder:record_event2`) or a different migration target
+# (`migration:failure_ledger`) stays useful.
+INTERNAL_MEMORY_SOURCES = frozenset(
+    {
+        "flight_recorder:record_event",
+        "checkpoint_journal:save_checkpoint",
+        "migration:flight_recorder",
+        "migration:checkpoint_journal",
+    }
+)
+
+
+def is_internal_memory_source(source: str) -> bool:
+    """Exact-membership check against `INTERNAL_MEMORY_SOURCES` -- the single
+    predicate every useful-memory projection filters by (T18 B1)."""
+    return source in INTERNAL_MEMORY_SOURCES
+
+
+def internal_source_exclusion_sql() -> tuple[str, tuple[str, ...]]:
+    """SQL fragment + bound params excluding `INTERNAL_MEMORY_SOURCES` rows,
+    built from the same frozenset as `is_internal_memory_source` so the two
+    can never drift apart."""
+    sources = tuple(sorted(INTERNAL_MEMORY_SOURCES))
+    placeholders = ", ".join("?" for _ in sources)
+    return f"source NOT IN ({placeholders})", sources
+
+
+def useful_memory_count(conn: sqlite3.Connection) -> int:
+    """R18.1: the internal-exclusion predicate AND `archived_at IS NULL` AND
+    `expired_at IS NULL` -- the "useful memory count" T20/T23/T28 share."""
+    fragment, params = internal_source_exclusion_sql()
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM memory_artifacts WHERE {fragment} "
+        "AND archived_at IS NULL AND expired_at IS NULL",
+        params,
+    ).fetchone()
+    return int(row[0])
+
 
 class TrustTierError(ValueError):
     """Raised when write() is given a disallowed trust_tier on insert."""
@@ -724,13 +766,17 @@ class TypedArtifactStore:
         return int(row[0])
 
     def snapshot_memories(
-        self, owner_filter: str | None = None
+        self, owner_filter: str | None = None, *, include_internal: bool = False
     ) -> tuple[list[dict[str, Any]], int]:
         """P69-01.2n shared primitive: reads the memory inventory and calls
         `current_generation()` inside the same read transaction/connection,
         returning `(memories, generation)` as one atomic pair -- never a
         memory list from before a generation bump paired with the bumped
-        generation, or vice versa."""
+        generation, or vice versa.
+
+        T18: bookkeeping rows (`is_internal_memory_source`) are excluded by
+        default -- diagnostic `include_internal=True` restores exactly the
+        pre-T18 row set."""
         with self._connect() as conn:
             conn.execute("BEGIN")
             rows = conn.execute(
@@ -749,7 +795,8 @@ class TypedArtifactStore:
                 "archived": row["archived_at"] is not None,
             }
             for row in rows
-            if owner_filter is None or row["source"] == owner_filter
+            if (owner_filter is None or row["source"] == owner_filter)
+            and (include_internal or not is_internal_memory_source(row["source"]))
         ]
         return memories, generation
 

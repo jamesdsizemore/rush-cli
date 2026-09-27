@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from rush.capabilities import inspect_capabilities
-from rush.memory.store import TypedArtifactStore
+from rush.memory.store import TypedArtifactStore, is_internal_memory_source
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import TelemetryStore
@@ -1072,7 +1072,10 @@ def git_link_matches_commit(
 
 
 def list_project_artifacts(
-    project: str | Path, *, data_root: Path | None = None
+    project: str | Path,
+    *,
+    data_root: Path | None = None,
+    include_internal: bool = False,
 ) -> dict[str, Any]:
     """Categorized, provenance-carrying references to everything this project has
     produced: scan-run outputs, agent handoff packets, and memory artifacts including
@@ -1150,6 +1153,7 @@ def list_project_artifacts(
             "deleted": False,
         }
         for row in store.list_artifact_refs()
+        if include_internal or not is_internal_memory_source(row["source"])
     ] + [
         {
             "artifact_ref": f"memory:{row['id']}",
@@ -1200,7 +1204,7 @@ def export_project_data(
     snapshot/artifact-reference serialization the dashboard/TUI already
     render, packaged as one downloadable document -- never a second,
     independently-computed export format."""
-    snapshot = project_snapshot(project, data_root=data_root)
+    snapshot = project_snapshot(project, data_root=data_root, include_internal=True)
     return {
         "schema_version": 1,
         "project_id": snapshot["project"]["project_id"],
@@ -1266,7 +1270,10 @@ def project_token_usage(
 
 
 def project_snapshot(
-    project: str | Path, *, data_root: Path | None = None
+    project: str | Path,
+    *,
+    data_root: Path | None = None,
+    include_internal: bool = False,
 ) -> dict[str, Any]:
     """One shared evidence view for CLI/MCP/TUI/web (plan §6.4, P65-07.2): overview,
     run/coverage/finding summary, memory summary, token totals, Git summary, and
@@ -1287,6 +1294,8 @@ def project_snapshot(
     store = TypedArtifactStore(root)
     subject_counts: dict[str, int] = {}
     for row in store.list_artifact_refs():
+        if not include_internal and is_internal_memory_source(row["source"]):
+            continue
         subject_counts[row["subject"]] = subject_counts.get(row["subject"], 0) + 1
 
     return {
@@ -1312,7 +1321,9 @@ def project_snapshot(
         },
         "tokens": project_token_usage(record["project_id"], data_root=data_root),
         "git": _git_summary(root),
-        "artifacts": list_project_artifacts(record["project_id"], data_root=data_root),
+        "artifacts": list_project_artifacts(
+            record["project_id"], data_root=data_root, include_internal=include_internal
+        ),
     }
 
 
