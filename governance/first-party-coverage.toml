@@ -2,9 +2,9 @@
 # Generated deterministically by rush.governance.coverage_manifest
 
 [manifest]
-revision = "866fc69674af13a99901e584d6fa181288adc8af"
+revision = "e3172ecc4dff342d8748081d41256a5ebe011692"
 generator_version = "1.0.0"
-total_records = 1484
+total_records = 1486
 
 [[records]]
 path = ".github/workflows/ci.yml"
@@ -4692,6 +4692,11 @@ classification = "source"
 inclusion_rule = "directory-tree:src/"
 
 [[records]]
+path = "src/rush/tools/check.py"
+classification = "source"
+inclusion_rule = "directory-tree:src/"
+
+[[records]]
 path = "src/rush/tools/ci.py"
 classification = "source"
 inclusion_rule = "directory-tree:src/"
@@ -6878,6 +6883,11 @@ inclusion_rule = "directory-tree:tests/"
 
 [[records]]
 path = "tests/test_phase70_t16.py"
+classification = "test"
+inclusion_rule = "directory-tree:tests/"
+
+[[records]]
+path = "tests/test_phase70_t17.py"
 classification = "test"
 inclusion_rule = "directory-tree:tests/"
 
