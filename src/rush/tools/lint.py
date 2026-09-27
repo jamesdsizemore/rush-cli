@@ -24,11 +24,18 @@ from .common import (
     now_ms,
     run_engine,
 )
-from .routing import collect_files, combine_status, detect_project_languages
+from .routing import (
+    collect_files,
+    combine_status,
+    detect_project_languages,
+    no_target_scope,
+)
 
 
-def _build_skipped_result(start: int, summary: str) -> ToolResult:
-    return ToolResult(
+def _build_skipped_result(
+    start: int, summary: str, scope: dict[str, Any] | None = None
+) -> ToolResult:
+    result = ToolResult(
         tool="lint",
         engine=None,
         engine_version=None,
@@ -38,6 +45,9 @@ def _build_skipped_result(start: int, summary: str) -> ToolResult:
         findings=[],
         raw=None,
     )
+    if scope is not None:
+        result["metadata"] = {"scope": scope}
+    return result
 
 
 def _select_engines(
@@ -67,13 +77,18 @@ def _run_selected_engines(
     *,
     owner_instance_id: str | None = None,
     run_id: str | None = None,
+    skip_reasons: list[str] | None = None,
 ) -> tuple[list[Finding], ToolStatus, list[str]]:
-    """Execute each applicable engine sequentially and aggregate findings."""
+    """Execute each applicable engine sequentially and aggregate findings.
+
+    T9: an engine that returned `skipped` (e.g. `ruff not on PATH`) has its
+    own reason appended to `skip_reasons`, so the lint summary can name it."""
     from ..engines import ENGINES
 
     findings_all: list[Finding] = []
     last_status: ToolStatus = "skipped"
     engines_used: list[str] = []
+    reasons = skip_reasons if skip_reasons is not None else []
 
     for name in ("ruff", "eslint"):
         files = engine_files.get(name, [])
@@ -91,6 +106,8 @@ def _run_selected_engines(
             findings_all.extend(r.get("findings", []))
             engines_used.append(name)
             last_status = combine_status(last_status, r.get("status", "ok"))
+            if r.get("status") == "skipped":
+                reasons.append(str(r.get("summary", "")).removeprefix("skipped: "))
 
     if engine_on_path("globstar"):
         globstar_args = [str(p) for p in targets] + (engine_args or [])
@@ -121,12 +138,23 @@ def _check_missing_engines_result(
         engines_missing.append("ruff")
     if eslint_files and not engine_on_path("eslint"):
         engines_missing.append("eslint")
-    summary = (
-        f"lint: engines not installed ({', '.join(engines_missing)})"
-        if engines_missing
-        else "lint: no engines could run on these files"
+    if engines_missing:
+        return _build_skipped_result(
+            start,
+            f"lint: engines not installed ({', '.join(engines_missing)})",
+            no_target_scope(
+                "engine_unavailable",
+                matched_file_count=len(ruff_files) + len(eslint_files),
+                consumed_file_count=0,
+            ),
+        )
+    return _build_skipped_result(
+        start,
+        "lint: no engines could run on these files",
+        no_target_scope(
+            "no_supported_targets", matched_file_count=0, consumed_file_count=0
+        ),
     )
-    return _build_skipped_result(start, summary)
 
 
 def _assemble_lint_result(
@@ -134,8 +162,14 @@ def _assemble_lint_result(
     last_status: ToolStatus,
     engines_used: list[str],
     start: int,
+    skip_reasons: list[str] | None = None,
+    matched_file_count: int = 0,
 ) -> ToolResult:
-    """Assemble canonical ToolResult from aggregated engine findings and status."""
+    """Assemble canonical ToolResult from aggregated engine findings and status.
+
+    T9: when every engine that should have run was skipped, the summary names
+    each engine's own reason (e.g. `ruff not on PATH`) and the scope records
+    that nothing was consumed (`engine_unavailable`)."""
     status = last_status
     n_findings = len(findings_all)
     if status == "ok" and n_findings > 0:
@@ -143,6 +177,18 @@ def _assemble_lint_result(
         status = "warn" if has_non_error else "fail"
 
     engine_str = "+".join(engines_used)
+    if status == "skipped" and not n_findings and skip_reasons:
+        result = _build_skipped_result(
+            start,
+            f"lint [{engine_str}]: {'; '.join(skip_reasons)}",
+            no_target_scope(
+                "engine_unavailable",
+                matched_file_count=matched_file_count,
+                consumed_file_count=0,
+            ),
+        )
+        result["engine"] = engine_str
+        return result
     summary = (
         f"lint [{engine_str}]: {n_findings} issue(s)"
         if n_findings
@@ -208,8 +254,15 @@ class LintTool(ToolFn):
                 if languages
                 else f"lint: no Python/JS/TS files found under {path}"
             )
-            return _build_skipped_result(start, summary)
+            return _build_skipped_result(
+                start,
+                summary,
+                no_target_scope(
+                    "no_supported_targets", matched_file_count=0, consumed_file_count=0
+                ),
+            )
 
+        skip_reasons: list[str] = []
         findings, last_status, engines_used = _run_selected_engines(
             engine_files,
             targets,
@@ -217,8 +270,16 @@ class LintTool(ToolFn):
             engine_args,
             owner_instance_id=owner_instance_id,
             run_id=run_id,
+            skip_reasons=skip_reasons,
         )
         if not engines_used:
             return _check_missing_engines_result(engine_files, start)
 
-        return _assemble_lint_result(findings, last_status, engines_used, start)
+        return _assemble_lint_result(
+            findings,
+            last_status,
+            engines_used,
+            start,
+            skip_reasons,
+            matched_file_count=sum(len(files) for files in engine_files.values()),
+        )

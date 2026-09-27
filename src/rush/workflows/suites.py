@@ -167,15 +167,24 @@ def run_workflow_suite(
             )
             res: ToolResult = executor.execute(context)
             children.append(res)
-            executed_tools.append(tool_name)
+            # T9: a step the executor refused to run (e.g. a missing target)
+            # is a retained child, never counted as executed.
+            execution = (res.get("metadata") or {}).get("execution") or {}
+            ran = execution.get("disposition") != "not_run"
+            if ran:
+                executed_tools.append(tool_name)
             if on_tool_complete is not None:
                 on_tool_complete(res)
 
             if fail_fast and res["status"] in {"fail", "error"}:
+                # T9: a refused step is an input error, not a tool failure --
+                # recorded in the result, not warned about as one.
                 log_subsystem(
                     "workflow",
-                    "WARN",
-                    f"Workflow suite '{suite.name}' short-circuited on failure at '{tool_name}'",
+                    "WARN" if ran else "INFO",
+                    f"Workflow suite '{suite.name}' short-circuited on failure at '{tool_name}'"
+                    if ran
+                    else f"Workflow suite '{suite.name}' stopped: '{tool_name}' was not run",
                 )
                 break
         except Exception as exc:  # noqa: BLE001 -- one real child result, zero retry
