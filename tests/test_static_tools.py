@@ -159,14 +159,21 @@ def test_tsc_normalizes_documented_text_fixture() -> None:
 
     result = TscEngine().normalize(raw, Path("."), "typecheck")
 
+    # T12 S12.3/A11: absolute (joined with the cwd) and scope-classified.
     assert result["findings"] == [
         {
-            "path": "src/example.ts",
+            "path": str(Path("src/example.ts").absolute()),
             "line": 7,
             "column": 3,
             "rule": "TS2322",
             "severity": "error",
             "message": "Type 'string' is not assignable to type 'number'.",
+            "extensions": {
+                "scope": "dependency",
+                "dependency_kind": "import",
+                "config": None,
+                "group": 0,
+            },
         }
     ]
 

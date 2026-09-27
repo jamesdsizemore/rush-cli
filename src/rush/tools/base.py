@@ -52,6 +52,8 @@ class Finding(TypedDict, total=False):
     freshness: str | None
     patch: str | None
     suggested_fix: str | None
+    # T12/T16: scope classification (`scope`, `dependency_kind`, ...).
+    extensions: dict[str, Any]
 
 
 class ToolResult(TypedDict, total=False):

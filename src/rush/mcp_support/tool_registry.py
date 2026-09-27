@@ -57,6 +57,8 @@ _CWD_RELATIVE_ARGS: dict[str, tuple[str, ...]] = {
     "load": ("report_path",),
     "sbom": ("output_path",),
     "offline-review": ("runner_path",),
+    # T12 S12.7/finding 7: containment and family checks follow in the tool.
+    "typecheck": ("typecheck_config",),
 }
 
 _PROJECT_DESCRIPTION = (

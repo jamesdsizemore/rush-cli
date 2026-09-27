@@ -101,11 +101,20 @@ class PyreflyEngine(Engine):
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         default_args = ["check", OUTPUT_FORMAT_FLAG]
-        argv = [binary_path, *default_args, *args, str(path)]
+        # S12.1: explicit file targets are the only targets -- re-appending
+        # the directory would make pyrefly check every unrelated sibling.
+        explicit_targets = any(
+            not arg.startswith("-") and arg.endswith((".py", ".pyi")) for arg in args
+        )
+        argv = [binary_path, *default_args, *args]
+        if not explicit_targets:
+            argv.append(str(path))
+        # S12.1: always a directory cwd, never a file.
+        run_cwd = cwd or (path if path.is_dir() else path.parent)
 
         proc = run_subprocess(
             argv,
-            cwd=cwd or path,
+            cwd=run_cwd,
             timeout=120,
             **ownership_kwargs(owner_instance_id, run_id),
         )
@@ -121,6 +130,11 @@ class PyreflyEngine(Engine):
                     findings_raw = parsed["errors"]
             except json.JSONDecodeError:
                 parsed = None
+        # S12.3: pyrefly prints paths relative to its (physical) cwd.
+        base = os.path.realpath(run_cwd)
+        for item in findings_raw:
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                item["path"] = os.path.normpath(os.path.join(base, item["path"]))
 
         return EngineResult(
             exit_code=proc.returncode,
