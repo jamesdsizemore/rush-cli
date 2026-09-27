@@ -1217,6 +1217,10 @@ def test_t27_matrix_route_writes_only_its_allowed_paths(
     before = {p for p in tmp_path.rglob("*")}
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=fixture_dir) as cwd:
+        # The positive case's own input files are arrangement, not effects.
+        for rel, text in case["expect"].get("setup", {}).items():
+            _write(Path(cwd), rel, text)
+        before |= set(tmp_path.rglob("*"))
         result = runner.invoke(cli, argv)
         written = _new_leaf_paths(tmp_path, before, Path(cwd))
     _assert_real_exercise(result)

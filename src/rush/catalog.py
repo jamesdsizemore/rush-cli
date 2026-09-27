@@ -138,6 +138,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         engine_names=(),
         maturity="real_adapter",
         scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "memory": ToolSpec(
         name="memory",
@@ -528,6 +530,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Diagnose environment health and binary resolution at <path>. Returns {status, findings[], summary}.",
         (),
         scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     # T23: `workflow` keeps status out of scan candidates (project_run).
     "status": ToolSpec(
@@ -539,6 +543,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "operation=result reads a stored result.",
         (),
         scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "patch-apply": ToolSpec(
         name="patch-apply",
@@ -804,6 +810,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ),
         ),
         scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "benchmark": ToolSpec(
         name="benchmark",
@@ -875,6 +883,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ),
         ),
         scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "dead-asset": ToolSpec(
         name="dead-asset",
@@ -916,6 +926,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             ),
         ),
         scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     # Phase 70 T17 (R17.1): a workflow tool -- full scans classify it
     # not_applicable and its steps validate their own targets.

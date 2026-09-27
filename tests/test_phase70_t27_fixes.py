@@ -1120,3 +1120,48 @@ def test_benchmark_status_default_output_not_yet_created_is_empty() -> None:
     result = CliRunner().invoke(cli, ["benchmark", "status", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == {"jobs": [], "results": []}
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["continuity", "doctor", "pr-synthesize", "provenance-ai", "status", "tui-diff"],
+)
+def test_missing_explicit_target_is_target_not_found_for_every_path_tool(
+    tmp_path: Path, tool: str
+) -> None:
+    """T27 R2: the shared executor check covers these tools too; a missing
+    explicit target is never ok or skipped."""
+    missing = tmp_path / "nope" / "missing"
+    result = CliRunner().invoke(cli, [tool, str(missing), "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "error"
+    assert payload["metadata"]["error"]["code"] == "TARGET_NOT_FOUND"
+
+
+def test_blast_radius_rejects_a_path_outside_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T27 R2: a changed path outside the analyzed project is an invalid
+    target, never a clean LOW-risk report."""
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    outside = tmp_path / "nope" / "missing.py"
+    result = CliRunner().invoke(cli, ["blast-radius", "--path", str(outside)])
+    assert result.exit_code == 2, result.output
+    assert "outside the project" in result.output
+    assert "Risk=" not in result.output
+
+
+def test_blast_radius_accepts_a_deleted_file_inside_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deleted module is a real changed path: its importers are affected."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "user.py").write_text("import gone\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+    result = CliRunner().invoke(cli, ["blast-radius", "--path", "gone.py"])
+    assert result.exit_code == 0, result.output
+    assert "user.py" in result.output

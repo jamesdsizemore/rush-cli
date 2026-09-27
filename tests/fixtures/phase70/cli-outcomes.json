@@ -755,15 +755,20 @@
     "argv": [
       "blast-radius",
       "--path",
-      "<fixture-file>"
+      "example.py"
     ],
     "canonical": "rush blast-radius",
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "example.py": "def example() -> int:\n    return 1\n",
+        "app.py": "import example\n"
+      },
       "json_paths": {},
       "human_contains": [
-        "Blast Radius Impact:"
+        "Blast Radius Impact: Risk=",
+        "Affected Files (1): app.py"
       ],
       "exit": 0
     },
@@ -781,9 +786,10 @@
       ],
       "json_paths": {},
       "human_contains": [
-        "Blast Radius Impact:"
+        "Invalid value for '--path'",
+        "outside the project"
       ],
-      "exit": 0
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1202,7 +1208,7 @@
     "id": "codeql",
     "argv": [
       "codeql",
-      "<fixture-file>",
+      "codeql.sarif",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -1211,14 +1217,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "codeql.sarif": "{\"version\": \"2.1.0\", \"$schema\": \"https://json.schemastore.org/sarif-2.1.0.json\", \"runs\": [{\"tool\": {\"driver\": {\"name\": \"CodeQL\", \"semanticVersion\": \"2.16.0\"}}, \"results\": []}]}"
+      },
       "json_paths": {
         "tool": "codeql",
-        "status": "error"
+        "status": "ok",
+        "engine": "codeql-sarif",
+        "metrics.findings": 0
       },
       "human_contains": [
-        "codeql error"
+        "CodeQL: 0 finding(s) from imported SARIF report",
+        "scope: codeql.sarif"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -1899,7 +1911,8 @@
         "status": "ok"
       },
       "human_contains": [
-        "continuity ok"
+        "continuity ok",
+        "0 records: no session checkpoints are saved"
       ],
       "exit": 0
     },
@@ -1925,16 +1938,18 @@
         "continuity",
         "<missing-target>",
         "--allow-cache-write",
-        "--allow-artifact-write"
+        "--allow-artifact-write",
+        "--json"
       ],
       "json_paths": {
         "tool": "continuity",
-        "status": "ok"
+        "status": "error",
+        "metadata.error.code": "TARGET_NOT_FOUND"
       },
       "human_contains": [
-        "continuity ok"
+        "target not found"
       ],
-      "exit": 0
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1946,7 +1961,7 @@
     "id": "contract",
     "argv": [
       "contract",
-      "<fixture-file>",
+      "pact-report.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -1955,14 +1970,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "pact-report.json": "{\"summary\": {\"errors\": 0, \"warnings\": 0}}"
+      },
       "json_paths": {
         "tool": "contract",
-        "status": "error"
+        "status": "ok",
+        "engine": "pact-report",
+        "metrics.errors": 0
       },
       "human_contains": [
-        "contract error"
+        "contract: 0 error(s), 0 warning(s) in imported report",
+        "scope: pact-report.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -2007,7 +2028,7 @@
     "id": "coverage",
     "argv": [
       "coverage",
-      "<fixture-file>",
+      "coverage.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -2016,14 +2037,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "coverage.json": "{\"totals\": {\"percent_covered\": 100.0}}"
+      },
       "json_paths": {
         "tool": "coverage",
-        "status": "error"
+        "status": "ok",
+        "engine": "coverage-report",
+        "metrics.line_percent": 100.0
       },
       "human_contains": [
-        "coverage error"
+        "coverage: 100% line coverage from imported report",
+        "scope: coverage.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -2305,16 +2332,18 @@
         "doctor",
         "<missing-target>",
         "--allow-cache-write",
-        "--allow-artifact-write"
+        "--allow-artifact-write",
+        "--json"
       ],
       "json_paths": {
         "tool": "doctor",
-        "status": "ok"
+        "status": "error",
+        "metadata.error.code": "TARGET_NOT_FOUND"
       },
       "human_contains": [
-        "doctor ok"
+        "target not found"
       ],
-      "exit": 0
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -2505,7 +2534,7 @@
     "id": "flaky",
     "argv": [
       "flaky",
-      "<fixture-file>",
+      "junit.xml",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -2514,14 +2543,19 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "junit.xml": "<testsuite><testcase classname='pkg.test' name='example'/></testsuite>"
+      },
       "json_paths": {
         "tool": "flaky",
-        "status": "error"
+        "status": "ok",
+        "engine": "junit-report"
       },
       "human_contains": [
-        "flaky error"
+        "flaky: no repeated test cases in imported report",
+        "scope: junit.xml"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -2668,7 +2702,7 @@
     "id": "fuzz",
     "argv": [
       "fuzz",
-      "<fixture-file>",
+      "fuzz-report.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -2677,14 +2711,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "fuzz-report.json": "{\"crashes\": 0, \"timeouts\": 0, \"seed\": 42}"
+      },
       "json_paths": {
         "tool": "fuzz",
-        "status": "error"
+        "status": "ok",
+        "engine": "fuzz-report",
+        "metrics.crashes": 0
       },
       "human_contains": [
-        "fuzz error"
+        "fuzz: 0 crash(es) or timeout(s) in imported report",
+        "scope: fuzz-report.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -3556,7 +3596,7 @@
     "id": "load",
     "argv": [
       "load",
-      "<fixture-file>",
+      "load-report.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -3565,14 +3605,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "load-report.json": "{\"failed_requests\": 0, \"total_requests\": 100, \"duration_seconds\": 10}"
+      },
       "json_paths": {
         "tool": "load",
-        "status": "error"
+        "status": "ok",
+        "engine": "load-report",
+        "metrics.failed_requests": 0
       },
       "human_contains": [
-        "load error"
+        "load: 0 failed request(s) in imported report",
+        "scope: load-report.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -5310,7 +5356,7 @@
     "id": "mutation",
     "argv": [
       "mutation",
-      "<fixture-file>",
+      "mutation-report.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -5319,14 +5365,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "mutation-report.json": "{\"killed\": 10, \"survived\": 0, \"timeout\": 0}"
+      },
       "json_paths": {
         "tool": "mutation",
-        "status": "error"
+        "status": "ok",
+        "engine": "mutation-report",
+        "metrics.survived": 0
       },
       "human_contains": [
-        "mutation error"
+        "mutation: 0 mutant(s) survived or timed out",
+        "scope: mutation-report.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -5616,7 +5668,7 @@
     "id": "pbt",
     "argv": [
       "pbt",
-      "<fixture-file>",
+      "property-report.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -5625,14 +5677,19 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "property-report.json": "{\"seed\": 1234, \"failures\": []}"
+      },
       "json_paths": {
         "tool": "pbt",
-        "status": "error"
+        "status": "ok",
+        "engine": "property-report"
       },
       "human_contains": [
-        "pbt error"
+        "pbt: 0 failure(s) in imported seeded report",
+        "scope: property-report.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -5859,16 +5916,18 @@
         "pr-synthesize",
         "<missing-target>",
         "--allow-cache-write",
-        "--allow-artifact-write"
+        "--allow-artifact-write",
+        "--json"
       ],
       "json_paths": {
         "tool": "pr-synthesize",
-        "status": "skipped"
+        "status": "error",
+        "metadata.error.code": "TARGET_NOT_FOUND"
       },
       "human_contains": [
-        "pr-synthesize skipped"
+        "target not found"
       ],
-      "exit": 0
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -6455,16 +6514,18 @@
         "provenance-ai",
         "<missing-target>",
         "--allow-cache-write",
-        "--allow-artifact-write"
+        "--allow-artifact-write",
+        "--json"
       ],
       "json_paths": {
         "tool": "provenance-ai",
-        "status": "skipped"
+        "status": "error",
+        "metadata.error.code": "TARGET_NOT_FOUND"
       },
       "human_contains": [
-        "provenance-ai skipped"
+        "target not found"
       ],
-      "exit": 0
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -7856,7 +7917,7 @@
     "id": "snapshot",
     "argv": [
       "snapshot",
-      "<fixture-file>",
+      "snapshot-report.json",
       "--allow-cache-write",
       "--allow-artifact-write",
       "--json"
@@ -7865,14 +7926,20 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "snapshot-report.json": "{\"matched\": 10, \"mismatched\": 0}"
+      },
       "json_paths": {
         "tool": "snapshot",
-        "status": "error"
+        "status": "ok",
+        "engine": "snapshot-report",
+        "metrics.mismatched": 0
       },
       "human_contains": [
-        "snapshot error"
+        "snapshot: 0 mismatch(es) in imported comparison",
+        "scope: snapshot-report.json"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -8663,7 +8730,8 @@
         "status": "ok"
       },
       "human_contains": [
-        "tui-diff ok"
+        "tui-diff ok",
+        "0 new regression(s), 0 resolved, 0 unchanged finding(s)"
       ],
       "exit": 0
     },
@@ -8689,16 +8757,18 @@
         "tui-diff",
         "<missing-target>",
         "--allow-cache-write",
-        "--allow-artifact-write"
+        "--allow-artifact-write",
+        "--json"
       ],
       "json_paths": {
         "tool": "tui-diff",
-        "status": "ok"
+        "status": "error",
+        "metadata.error.code": "TARGET_NOT_FOUND"
       },
       "human_contains": [
-        "tui-diff ok"
+        "target not found"
       ],
-      "exit": 0
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []

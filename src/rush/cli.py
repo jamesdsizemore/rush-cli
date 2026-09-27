@@ -5378,7 +5378,10 @@ def blast_radius_cmd(path: str, depth: int) -> None:
     from rush.tools.blast_radius import BlastRadiusAnalyzer
 
     analyzer = BlastRadiusAnalyzer()
-    report = analyzer.analyze([Path(path)], max_depth=depth)
+    try:
+        report = analyzer.analyze([Path(path)], max_depth=depth)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--path'") from exc
     echo(f"Blast Radius Impact: Risk={report.risk_score}")
     echo(
         f"  Affected Files ({len(report.affected_files)}): {', '.join(report.affected_files) or 'None'}"

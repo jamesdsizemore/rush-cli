@@ -32,6 +32,15 @@ class BlastRadiusAnalyzer:
     def analyze(
         self, changed_files: list[Path], max_depth: int = 5
     ) -> BlastRadiusReport:
+        root = self.project_root.resolve()
+        for changed in changed_files:
+            # A deleted file inside the project is a real changed path; one
+            # outside it has no importers here and is an invalid target.
+            candidate = changed if changed.is_absolute() else root / changed
+            if not candidate.resolve().is_relative_to(root):
+                raise ValueError(
+                    f"changed path {changed} is outside the project at {root}"
+                )
         target_stems = {p.stem for p in changed_files}
         graph = build_reverse_import_graph(self.project_root, target_stems)
         affected = walk_impacted_paths(graph, target_stems, max_depth)
