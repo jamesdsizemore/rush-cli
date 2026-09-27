@@ -19,9 +19,11 @@ from typing import Any, Literal
 from rush import __version__
 from rush.config import resolve_memory_record
 from rush.permissions import ExecutionPermissions
+from rush.safety.redactor import sanitize_value
 
 from .models import (
     CachePolicy,
+    InvalidTargetError,
     InvocationContext,
     OperationKind,
     PhysicalTarget,
@@ -140,15 +142,36 @@ def _normalize_permissions(
 def _resolve_targets(
     request: dict[str, Any], workspace_root: Path
 ) -> tuple[PhysicalTarget, ...]:
-    """Resolve and normalize physical targets within workspace root boundary."""
-    if "targets" in request and isinstance(request["targets"], (list, tuple)):
+    """Resolve and normalize physical targets within workspace root boundary.
+
+    T9/R9.2: a malformed target (e.g. an embedded NUL, which `lstat` rejects
+    with `ValueError`) is `InvalidTargetError`. This covers callers that
+    bypass the T8 root walk (suites' `files`, scan candidates, custom tools'
+    `files`); containment errors keep their own raise contract."""
+    raw_targets: list[Any] = _raw_targets(request)
+    try:
         return build_physical_targets(
             workspace_root=workspace_root,
-            raw_targets=request["targets"],
+            raw_targets=raw_targets,
             provenance=request.get("provenance", "explicit"),
             capability=request.get("capability", "read"),
             declared_inputs=request.get("declared_inputs"),
         )
+    except ValueError as exc:
+        shown = next(
+            (str(t) for t in raw_targets if "\x00" in str(t)),
+            ", ".join(str(t) for t in raw_targets),
+        )
+        raise InvalidTargetError(
+            str(sanitize_value(f"invalid target: {shown!r}: {exc}").value),
+            target=shown,
+        ) from None
+
+
+def _raw_targets(request: dict[str, Any]) -> list[Any]:
+    """Every target-bearing request field, in the historical order."""
+    if "targets" in request and isinstance(request["targets"], (list, tuple)):
+        return list(request["targets"])
 
     raw_paths: list[str | Path] = []
     if request.get("path"):
@@ -164,13 +187,7 @@ def _resolve_targets(
         if isinstance(value, (str, Path)) and str(value):
             raw_paths.append(value)
 
-    return build_physical_targets(
-        workspace_root=workspace_root,
-        raw_targets=raw_paths,
-        provenance=request.get("provenance", "explicit"),
-        capability=request.get("capability", "read"),
-        declared_inputs=request.get("declared_inputs"),
-    )
+    return raw_paths
 
 
 def _is_typed_argument_name(name: str, request: dict[str, Any]) -> bool:

@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.style import Style
 from rich.table import Table
@@ -60,6 +61,24 @@ def console() -> Console:
     return _shared_console
 
 
+_STATUS_GLYPHS = {
+    "ok": "✓",
+    "warn": "!",
+    "fail": "✗",
+    "error": "✗",
+    "skipped": "–",
+}
+
+
+def _styled(prefix: str, value: Any) -> str:
+    """`value` as literal text, in the theme's `<prefix>.<value>` style only
+    when that style exists -- never an unescaped markup tag."""
+    text = escape(str(value))
+    if f"{prefix}.{value}" in RUSH_THEME.styles:
+        return f"[{prefix}.{value}]{text}[/]"
+    return text
+
+
 def render_result(result: dict) -> None:
     """Human-facing rich render of a ToolResult. CLI-only (requirement C4 — MCP returns raw JSON)."""
     tool = result.get("tool", "?")
@@ -68,17 +87,13 @@ def render_result(result: dict) -> None:
     findings = result.get("findings", []) or []
 
     c = console()
-    glyph = {
-        "review": "⚡",
-        "lint": "✓",
-        "format": "✦",
-        "test": "▶",
-        "security": "⛨",
-        "mutation": "☣",
-        "coverage": "◎",
-        "ai-eval": "🤖",
-    }.get(tool, "•")
-    c.print(f"{glyph} [{tool}.{tool}] [{status}.{status}] {summary}")
+    # T9/S9.8: the glyph is derived from status (never a success mark for
+    # skipped work), the status word is printed, and every engine- or
+    # user-supplied string is escaped so it renders literally.
+    c.print(
+        f"{_STATUS_GLYPHS.get(status, '•')} {escape(str(tool))} "
+        f"{_styled('status', status)} {escape(str(summary))}"
+    )
 
     if findings:
         t = Table(show_header=True, header_style="bold")
@@ -96,12 +111,12 @@ def render_result(result: dict) -> None:
             fix_val = f.get("fix")
             fix_str = str(fix_val)[:40] if fix_val else ""
             t.add_row(
-                str(f.get("path", "")),
-                str(f.get("line", "")),
-                str(f.get("rule", "")),
-                f"[severity.{sev}]{sev}[/]",
-                str(f.get("message", ""))[:120],
-                *([fix_str] if has_any_fix else []),
+                escape(str(f.get("path", ""))),
+                escape(str(f.get("line", ""))),
+                escape(str(f.get("rule", ""))),
+                _styled("severity", sev),
+                escape(str(f.get("message", ""))[:120]),
+                *([escape(fix_str)] if has_any_fix else []),
             )
         c.print(t)
         if len(findings) > 50:

@@ -16,6 +16,7 @@ from typing import Any
 
 from rush.invocation.models import (
     AmbiguousRootError,
+    InvalidTargetError,
     PhysicalTarget,
     ScopeWideningError,
     TargetState,
@@ -172,6 +173,30 @@ class _Frame:
 
 
 def select_root(
+    raw: str | Path,
+    *,
+    anchor: Path,
+    declared_root: Path | None = None,
+    index: Mapping[str, str] | None = None,
+) -> RootSelection:
+    """The T8 ROOT-ENTRY walk (`_walk_root`) behind the T9 input-syntax gate:
+    a target containing NUL is rejected before any component is probed (a
+    NUL after a missing component would otherwise never reach `lstat`), and a
+    `ValueError` raised while walking is the same `InvalidTargetError`."""
+    text = str(raw)
+    if "\x00" in text:
+        raise InvalidTargetError(
+            _redact(f"invalid target: {text!r} contains a NUL byte"), target=text
+        )
+    try:
+        return _walk_root(text, anchor=anchor, declared_root=declared_root, index=index)
+    except ValueError as exc:
+        raise InvalidTargetError(
+            _redact(f"invalid target: {text!r}: {exc}"), target=text
+        ) from None
+
+
+def _walk_root(
     raw: str | Path,
     *,
     anchor: Path,

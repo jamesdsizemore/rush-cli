@@ -95,6 +95,18 @@ class UndeclaredInputError(InvocationError):
     """Raised when input artifacts or parameters are undeclared."""
 
 
+class InvalidTargetError(InvocationError):
+    """T9: a target that is not a usable path at all (e.g. an embedded NUL).
+    Input syntax, not containment: transports render it as a `TARGET_INVALID`
+    result instead of raising."""
+
+    code = "TARGET_INVALID"
+
+    def __init__(self, message: str, target: str = "") -> None:
+        super().__init__(message)
+        self.target = target
+
+
 class SignatureAdaptationError(InvocationError):
     """Raised when parameter or signature adaptation fails across transports."""
 
@@ -129,6 +141,7 @@ __all__ = [
     "AmbiguousRootError",
     "CacheDecision",
     "CachePolicy",
+    "InvalidTargetError",
     "InvocationContext",
     "InvocationError",
     "OperationKind",

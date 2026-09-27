@@ -12,8 +12,9 @@ from typing import Annotated, Any, cast
 from pydantic import Field
 
 from rush.config import RushConfigError, load_config
-from rush.invocation import InvocationExecutor, resolve_invocation
-from rush.invocation.executor import invocation_arguments
+from rush.invocation import InvocationContext, InvocationExecutor, resolve_invocation
+from rush.invocation.executor import invalid_target_result, invocation_arguments
+from rush.invocation.models import InvalidTargetError
 from rush.invocation.targets import (
     anchor_path_value,
     assert_contained,
@@ -129,13 +130,73 @@ def _anchored_arg(value: Any, anchor: Path) -> Any:
     return anchor_path_value(value, anchor)
 
 
+def _standard_context(
+    tool_name: str,
+    call_args: dict[str, Any],
+    cwd_relative: tuple[str, ...],
+    *,
+    server_anchor: Path,
+    declared: Path | None,
+    index: Mapping[str, str],
+) -> InvocationContext:
+    """The standard wrapper's T8 walk, member walk, containment pre-check and
+    invocation. Raises `InvalidTargetError` for malformed input (T9)."""
+    anchor = declared or server_anchor
+    raw = call_args.pop("path", None)
+    selection = select_root(
+        "." if raw is None else str(raw),
+        anchor=anchor,
+        declared_root=declared,
+        index=index,
+    )
+    # `files`/`paths` members are root-relative (their base contract),
+    # walked like the target and required to stay under the root.
+    for key in ("files", "paths"):
+        members = call_args.get(key)
+        if isinstance(members, (list, tuple)):
+            call_args[key] = [
+                select_member(
+                    str(member),
+                    anchor=selection.root,
+                    root=selection.root,
+                    index=index,
+                ).as_posix()
+                for member in members
+            ]
+    for key in cwd_relative:
+        if call_args.get(key) is not None:
+            call_args[key] = _anchored_arg(call_args[key], anchor)
+    assert_contained(selection)
+    assert_root_config_not_linked(selection.root)
+    req = {
+        "operation_id": tool_name,
+        "path": selection.relative.as_posix(),
+        **call_args,
+    }
+    return resolve_invocation(
+        req,
+        transport="mcp",
+        workspace_root=selection.root,
+        config=_load_config_or_none(selection.root),
+        original_requested_targets=None if raw is None else (str(raw),),
+        invocation_start_cwd=server_anchor,
+        declared_root=declared,
+    )
+
+
 def make_tool_wrapper(
     tool: Any,
     executor: InvocationExecutor | None = None,
     anchor_cwd: Path | None = None,
 ) -> Callable[..., Any]:
-    """Wrap a catalog ToolFn into an MCP tool handler using InvocationExecutor."""
-    exec_instance = executor if executor is not None else InvocationExecutor()
+    """Wrap a catalog ToolFn into an MCP tool handler using InvocationExecutor.
+
+    Without a shared `executor` the wrapper owns a private one, with this
+    tool registered on it (`register_all_tools` registers on the shared one)."""
+    if executor is None:
+        executor = InvocationExecutor()
+        executor.register(tool.name, tool.__call__)
+    exec_instance = executor
     real_sig = inspect.signature(tool.__call__, eval_str=True)
     public_sig = _public_signature(real_sig)
     inject = (
@@ -157,52 +218,75 @@ def make_tool_wrapper(
             )
         index = registered_root_index(strict=value is not None)
         declared = _declared_root(value, server_anchor, index)
-        anchor = declared or server_anchor
-        raw = call_args.pop("path", None)
-        selection = select_root(
-            "." if raw is None else str(raw),
-            anchor=anchor,
-            declared_root=declared,
-            index=index,
-        )
-        # `files`/`paths` members are root-relative (their base contract),
-        # walked like the target and required to stay under the root.
-        for key in ("files", "paths"):
-            members = call_args.get(key)
-            if isinstance(members, (list, tuple)):
-                call_args[key] = [
-                    select_member(
-                        str(member),
-                        anchor=selection.root,
-                        root=selection.root,
-                        index=index,
-                    ).as_posix()
-                    for member in members
-                ]
-        for key in cwd_relative:
-            if call_args.get(key) is not None:
-                call_args[key] = _anchored_arg(call_args[key], anchor)
-        assert_contained(selection)
-        assert_root_config_not_linked(selection.root)
-        req = {
-            "operation_id": tool.name,
-            "path": selection.relative.as_posix(),
-            **call_args,
-        }
-        context = resolve_invocation(
-            req,
-            transport="mcp",
-            workspace_root=selection.root,
-            config=_load_config_or_none(selection.root),
-            original_requested_targets=None if raw is None else (str(raw),),
-            invocation_start_cwd=server_anchor,
-            declared_root=declared,
-        )
+        try:
+            context = _standard_context(
+                tool.name,
+                call_args,
+                cwd_relative,
+                server_anchor=server_anchor,
+                declared=declared,
+                index=index,
+            )
+        except InvalidTargetError as exc:
+            # T9/R9.2: malformed input is a result, never a traceback.
+            return invalid_target_result(tool.name, exc)
         return exec_instance.execute(context)
 
     tool_mcp_wrapper.__dict__["__self__"] = tool
     tool_mcp_wrapper.__dict__["__signature__"] = public_sig
     return tool_mcp_wrapper
+
+
+def _custom_context(
+    tool_id: str,
+    call_args: dict[str, Any],
+    path_key: str | None,
+    *,
+    inject: bool,
+    server_anchor: Path,
+) -> InvocationContext:
+    """The custom wrapper's invocation: a bare request-dict tool is resolved
+    at the server anchor; a path/file/target tool walks its target like the
+    standard wrapper. Raises `InvalidTargetError` for malformed input (T9)."""
+    if path_key is None:
+        return resolve_invocation(
+            {"operation_id": tool_id, **call_args},
+            transport="mcp",
+            workspace_root=server_anchor,
+            config=_load_config_or_none(server_anchor),
+            invocation_start_cwd=server_anchor,
+        )
+    value = call_args.pop("project", None) if inject else call_args.get("project")
+    index = registered_root_index(strict=value is not None)
+    declared = _declared_root(value, server_anchor, index)
+    anchor = declared or server_anchor
+    # An omitted path/file/target means "." exactly like the standard
+    # wrapper: the anchor directory, never the climbed logical root.
+    raw = call_args.get(path_key)
+    selection = select_root(
+        "." if raw is None else str(raw),
+        anchor=anchor,
+        declared_root=declared,
+        index=index,
+    )
+    assert_contained(selection)
+    assert_root_config_not_linked(selection.root)
+    # The handler receives the contained canonical path, never the raw
+    # relative string next to a root derived from it (the double rebase).
+    req = {
+        "operation_id": tool_id,
+        **call_args,
+        path_key: str(selection.target),
+    }
+    return resolve_invocation(
+        req,
+        transport="mcp",
+        workspace_root=selection.root,
+        config=_load_config_or_none(selection.root),
+        original_requested_targets=None if raw is None else (str(raw),),
+        invocation_start_cwd=server_anchor,
+        declared_root=declared,
+    )
 
 
 def make_custom_wrapper(
@@ -236,46 +320,17 @@ def make_custom_wrapper(
     def custom_mcp_wrapper(*args: Any, **kwargs: Any) -> Any:
         call_args = dict(public_sig.bind(*args, **kwargs).arguments)
         server_anchor = anchor_cwd if anchor_cwd is not None else Path.cwd()
-        if path_key is None:
-            context = resolve_invocation(
-                {"operation_id": tool_id, **call_args},
-                transport="mcp",
-                workspace_root=server_anchor,
-                config=_load_config_or_none(server_anchor),
-                invocation_start_cwd=server_anchor,
+        try:
+            context = _custom_context(
+                tool_id,
+                call_args,
+                path_key,
+                inject=inject,
+                server_anchor=server_anchor,
             )
-            return exec_instance.execute(context)
-        value = call_args.pop("project", None) if inject else call_args.get("project")
-        index = registered_root_index(strict=value is not None)
-        declared = _declared_root(value, server_anchor, index)
-        anchor = declared or server_anchor
-        # An omitted path/file/target means "." exactly like the standard
-        # wrapper: the anchor directory, never the climbed logical root.
-        raw = call_args.get(path_key)
-        selection = select_root(
-            "." if raw is None else str(raw),
-            anchor=anchor,
-            declared_root=declared,
-            index=index,
-        )
-        assert_contained(selection)
-        assert_root_config_not_linked(selection.root)
-        # The handler receives the contained canonical path, never the raw
-        # relative string next to a root derived from it (the double rebase).
-        req = {
-            "operation_id": tool_id,
-            **call_args,
-            path_key: str(selection.target),
-        }
-        context = resolve_invocation(
-            req,
-            transport="mcp",
-            workspace_root=selection.root,
-            config=_load_config_or_none(selection.root),
-            original_requested_targets=None if raw is None else (str(raw),),
-            invocation_start_cwd=server_anchor,
-            declared_root=declared,
-        )
+        except InvalidTargetError as exc:
+            # T9/R9.2: malformed input is a result, never a traceback.
+            return invalid_target_result(tool_id, exc)
         return exec_instance.execute(context)
 
     custom_mcp_wrapper.__dict__["__signature__"] = public_sig

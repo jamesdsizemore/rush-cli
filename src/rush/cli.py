@@ -27,6 +27,7 @@ from . import __version__
 from .cli_support.catalog_commands import build_catalog_path_command
 from .cli_support.options import _extract_permissions, permission_options
 from .cli_support.rendering import (
+    TargetPath,
     _path_param_defaulted,
     _render_session_result,
     _run_tool,
@@ -288,7 +289,7 @@ def benchmark_status(output: Path) -> None:
 
 
 @benchmark.command("check")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--threshold", default=5.0, type=float, help="Percentage threshold for regression."
 )
@@ -335,7 +336,7 @@ def benchmark_check_cmd(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--llm",
     "use_llm",
@@ -389,7 +390,7 @@ def review(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--check", "check_only", is_flag=True, help="Only check; don't modify files."
 )
@@ -470,7 +471,7 @@ def commit_msg_cmd(
 
 
 @cli.command(name="sbom")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--output",
     "-o",
@@ -825,7 +826,7 @@ def _run_suite_cli(
 
 
 @cli.command(name="check")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
 )
@@ -860,7 +861,7 @@ def check_cmd(
 
 
 @cli.command(name="audit")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=False, help="Stop on first tool failure."
 )
@@ -895,7 +896,7 @@ def audit_cmd(
 
 
 @cli.command(name="gate")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
 )
@@ -4838,7 +4839,7 @@ def simulate_ci_cmd(workflow: str) -> None:
 @cli.command(name="attest")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
@@ -4929,7 +4930,7 @@ def attest_cmd(
 @cli.command(name="license-matrix")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
@@ -4967,7 +4968,7 @@ def license_matrix_cmd(
 @cli.command(name="iam-audit")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
