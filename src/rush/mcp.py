@@ -189,13 +189,17 @@ def rush_context_pack(
 
 
 # Phase 45 Tools
-def rush_context_gain_stats() -> str:
+def rush_context_gain_stats(*, _anchor: Path | None = None) -> str:
+    """T10 (finding 15): read-only, anchored at the logical root of the MCP
+    anchor (the declared root, else the server-start cwd); a missing DB is an
+    empty summary with `available: false`, a reason and the path."""
     import json
 
-    from rush.token_economy.telemetry import TelemetryStore
+    from rush.invocation.targets import resolve_logical_root
+    from rush.token_economy.telemetry import read_summary_readonly
 
-    store = TelemetryStore()
-    return json.dumps(store.get_summary(), indent=2)
+    root = resolve_logical_root(".", anchor=_anchor or Path.cwd())
+    return json.dumps(read_summary_readonly(root), indent=2)
 
 
 # Phase 46 Tools

@@ -608,8 +608,14 @@ def cache_stats() -> None:
     """Display cache entry count, file size, and location."""
     from .cache import ResultCache
 
-    c = ResultCache()
-    stats_data = c.stats()
+    # T10 (S10.6): read-only, anchored at the logical root; a missing DB is
+    # reported with its path and never created.
+    from .memory.store import MemoryStoreUnreadableError
+
+    try:
+        stats_data = ResultCache.stats_readonly(_logical_cache_db())
+    except MemoryStoreUnreadableError as exc:
+        raise click.ClickException(f"{exc.code}: {exc}") from exc
     click.echo(json.dumps(stats_data, indent=2))
 
 
@@ -618,9 +624,16 @@ def cache_clean() -> None:
     """Purge all cached results from .rush/cache.db."""
     from .cache import ResultCache
 
-    c = ResultCache()
-    count = c.clear()
+    db = _logical_cache_db()
+    count = ResultCache(db).clear() if db.is_file() else 0
     click.echo(f"Purged {count} cached result(s).")
+
+
+def _logical_cache_db() -> Path:
+    """T10: the result cache under the logical root of the cwd, never the cwd."""
+    from .invocation.targets import resolve_logical_root
+
+    return resolve_logical_root(Path.cwd()) / ".rush" / "cache.db"
 
 
 # --- Setup & Init CLI commands ---------------------------------------------
@@ -4633,18 +4646,29 @@ def trace_cmd() -> None:
 )
 def flight_recorder_cmd(session_id: str | None) -> None:
     """Record and replay agent JSON-RPC sessions."""
+    from rush.invocation.targets import resolve_logical_root
     from rush.tools.flight_recorder import FlightRecorder
 
-    recorder = FlightRecorder()
+    # T10 (S10.5): status and replay are read-only and anchored at the logical root.
+    recorder = FlightRecorder(resolve_logical_root(Path.cwd()), create=False)
     if session_id:
-        events = recorder.replay_session(session_id)
+        from rush.memory.store import MemoryStoreUnreadableError
+
+        try:
+            events = recorder.replay_session(session_id)
+        except MemoryStoreUnreadableError as exc:
+            raise click.ClickException(f"{exc.code}: {exc}") from exc
         click.echo(
             f"Flight Recorder: Replaying session '{session_id}' ({len(events)} events):"
         )
         for e in events:
             click.echo(f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}")
+    elif recorder.flights_dir.is_dir():
+        click.echo(f"Flight Recorder: Active (recording to {recorder.flights_dir}).")
     else:
-        click.echo("Flight Recorder: Active (recording to .rush/sessions/flights/).")
+        click.echo(
+            f"Flight Recorder: No recordings yet ({recorder.flights_dir} does not exist)."
+        )
 
 
 @cli.command(name="swarm-merge")

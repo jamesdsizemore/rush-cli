@@ -37,6 +37,8 @@ from rush.memory.store import (
     MemorySubject,
     TypedArtifactStore,
     _write_version,
+    read_sqlite_readonly,
+    sqlite_has_table,
 )
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import sanitize_value
@@ -179,6 +181,54 @@ def read_origin_kind_by_symbol(
             (origin_kind, symbol_ref),
         ).fetchall()
     return [json.loads(row["content"]) for row in rows]
+
+
+_ORIGIN_SQL = "SELECT content FROM memory_artifacts WHERE origin_kind = ?"
+_ORIGIN_ID_SQL = _ORIGIN_SQL + " AND origin_id = ? ORDER BY created_at"
+_ORIGIN_SYMBOL_SQL = _ORIGIN_SQL + " AND symbol_ref = ? ORDER BY created_at"
+_ORIGIN_KIND_SQL = _ORIGIN_SQL + " ORDER BY created_at"
+
+
+def _origin_rows_readonly(
+    project_root: Path, sql: str, params: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """T10: the non-creating compatibility-view read. One `read_sqlite_readonly`
+    connection (no `.rush`, DB, `-wal`/`-shm` or migration is ever created); a
+    legacy DB predating `artifact_version` still yields its origin rows, because
+    `origin_kind`/`origin_id`/`symbol_ref` are base-schema columns. A missing DB
+    or table gives no rows."""
+    db = Path(project_root).resolve() / ".rush" / "memory.db"
+
+    def read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        if not sqlite_has_table(conn, "memory_artifacts"):
+            return []
+        return [json.loads(row[0]) for row in conn.execute(sql, params).fetchall()]
+
+    return read_sqlite_readonly(db, read) or []
+
+
+def read_origin_readonly(
+    project_root: Path, origin_kind: str, origin_id: str
+) -> dict[str, Any] | None:
+    """Non-creating `read_origin`."""
+    rows = _origin_rows_readonly(project_root, _ORIGIN_ID_SQL, (origin_kind, origin_id))
+    return rows[0] if rows else None
+
+
+def read_origin_kind_readonly(
+    project_root: Path, origin_kind: str
+) -> list[dict[str, Any]]:
+    """Non-creating `read_origin_kind`."""
+    return _origin_rows_readonly(project_root, _ORIGIN_KIND_SQL, (origin_kind,))
+
+
+def read_origin_kind_by_symbol_readonly(
+    project_root: Path, origin_kind: str, symbol_ref: str
+) -> list[dict[str, Any]]:
+    """Non-creating `read_origin_kind_by_symbol`."""
+    return _origin_rows_readonly(
+        project_root, _ORIGIN_SYMBOL_SQL, (origin_kind, symbol_ref)
+    )
 
 
 def _rename_migrated(path: Path) -> None:

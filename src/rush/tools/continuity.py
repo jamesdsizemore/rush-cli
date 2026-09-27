@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
@@ -31,8 +32,11 @@ from ..continuity.results import (
     valid_name,
 )
 from ..contracts.results import ToolResultV1
+from ..invocation.models import AmbiguousRootError, InvocationError
+from ..invocation.targets import RootSelection, select_root
 from ..io.physical_paths import ContainmentError, PhysicalRoot
 from ..memory.checkpoint_journal import CheckpointJournal
+from ..memory.store import MemoryStoreUnreadableError
 from ..permissions import (
     ExecutionPermissions,
     check_permissions,
@@ -69,6 +73,71 @@ __all__ = [
     "SessionContinuityTool",
     "os",
 ]
+
+
+def state_location(path: Path, project_id: str | None = None) -> tuple[Path, Path]:
+    """T10 (R10.1): `(root, base)`. `root` is the logical root that owns this
+    call's `.rush` state, never `Path.resolve()` of the given path (a file target
+    would become the "root"). `base` is the root-relative directory `path` names
+    (its parent for a file), so path-relative arguments keep their meaning.
+
+    1. The ambient `current_invocation_root()` of the executing invocation, when
+       `path` lies within it (walked by the T8 no-follow `select_root`).
+    2. Else a registered `project_id` (it also serves as the declared root on
+       MCP); an unregistered value stays pure telemetry attribution.
+    3. Else the T8 logical root of `path`: the deepest marked or registered
+       directory on its walk, else the deepest existing directory.
+    """
+    from ..invocation.executor import current_invocation_root
+    from ..invocation.targets import registered_root_index, route_project_reference
+    from ..workflows.projects import ProjectNotFoundError, ProjectRootMissingError
+
+    anchor = Path.cwd()
+    index = registered_root_index()
+    ambient = current_invocation_root()
+    if ambient is not None:
+        within = _within(path, ambient, anchor, index)
+        if within is not None:
+            return within
+    if project_id:
+        try:
+            _, registered = route_project_reference(
+                project_id, anchor=anchor, index=index
+            )
+        except ProjectNotFoundError:
+            pass
+        else:
+            if not registered.is_dir():
+                raise ProjectRootMissingError(
+                    f"registered project root is missing: {registered}"
+                )
+            return _within(path, registered, anchor, index) or (registered, Path("."))
+    return _location(select_root(path, anchor=anchor, index=index))
+
+
+def _within(
+    path: Path, declared: Path, anchor: Path, index: Mapping[str, str]
+) -> tuple[Path, Path] | None:
+    try:
+        return _location(
+            select_root(path, anchor=anchor, declared_root=declared, index=index)
+        )
+    except AmbiguousRootError:
+        return None
+
+
+def _location(selection: RootSelection) -> tuple[Path, Path]:
+    base = selection.relative
+    if selection.target.is_file():
+        base = base.parent
+    return selection.root, base
+
+
+def _rebase(base: Path, value: str | None) -> str | None:
+    """A `path`-relative argument re-expressed relative to the logical root."""
+    if not value or os.path.isabs(value) or base == Path("."):
+        return value
+    return (base / value).as_posix()
 
 
 class SessionContinuityTool(ToolFn):
@@ -191,7 +260,6 @@ class SessionContinuityTool(ToolFn):
         # that same identity instead of minting a new one, so a real retry still dedupes.
         self._invocation_id = idempotency_key or str(uuid.uuid4())
         started = monotonic()
-        root = path.resolve()
         granted = permissions or ExecutionPermissions()
 
         if operation not in VALID_OPERATIONS:
@@ -202,8 +270,22 @@ class SessionContinuityTool(ToolFn):
                 operation=operation,
                 granted=granted,
             )
+        from ..workflows.projects import ProjectError
+
+        try:
+            root, base = state_location(path, project_id)
+        except (InvocationError, ProjectError, ValueError) as exc:
+            return self._result(
+                started,
+                "error",
+                f"Session state root could not be resolved: {exc}",
+                operation=operation,
+                granted=granted,
+            )
 
         handoff = {**(handoff or {}), "target_provider": provider_id}
+        context_path = _rebase(base, context_path)
+        coordination_path = _rebase(base, coordination_path)
 
         dispatch_table = {
             "context_pack": lambda: self._context_pack(
@@ -310,14 +392,17 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
     ) -> ContinuityOutput:
+        # T10 (finding 3): JSON first, then `memory.db` read-only, whether or not
+        # `.rush/sessions` exists; `list_checkpoints` never creates anything.
         try:
-            session_dir = PhysicalRoot(root).open_contained(
-                Path(".rush") / "sessions", purpose="read"
-            )
-            sessions = (
-                CheckpointJournal(root).list_checkpoints()
-                if session_dir.exists()
-                else []
+            sessions = CheckpointJournal(root).list_checkpoints()
+        except MemoryStoreUnreadableError as exc:
+            return self._result(
+                started,
+                "error",
+                f"Session checkpoint store is unreadable ({exc.code}): {exc}",
+                operation="list",
+                granted=granted,
             )
         except ContainmentError:
             return self._result(
@@ -386,6 +471,14 @@ class SessionContinuityTool(ToolFn):
             )
         try:
             data = CheckpointJournal(root).restore_checkpoint(name or "")
+        except MemoryStoreUnreadableError as exc:
+            return self._result(
+                started,
+                "error",
+                f"Session checkpoint store is unreadable ({exc.code}): {exc}",
+                operation="restore",
+                granted=granted,
+            )
         except ContainmentError:
             return self._result(
                 started,

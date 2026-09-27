@@ -7,13 +7,14 @@ enforces the no-STATED-on-entry, redact-before-store, recall-rescan, and stalene
 from __future__ import annotations
 
 import dataclasses
+import gc
 import hashlib
 import json
 import secrets
 import sqlite3
 import time
 import urllib.parse
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -128,6 +129,26 @@ class MemoryMigrationRequiredError(Exception):
     read-only, so it can never run the migration a legacy database needs; it reports the
     requirement instead of silently migrating (which would make a "preview" write).
     """
+
+
+class MemoryStoreUnreadableError(OSError):
+    """Raised when a read-only SQLite read cannot complete without writing.
+    `.code` is `readonly_state_code(...)`: `E_STORE_CORRUPT` or `E_STORE_BUSY`.
+
+    T10: an `OSError`, so compatibility readers' existing `OSError` handling
+    (for example coordination's flight replay) reports it as unavailable."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def readonly_state_code(state: str, db: Path) -> str:
+    """Error code for an unusable read-only open. A `read_conflict` on a DB that has no
+    `-wal` now (no writer appeared) is corruption; anything else is a writer in the way."""
+    if state == "read_conflict" and not Path(f"{db}-wal").exists():
+        return "E_STORE_CORRUPT"
+    return "E_STORE_BUSY"
 
 
 OwnerScopeKind = Literal["user", "project", "session", "agent"]
@@ -639,11 +660,149 @@ def _row_to_artifact(
 
 @dataclass(frozen=True)
 class ReadOnlyOpenResult:
-    """Result of `TypedArtifactStore.open_readonly` (MC01 §6.1): never creates a DB/directory."""
+    """Result of `open_sqlite_readonly` / `TypedArtifactStore.open_readonly` (MC01 §6.1):
+    never creates a DB, directory, or `-wal`/`-shm` sidecar.
+
+    `mode` is the SQLite URI mode actually used (`"ro"` or `"ro&immutable=1"`).
+    `consistency` is `"last_checkpoint"` for an immutable open (committed data still in
+    a `-wal` is not visible, but no `-wal` existed at open time). `state` is `None` on a
+    usable open, `"read_conflict"` when an immutable read raised `sqlite3.DatabaseError`
+    (corrupt, or changed underneath the read), or `"wal_index_missing"` when a `-wal`
+    exists without its `-shm` (reading it would create the `-shm`)."""
 
     available: bool
     migration_required: bool = False
     connection: sqlite3.Connection | None = None
+    mode: str | None = None
+    consistency: str | None = None
+    state: str | None = None
+
+
+def open_sqlite_readonly(db: Path) -> ReadOnlyOpenResult:
+    """W4 X2 shared read-only SQLite opener (memory, ledger, telemetry readers).
+
+    - `db` missing: `available=False`, no I/O beyond the existence check.
+    - `<db>-wal` exists (a writer is, or was, connected): `mode=ro`. Both sidecars
+      already exist, so nothing is created, and reads see a transactional snapshot.
+      A `-wal` without its `-shm` would force SQLite to create the `-shm`, so that
+      case returns `state="wal_index_missing"` with no connection.
+    - Otherwise: `mode=ro&immutable=1`, which never creates a sidecar. Each table's
+      first row is read once (cost bounded by the table count, never the DB size); a
+      `sqlite3.DatabaseError` from that read returns `state="read_conflict"` with no
+      connection. Never retried in a mode that could create sidecars. Corruption deeper
+      in a table surfaces as the `DatabaseError` of the caller's own read.
+    """
+    if not db.exists():
+        return ReadOnlyOpenResult(available=False)
+    quoted = urllib.parse.quote(str(db))
+    if Path(f"{db}-wal").exists():
+        if not Path(f"{db}-shm").exists():
+            return ReadOnlyOpenResult(
+                available=True, mode="ro", state="wal_index_missing"
+            )
+        conn = sqlite3.connect(f"file:{quoted}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        return ReadOnlyOpenResult(available=True, connection=conn, mode="ro")
+    mode = "ro&immutable=1"
+    conn = sqlite3.connect(f"file:{quoted}?mode={mode}", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND sql NOT LIKE 'CREATE VIRTUAL%'"
+        ).fetchall()
+        for (name,) in tables:
+            quoted_name = name.replace('"', '""')
+            conn.execute(f'SELECT * FROM "{quoted_name}" LIMIT 1').fetchall()
+    except sqlite3.DatabaseError:
+        conn.close()
+        return ReadOnlyOpenResult(
+            available=False,
+            mode=mode,
+            consistency="last_checkpoint",
+            state="read_conflict",
+        )
+    return ReadOnlyOpenResult(
+        available=True, connection=conn, mode=mode, consistency="last_checkpoint"
+    )
+
+
+def _sqlite_fingerprint(db: Path) -> tuple[int, int, int] | None:
+    try:
+        st = db.stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _unchanged_since(db: Path, fingerprint: tuple[int, int, int]) -> bool:
+    return not Path(f"{db}-wal").exists() and _sqlite_fingerprint(db) == fingerprint
+
+
+def read_sqlite_readonly[T](
+    db: Path,
+    read: Callable[[sqlite3.Connection], T],
+    *,
+    attempts: int = 3,
+) -> T | None:
+    """X1 (T10): run `read` over one `open_sqlite_readonly` connection, leaving no
+    `-wal`/`-shm` and no byte change behind. `None` when `db` is missing.
+
+    An immutable open (no `-wal` present) records `(st_ino, st_size, st_mtime_ns)`
+    before the read and re-checks it, and that no `-wal` appeared, after the read; a
+    change retries, up to `attempts` in total, then raises `E_STORE_BUSY`. An unusable
+    open (`wal_index_missing`, or a `read_conflict` on an unchanged file) raises
+    `MemoryStoreUnreadableError` with `readonly_state_code`. Nothing is ever migrated.
+    """
+    if Path(f"{db}-wal").exists():
+        # ponytail: this process's own leaked writers (`with self._connect()` commits
+        # but never closes) are collected first, so they checkpoint and remove their
+        # WAL now, not mid-read -- a read-only connection that closes last cannot
+        # checkpoint and would strand committed pages in the `-wal`. Ceiling: a
+        # writer in another process can still close first; closing every writer
+        # connection deterministically is the upgrade.
+        gc.collect()
+    for _ in range(attempts):
+        before = _sqlite_fingerprint(db)
+        if before is None:
+            return None
+        opened = open_sqlite_readonly(db)
+        conn = opened.connection
+        immutable = opened.mode == "ro&immutable=1"
+        if conn is None:
+            if opened.state is None:
+                return None
+            if immutable and not _unchanged_since(db, before):
+                continue
+            raise MemoryStoreUnreadableError(
+                f"{db} cannot be read without writing ({opened.state}); retry",
+                code=readonly_state_code(opened.state, db),
+            )
+        try:
+            value = read(conn)
+        except sqlite3.DatabaseError as exc:
+            if immutable and not _unchanged_since(db, before):
+                continue
+            raise MemoryStoreUnreadableError(
+                f"{db} could not be read: {exc}",
+                code=readonly_state_code("read_conflict", db),
+            ) from exc
+        finally:
+            conn.close()
+        if not immutable or _unchanged_since(db, before):
+            return value
+    raise MemoryStoreUnreadableError(
+        f"{db} kept changing during a read-only read; retry", code="E_STORE_BUSY"
+    )
+
+
+def sqlite_has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 class TypedArtifactStore:
@@ -1488,21 +1647,22 @@ class TypedArtifactStore:
         schema. A missing DB returns `available=False` with zero filesystem I/O. An existing DB
         predating `artifact_version` returns `migration_required=True` without touching it —
         callers must run `upgrade()` before writing. Otherwise returns an open read-only
-        `sqlite3.Connection` (SQLite `mode=ro`, so any accidental write raises)."""
+        `sqlite3.Connection` (SQLite `mode=ro`, so any accidental write raises).
+
+        G1/X2: opens through `open_sqlite_readonly`, so it never leaves a `-wal`/`-shm`
+        behind; a non-`None` `state` is passed through with no connection."""
         root = Path(project_root).resolve()
-        db_path = root / ".rush" / "memory.db"
-        if not db_path.exists():
-            return ReadOnlyOpenResult(available=False)
-        uri = f"file:{urllib.parse.quote(str(db_path))}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
-        conn.row_factory = sqlite3.Row
+        opened = open_sqlite_readonly(root / ".rush" / "memory.db")
+        conn = opened.connection
+        if conn is None:
+            return opened
         columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
         if "artifact_version" not in columns:
             conn.close()
-            return ReadOnlyOpenResult(available=True, migration_required=True)
-        return ReadOnlyOpenResult(available=True, connection=conn)
+            return dataclasses.replace(opened, migration_required=True, connection=None)
+        return opened
 
     @classmethod
     def preview_mutation(
@@ -1533,6 +1693,12 @@ class TypedArtifactStore:
         """
         root = Path(project_root).resolve()
         opened = cls.open_readonly(root)
+        if opened.state is not None:
+            db = root / ".rush" / "memory.db"
+            raise MemoryStoreUnreadableError(
+                f"{db} cannot be read without writing ({opened.state}); retry",
+                code=readonly_state_code(opened.state, db),
+            )
         if not opened.available:
             raise KeyError(artifact_id)
         if opened.migration_required or opened.connection is None:
