@@ -719,11 +719,12 @@ def test_no_module_level_home_lookup(module: str) -> None:
 
 
 def test_benchmark_status_default_output_is_under_temp_home(
-    _isolated_home: Path,
+    _isolated_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from rush.setup.provision import default_data_root
+    from rush import cli as cli_module
 
-    jobs = default_data_root() / "benchmarks" / "jobs"
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    jobs = cli_module._benchmark_default_root() / "jobs"
     assert jobs.is_relative_to(_isolated_home)
     jobs.mkdir(parents=True)
     (jobs / "benchmark-abc.json").write_text(
@@ -748,7 +749,7 @@ def test_benchmark_run_defaults_are_under_temp_home(_isolated_home: Path) -> Non
 # --- part B2 item 2: sync env with a missing env file -------------------------
 
 
-@pytest.mark.parametrize("missing", ["example", "actual"])
+@pytest.mark.parametrize("missing", ["example"])  # a missing .env: see the domain-result test
 def test_sync_env_missing_file_is_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
@@ -1472,3 +1473,47 @@ def test_project_read_views_create_no_store(tmp_path: Path, operation: str) -> N
     assert result.exit_code == 0, result.output
     after = sorted(p.relative_to(root) for p in root.rglob("*"))
     assert after == before, sorted(set(after) - set(before))
+
+
+def test_benchmark_default_root_keeps_its_existing_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T27 R2: the default benchmark root stays where existing history lives
+    (LOCALAPPDATA/Rush/benchmarks, else ~/AppData/Local/Rush/benchmarks)."""
+    from rush import cli as cli_module
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert (
+        cli_module._benchmark_default_root()
+        == tmp_path / "local" / "Rush" / "benchmarks"
+    )
+    monkeypatch.delenv("LOCALAPPDATA")
+    assert cli_module._benchmark_default_root() == (
+        Path.home() / "AppData" / "Local" / "Rush" / "benchmarks"
+    )
+
+
+def test_benchmark_status_explicit_output_that_is_a_file_is_invalid(
+    tmp_path: Path,
+) -> None:
+    """T27 R2: an explicit --output naming a file is an invalid target, never
+    an empty history read from its parent."""
+    target = tmp_path / "hosts"
+    target.write_text("x")
+    result = CliRunner().invoke(cli, ["benchmark", "status", "--output", str(target)])
+    assert result.exit_code == 2, result.output
+    assert "Invalid value for '--output'" in result.output
+
+
+def test_sync_env_missing_env_file_lists_every_key_as_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T27 R2: a missing `.env` is the domain result (every example key is
+    missing, exit 1), not a usage error; a missing `.env.example` stays one."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env.example").write_text("API_URL=\nDEBUG=\n")
+    result = CliRunner().invoke(cli, ["sync", "env", "--json"])
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["passed"] is False
+    assert sorted(payload["rows"]) == ["API_URL", "DEBUG"]

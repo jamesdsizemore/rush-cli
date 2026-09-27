@@ -237,9 +237,11 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
 def _benchmark_default_root() -> Path:
     """Return the durable user-local benchmark root, never a repository path.
     Resolved at call time (a Click callable default), never at import."""
-    from .setup.provision import default_data_root
-
-    return default_data_root() / "benchmarks"
+    return (
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        / "Rush"
+        / "benchmarks"
+    )
 
 
 def _benchmark_default_output() -> Path:
@@ -382,12 +384,11 @@ def benchmark_status(output: Path, as_json: bool) -> None:
     explicit = (
         ctx.get_parameter_source("output") is not click.core.ParameterSource.DEFAULT
     )
-    if explicit and not output.exists():
-        # A typed output that does not exist is an invalid target, not an
-        # empty history; the default output is absent until the first run.
-        raise click.BadParameter(
-            f"Path '{output}' does not exist.", param_hint="'--output'"
-        )
+    if explicit and not output.is_dir():
+        # A typed output that is not an existing directory is an invalid
+        # target, not an empty history; the default is absent until a run.
+        problem = "is not a directory" if output.exists() else "does not exist"
+        raise click.BadParameter(f"Path '{output}' {problem}.", param_hint="'--output'")
     jobs = [
         {
             "job_id": payload.get("job_id", path.stem),
@@ -2490,7 +2491,7 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
 @click.argument(
     "env_actual",
     default=".env",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    type=click.Path(dir_okay=False, path_type=Path),
 )
 @click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
 def sync_env_cmd(env_example: Path, env_actual: Path, as_json: bool) -> None:
