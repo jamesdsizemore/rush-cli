@@ -48,7 +48,12 @@ from rush.dashboard.static_assets import (
 from rush.dashboard.theme import MOTION, THEME
 from rush.discovery.stack import detect_project_stacks
 from rush.memory.maintenance import MaintenanceTask
-from rush.memory.store import MemorySubject, OwnerScope, TypedArtifactStore
+from rush.memory.store import (
+    MemorySubject,
+    OwnerScope,
+    TypedArtifactStore,
+    is_internal_memory_source,
+)
 from rush.permissions import ExecutionPermissions
 from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
@@ -3505,6 +3510,15 @@ def _build_memory_section(
     source_filter = set(_split_csv(query.get("source", [])))
     freshness = query.get("freshness", [None])[0]
     include_archived = query.get("include_archived", ["false"])[0] == "true"
+    # T18 R18.2: bookkeeping sources are excluded from the default browse/query
+    # allowlist and `known_sources`. `include_internal` restores exactly the
+    # pre-T18 set. Expand/related-by-ID (below) keep the unfiltered `all_sources`.
+    include_internal = query.get("include_internal", ["false"])[0] == "true"
+    browse_sources = (
+        all_sources
+        if include_internal
+        else [s for s in all_sources if not is_internal_memory_source(s)]
+    )
     query_text = query.get("query", [""])[0]
 
     # Only the browse (empty-query) path is cache-eligible: its own docstring
@@ -3518,7 +3532,7 @@ def _build_memory_section(
         tuple(subjects),
         frozenset(trust_filter),
         include_archived,
-        tuple(sorted(all_sources)),
+        tuple(sorted(browse_sources)),
         browse_revision,
     )
     cached_items = None if query_text else _MEMORY_BROWSE_CACHE.get(browse_cache_key)
@@ -3529,7 +3543,7 @@ def _build_memory_section(
         items = _fetch_memory_browse_items(
             store,
             root=root,
-            all_sources=all_sources,
+            all_sources=browse_sources,
             subjects=subjects,
             trust_filter=trust_filter,
             include_archived=include_archived,
@@ -3574,7 +3588,7 @@ def _build_memory_section(
         "next_cursor": next_cursor,
         "total": len(items),
         "subjects": list(_MEMORY_SUBJECTS),
-        "known_sources": all_sources,
+        "known_sources": browse_sources,
     }
 
     expand_id = query.get("expand_id", [None])[0]

@@ -1326,10 +1326,16 @@ def _memory_known_sources(project: ProjectState) -> list[str]:
     `_all_known_sources` in `server.py`), never a narrower cross-tool
     allowlist. Read-only: `TypedArtifactStore.list_artifact_refs()` is a
     public read method, never a raw SQLite write."""
-    from rush.memory.store import TypedArtifactStore
+    from rush.memory.store import TypedArtifactStore, is_internal_memory_source
 
     store = TypedArtifactStore(project.root)
-    return sorted({row["source"] for row in store.list_artifact_refs()})
+    return sorted(
+        {
+            row["source"]
+            for row in store.list_artifact_refs()
+            if not is_internal_memory_source(row["source"])
+        }
+    )
 
 
 def _memory_refresh(
