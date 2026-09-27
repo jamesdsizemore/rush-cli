@@ -65,6 +65,15 @@ def classify_path(rel_path: str) -> CoverageRecord:
             exclusion_reason="Untracked local research artifacts governed by AGENTS.md",
         )
 
+    # PyInstaller byproducts of the ci.yml/release.yml native-archive step
+    if normalized in {"rush_entry.py", "rush.spec"}:
+        return CoverageRecord(
+            path=normalized,
+            classification="excluded",
+            inclusion_rule="pyinstaller-build-byproduct",
+            exclusion_reason="Untracked entry script and spec written by the native-archive build step",
+        )
+
     # Source code
     if normalized.startswith("src/"):
         return CoverageRecord(
