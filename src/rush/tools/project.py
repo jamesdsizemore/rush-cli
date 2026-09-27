@@ -23,6 +23,7 @@ from typing import Any, Literal
 
 from rush.permissions import ExecutionPermissions, check_permissions
 from rush.workflows.projects import (
+    DESCRIPTOR_RELATIVE_PATH,
     ProjectError,
     ProjectInvalidRequestError,
     configure_project,
@@ -30,7 +31,7 @@ from rush.workflows.projects import (
     list_project_artifacts,
     list_projects,
     project_snapshot,
-    register_project,
+    register_project_outcome,
     relink_project,
     resolve_active_project,
     resolve_project,
@@ -38,6 +39,26 @@ from rush.workflows.projects import (
 )
 
 from .base import Finding, ToolFn, ToolResult, ToolStatus
+
+_READBACK_FIELDS = ("project_id", "root", "name", "revision", "configured", "exists")
+
+
+def _mutation_view(project_id: str, *, created: bool) -> dict[str, Any]:
+    """T27: the project view re-read from the registry after the write, plus
+    `changed` (what this call wrote) or `unchanged` (it wrote nothing) and
+    `readback` (the re-read registry fields)."""
+    view = resolve_project(project_id)
+    readback = {key: view.get(key) for key in _READBACK_FIELDS}
+    if not created:
+        return {**view, "unchanged": "already registered", "readback": readback}
+    changed = {
+        "project_id": view["project_id"],
+        "root": view["root"],
+        "revision": view["revision"],
+        "descriptor": str(Path(view["root"]) / DESCRIPTOR_RELATIVE_PATH),
+    }
+    return {**view, "changed": changed, "readback": readback}
+
 
 ProjectAction = Literal[
     "add",
@@ -233,15 +254,15 @@ class ProjectTool(ToolFn):
         if action == "show":
             return resolve_project(project_id or path)
         if action == "add":
-            record = register_project(path, name=name)
-            return resolve_project(record.project_id)
+            record, created = register_project_outcome(path, name=name)
+            return _mutation_view(record.project_id, created=created)
         if action == "create":
             if not name:
                 raise ValueError("create requires name")
             record = create_project(
                 Path(parent) if parent else path, name, init_git=init_git
             )
-            return resolve_project(record.project_id)
+            return _mutation_view(record.project_id, created=True)
         if action == "select":
             if not project_id or not session_id:
                 raise ValueError("select requires project_id and session_id")
@@ -273,7 +294,10 @@ class ProjectTool(ToolFn):
                 raise ValueError("relink requires project_id")
             if expected_revision is None:
                 raise ValueError("relink requires expected_revision")
-            return relink_project(project_id, path, expected_revision=expected_revision)
+            relinked = relink_project(
+                project_id, path, expected_revision=expected_revision
+            )
+            return _mutation_view(relinked["project_id"], created=True)
         raise ValueError(f"unknown project action: {action}")
 
     def handle_request(
@@ -395,15 +419,15 @@ class ProjectTool(ToolFn):
             path = request.get("path")
             if not path:
                 raise ProjectInvalidRequestError("add requires path")
-            record = register_project(path, name=request.get("name"))
-            return resolve_project(record.project_id)
+            record, created = register_project_outcome(path, name=request.get("name"))
+            return _mutation_view(record.project_id, created=created)
         if operation == "create":
             parent = request.get("parent")
             name = request.get("name")
             if not parent or not name:
                 raise ProjectInvalidRequestError("create requires parent and name")
             record = create_project(parent, name, init_git=git_init)
-            return resolve_project(record.project_id)
+            return _mutation_view(record.project_id, created=True)
         if operation == "relink":
             path = request.get("path")
             expected_revision = request.get("expected_revision")
@@ -412,12 +436,13 @@ class ProjectTool(ToolFn):
                     "relink requires project, path, and expected_revision"
                 )
             _require_int_in_range(expected_revision, "expected_revision", minimum=0)
-            return relink_project(
+            relinked = relink_project(
                 project,
                 path,
                 expected_revision=expected_revision,
                 lock_timeout=lock_timeout,
             )
+            return _mutation_view(relinked["project_id"], created=True)
         if operation == "configure":
             if not project:
                 raise ProjectInvalidRequestError("configure requires project")

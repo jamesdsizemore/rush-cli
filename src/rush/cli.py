@@ -2278,11 +2278,12 @@ def release_check_cmd(as_json: bool) -> None:
     from rush.release.semver import SemVerValidator
 
     versions = SemVerValidator.check_manifest_parity(Path.cwd())
+    rows = [{"manifest": m, "version": v} for m, v in versions.items()]
     if as_json:
-        echo_json({"rows": versions, "total": len(versions)})
+        echo_json({"rows": rows, "total": len(rows)})
         return
     echo("Discovered Manifest Versions:")
-    echo_rows(list(versions.items()), lambda item: f"  - {item[0]}: {item[1]}")
+    echo_rows(rows, lambda row: f"  - {row['manifest']}: {row['version']}")
 
 
 @cli.group(name="ci")
@@ -5236,7 +5237,7 @@ def context_gain_cmd() -> None:
 )
 def context_persona_cmd(set_persona: str | None) -> None:
     """View or configure agent terse response persona style."""
-    from rush.memory.preference_store import PreferenceStore
+    from rush.memory.preference_store import PreferenceStore, get_preference_readonly
 
     if set_persona:
         PreferenceStore().set("persona_style", set_persona)
@@ -5250,7 +5251,7 @@ def context_persona_cmd(set_persona: str | None) -> None:
         # T27: a read never creates the preference or memory store.
         echo("Current persona style: terse (default; no preference store in .rush/)")
         return
-    current = PreferenceStore().get("persona_style", "terse")
+    current = get_preference_readonly(rush_dir.parent, "persona_style", "terse")
     echo(f"Current persona style: {current}")
 
 

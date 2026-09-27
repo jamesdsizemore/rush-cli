@@ -620,6 +620,7 @@ def test_preview_apply_false_still_reports_real_row_state(tmp_path: Path) -> Non
         "id": "a1",
         "revision": 1,
         "trust_tier": "IMPORTED",
+        "unchanged": "preview only (apply=false); nothing committed",
     }
 
     denied = MemoryTool().run(

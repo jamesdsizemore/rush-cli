@@ -72,13 +72,16 @@ def console() -> Console:
     return _shared_console
 
 
-_UNSAFE_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# A CR directly before LF is a CRLF line ending, kept so verbatim CRLF
+# source stays readable; a lone CR (cursor return) is still escaped.
+_UNSAFE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
 
 
 def safe_terminal_text(s: str) -> str:
-    """X3: every C0 control except newline and tab, plus DEL and C1, as a
-    visible `\\xNN` escape, so no dynamic string can clear the screen,
-    retitle the terminal or move the cursor. Apply after secret redaction."""
+    """X3: every C0 control except newline, tab and a CRLF's CR, plus DEL and
+    C1, as a visible `\\xNN` escape, so no dynamic string can clear the
+    screen, retitle the terminal or move the cursor. Apply after secret
+    redaction."""
     return _UNSAFE_CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", s)
 
 
@@ -119,11 +122,15 @@ def _glyph(c: Console, status: str) -> str:
 
 def copyable_json_command(tool: str) -> str:
     """The `rush ... --json` command that prints the untruncated result: the
-    real argv when it is this invocation's, else the Click command path."""
+    real argv when it is this invocation's, else the Click command path.
+    X3: argv values are secret-redacted before they are shown."""
+    from rush.safety.redactor import sanitize_value
+
     ctx = click.get_current_context(silent=True)
     path = ctx.command_path.split()[1:] if ctx is not None else [tool]
     argv = sys.argv[1:]
     words = argv if path and all(part in argv for part in path) else path
+    words = [str(word) for word in sanitize_value(list(words)).value]
     if "--json" not in words:
         words = [*words, "--json"]
     return shlex.join(["rush", *words])
@@ -174,20 +181,6 @@ _ROW_KEYS = (
     "kind",
     "root",
     "path",
-)
-_CHANGED_KEYS = (
-    "project_id",
-    "run_id",
-    "attempt_id",
-    "handoff_id",
-    "plan_id",
-    "artifact_id",
-    "record_id",
-    "session_id",
-    "id",
-    "root",
-    "path",
-    "manifest_path",
 )
 _EMPTY_REASONS = {
     "project": "no projects are registered; register one with "
@@ -251,8 +244,60 @@ def _row_line(row: Any) -> Text:
     return _text("  " + "  ".join(f"{k}: {_plain(flat[k])}" for k in keys))
 
 
+def _metadata(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Legacy `metadata`, else strict V1 `extensions.metadata`."""
+    metadata = result.get("metadata")
+    if not isinstance(metadata, Mapping):
+        extensions = result.get("extensions")
+        metadata = (
+            extensions.get("metadata") if isinstance(extensions, Mapping) else None
+        )
+    return metadata if isinstance(metadata, Mapping) else {}
+
+
+def _count(scope: Mapping[str, Any], key: str) -> str:
+    value = scope.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return f"unavailable: {scope.get('reason') or 'not reported'}"
+
+
 def _analysis(result: Mapping[str, Any], c: Console) -> None:
-    """Analysis results are their findings table, rendered for every family."""
+    """Assessed scope, coverage and engines; the findings table follows."""
+    metadata = _metadata(result)
+    scope = metadata.get("scope")
+    if isinstance(scope, Mapping):
+        roots = scope.get("requested_targets") or scope.get("logical_root")
+        if isinstance(roots, list):
+            roots = ", ".join(_plain(r) for r in roots)
+        c.print(_text(f"scope: {roots or 'unavailable: no requested roots reported'}"))
+        if scope.get("kind") == "operation":
+            c.print(_text(f"files: not applicable ({scope.get('reason')})"))
+        else:
+            c.print(
+                _text(
+                    f"files: matched {_count(scope, 'matched_file_count')}, "
+                    f"consumed {_count(scope, 'consumed_file_count')}"
+                )
+            )
+        coverage = scope.get("coverage") or "unavailable"
+        reason = scope.get("reason") or (
+            "not reported" if coverage == "unavailable" else None
+        )
+        c.print(_text(f"coverage: {coverage}" + (f" ({reason})" if reason else "")))
+    else:
+        c.print(_text("scope: unavailable: the producer reported no scope"))
+    engines = [e for e in metadata.get("engines") or [] if isinstance(e, Mapping)]
+    for entry in engines:
+        reason = entry.get("reason")
+        c.print(
+            _text(
+                f"engine {_plain(entry.get('engine'))}: {_plain(entry.get('status'))}"
+                + (f" ({reason})" if reason else "")
+            )
+        )
+    if not engines:
+        c.print(_text("engines: unavailable: the producer reported no engine entries"))
 
 
 def _collection(result: Mapping[str, Any], c: Console) -> None:
@@ -298,20 +343,25 @@ def _mutation(result: Mapping[str, Any], c: Console) -> None:
         c.print(_text(f"no change applied: {_reason(result)}"))
         return
     payload = _payload(result)
-    if not isinstance(payload, Mapping) or not payload:
+    payload = payload if isinstance(payload, Mapping) else {}
+    changed, readback = payload.get("changed"), payload.get("readback")
+    if payload.get("unchanged"):
+        c.print(_text(f"unchanged: {_plain(payload['unchanged'])}"))
+    elif isinstance(changed, Mapping) and changed:
+        listed = ", ".join(f"{k}={_plain(v)}" for k, v in _flatten(changed).items())
+        c.print(_text(f"changed: {listed}"))
+    else:
+        c.print(_text("changed: not reported by the producer"))
+    if not isinstance(readback, Mapping) or not readback:
         c.print(
             _text("readback: unavailable (the producer returned no readback record)")
         )
         return
-    flat = _flatten(payload)
-    changed = [k for k in _CHANGED_KEYS if k in flat]
-    listed = ", ".join(f"{k}={_plain(flat[k])}" for k in changed)
-    c.print(_text(f"changed: {listed or 'no identifier reported'}"))
-    readback = [(k, v) for k, v in flat.items() if k not in changed]
-    for key, value in readback[:ROW_CAP]:
+    items = list(_flatten(readback).items())
+    for key, value in items[:ROW_CAP]:
         c.print(_text(f"  readback {key}: {_plain(value)}"))
-    if len(readback) > ROW_CAP:
-        _truncation(c, ROW_CAP, len(readback), "fields", str(result.get("tool")))
+    if len(items) > ROW_CAP:
+        _truncation(c, ROW_CAP, len(items), "fields", str(result.get("tool")))
 
 
 Projector = Callable[[Mapping[str, Any], Console], None]
@@ -496,6 +546,8 @@ def _render_findings(c: Console, tool: str, findings: list[Any]) -> None:
     c.print(t)
     if len(findings) > FINDINGS_CAP:
         _truncation(c, FINDINGS_CAP, len(findings), "findings", tool)
+    else:
+        c.print(_text(f"{len(findings)}/{len(findings)} findings", "dim"))
 
 
 def render_result(result: dict) -> None:

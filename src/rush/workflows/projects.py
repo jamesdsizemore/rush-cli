@@ -423,6 +423,25 @@ def register_project(
     If the descriptor write fails after the registry save, the new entry is
     removed again under the same lock before the error propagates.
     """
+    return register_project_outcome(
+        path,
+        name=name,
+        data_root=data_root,
+        lock_timeout=lock_timeout,
+        expect_new=expect_new,
+    )[0]
+
+
+def register_project_outcome(
+    path: Path | str,
+    *,
+    name: str | None = None,
+    data_root: Path | None = None,
+    lock_timeout: float = 5.0,
+    expect_new: bool = False,
+) -> tuple[ProjectRecord, bool]:
+    """`register_project`, plus whether this call wrote the registry entry
+    (`False`: the root was already registered and nothing was written)."""
     data_root = data_root or default_data_root()
     root = _canonical_root(path)
     if not root.is_dir():
@@ -446,7 +465,7 @@ def register_project(
                     created_at=entry.get("created_at", ""),
                     configured=bool(entry.get("configured", False)),
                     revision=int(entry.get("revision", 1)),
-                )
+                ), False
 
         descriptor = _read_descriptor(root)
         descriptor_id = descriptor.get("project_id") if descriptor else None
@@ -470,7 +489,7 @@ def register_project(
             del projects[project_id]
             _save_registry(data_root, registry)
             raise
-        return record
+        return record, True
 
 
 def _descriptor_bytes(record: ProjectRecord) -> bytes:
