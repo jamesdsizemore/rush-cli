@@ -2189,9 +2189,6 @@ def _memory_refresh(
         state.memory_message = "memory operations unavailable"
         return
     query = state.memory_query_buffer.strip()
-    if not query:
-        state.memory_message = "type a query, then Enter"
-        return
     sources, store_state = _memory_sources_and_state(project)
     if store_state is not None:
         from rush.memory.store import readonly_view_reason
@@ -2504,6 +2501,17 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             state.memory_selected_index = (state.memory_selected_index - 1) % len(
                 state.memory_items
             )
+        return
+    if key == "S":
+        from typing import get_args
+
+        from rush.memory.store import MemorySubject
+
+        subjects = list(get_args(MemorySubject))
+        current = state.memory_subject
+        index = subjects.index(current) if current in subjects else -1
+        state.memory_subject = subjects[(index + 1) % len(subjects)]
+        _memory_refresh(state, project, actions)
         return
     if key == "/":
         state.mode = "memory_search"
@@ -3013,7 +3021,7 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
     if section == "git":
         _load_git_view(state, project, actions)
     elif section == "memory":
-        state.memory_message = f"press / to search {state.memory_subject} memories"
+        _memory_refresh(state, project, actions)
     elif section in _SECTION_LOADERS:
         state.load_requests.add((project_key(project), section))
 
