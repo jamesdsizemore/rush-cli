@@ -50,9 +50,10 @@ _ACYCLIC_KINDS = frozenset({"supersedes"})
 
 
 def _connect(store: TypedArtifactStore) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(store.db_path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    # The store's own connection: a writable store opens one as before, and a
+    # read-only view (R20.G8) returns its single `open_readonly()` connection,
+    # so a related-by-ID read never creates a DB or `-wal`/`-shm` sidecars.
+    return store._connect()
 
 
 def _endpoint_exists(conn: sqlite3.Connection, artifact_id: str, version: int) -> bool:
