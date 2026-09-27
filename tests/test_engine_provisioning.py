@@ -46,9 +46,9 @@ from rush.setup.engine_packages import (
 from rush.setup.provision import (
     ProvisionError,
     _destination_for,
-    apply_provision_plan,
     build_provision_plan,
     current_os_arch,
+    resolve_and_apply_provision_plan,
 )
 
 # --- Registry exhaustiveness -------------------------------------------------
@@ -396,12 +396,17 @@ def test_apply_github_engine_downloads_verifies_extracts_and_binds_manifest(
         )
 
     plan = build_provision_plan(
-        project, ["osv-scanner"], os_name="linux", arch="x86_64"
+        project,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
     )
-    result = apply_provision_plan(
+    result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=http_get,
         downloader=downloader,
@@ -441,11 +446,18 @@ def test_apply_github_engine_fails_closed_on_checksum_mismatch(tmp_path: Path) -
             }
         ).encode()
 
-    plan = build_provision_plan(project, ["gitleaks"], os_name="linux", arch="x86_64")
-    result = apply_provision_plan(
+    plan = build_provision_plan(
+        project,
+        ["gitleaks"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
+    )
+    result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=tmp_path / "data",
         http_get=http_get,
         downloader=lambda url: archive,
@@ -463,11 +475,18 @@ def test_apply_never_reports_ready_when_probe_fails(tmp_path: Path) -> None:
     binary_bytes = b"payload"
     archive = _make_tar_gz("gitleaks", binary_bytes)
 
-    plan = build_provision_plan(project, ["gitleaks"], os_name="linux", arch="x86_64")
-    result = apply_provision_plan(
+    plan = build_provision_plan(
+        project,
+        ["gitleaks"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
+    )
+    result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=tmp_path / "data",
         http_get=lambda url: _github_release_fixture(
             archive, "gitleaks_linux_x86_64.tar.gz"
@@ -486,12 +505,17 @@ def test_apply_permission_blocked_reports_missing_grants(tmp_path: Path) -> None
     project = tmp_path / "proj"
     project.mkdir()
     plan = build_provision_plan(
-        project, ["osv-scanner"], os_name="linux", arch="x86_64"
+        project,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
     )
-    result = apply_provision_plan(
+    result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(),  # no grants at all
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=tmp_path / "data",
     )
     assert result.applied == {}
@@ -503,7 +527,9 @@ def test_apply_missing_manager_reports_exact_unresolved_prerequisite(
 ) -> None:
     project = tmp_path / "proj"
     project.mkdir()
-    plan = build_provision_plan(project, ["ruff"], os_name="linux", arch="x86_64")
+    plan = build_provision_plan(
+        project, ["ruff"], os_name="linux", arch="x86_64", data_root=tmp_path / "data"
+    )
 
     def http_get(url: str) -> bytes:
         return json.dumps(
@@ -521,10 +547,11 @@ def test_apply_missing_manager_reports_exact_unresolved_prerequisite(
             }
         ).encode()
 
-    result = apply_provision_plan(
+    result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=tmp_path / "data",
         http_get=http_get,
         which=lambda name: None,  # ambient PATH stripped: no manager found
@@ -552,12 +579,17 @@ def test_two_projects_select_different_compatible_versions_without_collision(
     archive_b, release_b = make_release("v2.0.0", b"binary-b")
 
     plan_a = build_provision_plan(
-        project_a, ["osv-scanner"], os_name="linux", arch="x86_64"
+        project_a,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
     )
-    result_a = apply_provision_plan(
+    result_a = resolve_and_apply_provision_plan(
         plan_a,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=lambda url: release_a,
         downloader=lambda url: archive_a,
@@ -566,12 +598,17 @@ def test_two_projects_select_different_compatible_versions_without_collision(
         ),
     )
     plan_b = build_provision_plan(
-        project_b, ["osv-scanner"], os_name="linux", arch="x86_64"
+        project_b,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
     )
-    result_b = apply_provision_plan(
+    result_b = resolve_and_apply_provision_plan(
         plan_b,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-b",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=lambda url: release_b,
         downloader=lambda url: archive_b,
@@ -617,12 +654,17 @@ def test_retry_after_interrupted_download_leaves_no_partial_manifest(
         return _github_release_fixture(archive, "osv-scanner_linux_x86_64.tar.gz")
 
     plan = build_provision_plan(
-        project, ["osv-scanner"], os_name="linux", arch="x86_64"
+        project,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
     )
-    first_result = apply_provision_plan(
+    first_result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=http_get,
         downloader=flaky_downloader,
@@ -635,12 +677,17 @@ def test_retry_after_interrupted_download_leaves_no_partial_manifest(
     assert not (dest_dir / "manifest.json").exists()
 
     plan_retry = build_provision_plan(
-        project, ["osv-scanner"], os_name="linux", arch="x86_64"
+        project,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
     )
-    result = apply_provision_plan(
+    result = resolve_and_apply_provision_plan(
         plan_retry,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=http_get,
         downloader=flaky_downloader,
@@ -687,11 +734,14 @@ def test_retry_after_interrupted_manager_install_cleans_partial_directory(
         (dest_dir / "ruff").write_bytes(b"partial-junk")
         return subprocess.CompletedProcess(argv, 0, stdout="installed", stderr="")
 
-    plan = build_provision_plan(project, ["ruff"], os_name="linux", arch="x86_64")
-    first_result = apply_provision_plan(
+    plan = build_provision_plan(
+        project, ["ruff"], os_name="linux", arch="x86_64", data_root=tmp_path / "data"
+    )
+    first_result = resolve_and_apply_provision_plan(
         plan,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=http_get,
         runner=runner_writes_junk,
@@ -704,11 +754,14 @@ def test_retry_after_interrupted_manager_install_cleans_partial_directory(
     assert dest_dir.is_dir()
     assert not (dest_dir / "manifest.json").exists()
 
-    plan_retry = build_provision_plan(project, ["ruff"], os_name="linux", arch="x86_64")
-    retry_result = apply_provision_plan(
+    plan_retry = build_provision_plan(
+        project, ["ruff"], os_name="linux", arch="x86_64", data_root=tmp_path / "data"
+    )
+    retry_result = resolve_and_apply_provision_plan(
         plan_retry,
         ExecutionPermissions(network=True, download=True, cache_write=True),
         project_id="proj-a",
+        current_platform=("linux", "x86_64"),
         data_root=data_root,
         http_get=http_get,
         runner=runner_writes_junk,
@@ -897,3 +950,218 @@ def test_t14_dependency_audit_engines_are_provisionable() -> None:
     for name in ("osv-scanner", "pip-audit"):
         assert name in ENGINE_PACKAGES
         assert ENGINES[name].binary == name
+
+
+# --- Phase 70 T24: reviewed-plan apply boundaries ----------------------------
+
+
+def _resolved_osv_plan(tmp_path: Path):
+    from rush.permissions import ExecutionPermissions as Perms
+    from rush.setup.provision import resolve_provision_identities
+
+    project = tmp_path / "proj"
+    project.mkdir(exist_ok=True)
+    archive = _make_tar_gz("osv-scanner", b"bin")
+    plan = build_provision_plan(
+        project,
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
+    )
+    resolved = resolve_provision_identities(
+        plan,
+        Perms(network=True),
+        http_get=lambda url: _github_release_fixture(
+            archive, "osv-scanner_linux_x86_64.tar.gz"
+        ),
+    )
+    return resolved, archive
+
+
+def _apply(plan, tmp_path: Path, **overrides):
+    from rush.setup.provision import apply_provision_plan
+
+    kwargs = {
+        "project_id": "proj-a",
+        "data_root": tmp_path / "data",
+        "reviewed_plan_id": plan.plan_id,
+        "current_platform": ("linux", "x86_64"),
+        "prober": lambda argv: subprocess.CompletedProcess(argv, 0, "ok", ""),
+    }
+    kwargs.update(overrides)
+    return apply_provision_plan(
+        plan,
+        ExecutionPermissions(network=True, download=True, cache_write=True),
+        **kwargs,
+    )
+
+
+def test_apply_denied_grants_have_zero_effects(tmp_path: Path) -> None:
+    from rush.setup.provision import apply_provision_plan
+
+    plan, _ = _resolved_osv_plan(tmp_path)
+    calls: list[str] = []
+    result = apply_provision_plan(
+        plan,
+        ExecutionPermissions(network=True),
+        project_id="proj-a",
+        data_root=tmp_path / "data",
+        reviewed_plan_id=plan.plan_id,
+        current_platform=("linux", "x86_64"),
+        downloader=lambda url: calls.append(url) or b"",
+    )
+    assert result.permission_blocked["osv-scanner"] == [
+        "--allow-download",
+        "--allow-cache-write",
+    ]
+    assert calls == []
+    assert not (tmp_path / "data").exists(), "no cursor.key, no toolchains dir"
+
+
+def test_apply_rejects_tampered_version_and_destination(tmp_path: Path) -> None:
+    import dataclasses
+
+    from rush.setup.provision import compute_plan_id
+
+    plan, archive = _resolved_osv_plan(tmp_path)
+    entry = plan.entries[0]
+    assert entry.identity is not None
+    for changed in (
+        dataclasses.replace(
+            entry, identity=dataclasses.replace(entry.identity, version="v9.9.9")
+        ),
+        dataclasses.replace(entry, destination=str(tmp_path / "elsewhere")),
+    ):
+        tampered = dataclasses.replace(plan, entries=(changed,))
+        rehashed = dataclasses.replace(
+            tampered,
+            plan_id=compute_plan_id(
+                project_root=plan.project_root,
+                data_root=plan.data_root,
+                os_name=plan.os_name,
+                arch=plan.arch,
+                entries=(changed,),
+            ),
+        )
+        for candidate in (tampered, rehashed):
+            result = _apply(
+                candidate,
+                tmp_path,
+                reviewed_plan_id=plan.plan_id,
+                downloader=lambda url: archive,
+            )
+            assert result.failed["osv-scanner"]["code"] == "PLAN_TAMPERED"
+    assert not (tmp_path / "data" / "toolchains").exists()
+
+
+def test_apply_escaping_destination_is_rejected(tmp_path: Path) -> None:
+    import dataclasses
+
+    from rush.setup.provision import _make_plan
+
+    plan, archive = _resolved_osv_plan(tmp_path)
+    entry = plan.entries[0]
+    assert entry.identity is not None
+    escaped = dataclasses.replace(
+        entry,
+        identity=dataclasses.replace(entry.identity, version="../../../escape"),
+        destination=str(
+            _destination_for(
+                tmp_path / "data", "osv-scanner", "../../../escape", "linux", "x86_64"
+            )
+        ),
+    )
+    reviewed = _make_plan(
+        plan.project_root, plan.data_root, plan.os_name, plan.arch, (escaped,)
+    )
+    result = _apply(reviewed, tmp_path, downloader=lambda url: archive)
+    assert result.failed["osv-scanner"]["code"] == "DESTINATION_ESCAPE"
+    assert not (tmp_path / "escape").exists()
+
+
+def test_apply_wrong_platform_is_rejected(tmp_path: Path) -> None:
+    plan, archive = _resolved_osv_plan(tmp_path)
+    result = _apply(
+        plan,
+        tmp_path,
+        current_platform=("windows", "arm64"),
+        downloader=lambda u: archive,
+    )
+    assert result.failed["osv-scanner"]["code"] == "WRONG_PLATFORM"
+    assert not (tmp_path / "data").exists()
+
+
+def test_apply_resolved_identity_never_touches_foreign_directory(
+    tmp_path: Path,
+) -> None:
+    plan, archive = _resolved_osv_plan(tmp_path)
+    dest = Path(plan.entries[0].destination)
+    dest.mkdir(parents=True)
+    (dest / "keep.txt").write_text("foreign")
+    result = _apply(plan, tmp_path, downloader=lambda url: archive)
+    assert result.failed["osv-scanner"]["code"] == "DESTINATION_OCCUPIED"
+    assert result.recovery_required["osv-scanner"] == str(dest)
+    assert sorted(p.name for p in dest.iterdir()) == ["keep.txt"]
+
+
+def test_apply_marker_for_other_identity_is_occupied(tmp_path: Path) -> None:
+    plan, archive = _resolved_osv_plan(tmp_path)
+    dest = Path(plan.entries[0].destination)
+    dest.mkdir(parents=True)
+    (dest / ".rush-provision-owner.json").write_text(
+        json.dumps({"engine_id": "osv-scanner", "identity": {"version": "other"}})
+    )
+    result = _apply(plan, tmp_path, downloader=lambda url: archive)
+    assert result.failed["osv-scanner"]["code"] == "DESTINATION_OCCUPIED"
+
+
+def test_rerun_reuses_verified_manifest_without_reinstall(tmp_path: Path) -> None:
+    plan, archive = _resolved_osv_plan(tmp_path)
+    first = _apply(plan, tmp_path, downloader=lambda url: archive)
+    assert "osv-scanner" in first.applied
+    assert first.applied["osv-scanner"].plan_id == plan.plan_id
+
+    again = build_provision_plan(
+        tmp_path / "proj",
+        ["osv-scanner"],
+        os_name="linux",
+        arch="x86_64",
+        data_root=tmp_path / "data",
+    )
+    assert again.entries[0].identity_state == "reuse_verified"
+    downloads: list[str] = []
+    second = _apply(
+        again, tmp_path, downloader=lambda url: downloads.append(url) or archive
+    )
+    assert "osv-scanner" in second.reused
+    assert downloads == []
+
+
+def test_go_resolver_asks_module_proxy_for_concrete_version() -> None:
+    import dataclasses
+
+    from rush.setup.provision import resolution_url, resolve_identity
+
+    engine = dataclasses.replace(
+        ENGINE_PACKAGES["zally"], version_policy="latest_stable"
+    )
+    requested: list[str] = []
+
+    def http_get(url: str) -> bytes:
+        requested.append(url)
+        return json.dumps({"Version": "v2.2.0"}).encode()
+
+    identity = resolve_identity(
+        engine, os_name="linux", arch="x86_64", http_get=http_get
+    )
+    assert requested == ["https://proxy.golang.org/github.com/zalando/zally/@latest"]
+    assert requested == [resolution_url(engine)]
+    assert identity.version == "v2.2.0"
+    assert identity.digest_value is None
+
+    pinned = resolve_identity(
+        ENGINE_PACKAGES["zally"], os_name="linux", arch="x86_64", http_get=http_get
+    )
+    assert pinned.version == "v2.1.1"
+    assert resolution_url(ENGINE_PACKAGES["zally"]) is None
