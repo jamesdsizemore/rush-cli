@@ -235,11 +235,9 @@ class ReviewTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Review code at <path> for size, TODO density, missing docstrings, "
-            "naming, complexity. Returns {status, findings[], summary}. "
-            "Default: heuristic. Pass use_llm=true to call configured model."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["review"].mcp_description
 
     def __call__(
         self,

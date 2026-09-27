@@ -50,10 +50,9 @@ class SecurityTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Scan deps at <path> for known vulnerabilities. Returns {status, findings[], summary}. "
-            "Engines: pip-audit (Python), npm audit (JS/TS). status='skipped' means engine not on PATH."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["security"].mcp_description
 
     def __call__(
         self,
@@ -170,6 +169,12 @@ class SecurityTool(ToolFn):
 
         if results:
             final = aggregate_results(self.name, results)
+            # T5: every audit denied a permission -> the step never ran.
+            if all(_permission_denied(result) for result in results):
+                final["metadata"] = {
+                    **(final.get("metadata") or {}),
+                    "execution": _denied_execution(None, permissions),
+                }
         else:
             final = ToolResult(
                 tool="security",
@@ -194,6 +199,29 @@ class SecurityTool(ToolFn):
         metadata["scope"] = {"version": 1, "dependencies": dependencies}
         final["metadata"] = metadata
         return final
+
+
+def _denied_execution(
+    required: ExecutionPermissions | None, granted: ExecutionPermissions | None
+) -> dict[str, Any]:
+    """T5: execution metadata of a permission-denied audit -- `not_run`, so a
+    suite never counts it as executed (same as `run_engine`'s denial)."""
+    from ..permissions import build_execution_metadata
+
+    return build_execution_metadata(
+        "executed",
+        requested=required,
+        granted=granted,
+        extra={"disposition": "not_run", "cause": "permission_denied"},
+    )
+
+
+def _permission_denied(result: ToolResult) -> bool:
+    execution = (result.get("metadata") or {}).get("execution") or {}
+    return (
+        execution.get("disposition") == "not_run"
+        and execution.get("cause") == "permission_denied"
+    )
 
 
 def _find_project_root(path: Path) -> Path | None:
@@ -500,6 +528,7 @@ def _audit_pyproject_project_mode(
                 "pip-audit",
                 "pyproject project-mode audit requires permissions: "
                 "network, download, cache_write, build",
+                metadata={"execution": _denied_execution(required, permissions)},
             )
         )
         return

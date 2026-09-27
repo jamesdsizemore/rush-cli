@@ -1581,11 +1581,14 @@ def _run_engine_in_scope(
             engine.name,
             f"requires permission: {missing_str}",
             metadata={
+                # T5: a denied step never ran -- `not_run`, so suites do not
+                # count it in `executed_tools`.
                 "execution": build_execution_metadata(
                     "executed",
                     requested=required_permissions,
                     granted=permissions,
                     producer=engine.name,
+                    extra={"disposition": "not_run", "cause": "permission_denied"},
                 )
             },
         )

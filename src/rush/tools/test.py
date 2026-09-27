@@ -22,10 +22,9 @@ class TestTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Run tests for project at <path>. Returns {status, findings[], summary}. "
-            "Engines: pytest (Python), vitest/npm (JS/TS). status='skipped' means engine not on PATH."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["test"].mcp_description
 
     def __call__(self, path: Path, allow_build: bool = False) -> ToolResult:
         # T17 S17.3: the explicit build grant of every transport (CLI, MCP,

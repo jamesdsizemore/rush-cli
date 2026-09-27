@@ -348,10 +348,9 @@ class LintTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Lint Python/JS/TS files at <path>. Returns {status, findings[], summary}. "
-            "Engines: ruff (Python), eslint (JS/TS). status='skipped' means engine not on PATH."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["lint"].mcp_description
 
     def __call__(
         self,
