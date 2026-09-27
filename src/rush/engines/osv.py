@@ -27,15 +27,31 @@ class OsvScannerEngine(Engine):
         run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
-        # `path` is either an explicit lockfile (reference-test contract:
-        # -L against that exact file) or a project directory -- the real
-        # `run_engine` call site (project_run.py) always passes the project
-        # root, never a discovered lockfile. `-L <directory>` is an invalid
-        # osv-scanner invocation (wrong extractor for a directory); a
-        # directory gets osv-scanner's own directory-scan mode instead,
-        # with --allow-no-lockfiles so "no lockfile in this project" is its
-        # own clean exit 0/empty-results outcome rather than a scan error.
-        if path.is_dir():
+        # T14: `--lockfile` flags in `args` mean the caller (security.py) built
+        # an explicit multi-input Python dependency audit (uv.lock and/or
+        # requirements* files, each already containment/format validated).
+        # `scan source` takes only `--lockfile` flags -- never a positional
+        # path or `-L` -- so `path` (the project root, kept only for cwd
+        # purposes upstream) is not used in this mode.
+        if "--lockfile" in args:
+            argv = [
+                binary_path,
+                "scan",
+                "source",
+                "--offline",
+                "--format",
+                "json",
+                *args,
+            ]
+        elif path.is_dir():
+            # `path` is either an explicit lockfile (reference-test contract:
+            # -L against that exact file) or a project directory -- the real
+            # `run_engine` call site (project_run.py) always passes the project
+            # root, never a discovered lockfile. `-L <directory>` is an invalid
+            # osv-scanner invocation (wrong extractor for a directory); a
+            # directory gets osv-scanner's own directory-scan mode instead,
+            # with --allow-no-lockfiles so "no lockfile in this project" is its
+            # own clean exit 0/empty-results outcome rather than a scan error.
             argv = [
                 binary_path,
                 "scan",
@@ -119,6 +135,7 @@ class OsvScannerEngine(Engine):
                                 "rule": str(rule),
                                 "severity": "error",
                                 "message": f"{ecosystem} {name}=={version}: {remediation}",
+                                "evidence": {"input": str(source_path)},
                             }
                         )
         exit_code = raw.get("exit_code", 0)

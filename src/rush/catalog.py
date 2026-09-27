@@ -202,7 +202,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "Scan dependencies at <path>. Returns {status, findings[], summary}. "
             "Missing engines return status='skipped'."
         ),
-        engine_names=("pip-audit", "npm-audit"),
+        # T14 (R14.2): osv-scanner (uv.lock/requirements*) and medusa are
+        # owned here, not standalone scan candidates.
+        engine_names=("pip-audit", "npm-audit", "osv-scanner", "medusa"),
     ),
     "typecheck": ToolSpec(
         name="typecheck",
@@ -1059,6 +1061,7 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
         (
             "poetry.lock",
             "requirements.txt",
+            "uv.lock",
             "package-lock.json",
             "Cargo.lock",
             "go.sum",

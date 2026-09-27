@@ -430,6 +430,14 @@ def _prerequisites(engine_id: str, source: EngineSource) -> tuple[str, ...]:
 def _version_policy(engine_id: str, source: EngineSource) -> str:
     if engine_id == "zally":
         return "pinned:v2.1.1"
+    # T14 (S14.2/S14.3): osv-scanner's `scan source --lockfile` and the
+    # explicit `--lockfile <parser>:<path>` prefix require >=2.0.0; pip-audit
+    # project mode requires >=2.10.1 for the `dependencies` JSON envelope
+    # `_parse_dependencies` already expects.
+    if engine_id == "osv-scanner":
+        return "minimum:2.0.0"
+    if engine_id == "pip-audit":
+        return "minimum:2.10.1"
     if source == "maven":
         return "project_locked"
     if source == "internal":

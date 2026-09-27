@@ -885,3 +885,15 @@ def test_current_os_arch_returns_normalized_values() -> None:
     os_name, arch = current_os_arch()
     assert os_name in ("macos", "linux", "windows")
     assert arch in ("x86_64", "arm64")
+
+
+def test_t14_dependency_audit_engines_are_provisionable() -> None:
+    """T14 dispatches osv-scanner (uv.lock/requirements*) and pip-audit
+    (pyproject project mode) through `ENGINES` -- both must stay real,
+    provisionable entries in `ENGINE_PACKAGES` so `rush setup` can install
+    what `security.py` now depends on."""
+    from rush.engines import ENGINES
+
+    for name in ("osv-scanner", "pip-audit"):
+        assert name in ENGINE_PACKAGES
+        assert ENGINES[name].binary == name
