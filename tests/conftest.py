@@ -6,13 +6,16 @@ Architecture §11.2.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+import time
+import tomllib
+from collections.abc import Collection, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -20,6 +23,7 @@ import pytest
 
 from rush.dashboard.server import stop_all_dashboard_contexts
 from rush.runtime.binaries import clear_binary_cache
+from rush.setup.provision import default_data_root
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _HOST_PATH = os.environ.get("PATH", "")
@@ -60,6 +64,271 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = keep
+
+
+def _mcp_servers(path: Path) -> str:
+    """The Rush-relevant content of `~/.claude.json` (top-level `mcpServers`
+    plus each project's non-empty `mcpServers`) or `~/.codex/config.toml`
+    (its `[mcp_servers.*]` tables), as canonical JSON, or "absent". Claude
+    Code rewrites the rest of `~/.claude.json` while any session is open."""
+    attempts = 10
+    while True:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return "absent"
+        try:
+            if path.suffix == ".toml":
+                servers: object = tomllib.loads(text).get("mcp_servers", {})
+            else:
+                data = json.loads(text)
+                servers = {
+                    "mcpServers": data.get("mcpServers", {}),
+                    "projects": {
+                        project: entry["mcpServers"]
+                        for project, entry in data.get("projects", {}).items()
+                        if isinstance(entry, dict) and entry.get("mcpServers")
+                    },
+                }
+            return json.dumps(servers, sort_keys=True)
+        except (json.JSONDecodeError, tomllib.TOMLDecodeError):
+            # A read racing the owner's rewrite; the next one is whole.
+            attempts -= 1
+            if not attempts:
+                raise
+            time.sleep(0.1)
+
+
+def _real_home_snapshot(home: Path, data_root: Path) -> dict[str, str]:
+    """Fingerprint of what tests must never change: the MCP server entries
+    (or "absent") of `~/.claude.json` and `~/.codex/config.toml`, plus every
+    path under the Rush data root (or "absent")."""
+    snapshot: dict[str, str] = {}
+    for path in (home / ".claude.json", home / ".codex" / "config.toml"):
+        snapshot[str(path)] = _mcp_servers(path)
+    if not data_root.is_dir():
+        snapshot[str(data_root)] = "absent"
+        return snapshot
+    snapshot[str(data_root)] = "dir"
+    for dirpath, dirnames, filenames in os.walk(data_root):
+        for name in dirnames:
+            snapshot[str(Path(dirpath) / name)] = "dir"
+        for name in filenames:
+            snapshot[str(Path(dirpath) / name)] = "file"
+    return snapshot
+
+
+def _changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    return sorted(
+        p for p in before.keys() | after.keys() if before.get(p) != after.get(p)
+    )
+
+
+# Owner-liveness locks/`.procs` and project mutation locks: any Rush process
+# on the machine (a running `rush mcp serve`, another worktree's suite) adds
+# these, so only the per-test check, which attributes them, reports them.
+_WATCHED_SUBDIRS = ("owners", os.path.join("dashboard", "project_locks"))
+
+
+def _watched_entries(data_root: Path) -> set[str]:
+    entries: set[str] = set()
+    for sub in _WATCHED_SUBDIRS:
+        try:
+            entries.update(
+                str(data_root / sub / name) for name in os.listdir(data_root / sub)
+            )
+        except FileNotFoundError:
+            pass
+    return entries
+
+
+def _session_changes(
+    before: dict[str, str], after: dict[str, str], data_root: Path
+) -> list[str]:
+    watched = tuple(str(data_root / sub) + os.sep for sub in _WATCHED_SUBDIRS)
+    return [p for p in _changed_paths(before, after) if not p.startswith(watched)]
+
+
+# Data-root prefixes (ending in os.sep) whose creates `_record_real_root_write`
+# records, and the paths it recorded since the last per-test check.
+_WATCHED_ROOTS: list[str] = []
+_WRITTEN_IN_PROCESS: set[str] = set()
+
+
+def _record_real_root_write(event: str, args: tuple[object, ...]) -> None:
+    """F14 audit hook: remember every path under a watched data root that
+    this process creates, from any thread, so a new entry there is
+    attributable to this pytest process."""
+    if not _WATCHED_ROOTS:
+        return
+    if event == "open":
+        flags = args[2]
+        if not isinstance(flags, int) or not flags & os.O_CREAT:
+            return
+        path = args[0]
+    elif event == "os.mkdir":
+        path = args[0]
+    elif event == "os.rename":
+        path = args[1]
+    else:
+        return
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return
+    text = os.fsdecode(os.fspath(path))
+    # The event fires before the call: an existing path is not a create
+    # (`mkdir(exist_ok=True)`, reopening a lock with O_CREAT).
+    if text.startswith(tuple(_WATCHED_ROOTS)) and not os.path.lexists(text):
+        _WRITTEN_IN_PROCESS.add(os.path.normpath(text))
+
+
+def _descendant_pids() -> set[int]:
+    ps = shutil.which("ps")
+    if ps is None:
+        return set()
+    listing = subprocess.run(
+        [ps, "-A", "-o", "pid=,ppid="], capture_output=True, text=True, check=True
+    ).stdout
+    children: dict[int, list[int]] = {}
+    for line in listing.splitlines():
+        pid, ppid = (int(field) for field in line.split())
+        children.setdefault(ppid, []).append(pid)
+    found: set[int] = set()
+    stack = [os.getpid()]
+    while stack:
+        for child in children.get(stack.pop(), ()):
+            if child not in found:
+                found.add(child)
+                stack.append(child)
+    return found
+
+
+def _held_by_descendants(paths: Collection[str]) -> set[str]:
+    """The paths a live child (or deeper descendant) of this process holds
+    open: an owner-liveness lock is held for its owner's whole lifetime."""
+    lsof = shutil.which("lsof")
+    if not paths or lsof is None:
+        return set()
+    pids = _descendant_pids()
+    if not pids:
+        return set()
+    # lsof exits 1 when no process has any of the files open.
+    fields = subprocess.run(
+        [lsof, "-F", "pn", "--", *paths], capture_output=True, text=True, check=False
+    ).stdout
+    # lsof names files by their real path (/private/var on macOS).
+    by_real_path = {os.path.realpath(path): path for path in paths}
+    held: set[str] = set()
+    pid = 0
+    for line in fields.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:])
+        elif line.startswith("n") and pid in pids and line[1:] in by_real_path:
+            held.add(by_real_path[line[1:]])
+    return held
+
+
+def _created_entries(data_root: Path, before: set[str]) -> list[str]:
+    """Entries this pytest process created under the data root since the
+    last check and that still exist, plus new owners/ and project_locks/
+    entries (outside `before`) that one of its children holds. Entries of
+    unrelated processes are not attributed."""
+    root = str(data_root) + os.sep
+    # A copy: the audit hook adds to the set from other threads.
+    written = {path for path in set(_WRITTEN_IN_PROCESS) if path.startswith(root)}
+    _WRITTEN_IN_PROCESS.difference_update(written)
+    mine = {path for path in written if os.path.lexists(path)}
+    new = _watched_entries(data_root) - before - mine
+    return sorted(mine | _held_by_descendants(new))
+
+
+_REAL_HOME_GUARD: dict[str, Path] = {}
+_REAL_HOME_BEFORE: dict[str, str] = {}
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """F14: record the real HOME before any fixture redirects it."""
+    home = Path.home()
+    data_root = default_data_root()
+    _REAL_HOME_GUARD.update(home=home, data_root=data_root)
+    _REAL_HOME_BEFORE.update(_real_home_snapshot(home, data_root))
+    _WATCHED_ROOTS.append(str(data_root) + os.sep)
+    sys.addaudithook(_record_real_root_write)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """F14: fail the session, naming each path, if the real HOME changed."""
+    data_root = _REAL_HOME_GUARD["data_root"]
+    after = _real_home_snapshot(_REAL_HOME_GUARD["home"], data_root)
+    changed = _session_changes(_REAL_HOME_BEFORE, after, data_root)
+    if not changed:
+        return
+    lines = ["tests changed the real HOME:", *changed]
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is None:
+        print("\n".join(lines), file=sys.stderr)
+    else:
+        reporter.write_sep("=", "REAL HOME GUARD", red=True)
+        for line in lines:
+            reporter.write_line(line, red=True)
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F14: every test gets a temporary HOME and XDG/AppData dirs; a test
+    that sets its own HOME later through `monkeypatch` wins."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
+    if os.name == "nt":
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+        monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+
+
+_ENTRIES_BEFORE = pytest.StashKey[set[str]]()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item: pytest.Item) -> Generator[None]:
+    item.stash[_ENTRIES_BEFORE] = _watched_entries(_REAL_HOME_GUARD["data_root"])
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Generator[None]:
+    """F14: fail, naming the test, when this pytest process (any thread) or
+    a child it still runs created an entry under the real Rush data root
+    since the previous test's check: in this test's setup (a session or
+    module fixture included), call or teardown, or in a thread that
+    outlived an earlier test. Runs once every fixture of the test is
+    finalized, so no test's monkeypatch is still in effect."""
+
+    def created_message() -> str:
+        created = _created_entries(
+            _REAL_HOME_GUARD["data_root"], item.stash[_ENTRIES_BEFORE]
+        )
+        if not created:
+            return ""
+        return "\n".join(
+            [f"{item.nodeid} created under the real Rush data root:", *created]
+        )
+
+    try:
+        result = yield
+    except BaseException as exc:
+        message = created_message()
+        if message:
+            exc.add_note(message)
+        raise
+    message = created_message()
+    if message:
+        pytest.fail(message, pytrace=False)
+    return result
 
 
 @pytest.fixture(autouse=True)
