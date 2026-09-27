@@ -3759,7 +3759,7 @@ def _fetch_memory_browse_items(
     *,
     root: Path,
     all_sources: list[str],
-    subjects: list[str],
+    subjects: list[MemorySubject],
     trust_filter: set[str],
     include_archived: bool,
     query_text: str,
@@ -3777,7 +3777,7 @@ def _fetch_memory_browse_items(
             # rejected subject yields no rows, exactly as `list`'s error did.
             try:
                 artifacts = store.recall(
-                    cast(MemorySubject, subject),
+                    subject,
                     query_text,
                     all_sources,
                     include_archived=include_archived,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import tiktoken
 
@@ -76,28 +76,35 @@ def _build_recovery_envelope(
     }
 
 
+class _MemoryEventAttribution(TypedDict, total=False):
+    project_id: str
+    run_id: str
+    agent_id: str
+    session_id: str
+
+
 def _memory_event_attribution(
     project_id: str | None,
     run_id: str | None,
     agent_id: str | None,
     session_id: str | None,
-) -> dict[str, str]:
+) -> _MemoryEventAttribution:
     """M11: `project_id`/`run_id`/`agent_id`/`session_id` are pure caller-
     supplied attribution -- never invented from a project root path (a
     filesystem path is not a registered project UUID). Omitted dimensions
     are left out so `TelemetryStore.record_memory_event()`'s own
     `_UNSCOPED` default applies, mirroring `memory/retrieval.py`'s own
     `_record_memory_event` helper."""
-    return {
-        key: value
-        for key, value in (
-            ("project_id", project_id),
-            ("run_id", run_id),
-            ("agent_id", agent_id),
-            ("session_id", session_id),
-        )
-        if value is not None
-    }
+    attribution: _MemoryEventAttribution = {}
+    if project_id is not None:
+        attribution["project_id"] = project_id
+    if run_id is not None:
+        attribution["run_id"] = run_id
+    if agent_id is not None:
+        attribution["agent_id"] = agent_id
+    if session_id is not None:
+        attribution["session_id"] = session_id
+    return attribution
 
 
 def _cache_fill_receipts(filled: MemoryArtifact | None) -> list[dict[str, Any]]:

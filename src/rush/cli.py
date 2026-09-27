@@ -46,12 +46,18 @@ from .delivery.compact import ViewOptions
 from .invocation.models import InvocationError
 from .invocation.targets import RootSelection, assert_contained, select_root
 from .logging import setup_logging
-from .memory.store import MemorySubject, OwnerScope, legacy_owner_scope
+from .memory.store import (
+    MemorySubject,
+    OwnerScope,
+    OwnerScopeKind,
+    legacy_owner_scope,
+)
 from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
 
 if TYPE_CHECKING:
     from .memory.maintenance import MaintenanceTask
+    from .tools.base import ToolResult
     from .tools.memory import SourceKind
 
 _MEMORY_SUBJECTS = get_args(MemorySubject)
@@ -1744,7 +1750,7 @@ def dashboard_cmd(
         # `_dispatch_check_suite`).
         check_suite_snapshots: dict[str, dict[str, dict[str, object]]] = {}
 
-        def _on_tool_complete(child: dict[str, object]) -> None:
+        def _on_tool_complete(child: ToolResult) -> None:
             tool_name = str(child.get("tool") or "")
             if tool_name:
                 check_suite_snapshots[tool_name] = _capture_artifact_snapshots(
@@ -3270,7 +3276,7 @@ def memory_maintain_cmd(
     batch_size: int,
     as_json: bool,
     allow_cache_write: bool,
-    owner_kind: str | None,
+    owner_kind: OwnerScopeKind | None,
     owner_id: str | None,
 ) -> None:
     """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""

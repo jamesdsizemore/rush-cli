@@ -627,6 +627,8 @@ def _launch_gated_process_windows(  # pragma: no cover -- Windows-only; no
     pid-keyed handle registry and close+pop from `_clear_owned_process_record`
     once a launch's owning `Popen` has actually exited.
     """
+    if sys.platform != "win32":
+        raise RuntimeError("Windows-only launcher called on a non-Windows platform")
     import msvcrt
 
     read_fd: int | None = None
@@ -1702,7 +1704,7 @@ def _run_engine_in_scope(
     # undercover) stashes its own real-evidence digest on `result` itself --
     # carry it forward onto the returned `ToolResult`'s metadata so
     # `project_run.py` can fold it into the run's consumption identity.
-    provenance = result.get("provenance")  # type: ignore[typeddict-item]
+    provenance = result.get("provenance")
     with owned_execution_scope(owner_instance_id, run_id):
         tool_res = engine.normalize(result, run_path, tool_name)
     if staging is not None:
