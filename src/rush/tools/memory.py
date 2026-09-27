@@ -297,11 +297,9 @@ class MemoryTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Query, write, or promote a cross-tool memory artifact in the typed artifact "
-            "store. Returns {status, findings[], summary}; write/promote/maintain/verify_attempt "
-            "require explicit permissions."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["memory"].mcp_description
 
     def __call__(
         self,

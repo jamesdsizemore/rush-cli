@@ -1642,7 +1642,8 @@ INSTRUCTION_BODY: tuple[str, ...] = (
     ),
     (
         "- Each tool returns `{status, findings, summary}`. `status: skipped` "
-        "means the underlying engine is not installed, not that the code passed."
+        "means no work was performed (the engine is missing, there were no "
+        "supported targets, or a permission was denied), not that the code passed."
     ),
     (
         "- Rush manages this block. Remove it with "

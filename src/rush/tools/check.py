@@ -21,11 +21,9 @@ class CheckTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Run the check suite at <path>: format (check-only), lint, typecheck, "
-            "dead, slop, test; every step is reported. The test step needs "
-            "allow_build."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["check"].mcp_description
 
     def __call__(
         self,

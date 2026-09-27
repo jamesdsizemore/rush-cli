@@ -144,8 +144,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="workflow",
         description="Query, write, or promote cross-tool memory artifacts.",
         mcp_description=(
-            "Query, write, or promote a cross-tool memory artifact in the typed artifact "
-            "store. Write/promote/maintain require explicit cache-write permission."
+            "Recall or record project memory at <path>. Reads need a non-empty "
+            "session_allowlist; writes and other mutations need the allow_cache_write "
+            "permission. Returns {status, findings[], summary}."
         ),
         engine_names=(),
         maturity="real_adapter",
@@ -175,8 +176,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="quality",
         description="Review code for deterministic heuristic quality signals.",
         mcp_description=(
-            "Review <path> with deterministic heuristics. Returns {status, findings[], "
-            "summary}; optional LLM and local Graft context use are explicit."
+            "Before commit: heuristic review of <path>; engines are deterministic. Returns "
+            "{status, findings[], summary}. use_llm=true sends findings to a configured "
+            "external LLM; no Rush grant gates it."
         ),
         engine_names=(),
     ),
@@ -185,8 +187,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="quality",
         description="Lint Python and JavaScript/TypeScript source files.",
         mcp_description=(
-            "Lint Python/JS/TS files at <path>. Returns {status, findings[], summary}. "
-            "Missing engines return status='skipped'."
+            "Lint Python/JS/TS files at <path> after every edit (ruff, eslint); no grant "
+            "needed. Returns {status, findings[], summary}; skipped = no work ran (missing "
+            "engine or no supported files)."
         ),
         engine_names=("ruff", "eslint"),
     ),
@@ -205,8 +208,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="test",
         description="Run the project test runner selected from project metadata.",
         mcp_description=(
-            "Run tests at <path>. Returns {status, findings[], summary}. "
-            "Missing engines return status='skipped'."
+            "After edits: run the project's tests at <path> (pytest, vitest). Runs only "
+            "with allow_build; otherwise skipped and nothing runs. Returns {status, "
+            "findings[], summary}."
         ),
         engine_names=("pytest", "vitest"),
     ),
@@ -215,8 +219,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="security",
         description="Scan dependency manifests for known vulnerabilities.",
         mcp_description=(
-            "Scan dependencies at <path>. Returns {status, findings[], summary}. "
-            "Missing engines return status='skipped'."
+            "Before commit: audit dependencies at <path>. Returns {status, findings[], "
+            "summary}; skipped = no audit ran. pyproject-only audit needs "
+            "allow_network, allow_download, allow_cache_write, allow_build."
         ),
         # T14 (R14.2): osv-scanner (uv.lock/requirements*) and medusa are
         # owned here, not standalone scan candidates.
@@ -529,8 +534,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "status",
         "workflow",
         "Show the selected project's registration, setup, scan and memory status without changing anything.",
-        "Read-only project status at <path>: registration, config, engines, scan activity, "
-        "latest and published results, agents, memory. operation=result reads a stored result.",
+        "Call first each session. Read-only, no grant: <path> project setup, engines, "
+        "scans, results, agents, memory. Agent registration is not verified activity. "
+        "operation=result reads a stored result.",
         (),
         scope_kind="operation",
     ),
@@ -921,8 +927,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
             "typecheck, dead, slop and test."
         ),
         mcp_description=(
-            "Run the check suite at <path>; every step is reported, and the "
-            "test step needs allow_build."
+            "Before commit/after edits: format-check, lint, typecheck, dead, slop, test "
+            "at <path>. Test step runs only with allow_build; else it is skipped and the "
+            "result is never ok (warn if all else passes)."
         ),
         engine_names=(),
         maturity="real_adapter",
