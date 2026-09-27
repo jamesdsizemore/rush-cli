@@ -25,6 +25,16 @@ effect_class = "stateful-mutation"
 safe_probe = "rush agent disconnect --help"
 
 [[operations]]
+id = "admin.agent_hook"
+kind = "admin"
+canonical_impl = "rush.integrations.agent_hooks:run_agent_hook"
+cli_command = "agent hook"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush agent hook --help"
+
+[[operations]]
 id = "admin.install"
 kind = "admin"
 canonical_impl = "rush.tools.install:InstallTool"

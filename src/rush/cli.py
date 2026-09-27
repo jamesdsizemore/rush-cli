@@ -4076,6 +4076,24 @@ def agent_disconnect_cmd(
     _render_session_result(dict(result), as_json)
 
 
+@agent_group.command(name="hook")
+@click.argument("host", type=click.Choice(["claude", "codex"]))
+def agent_hook_cmd(host: str) -> None:
+    """Post-edit hook entrypoint the Rush Claude Code/Codex plugins run.
+
+    Reads the host's JSON event on stdin. Prints nothing and runs no check
+    unless agent hooks are enabled for this host and project; always exits 0
+    so a hook never changes the edit's result.
+    """
+    from .integrations.agent_hooks import MAX_PAYLOAD_BYTES, run_agent_hook
+
+    stdin = click.get_binary_stream("stdin")
+    payload = b"" if stdin.isatty() else stdin.read(MAX_PAYLOAD_BYTES + 1)
+    output = run_agent_hook(host, payload)
+    if output:
+        click.echo(output)
+
+
 @agent_group.command(name="doctor")
 @click.option(
     "--session", "session_id", default=None, help="Include this session's memory state."
@@ -4160,6 +4178,25 @@ def agent_doctor_cmd(
         "CLAUDE.md/AGENTS.md; without it the block is only previewed."
     ),
 )
+@click.option(
+    "--agent-plugin",
+    "agent_plugins",
+    multiple=True,
+    type=click.Choice(["claude", "codex"]),
+    help=(
+        "Install (or upgrade) the native Rush plugin for this host through "
+        "its own plugin CLI instead of a manual MCP entry. Repeatable."
+    ),
+)
+@click.option(
+    "--convert-manual-entry",
+    is_flag=True,
+    help=(
+        "With --agent-plugin: consent to removing an existing 'rush' MCP entry "
+        "Rush did not record (shown as a diff in the result) so the plugin is "
+        "the only Rush server. Without it that host is left unchanged."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def install_cmd(
     agents: str,
@@ -4171,6 +4208,8 @@ def install_cmd(
     session_id: str,
     version: str | None,
     install_guidance: bool,
+    agent_plugins: tuple[str, ...],
+    convert_manual_entry: bool,
     as_json: bool,
 ) -> None:
     """Download/verify/install the release binary, connect agents, and optionally set up a project."""
@@ -4186,6 +4225,8 @@ def install_cmd(
         session_id=session_id,
         version=version,
         install_guidance=install_guidance,
+        agent_plugins=agent_plugins,
+        convert_manual_entry=convert_manual_entry,
         permissions=ExecutionPermissions(
             network=True, download=True, cache_write=True, artifact_write=True
         ),

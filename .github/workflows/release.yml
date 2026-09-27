@@ -88,7 +88,7 @@ jobs:
 
       - name: Compile standalone binary
         run: |
-          uv run pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
 
       - name: Package named archive with version metadata (POSIX)
         if: runner.os != 'Windows'

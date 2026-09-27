@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import platform
 import shutil
@@ -41,6 +42,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
@@ -51,12 +53,25 @@ import certifi
 from rush.integrations.agents import (
     ADAPTERS,
     INSTRUCTION_TARGETS,
+    PLUGIN_HOSTS,
+    PLUGIN_ID,
+    PLUGIN_MARKETPLACE,
     AgentConnectionError,
+    CASConflictError,
+    ManualEntryRemoval,
+    WriteJournal,
+    cas_replace_file,
     discover_agents,
+    finalize_agent_plugin_upgrade,
+    installed_plugin_roots,
+    materialize_agent_plugins,
+    plan_manual_entry_removal,
     read_agent_memory_state,
     reconcile_agent_instructions,
+    record_native_plugin_install,
     resolve_rush_binary,
 )
+from rush.memory.transactions import StoreError
 from rush.permissions import ExecutionPermissions
 from rush.setup.provision import (
     DataRootUnavailableError,
@@ -79,6 +94,7 @@ from .base import Finding, ToolFn, ToolResult, ToolStatus
 
 AgentsFlag = Literal["all", "none"]
 MemoryFlag = Literal["on", "off"]
+ManualEntryConsent = bool | Callable[[ManualEntryRemoval], bool]
 
 _RELEASE_REPO = "jamesdsizemore/rush-cli"
 
@@ -235,6 +251,290 @@ def _atomic_install_binary(
     return final_path, backup_path
 
 
+def _plugin_install_commands(host: str, plugin_root: Path) -> list[tuple[str, ...]]:
+    """The host's own local-marketplace install route (design brief X8)."""
+    root = str(plugin_root)
+    if host == "claude":
+        return [
+            ("claude", "plugin", "marketplace", "add", root, "--scope", "user"),
+            ("claude", "plugin", "install", PLUGIN_ID, "--scope", "user"),
+        ]
+    return [
+        ("codex", "plugin", "marketplace", "add", root),
+        ("codex", "plugin", "add", PLUGIN_ID),
+    ]
+
+
+def _plugin_upgrade_commands(host: str, plugin_root: Path) -> list[tuple[str, ...]]:
+    """Point `rush-local` at the new version root, then update the plugin.
+
+    Verified against claude 2.1.283 and codex 0.155.1 in isolated homes: an
+    update alone re-reads the old directory and stays on the old version.
+    Claude re-adding the same marketplace name replaces its source; Codex
+    refuses a second source under one name until the old one is removed
+    (removing the marketplace leaves the installed plugin enabled).
+    """
+    root = str(plugin_root)
+    if host == "claude":
+        return [
+            ("claude", "plugin", "marketplace", "add", root, "--scope", "user"),
+            ("claude", "plugin", "marketplace", "update", PLUGIN_MARKETPLACE),
+            ("claude", "plugin", "update", PLUGIN_ID, "--scope", "user"),
+        ]
+    return [
+        ("codex", "plugin", "marketplace", "remove", PLUGIN_MARKETPLACE),
+        ("codex", "plugin", "marketplace", "add", root),
+        ("codex", "plugin", "add", PLUGIN_ID),
+    ]
+
+
+# Host output that means a policy/approval refusal, reproduced in isolated
+# homes (HOME, CLAUDE_CONFIG_DIR, CODEX_HOME under the session scratchpad):
+# - claude 2.1.283, `claude --managed-settings '{"strictKnownMarketplaces":[]}'`
+#   (or `blockedMarketplaces` naming the root): `plugin marketplace add` and
+#   `plugin marketplace update` print "Marketplace source 'dir:<root>' is
+#   blocked by enterprise policy."; `plugin install` and `plugin update` print
+#   'Plugin "rush" is from marketplace "rush-local", which is blocked by your
+#   organization's policy'. All exit 1.
+# - codex 0.155.1, marketplace entry `"policy": {"installation":
+#   "NOT_AVAILABLE"}`: `plugin add` prints "Error: plugin `rush` is not
+#   available for install in marketplace `rush-local`" and exits 1.
+# Every other nonzero exit (missing source, unknown plugin, crash) is `failed`.
+_HOST_REFUSAL_SIGNATURES = (
+    "is blocked by enterprise policy",
+    "which is blocked by your organization's policy",
+    "is not available for install in marketplace",
+)
+_STDERR_TAIL_CHARS = 2000
+
+
+def _redacted_tail(text: str) -> str:
+    from rush.logging import redact_secrets
+
+    return redact_secrets(text.strip()[-_STDERR_TAIL_CHARS:])
+
+
+def _run_host_commands(commands: list[tuple[str, ...]]) -> dict[str, Any] | None:
+    """Run each command in order; the first failure as a state dict, else None.
+
+    A nonzero exit is `denied` only when the host's output carries one of its
+    own policy/approval refusal messages; any other nonzero exit is `failed`
+    with the exit code and a redacted stderr tail. Never reported as success.
+    """
+    for index, argv in enumerate(commands):
+        try:
+            proc = subprocess.run(
+                list(argv), capture_output=True, text=True, timeout=120, check=False
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"state": "failed", "detail": str(exc), "step": index}
+        if proc.returncode != 0:
+            output = f"{proc.stderr or ''}\n{proc.stdout or ''}"
+            refused = any(sig in output for sig in _HOST_REFUSAL_SIGNATURES)
+            return {
+                "state": "denied" if refused else "failed",
+                "exit_code": proc.returncode,
+                "detail": _redacted_tail(proc.stderr or proc.stdout or "")
+                or f"exit {proc.returncode}",
+                "command": list(argv),
+                "step": index,
+            }
+    return None
+
+
+def _host_output(argv: list[str]) -> str | None:
+    try:
+        proc = subprocess.run(
+            argv, capture_output=True, text=True, timeout=60, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _host_version(host: str) -> str | None:
+    output = _host_output([host, "--version"])
+    return output.strip().splitlines()[0] if output and output.strip() else None
+
+
+def _installed_plugin_version(host: str) -> str | None:
+    """The Rush plugin version the host itself reports as installed."""
+    output = _host_output([host, "plugin", "list", "--json"])
+    try:
+        data = json.loads(output or "")
+    except ValueError:
+        return None
+    rows = data.get("installed") if isinstance(data, dict) else data
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and PLUGIN_ID in (row.get("id"), row.get("pluginId")):
+            version = row.get("version")
+            return version if isinstance(version, str) else None
+    return None
+
+
+def _check_plugin_host(host: str) -> dict[str, Any] | None:
+    if host not in PLUGIN_HOSTS:
+        return {
+            "state": "failed",
+            "host": host,
+            "detail": f"unknown plugin host {host!r}",
+        }
+    if shutil.which(host) is None:
+        return {
+            "state": "host_missing",
+            "host": host,
+            "detail": f"{host} executable not found on PATH",
+        }
+    return None
+
+
+def install_native_agent_plugin(
+    *,
+    host: str,
+    plugin_root: Path,
+    manual_config_path: Path | None = None,
+    dry_run: bool = False,
+    data_root: Path | None = None,
+    consent: ManualEntryConsent = False,
+) -> dict[str, Any]:
+    """Install the materialized plugin at `plugin_root` through the host's own CLI.
+
+    A manual `rush` MCP entry in `manual_config_path` is shown as a diff,
+    removed before the install runs and restored byte-for-byte if the
+    install fails, so two Rush servers are never registered at once. Only
+    an entry the ownership ledger records is converted without asking; any
+    other entry needs `consent` (True, or a callable that is shown the
+    removal and answers), mirroring T3's guidance consent. Without it the
+    state is `consent_required` (or `declined`), nothing is written and no
+    host command runs. A host policy refusal is `denied`; any other host
+    failure is `failed`. With `data_root`, the install and the entry it
+    replaced are recorded in the ownership ledger.
+    """
+    plugin_root = Path(plugin_root)
+    unavailable = _check_plugin_host(host)
+    if unavailable is not None:
+        return unavailable
+    commands = _plugin_install_commands(host, plugin_root)
+    try:
+        removal = (
+            plan_manual_entry_removal(
+                PLUGIN_HOSTS[host], Path(manual_config_path), data_root=data_root
+            )
+            if manual_config_path is not None
+            else None
+        )
+    except (AgentConnectionError, ValueError, OSError) as exc:
+        return {"state": "conflict", "host": host, "detail": str(exc)}
+    preview = {
+        "commands": [list(argv) for argv in commands],
+        "conversion": removal.to_dict() if removal is not None else None,
+    }
+    if dry_run:
+        return {"state": "preview", "host": host, "preview": preview}
+    if removal is not None and not removal.owned:
+        granted = consent(removal) if callable(consent) else consent
+        if not granted:
+            return {
+                "state": "declined" if callable(consent) else "consent_required",
+                "host": host,
+                "detail": (
+                    f"{removal.path} has a 'rush' MCP entry Rush did not record; "
+                    "converting it to the plugin needs your consent "
+                    "(rush install --convert-manual-entry)"
+                ),
+                "preview": preview,
+            }
+
+    journal = WriteJournal()
+    if removal is not None:
+        try:
+            written = cas_replace_file(
+                removal.path,
+                removal.new_bytes,
+                expected_sha256=hashlib.sha256(removal.original).hexdigest(),
+            )
+        except (CASConflictError, OSError) as exc:
+            return {"state": "conflict", "host": host, "detail": str(exc)}
+        journal.record_file("mcp_entry", removal.path, removal.original, written)
+
+    failure = _run_host_commands(commands)
+    if failure is not None:
+        return {
+            **failure,
+            "host": host,
+            "recovery": journal.rollback(),
+            "preview": preview,
+        }
+    report: dict[str, Any] = {
+        "state": "installed",
+        "host": host,
+        "plugin_root": str(plugin_root),
+        "host_version": _host_version(host),
+        "reload": "restart the host session to load the plugin",
+        "preview": preview,
+    }
+    if data_root is not None:
+        try:
+            record_native_plugin_install(
+                data_root=data_root,
+                host=host,
+                plugin_root=plugin_root,
+                removed_entry=removal,
+            )
+        except (AgentConnectionError, StoreError, OSError) as exc:
+            report["ledger_error"] = str(exc)
+    return report
+
+
+def upgrade_native_agent_plugin(
+    *,
+    host: str,
+    plugin_root: Path,
+    previous_root: Path | None = None,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    """Move the host to the new version root and confirm what it now runs.
+
+    The previous version directory is removed (through the ownership
+    ledger) only after the host itself reports the new version; until then
+    the state is `pending_confirmation` and the old directory stays. A
+    failed step re-points `rush-local` at `previous_root` when one is given.
+    """
+    plugin_root = Path(plugin_root)
+    unavailable = _check_plugin_host(host)
+    if unavailable is not None:
+        return unavailable
+    failure = _run_host_commands(_plugin_upgrade_commands(host, plugin_root))
+    if failure is not None:
+        recovery: dict[str, Any] | None = None
+        if previous_root is not None and failure["step"] > 0:
+            restore = _plugin_install_commands(host, Path(previous_root))[:1]
+            recovery = _run_host_commands(restore) or {"state": "restored"}
+        return {**failure, "host": host, "recovery": recovery}
+    expected = plugin_root.parent.name
+    installed = _installed_plugin_version(host)
+    report: dict[str, Any] = {
+        "state": "upgraded" if installed == expected else "pending_confirmation",
+        "host": host,
+        "plugin_root": str(plugin_root),
+        "host_version": _host_version(host),
+        "installed_version": installed,
+        "expected_version": expected,
+        "reload": "restart the host session to load the plugin",
+    }
+    if data_root is not None and installed == expected:
+        try:
+            record_native_plugin_install(
+                data_root=data_root, host=host, plugin_root=plugin_root
+            )
+            report["cleanup"] = finalize_agent_plugin_upgrade(
+                host=host, confirmed_version=expected, data_root=data_root
+            )
+        except (AgentConnectionError, StoreError, OSError) as exc:
+            report["ledger_error"] = str(exc)
+    return report
+
+
 class InstallTool(ToolFn):
     """Download/verify/install the release binary and bring agents + a project online."""
 
@@ -277,6 +577,8 @@ class InstallTool(ToolFn):
         prober: Prober | None = None,
         permissions: ExecutionPermissions | None = None,
         install_guidance: bool = False,
+        agent_plugins: Sequence[str] = (),
+        convert_manual_entry: bool = False,
     ) -> ToolResult:
         started = monotonic()
         granted = permissions or ExecutionPermissions()
@@ -284,6 +586,14 @@ class InstallTool(ToolFn):
         prober = prober or _default_prober
         resolved_os = os_name or platform.system()
         resolved_arch = arch or platform.machine()
+        unknown_plugins = sorted(set(agent_plugins) - set(PLUGIN_HOSTS))
+        if unknown_plugins:
+            return self._result(
+                started,
+                "error",
+                f"install: unknown --agent-plugin host(s) {unknown_plugins}; "
+                f"expected {sorted(PLUGIN_HOSTS)}",
+            )
 
         try:
             resolved_data_root = data_root or default_data_root()
@@ -330,6 +640,15 @@ class InstallTool(ToolFn):
                 session_id=session_id,
                 data_root=resolved_data_root,
                 permissions=granted,
+                native_plugin_agents={PLUGIN_HOSTS[host] for host in agent_plugins},
+            )
+            plugin_reports = self._install_agent_plugins(
+                agent_plugins,
+                rush_binary=resolved_rush_binary,
+                data_root=resolved_data_root,
+                home=home,
+                os_name=resolved_os,
+                convert_manual_entry=convert_manual_entry,
             )
         except AgentConnectionError as exc:
             return self._result(
@@ -386,15 +705,76 @@ class InstallTool(ToolFn):
                 "arch": resolved_arch,
             },
             "agents": agent_reports,
+            "agent_plugins": plugin_reports,
             "project": project_view,
             "provision": provision_summary,
         }
-        summary = (
-            "install: ok (no active project)"
-            if project_view is None
-            else f"install: ok (project={project_view['project_id']})"
+        # A requested plugin the host did not install (or has not confirmed)
+        # is incomplete work: the install still succeeded, so warn, not ok.
+        plugins_done = all(
+            report.get("state") in ("installed", "upgraded")
+            for report in plugin_reports.values()
         )
-        return self._result(started, "ok", summary, raw=raw)
+        status: ToolStatus = "ok" if plugins_done else "warn"
+        summary = (
+            f"install: {status} (no active project)"
+            if project_view is None
+            else f"install: {status} (project={project_view['project_id']})"
+        )
+        return self._result(started, status, summary, raw=raw)
+
+    # --- Native host plugins (Phase 70 T2) ----------------------------------
+
+    def _install_agent_plugins(
+        self,
+        hosts: Sequence[str],
+        *,
+        rush_binary: str,
+        data_root: Path,
+        home: Path | None,
+        os_name: str | None,
+        convert_manual_entry: bool,
+    ) -> dict[str, dict[str, Any]]:
+        """Materialize the plugins once, then install or upgrade each host."""
+        if not hosts:
+            return {}
+        try:
+            roots = materialize_agent_plugins(
+                rush_binary=rush_binary, data_root=data_root
+            )
+        except (AgentConnectionError, StoreError, OSError) as exc:
+            return {
+                host: {"state": "failed", "host": host, "detail": str(exc)}
+                for host in hosts
+            }
+        reports: dict[str, dict[str, Any]] = {}
+        for host in dict.fromkeys(hosts):
+            root = roots[host]
+            previous = [
+                path for path in installed_plugin_roots(host, data_root) if path != root
+            ]
+            if previous:
+                reports[host] = upgrade_native_agent_plugin(
+                    host=host,
+                    plugin_root=root,
+                    previous_root=previous[0],
+                    data_root=data_root,
+                )
+                continue
+            # The manual-entry config path only; install_native_agent_plugin
+            # reads it and reports an unreadable file as a conflict.
+            candidates = ADAPTERS[PLUGIN_HOSTS[host]].config_paths(
+                os_name or platform.system(), home or Path.home()
+            )
+            config_path = next((p for p in candidates if p.exists()), candidates[0])
+            reports[host] = install_native_agent_plugin(
+                host=host,
+                plugin_root=root,
+                manual_config_path=config_path,
+                data_root=data_root,
+                consent=convert_manual_entry,
+            )
+        return reports
 
     # --- Binary download/verify/extract/replace ----------------------------
 
@@ -465,6 +845,7 @@ class InstallTool(ToolFn):
         session_id: str,
         data_root: Path,
         permissions: ExecutionPermissions,
+        native_plugin_agents: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         statuses = discover_agents(home=home, os_name=os_name, rush_binary=rush_binary)
         connect_tool = AgentConnectionTool()
@@ -474,6 +855,12 @@ class InstallTool(ToolFn):
             adapter = ADAPTERS[status.agent_id]
             if not status.detected:
                 reports.append(self._agent_report(status, adapter, "unsupported"))
+                continue
+
+            if status.agent_id in (native_plugin_agents or set()):
+                # The native plugin registers Rush for this host; a manual
+                # MCP connection as well would run two Rush servers.
+                reports.append(self._agent_report(status, adapter, "native_plugin"))
                 continue
 
             if agents_flag != "all":
@@ -640,5 +1027,8 @@ __all__ = [
     "InstallError",
     "InstallTool",
     "UnsupportedPlatformError",
+    "finalize_agent_plugin_upgrade",
+    "install_native_agent_plugin",
     "select_release_asset",
+    "upgrade_native_agent_plugin",
 ]
