@@ -39,6 +39,7 @@ import platform
 import shutil
 import ssl
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -80,7 +81,13 @@ from rush.setup.provision import (
     default_data_root,
 )
 from rush.tools.agent_connection import AgentConnectionTool
-from rush.tools.setup_wizard import run_setup_wizard
+from rush.tools.setup_wizard import (
+    SETUP_HOSTS,
+    render_setup_result,
+    run_guided_setup,
+    run_setup_wizard,
+    setup_resume_command,
+)
 from rush.workflows.projects import (
     ProjectError,
     ProjectNotFoundError,
@@ -579,7 +586,18 @@ class InstallTool(ToolFn):
         install_guidance: bool = False,
         agent_plugins: Sequence[str] = (),
         convert_manual_entry: bool = False,
+        handoff_archive: Path | None = None,
+        handoff_sums: Path | None = None,
+        only_agent: str | None = None,
     ) -> ToolResult:
+        """Install (or accept a verified handoff of) Rush, then agents/project.
+
+        T26: `handoff_archive`/`handoff_sums` are the bootstrap script's own
+        downloaded release files. They are verified against each other and
+        against the running installed executable; nothing is downloaded or
+        installed in that mode, so no path can install unverified bytes.
+        `only_agent` (an adapter id) connects exactly that host.
+        """
         started = monotonic()
         granted = permissions or ExecutionPermissions()
         downloader = downloader or _default_downloader
@@ -601,19 +619,31 @@ class InstallTool(ToolFn):
             return self._result(started, "error", f"install: {exc}")
         bin_dir = install_dir or (resolved_data_root / "bin")
 
+        handoff = handoff_archive is not None or handoff_sums is not None
+        binary_version: str | None = None
         try:
             asset_name = select_release_asset(resolved_os, resolved_arch)
-            archive_bytes, sums_text = self._download_release(
-                asset_name=asset_name, version=version, downloader=downloader
-            )
-            binary_path = self._install_binary(
-                bin_dir=bin_dir,
-                asset_name=asset_name,
-                os_name=resolved_os,
-                archive_bytes=archive_bytes,
-                sums_text=sums_text,
-                prober=prober,
-            )
+            if handoff:
+                binary_path, binary_version = self._verify_handoff(
+                    archive=handoff_archive,
+                    sums=handoff_sums,
+                    asset_name=asset_name,
+                    os_name=resolved_os,
+                    install_dir=install_dir,
+                    prober=prober,
+                )
+            else:
+                archive_bytes, sums_text = self._download_release(
+                    asset_name=asset_name, version=version, downloader=downloader
+                )
+                binary_path = self._install_binary(
+                    bin_dir=bin_dir,
+                    asset_name=asset_name,
+                    os_name=resolved_os,
+                    archive_bytes=archive_bytes,
+                    sums_text=sums_text,
+                    prober=prober,
+                )
         except InstallError as exc:
             return self._result(
                 started, "error", f"install: {exc}", raw={"code": exc.code}
@@ -641,6 +671,7 @@ class InstallTool(ToolFn):
                 data_root=resolved_data_root,
                 permissions=granted,
                 native_plugin_agents={PLUGIN_HOSTS[host] for host in agent_plugins},
+                only_agent=only_agent,
             )
             plugin_reports = self._install_agent_plugins(
                 agent_plugins,
@@ -694,6 +725,7 @@ class InstallTool(ToolFn):
             project_root=Path(project_view["root"]) if project_view else None,
             data_root=resolved_data_root,
             consent=install_guidance and granted.cache_write and granted.artifact_write,
+            only_agent=only_agent,
         )
 
         raw = {
@@ -703,6 +735,8 @@ class InstallTool(ToolFn):
                 "asset": asset_name,
                 "os": resolved_os,
                 "arch": resolved_arch,
+                "handoff": handoff,
+                "version": binary_version,
             },
             "agents": agent_reports,
             "agent_plugins": plugin_reports,
@@ -792,6 +826,61 @@ class InstallTool(ToolFn):
             ) from exc
         return archive_bytes, sums_bytes.decode("utf-8")
 
+    def _verify_handoff(
+        self,
+        *,
+        archive: Path | None,
+        sums: Path | None,
+        asset_name: str,
+        os_name: str,
+        install_dir: Path | None,
+        prober: Prober,
+    ) -> tuple[Path, str]:
+        """Accept the bootstrap script's verified download (T26 handoff).
+
+        The archive must match its SHA256SUMS entry, and the binary inside it
+        must be byte-identical to the installed executable that is running.
+        Nothing is downloaded, installed, or replaced here. Returns the
+        executable and the version it reports.
+        """
+
+        def failed(message: str) -> InstallError:
+            return InstallError("HANDOFF_VERIFICATION_FAILED", message)
+
+        if archive is None or sums is None:
+            raise failed("--handoff-archive and --handoff-sums must be given together")
+        try:
+            archive_bytes = Path(archive).read_bytes()
+            sums_text = Path(sums).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise failed(f"cannot read the handed-off release files: {exc}") from exc
+        if not _verify_checksum(archive_bytes, sums_text, asset_name):
+            raise failed(
+                f"{archive} does not match the SHA256SUMS entry for {asset_name}"
+            )
+        binary_name = _binary_name(os_name)
+        try:
+            binary_bytes = _extract_binary_bytes(archive_bytes, asset_name, binary_name)
+        except (InstallError, tarfile.TarError, zipfile.BadZipFile, OSError) as exc:
+            raise failed(f"cannot extract {binary_name}: {exc}") from exc
+        target = _running_executable(install_dir, binary_name)
+        try:
+            installed = target.read_bytes() if target is not None else None
+        except OSError:
+            installed = None
+        if installed is None or (
+            hashlib.sha256(installed).digest() != hashlib.sha256(binary_bytes).digest()
+        ):
+            raise failed(
+                f"the handed-off release is not the running installed executable "
+                f"({target or 'none found'})"
+            )
+        assert target is not None
+        probe = prober([str(target), "--version"])
+        if probe.returncode != 0:
+            raise failed(f"{target} --version failed: {(probe.stderr or '').strip()}")
+        return target, (probe.stdout or "").strip()
+
     def _install_binary(
         self,
         *,
@@ -846,6 +935,7 @@ class InstallTool(ToolFn):
         data_root: Path,
         permissions: ExecutionPermissions,
         native_plugin_agents: set[str] | None = None,
+        only_agent: str | None = None,
     ) -> list[dict[str, Any]]:
         statuses = discover_agents(home=home, os_name=os_name, rush_binary=rush_binary)
         connect_tool = AgentConnectionTool()
@@ -863,7 +953,8 @@ class InstallTool(ToolFn):
                 reports.append(self._agent_report(status, adapter, "native_plugin"))
                 continue
 
-            if agents_flag != "all":
+            # `--agent HOST` (T26) connects exactly that host; others are left as is.
+            if agents_flag != "all" or only_agent not in (None, status.agent_id):
                 passive_state = (
                     "active" if status.status == "registered" else "configured"
                 )
@@ -935,6 +1026,7 @@ class InstallTool(ToolFn):
         project_root: Path | None,
         data_root: Path,
         consent: bool,
+        only_agent: str | None = None,
     ) -> None:
         """Attach the instruction-block preview to every connected-or-kept agent.
 
@@ -946,6 +1038,8 @@ class InstallTool(ToolFn):
             return
         for report in reports:
             if not report["detected"] or report["agent_id"] not in INSTRUCTION_TARGETS:
+                continue
+            if only_agent not in (None, report["agent_id"]):
                 continue
             try:
                 report["guidance"] = reconcile_agent_instructions(
@@ -1022,6 +1116,73 @@ class InstallTool(ToolFn):
         )
 
 
+def _running_executable(install_dir: Path | None, binary_name: str) -> Path | None:
+    """The installed Rush executable this process runs as: the named install
+    directory's binary, the frozen executable itself, or the `rush` on PATH."""
+    if install_dir is not None:
+        return Path(install_dir) / binary_name
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable)
+    try:
+        return Path(resolve_rush_binary(None))
+    except AgentConnectionError:
+        return None
+
+
+def run_install_command(
+    *,
+    setup: bool,
+    agent: str | None,
+    project_path: str | None,
+    interactive: bool,
+    **install_kwargs: Any,
+) -> dict[str, Any]:
+    """`rush install` orchestration, kept out of the Click handler.
+
+    With `setup` (the guided bootstrap's `--setup`) the install connects no
+    agent itself; the selected host and project go to the same setup
+    implementation as `rush setup`, with consent only from the controlling
+    terminal. Otherwise `agent` connects exactly that host and the result
+    carries the one shell-quoted `rush setup PATH [--agent HOST]` line that
+    continues setup later -- nothing prompts. Returns the install result (the
+    setup payload and that line added under `raw`), the text follow-up, and
+    the setup exit code.
+    """
+    if setup:
+        install_kwargs["agents"] = "none"  # the host is connected by setup itself
+    result = InstallTool().run(
+        project=None if setup else project_path,
+        only_agent=None if setup or agent is None else SETUP_HOSTS[agent],
+        permissions=ExecutionPermissions(
+            network=True, download=True, cache_write=True, artifact_write=True
+        ),
+        **install_kwargs,
+    )
+    outcome: dict[str, Any] = {"install": result, "followup": None, "setup_exit": 0}
+    raw = result.get("raw")
+    if result["status"] == "error" or not isinstance(raw, dict):
+        return outcome
+    if not setup:
+        project = raw.get("project")
+        root = Path(project["root"]) if project else Path.cwd().resolve()
+        raw["next_command"] = outcome["followup"] = setup_resume_command(root, agent)
+        return outcome
+    root = Path(project_path).expanduser() if project_path else Path.cwd()
+    if not root.is_dir():
+        payload: dict[str, Any] = {
+            "status": "error",
+            "reason": "project_missing",
+            "message": f"--project {root} is not a directory",
+        }
+        code = 2
+    else:
+        payload, code = run_guided_setup(root.resolve(), agent, interactive=interactive)
+    raw["setup"] = payload
+    outcome["followup"] = render_setup_result(payload)
+    outcome["setup_exit"] = code
+    return outcome
+
+
 __all__ = [
     "RELEASE_ASSET_MATRIX",
     "InstallError",
@@ -1029,6 +1190,7 @@ __all__ = [
     "UnsupportedPlatformError",
     "finalize_agent_plugin_upgrade",
     "install_native_agent_plugin",
+    "run_install_command",
     "select_release_asset",
     "upgrade_native_agent_plugin",
 ]

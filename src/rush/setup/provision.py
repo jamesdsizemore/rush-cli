@@ -452,22 +452,56 @@ _GRANT_FLAGS: dict[str, str] = {
 _GRANT_ORDER: tuple[str, ...] = ("network", "download", "cache_write", "build")
 
 
+SETUP_PLAN_RELATIVE_PATH = ".rush/setup-plan.json"
+
+
 def setup_action_command(root: Path, entries: list[EnginePackage]) -> str:
     """The exact `rush setup` route to provision `entries` (S15.5).
 
-    Single shared builder for the doctor readiness action string -- T24
-    updates non-interactive apply flags here, in one place, for every
-    caller. Grants are the union of every entry's source grants
-    (`_SOURCE_GRANTS`), in canonical flag order; a single-entry call
-    reproduces exactly one source's grant list.
+    Single shared builder for the doctor readiness action string. The
+    non-interactive apply route (T24/T26) is `rush setup PATH --apply --yes
+    --plan-file FILE --plan-id ID` plus grants, and its `ID` exists only once
+    a reviewed plan with resolved identities is saved -- so the action is the
+    save step: it resolves identities (`--allow-network`, needed whenever an
+    entry's source resolves over the network), writes the reviewed plan to
+    `<root>/.rush/setup-plan.json` (`--allow-artifact-write`), and prints
+    that exact apply command with every grant the saved plan needs.
     """
-    grants: set[str] = set()
-    for entry in entries:
-        grants.update(_SOURCE_GRANTS.get(entry.source, ()))
-    flags = " ".join(_GRANT_FLAGS[g] for g in _GRANT_ORDER if g in grants)
-    quoted_root = shlex.quote(str(root.resolve()))
-    base = f"rush setup {quoted_root} --install"
-    return f"{base} {flags}" if flags else base
+    resolved = root.resolve()
+    needs_network = any(
+        "network" in _SOURCE_GRANTS.get(entry.source, ()) for entry in entries
+    )
+    plan_file = shlex.quote(str(resolved / SETUP_PLAN_RELATIVE_PATH))
+    base = (
+        f"rush setup {shlex.quote(str(resolved))} --save-plan {plan_file} "
+        "--allow-artifact-write"
+    )
+    return f"{base} --allow-network" if needs_network else base
+
+
+def plan_is_complete(plan: ProvisionPlan) -> bool:
+    """Whether every applicable entry already has its verified install.
+
+    Read-only: a `reuse_verified` entry counts, and so does a resolved entry
+    whose reviewed destination holds a manifest that verifies for exactly
+    its frozen version. An unresolved or blocked entry is incomplete.
+    """
+    root = Path(plan.project_root)
+    for entry in plan.entries:
+        if (
+            entry.disposition != "applicable"
+            or entry.identity_state == "reuse_verified"
+        ):
+            continue
+        if entry.identity_state != "resolved" or entry.identity is None:
+            return False
+        dest = Path(entry.destination)
+        if (
+            _verified_manifest_at(dest, entry.engine_id, entry.identity.version, root)
+            is None
+        ):
+            return False
+    return True
 
 
 # --- Plan -------------------------------------------------------------------
@@ -1479,6 +1513,7 @@ __all__ = [
     "current_os_arch",
     "default_data_root",
     "plan_from_dict",
+    "plan_is_complete",
     "plan_to_dict",
     "resolution_url",
     "resolve_and_apply_provision_plan",

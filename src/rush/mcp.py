@@ -9,6 +9,7 @@ avoids collisions with other MCP servers in multi-server agent sessions).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,68 @@ from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
 
 SERVER_NAME = "rush"
+
+
+class ServerBindingError(Exception):
+    """`rush mcp serve --project` named no registered project (startup error)."""
+
+
+@dataclass(frozen=True)
+class ServerBinding:
+    """T26: the project and session a `rush mcp serve` process is bound to."""
+
+    project_id: str | None
+    root: Path | None
+    session_id: str | None
+
+
+def resolve_server_binding(
+    project: str | None, session: str | None
+) -> ServerBinding | None:
+    """Resolve `--project`/`--session` read-only, before any server exists.
+
+    An unknown project, or one whose registered root is gone, raises
+    `ServerBindingError` so the caller exits without starting a server.
+    """
+    if project is None and session is None:
+        return None
+    if project is None:
+        return ServerBinding(None, None, session)
+    from .workflows.projects import ProjectError, resolve_project
+
+    try:
+        view = resolve_project(project)
+    except ProjectError as exc:
+        raise ServerBindingError(f"unknown project {project!r}: {exc}") from exc
+    root = Path(view["root"])
+    if not root.is_dir():
+        raise ServerBindingError(
+            f"project {view['project_id']} root is missing: {root}"
+        )
+    return ServerBinding(str(view["project_id"]), root, session)
+
+
+# The binding of the server this process runs (one stdio server per process).
+_BINDING: ServerBinding | None = None
+# `rush_project` operations that accept `session_id` (tools/project.py).
+_SESSION_PROJECT_OPERATIONS = frozenset({"show", "select", "snapshot", "artifacts"})
+
+
+def _with_binding_defaults(
+    request: dict[str, object], *, session_ops: frozenset[str] | None
+) -> dict[str, object]:
+    """Fill a bound server's defaults the caller omitted: `session_id` for
+    the operations in `session_ops`, else (scan tools) the bound `project`."""
+    binding = _BINDING
+    if binding is None or not isinstance(request, dict):
+        return request
+    filled = dict(request)
+    if session_ops is not None:
+        if binding.session_id and filled.get("operation") in session_ops:
+            filled.setdefault("session_id", binding.session_id)
+    elif binding.project_id:
+        filled.setdefault("project", binding.project_id)
+    return filled
 
 
 def build_server_instructions() -> str:
@@ -97,8 +160,15 @@ class RushFastMCP(FastMCP):
         return CallToolResult(content=list(result), isError=False)
 
 
-def build_server(memory_session: str | None = None):
+def build_server(
+    memory_session: str | None = None, *, binding: ServerBinding | None = None
+):
     """Construct and return the FastMCP server with all catalog tools registered.
+
+    T26: with ``binding`` (`rush mcp serve --project ID --session SID`) the
+    registered project root, not the process cwd, anchors every relative
+    path, and the session/project become the defaults for `rush_project`
+    and `rush_scan` requests that omit them.
 
     Does NOT start serving — caller decides transport. See ``run_stdio``.
 
@@ -137,7 +207,11 @@ def build_server(memory_session: str | None = None):
     # wrapper anchors its relative-path resolution to this snapshot, so a
     # process cwd change after server creation cannot retarget a later
     # relative call.
-    anchor_cwd = Path.cwd().resolve()
+    global _BINDING
+    _BINDING = binding
+    anchor_cwd = (
+        binding.root if binding and binding.root is not None else Path.cwd().resolve()
+    )
     server = RushFastMCP(SERVER_NAME, instructions=build_server_instructions())
     _register_tools(server, anchor_cwd)
     return server
@@ -473,7 +547,7 @@ def rush_project(
 
     result = ProjectTool().handle_request(
         _anchor_request(
-            request,
+            _with_binding_defaults(request, session_ops=_SESSION_PROJECT_OPERATIONS),
             _anchor,
             paths={"add": ("path",), "relink": ("path",), "create": ("parent",)},
             projects=("show", "snapshot", "artifacts"),
@@ -505,7 +579,9 @@ def rush_scan(
 ) -> dict[str, object]:
     from rush.tools.scan import ScanTool
 
-    request = _anchor_request(request, _anchor, projects=None)
+    request = _anchor_request(
+        _with_binding_defaults(request, session_ops=None), _anchor, projects=None
+    )
     operation = request.get("operation") if isinstance(request, dict) else None
     if operation in _SCAN_DIRECT_OPERATIONS:
         return _rush_scan_direct_operation(dict(request), str(operation))
@@ -848,8 +924,10 @@ def _register_tools(server, anchor_cwd: Path | None = None) -> None:
 mcp_server = build_server()
 
 
-async def run_stdio(memory_session: str | None = None) -> None:
+async def run_stdio(
+    memory_session: str | None = None, *, binding: ServerBinding | None = None
+) -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""
-    server = build_server(memory_session)
+    server = build_server(memory_session, binding=binding)
     get_logger("mcp").debug("starting rush stdio MCP server")
     await server.run_stdio_async()
