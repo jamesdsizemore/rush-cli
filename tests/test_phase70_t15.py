@@ -431,10 +431,14 @@ def test_missing_engine_action_is_exact_rush_setup_command(
     entries = doctor_mod.build_engine_inventory(root, probe=False)
     ruff_entry = next(e for e in entries if e["engine"] == "ruff")
 
+    # T26: the action is the saved-plan step of the non-interactive route;
+    # it prints the exact `--apply --yes --plan-file --plan-id` command with
+    # the plan's grants (the plan id exists only once the plan is saved).
     quoted_root = shlex.quote(str(root.resolve()))
+    quoted_plan = shlex.quote(str(root.resolve() / ".rush" / "setup-plan.json"))
     expected = (
-        f"rush setup {quoted_root} --install --allow-network "
-        "--allow-download --allow-cache-write"
+        f"rush setup {quoted_root} --save-plan {quoted_plan} "
+        "--allow-artifact-write --allow-network"
     )
     assert ruff_entry["action"] == expected
     assert "--allow-build" not in ruff_entry["action"]

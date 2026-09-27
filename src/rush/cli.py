@@ -587,13 +587,33 @@ def mcp() -> None:
         "capability is read from RUSH_MEMORY_CAPABILITY, never a CLI argument."
     ),
 )
-def serve(memory_session: str | None) -> None:
+@click.option(
+    "--project",
+    "project",
+    default=None,
+    help=(
+        "Bind this server to one registered project (ID or registered root): its "
+        "root anchors every relative path. Unknown projects fail at startup."
+    ),
+)
+@click.option(
+    "--session",
+    "session",
+    default=None,
+    help="Default session_id for project and scan tools when a caller omits it.",
+)
+def serve(memory_session: str | None, project: str | None, session: str | None) -> None:
     """Start the rush MCP server on stdio (for coding agents)."""
     import asyncio
 
-    from .mcp import run_stdio
+    from .mcp import ServerBindingError, resolve_server_binding, run_stdio
 
-    asyncio.run(run_stdio(memory_session))
+    try:
+        binding = resolve_server_binding(project, session)
+    except ServerBindingError as exc:
+        click.echo(f"rush mcp serve: {exc}", err=True)
+        sys.exit(1)
+    asyncio.run(run_stdio(memory_session, binding=binding))
 
 
 # --- Cache CLI commands ---------------------------------------------------
@@ -672,7 +692,44 @@ def _logical_cache_db() -> Path:
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Saved JSON output of `rush setup PATH --json`.",
 )
-@click.option("--plan-id", help="The review_id of that saved review.")
+@click.option(
+    "--plan-id",
+    help="The saved plan's setup_plan_id (or a T24 review's review_id).",
+)
+@click.option(
+    "--agent",
+    "host",
+    type=click.Choice(["claude", "codex"]),
+    default=None,
+    help="The LLM CLI to connect to this project (Claude Code or Codex CLI).",
+)
+@click.option(
+    "--save-plan",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Save the complete reviewed setup plan here (needs --allow-artifact-write) "
+        "and print the exact --apply command. Saving applies nothing."
+    ),
+)
+@click.option(
+    "--install-guidance",
+    is_flag=True,
+    help="Also write the Rush instruction block into CLAUDE.md/AGENTS.md.",
+)
+@click.option(
+    "--enable-agent-hooks",
+    is_flag=True,
+    help="Also enable the host's Rush hooks.",
+)
+@click.option(
+    "--verify-host",
+    is_flag=True,
+    help=(
+        "Launch the host once to verify it calls Rush for this project (uses the "
+        "network and model tokens on your host account)."
+    ),
+)
 @permission_options
 @click.option(
     "--json",
@@ -688,6 +745,11 @@ def setup_cmd(
     yes: bool,
     plan_file: Path | None,
     plan_id: str | None,
+    host: str | None,
+    save_plan: Path | None,
+    install_guidance: bool,
+    enable_agent_hooks: bool,
+    verify_host: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -721,6 +783,11 @@ def setup_cmd(
         as_json=as_json,
         stdin_tty=sys.stdin.isatty(),
         stdout_tty=sys.stdout.isatty(),
+        host=host,
+        save_plan=save_plan,
+        install_guidance=install_guidance,
+        enable_hooks=enable_agent_hooks,
+        verify_host=verify_host,
     )
     click.echo(
         json.dumps(payload, indent=2, default=str)
@@ -4211,6 +4278,33 @@ def agent_doctor_cmd(
         "the only Rush server. Without it that host is left unchanged."
     ),
 )
+@click.option(
+    "--agent",
+    "agent",
+    type=click.Choice(["claude", "codex"]),
+    default=None,
+    help=(
+        "Connect exactly this LLM CLI (overrides --agents all). With --setup, the "
+        "host that guided setup connects to --project."
+    ),
+)
+@click.option(
+    "--setup",
+    "guided_setup",
+    is_flag=True,
+    help=(
+        "After installing (connecting no agent itself), run `rush setup` for "
+        "--project (default: the current directory) and --agent, asking consent "
+        "on the terminal."
+    ),
+)
+@click.option(
+    "--non-interactive",
+    is_flag=True,
+    help="With --setup: never prompt; print the full setup preview instead.",
+)
+@click.option("--handoff-archive", type=click.Path(path_type=Path), hidden=True)
+@click.option("--handoff-sums", type=click.Path(path_type=Path), hidden=True)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def install_cmd(
     agents: str,
@@ -4224,15 +4318,28 @@ def install_cmd(
     install_guidance: bool,
     agent_plugins: tuple[str, ...],
     convert_manual_entry: bool,
+    agent: str | None,
+    guided_setup: bool,
+    non_interactive: bool,
+    handoff_archive: Path | None,
+    handoff_sums: Path | None,
     as_json: bool,
 ) -> None:
     """Download/verify/install the release binary, connect agents, and optionally set up a project."""
-    from .tools.install import InstallTool
+    if agent is not None and agents == "none" and not guided_setup:
+        raise click.UsageError(
+            "--agent conflicts with --agents none: --agent HOST connects exactly "
+            "that host, --agents none connects none"
+        )
+    from .tools.install import run_install_command
 
-    result = InstallTool().run(
-        agents=agents,  # type: ignore[arg-type]
-        memory=memory,  # type: ignore[arg-type]
-        project=project_path,
+    outcome = run_install_command(
+        setup=guided_setup,
+        agent=agent,
+        project_path=project_path,
+        interactive=not (as_json or non_interactive),
+        agents=agents,
+        memory=memory,
         create_name=create_name,
         create_parent=create_parent,
         init_git=init_git,
@@ -4241,13 +4348,15 @@ def install_cmd(
         install_guidance=install_guidance,
         agent_plugins=agent_plugins,
         convert_manual_entry=convert_manual_entry,
-        permissions=ExecutionPermissions(
-            network=True, download=True, cache_write=True, artifact_write=True
-        ),
+        handoff_archive=handoff_archive,
+        handoff_sums=handoff_sums,
     )
-    _render_session_result(dict(result), as_json)
-    if result["status"] != "ok":
-        raise click.exceptions.Exit(1)
+    try:
+        _render_session_result(dict(outcome["install"]), as_json)
+    except click.exceptions.Exit as done:
+        if outcome["followup"] and not as_json:
+            click.echo(outcome["followup"])
+        raise click.exceptions.Exit(done.exit_code or outcome["setup_exit"]) from None
 
 
 @cli.group(name="ship")

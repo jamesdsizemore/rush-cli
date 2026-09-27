@@ -54,7 +54,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 from rush.memory.transactions import CASMapTransaction, StoreError
 from rush.setup.provision import default_data_root
@@ -548,7 +548,18 @@ class RegistrationStep:
     restart_required: bool
     # sha256 of the config file's bytes when the plan was built; None means
     # the file was absent. Apply re-checks it immediately before replacing.
+    # For a project-bound Claude Code (`scope="local"`) step it is the digest
+    # of the project's current `rush` entry instead: Claude rewrites
+    # `~/.claude.json` constantly, so only the entry itself is comparable.
     expected_sha256: str | None = None
+    # Phase 70 T26: project-bound registration (`plan_project_registration`).
+    scope: Literal["user", "local"] = "user"
+    project_root: Path | None = None
+    entry: dict[str, Any] | None = None
+    current_entry: dict[str, Any] | None = None
+    diff: str = ""
+    requires_consent: bool = False
+    unchanged: bool = False
 
 
 @dataclass(frozen=True)
@@ -1644,16 +1655,62 @@ class AgentInstructionApplyResult:
         }
 
 
+@overload
 def plan_agent_instructions(
-    agent_id: str, *, project_root: Path, data_root: Path | None = None
-) -> AgentInstructionPlan:
+    agent_id: str,
+    *,
+    project_root: Path,
+    data_root: Path | None = None,
+    rush_binary: None = None,
+) -> AgentInstructionPlan: ...
+
+
+@overload
+def plan_agent_instructions(
+    agent_id: str,
+    *,
+    project_root: Path,
+    data_root: Path | None = None,
+    rush_binary: str,
+    home: Path | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> RegistrationStep: ...
+
+
+def plan_agent_instructions(
+    agent_id: str,
+    *,
+    project_root: Path,
+    data_root: Path | None = None,
+    rush_binary: str | None = None,
+    home: Path | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> AgentInstructionPlan | RegistrationStep:
     """Plan the Rush instruction block for `agent_id` in `project_root`. Never writes.
 
     Claude Code uses `CLAUDE.md`, Codex `AGENTS.md`. A symlinked instruction
     file is followed only to a regular file inside the canonical project
     root; the block then lives in that physical file, shared by every host
     whose file resolves there (`hosts=` is the union).
+
+    With `rush_binary` (Phase 70 T26) this plans the host's project-bound
+    MCP registration instead -- the server entry that launches `rush_binary`
+    bound to this project and session (`plan_project_registration`).
     """
+    if rush_binary is not None:
+        return plan_project_registration(
+            agent_id,
+            rush_binary=rush_binary,
+            project_root=project_root,
+            project_id=project_id,
+            session_id=session_id,
+            home=home,
+            which=which,
+        )
     name = INSTRUCTION_TARGETS.get(agent_id)
     if name is None:
         raise UnknownAgentError(
@@ -1752,14 +1809,55 @@ def plan_agent_instructions(
     )
 
 
+@overload
 def apply_agent_instructions(
     plan: AgentInstructionPlan, *, consent: bool
-) -> AgentInstructionApplyResult:
+) -> AgentInstructionApplyResult: ...
+
+
+@overload
+def apply_agent_instructions(
+    plan: RegistrationStep,
+    *,
+    consent: bool | None = None,
+    data_root: Path | None = None,
+    project_root: Path | None = None,
+    runner: HostRunner | None = None,
+    writer: Callable[..., Any] | None = None,
+) -> AgentApplyResult: ...
+
+
+def apply_agent_instructions(
+    plan: AgentInstructionPlan | RegistrationStep,
+    *,
+    consent: bool | None = None,
+    data_root: Path | None = None,
+    project_root: Path | None = None,
+    runner: HostRunner | None = None,
+    writer: Callable[..., Any] | None = None,
+) -> AgentInstructionApplyResult | AgentApplyResult:
     """Apply a previewed block only with consent and only if the file is unchanged.
 
     The whole-file digest recorded at preview is re-checked immediately
     before `os.replace`; any difference is a conflict with no write.
+
+    A project-bound registration step (T26) goes to
+    `apply_project_registration`; `project_root`, when given, must be the
+    root the step was planned for.
     """
+    if isinstance(plan, RegistrationStep):
+        if (
+            project_root is not None
+            and plan.project_root != Path(project_root).resolve()
+        ):
+            return _registration_result(plan, False, "project_root_mismatch")
+        return apply_project_registration(
+            plan,
+            consent=consent,
+            data_root=data_root,
+            runner=runner,
+            writer=writer,
+        )
     target = plan.target_path
     if plan.conflict is not None:
         return AgentInstructionApplyResult("conflict", target, plan.conflict)
@@ -2380,7 +2478,9 @@ def disconnect_agent(
 
 def _references(remaining: dict[str, dict[str, Any]], kind: str, path: Path) -> bool:
     for row in remaining.values():
-        if row.get("kind") != kind:
+        # A Claude Code local-scope entry (T26) is its own per-project entry
+        # inside the shared config file, never the user-scope entry.
+        if row.get("kind") != kind or row.get("scope") == "local":
             continue
         try:
             if _entry_physical_path(row) == path:
@@ -2428,6 +2528,8 @@ def _disconnect_component(
             raise ValueError(
                 f"ledger MCP path is not {agent_id}'s config: {config_path}"
             )
+        if row.get("scope") == "local":
+            return _disconnect_local_entry(row, agent_id, config_path)
         if _references(remaining, "mcp_entry", config_path):
             return "kept_shared"
         raw = _read_regular(config_path)
@@ -3016,8 +3118,642 @@ def finalize_agent_plugin_upgrade(
     }
 
 
+# --- Phase 70 T26: project-bound host registration, readback and probe --------------
+#
+# `rush setup PATH --agent HOST` binds a host's Rush server to one project: the
+# entry launches the installed Rush with `mcp serve --project ID --session
+# HOST:ID`. Claude Code keeps that entry in the project's local scope
+# (`claude mcp add --scope local`, run with `cwd=PATH`), so each project has its
+# own. Codex has one global `[mcp_servers.rush]` table, edited through the T3
+# compare-and-swap writer; rebinding it from another project is a host-change
+# diff that needs consent. Host readback and capability-probe argv are data
+# here; the real-host lanes (G6) validate them against each installed host.
+
+HOST_BINARIES: dict[str, str] = {"claude-code": "claude", "codex": "codex"}
+PROBE_PROMPT = "Call rush_status with no arguments and return its JSON"
+HOST_READBACK_ARGS: dict[str, tuple[str, ...]] = {
+    "claude-code": ("mcp", "get", "rush"),
+    "codex": ("mcp", "get", "rush", "--json"),
+}
+HOST_PROBE_ARGS: dict[str, tuple[str, ...]] = {
+    "claude-code": (
+        "-p",
+        PROBE_PROMPT,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--allowedTools",
+        "mcp__rush__rush_status",
+    ),
+    "codex": ("exec", "--json", "--skip-git-repo-check", PROBE_PROMPT),
+}
+HOST_LOGIN_ACTIONS: dict[str, str] = {
+    "claude-code": "claude /login",
+    "codex": "codex login",
+}
+_CLAUDE_CONNECTED_RE = re.compile(r"status:\s*(?:\S+\s+)?connected\b", re.IGNORECASE)
+
+# Runs one host CLI command with `cwd`; returns stdout, raises `HostCommandError`.
+HostRunner = Callable[[tuple[str, ...], str], str]
+
+
+class HostCommandError(AgentConnectionError):
+    """A host CLI command exited non-zero or could not be started."""
+
+    def __init__(
+        self, argv: Sequence[str], returncode: int | None, detail: str
+    ) -> None:
+        super().__init__(f"{' '.join(argv[:4])} failed ({returncode}): {detail}")
+        self.argv = tuple(argv)
+        self.returncode = returncode
+        self.detail = detail
+
+
+def run_host_command(argv: tuple[str, ...], cwd: str) -> str:
+    """Run one host CLI command in `cwd` (stdin closed); its stdout."""
+    from rush.logging import redact_secrets
+
+    try:
+        proc = subprocess.run(
+            list(argv),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HostCommandError(argv, None, str(exc)) from exc
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip()[-2000:]
+        raise HostCommandError(argv, proc.returncode, redact_secrets(tail))
+    return proc.stdout
+
+
+def project_session_id(agent_id: str, project_id: str) -> str:
+    """The session a project-bound server defaults to: `HOST:PROJECT_ID`."""
+    return f"{HOST_BINARIES.get(agent_id, agent_id)}:{project_id}"
+
+
+def project_serve_args(project_id: str, session_id: str) -> tuple[str, ...]:
+    # ponytail: T4 adds `--profile core` here once `mcp serve --profile` exists.
+    return ("mcp", "serve", "--project", project_id, "--session", session_id)
+
+
+def _claude_local_entry(raw: bytes | None, root: Path) -> dict[str, Any] | None:
+    """Claude Code's local-scope `rush` entry for `root` in `~/.claude.json`."""
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise MalformedConfigError(f"Claude Code config is not JSON: {exc}") from exc
+    node: Any = data.get("projects") if isinstance(data, dict) else None
+    for key in (str(root), "mcpServers", "rush"):
+        node = node.get(key) if isinstance(node, dict) else None
+    return node if isinstance(node, dict) else None
+
+
+def read_project_registration_entry(
+    agent_id: str,
+    *,
+    project_root: Path,
+    home: Path | None = None,
+    os_name: str | None = None,
+) -> tuple[Path, dict[str, Any] | None]:
+    """The config path a project-bound registration targets and its current entry."""
+    root = Path(project_root).resolve()
+    if agent_id == "claude-code":
+        adapter = ADAPTERS[agent_id]
+        config_path = adapter.config_paths(
+            os_name or platform.system(), home or Path.home()
+        )[0]
+        return config_path, _claude_local_entry(_read_regular(config_path), root)
+    return read_registration_entry(agent_id, home=home, os_name=os_name)
+
+
+def same_server_entry(current: dict[str, Any] | None, entry: dict[str, Any]) -> bool:
+    """Whether a host entry already launches exactly `entry`'s command and args."""
+    return (
+        current is not None
+        and current.get("command") == entry["command"]
+        and list(current.get("args") or []) == list(entry["args"])
+    )
+
+
+def _entry_diff(
+    path: Path, before: dict[str, Any] | None, after: dict[str, Any]
+) -> str:
+    def lines(entry: dict[str, Any] | None) -> list[str]:
+        if entry is None:
+            return []
+        text = json.dumps({"rush": entry}, indent=2, sort_keys=True) + "\n"
+        return text.splitlines(keepends=True)
+
+    return _redacted(
+        "".join(
+            difflib.unified_diff(
+                lines(before), lines(after), fromfile=str(path), tofile=str(path)
+            )
+        )
+    )
+
+
+def _redacted(text: str) -> str:
+    from rush.logging import redact_secrets
+
+    return redact_secrets(text)
+
+
+def plan_project_registration(
+    agent_id: str,
+    *,
+    rush_binary: str,
+    project_root: Path,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    home: Path | None = None,
+    os_name: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> RegistrationStep:
+    """Plan one host's project-bound Rush MCP entry. Never writes or runs anything.
+
+    `project_id` defaults to the canonical project root, which `mcp serve
+    --project` also resolves once the root is registered. An existing `rush`
+    entry that differs from the planned one (another project, an unbound
+    entry, another binary) is a host change: the step carries its diff and
+    `requires_consent=True`. An identical entry is `unchanged`.
+    """
+    if agent_id not in HOST_BINARIES:
+        raise UnknownAgentError(
+            f"project-bound registration is defined for {sorted(HOST_BINARIES)}, "
+            f"not {agent_id!r}"
+        )
+    adapter = ADAPTERS[agent_id]
+    root = Path(project_root).resolve()
+    pid = project_id or str(root)
+    entry = build_stdio_entry(
+        rush_binary,
+        args=project_serve_args(pid, session_id or project_session_id(agent_id, pid)),
+    )
+    config_path, current = read_project_registration_entry(
+        agent_id, project_root=root, home=home, os_name=os_name
+    )
+    same = same_server_entry(current, entry)
+    changes_existing = current is not None and not same
+    if agent_id == "claude-code":
+        binary = which(HOST_BINARIES[agent_id])
+        if binary is None:
+            raise AgentConnectionError("absent_host: `claude` is not on PATH")
+        return RegistrationStep(
+            agent_id,
+            "native",
+            config_path,
+            None,
+            (binary, "mcp", "add", "rush", "--scope", "local", "--")
+            + (entry["command"], *entry["args"]),
+            None,
+            adapter.restart_required,
+            _entry_digest(current) if current is not None else None,
+            scope="local",
+            project_root=root,
+            entry=entry,
+            current_entry=current,
+            diff="" if same else _entry_diff(config_path, current, entry),
+            requires_consent=changes_existing,
+            unchanged=same,
+        )
+    raw = _read_regular(config_path)
+    if raw is not None and not os.access(config_path, os.W_OK):
+        raise ReadOnlyConfigError(f"{agent_id}: config is read-only: {config_path}")
+    text = raw.decode("utf-8") if raw is not None else _default_document(adapter)
+    new_text = (
+        text
+        if same
+        else _upsert_toml_table(text, (*adapter.servers_key, "rush"), entry)
+    )
+    # No context lines and redacted: the diff is shown and saved in plans, and
+    # a host config's neighbouring tables can hold credentials.
+    diff = _redacted(
+        "".join(
+            difflib.unified_diff(
+                text.splitlines(keepends=True),
+                new_text.splitlines(keepends=True),
+                fromfile=str(config_path),
+                tofile=str(config_path),
+                n=0,
+            )
+        )
+    )
+    return RegistrationStep(
+        agent_id,
+        "config-edit",
+        config_path,
+        None,
+        None,
+        new_text,
+        adapter.restart_required,
+        _digest_or_none(raw),
+        scope="user",
+        project_root=root,
+        entry=entry,
+        current_entry=current,
+        diff=diff,
+        requires_consent=changes_existing,
+        unchanged=same,
+    )
+
+
+def _registration_result(
+    step: RegistrationStep, ok: bool, error: str | None = None
+) -> AgentApplyResult:
+    return AgentApplyResult(
+        step.agent_id,
+        ok,
+        step.method,
+        step.config_path,
+        None,
+        step.restart_required,
+        error=error,
+    )
+
+
+def _apply_config_edit(
+    step: RegistrationStep, writer: Callable[..., Any], journal: WriteJournal
+) -> None:
+    """CAS-write a planned Codex config (parent directories undone on rollback)."""
+    path = step.config_path
+    if path is None or step.new_text is None:
+        raise ValueError("config-edit step has no config path or text")
+    current = _read_regular(path)
+    actual = _digest_or_none(current)
+    if actual != step.expected_sha256:
+        raise CASConflictError(path, step.expected_sha256, actual)
+    missing: list[Path] = []
+    parent = path.parent
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        directory.mkdir()
+    if missing:
+
+        def remove_created_dirs() -> dict[str, Any] | None:
+            for directory in missing:  # deepest first
+                with suppress(OSError):
+                    directory.rmdir()
+            return None
+
+        journal.record_undo(remove_created_dirs)
+    data = step.new_text.encode("utf-8")
+    writer(path, data, expected_sha256=step.expected_sha256, new_file_mode=0o600)
+    journal.record_file("mcp_entry", path, current, _sha256(data))
+
+
+def _step_entry_now(step: RegistrationStep) -> dict[str, Any] | None:
+    """The `rush` entry now at the exact config path the step was planned for."""
+    if step.config_path is None or step.project_root is None:
+        raise ValueError("not a project registration step")
+    raw = _read_regular(step.config_path)
+    if step.scope == "local":
+        return _claude_local_entry(raw, step.project_root)
+    if raw is None:
+        return None
+    entry = _read_rush_entry(raw.decode("utf-8"), ADAPTERS[step.agent_id])
+    return entry if isinstance(entry, dict) else None
+
+
+def _apply_local_native(
+    step: RegistrationStep, runner: HostRunner, journal: WriteJournal
+) -> None:
+    """`claude mcp add --scope local` in the project root, restoring the
+    entry it replaced when the add fails."""
+    assert step.native_command is not None and step.project_root is not None
+    cwd = str(step.project_root)
+    prefix = step.native_command[:2]
+    current = _step_entry_now(step)
+    actual = _entry_digest(current) if current is not None else None
+    if actual != step.expected_sha256:
+        raise CASConflictError(step.config_path or Path(), step.expected_sha256, actual)
+    if current is not None:
+        runner((*prefix, "remove", "rush", "--scope", "local"), cwd)
+    try:
+        runner(step.native_command, cwd)
+    except HostCommandError as exc:
+        if current is not None:
+            restore = (*prefix, "add-json", "rush", json.dumps(current))
+            try:
+                runner((*restore, "--scope", "local"), cwd)
+            except HostCommandError as restore_exc:
+                raise HostCommandError(
+                    exc.argv,
+                    exc.returncode,
+                    f"{exc.detail}; recovery_required: restoring the previous "
+                    f"entry failed ({restore_exc.detail}); entry: {json.dumps(current)}",
+                ) from exc
+        raise
+    written = _step_entry_now(step)
+
+    def undo() -> dict[str, Any] | None:
+        now = _step_entry_now(step)
+        if now != written:
+            return {
+                "component": "mcp_entry",
+                "path": str(step.config_path),
+                "expected": _entry_digest(written) if written is not None else None,
+                "actual": _entry_digest(now) if now is not None else None,
+            }
+        try:
+            if now is not None:
+                runner((*prefix, "remove", "rush", "--scope", "local"), cwd)
+            if current is not None:
+                runner(
+                    (*prefix, "add-json", "rush", json.dumps(current))
+                    + ("--scope", "local"),
+                    cwd,
+                )
+        except HostCommandError as exc:
+            return {
+                "component": "mcp_entry",
+                "path": str(step.config_path),
+                "expected": _entry_digest(current) if current is not None else None,
+                "actual": None,
+                "error": exc.detail,
+            }
+        return None
+
+    journal.record_undo(undo)
+
+
+def _record_project_registration_locked(
+    step: RegistrationStep, ledger: dict[str, dict[str, Any]]
+) -> bool:
+    """Record the entry the host now holds for this project; whether the ledger changed.
+
+    A Codex entry is global, so once bound to this project the other rows
+    over that same entry no longer own a binding and are dropped (their
+    original digest carries over for disconnect).
+    """
+    assert step.project_root is not None and step.config_path is not None
+    entry = _step_entry_now(step)
+    if entry is None:
+        return False
+    config_path = step.config_path
+    root = step.project_root
+    entry_id = f"{step.agent_id}:mcp_entry:{config_path}:{root}"
+    original = (
+        _entry_digest(step.current_entry) if step.current_entry is not None else None
+    )
+    changed = False
+    for eid, row in list(ledger.items()):
+        same_entry = (
+            row.get("kind") == "mcp_entry"
+            and row.get("host") == step.agent_id
+            and row.get("path") == str(config_path)
+        )
+        if not same_entry:
+            continue
+        if eid == entry_id:
+            original = row.get("original_sha256")
+        elif step.scope == "user" and row.get("scope") != "local":
+            original = row.get("original_sha256")
+            del ledger[eid]
+            changed = True
+    written = _entry_digest(entry)
+    existing = ledger.get(entry_id)
+    if (
+        existing is not None
+        and existing.get("written_sha256") == written
+        and existing.get("scope") == step.scope
+    ):
+        return changed
+    row = _ledger_entry(
+        entry_id, "mcp_entry", step.agent_id, root, str(config_path), written, original
+    )
+    row["scope"] = step.scope
+    ledger[entry_id] = row
+    return True
+
+
+def apply_project_registration(
+    step: RegistrationStep,
+    *,
+    consent: bool | None = None,
+    data_root: Path | None = None,
+    runner: HostRunner | None = None,
+    writer: Callable[..., Any] | None = None,
+) -> AgentApplyResult:
+    """Apply a `plan_project_registration` step. Never raises for host or I/O failures.
+
+    A step that changes an existing `rush` entry runs only with
+    `consent=True` (`False` is `declined`, `None` is `consent_required`).
+    The entry (Codex: the whole config file) must still be exactly what the
+    plan saw. Under the ownership-ledger lock the change is journaled, read
+    back and recorded as this project's `mcp_entry` row; any failure undoes
+    this call's own change while it is still Rush's and reports the rest as
+    `recovery_required`.
+    """
+    if step.entry is None or step.project_root is None:
+        return _registration_result(step, False, "not_a_project_registration")
+    if step.requires_consent and consent is not True:
+        return _registration_result(
+            step, False, "declined" if consent is False else "consent_required"
+        )
+    resolved_data_root = data_root or default_data_root()
+    try:
+        with _ledger_lock(resolved_data_root):
+            ledger, version = _load_ledger(resolved_data_root)
+            journal = WriteJournal()
+            try:
+                if not step.unchanged and step.method == "native":
+                    _apply_local_native(step, runner or run_host_command, journal)
+                elif not step.unchanged:
+                    _apply_config_edit(step, writer or cas_replace_file, journal)
+                if _record_project_registration_locked(step, ledger):
+                    _save_ledger(resolved_data_root, ledger, version)
+            except (AgentConnectionError, StoreError, OSError, ValueError) as exc:
+                recovery = journal.rollback()
+                detail = str(exc)
+                if recovery:
+                    detail += f"; recovery_required: {json.dumps(recovery)}"
+                return _registration_result(step, False, detail)
+    except AgentConnectionError as exc:  # ledger busy or corrupt
+        return _registration_result(step, False, str(exc))
+    return _registration_result(step, True)
+
+
+def _disconnect_local_entry(
+    row: dict[str, Any], agent_id: str, config_path: Path
+) -> str | dict[str, Any]:
+    """Remove a project's Claude Code local-scope entry, mirroring how it was added."""
+    recorded_root = row.get("project_root")
+    if not isinstance(recorded_root, str) or not recorded_root:
+        raise ValueError("local-scope ledger row has no project root")
+    root = Path(recorded_root).resolve()
+    written = row.get("written_sha256")
+    current = _claude_local_entry(_read_regular(config_path), root)
+    if current is None:
+        return "absent"
+    actual = _entry_digest(current)
+    if actual != written:
+        return _conflict_row("mcp_entry", str(config_path), written, actual, "changed")
+    binary = shutil.which(HOST_BINARIES[agent_id])
+    if binary is None:
+        return _conflict_row(
+            "mcp_entry",
+            str(config_path),
+            written,
+            actual,
+            f"native_remove_failed: `{HOST_BINARIES[agent_id]}` is not on PATH",
+        )
+    try:
+        run_host_command(
+            (binary, "mcp", "remove", "rush", "--scope", "local"), str(root)
+        )
+    except HostCommandError as exc:
+        return _conflict_row(
+            "mcp_entry",
+            str(config_path),
+            written,
+            actual,
+            f"native_remove_failed: {exc.detail}",
+        )
+    return "removed"
+
+
+def host_readback_connected(agent_id: str, output: str) -> bool:
+    """Whether a host's own MCP readback reports the Rush server connected.
+
+    Only Claude Code's `mcp get` reports a live health check; Codex's
+    readback shows configuration only, so it never proves a connection.
+    """
+    return agent_id == "claude-code" and bool(_CLAUDE_CONNECTED_RE.search(output))
+
+
+def _json_documents(output: str) -> list[Any]:
+    try:
+        return [json.loads(output)]
+    except ValueError:
+        pass
+    documents: list[Any] = []
+    for line in output.splitlines():
+        if line.strip():
+            with suppress(ValueError):
+                documents.append(json.loads(line))
+    return documents
+
+
+def _tool_result_value(value: Any) -> Any:
+    """A tool result as parsed JSON when it carries a single JSON text block."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    if isinstance(value, list):
+        texts = [
+            block.get("text")
+            for block in value
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        return _tool_result_value(texts[0]) if len(texts) == 1 else value
+    if isinstance(value, dict) and "project" not in value:
+        for key in ("structured_content", "structuredContent"):
+            if isinstance(value.get(key), dict):
+                return value[key]
+        if "content" in value:
+            return _tool_result_value(value["content"])
+    return value
+
+
+def _claude_blocks(document: dict[str, Any]) -> list[dict[str, Any]]:
+    message = document.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return (
+        [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+    )
+
+
+def parse_host_tool_calls(output: str) -> list[dict[str, Any]]:
+    """Every completed tool call in a host's non-interactive JSON output, as `{name, result}`.
+
+    Reads Claude Code `--output-format stream-json` (assistant `tool_use`
+    blocks joined to their `tool_result`), Codex `exec --json`
+    (`mcp_tool_call` items, named `mcp__SERVER__TOOL`), and Rush's own
+    normalized record `{"tool_calls": [{"name", "result"}]}`. Failed calls
+    are skipped.
+    """
+    calls: list[dict[str, Any]] = []
+    tool_names: dict[Any, Any] = {}
+    for document in _json_documents(output):
+        if not isinstance(document, dict):
+            continue
+        recorded = document.get("tool_calls")
+        for call in recorded if isinstance(recorded, list) else []:
+            if isinstance(call, dict) and isinstance(call.get("name"), str):
+                calls.append(
+                    {
+                        "name": call["name"],
+                        "result": _tool_result_value(call.get("result")),
+                    }
+                )
+        item = document.get("item")
+        if (
+            document.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "mcp_tool_call"
+            and item.get("status", "completed") == "completed"
+        ):
+            calls.append(
+                {
+                    "name": f"mcp__{item.get('server')}__{item.get('tool')}",
+                    "result": _tool_result_value(item.get("result")),
+                }
+            )
+        for block in _claude_blocks(document):
+            if block.get("type") == "tool_use":
+                tool_names[block.get("id")] = block.get("name")
+            elif (
+                block.get("type") == "tool_result"
+                and block.get("tool_use_id") in tool_names
+                and not block.get("is_error")
+            ):
+                calls.append(
+                    {
+                        "name": tool_names[block["tool_use_id"]],
+                        "result": _tool_result_value(block.get("content")),
+                    }
+                )
+    return calls
+
+
+def observed_status_project_ids(calls: list[dict[str, Any]]) -> list[str]:
+    """Project ids reported by observed Rush `rush_status` calls (never another server's)."""
+    ids: list[str] = []
+    for call in calls:
+        name = str(call.get("name"))
+        if name != "rush_status" and name != "mcp__rush__rush_status":
+            continue
+        result = call.get("result")
+        candidates = (result, result.get("raw") if isinstance(result, dict) else None)
+        for node in candidates:
+            project = node.get("project") if isinstance(node, dict) else None
+            project_id = (
+                project.get("project_id") if isinstance(project, dict) else None
+            )
+            if isinstance(project_id, str):
+                ids.append(project_id)
+                break
+    return ids
+
+
 __all__ = [
     "ADAPTERS",
+    "HOST_BINARIES",
+    "HOST_LOGIN_ACTIONS",
+    "HOST_PROBE_ARGS",
+    "HOST_READBACK_ARGS",
     "INSTRUCTION_TARGETS",
     "PLUGIN_HOSTS",
     "PLUGIN_ID",
@@ -3032,6 +3768,7 @@ __all__ = [
     "AgentTransactionError",
     "CASConflictError",
     "GuidanceConsent",
+    "HostCommandError",
     "LedgerBusyError",
     "LedgerCorruptError",
     "MalformedConfigError",
@@ -3046,6 +3783,7 @@ __all__ = [
     "agent_readiness",
     "apply_agent_instructions",
     "apply_agent_registration",
+    "apply_project_registration",
     "build_stdio_entry",
     "cas_replace_file",
     "cas_unlink",
@@ -3053,21 +3791,30 @@ __all__ = [
     "disconnect_agent",
     "discover_agents",
     "finalize_agent_plugin_upgrade",
+    "host_readback_connected",
     "initialize_agent_memory",
     "installed_plugin_roots",
     "materialize_agent_plugins",
+    "observed_status_project_ids",
     "owned_path_digest",
     "ownership_ledger_path",
+    "parse_host_tool_calls",
     "plan_agent_instructions",
     "plan_agent_registration",
     "plan_manual_entry_removal",
+    "plan_project_registration",
     "plugin_uninstall_commands",
     "probe_agent_connection",
+    "project_serve_args",
+    "project_session_id",
     "read_agent_memory_state",
+    "read_project_registration_entry",
     "read_registration_entry",
     "reconcile_agent_instructions",
     "record_native_plugin_install",
     "record_tool_observation",
     "registration_undo",
     "resolve_rush_binary",
+    "run_host_command",
+    "same_server_entry",
 ]

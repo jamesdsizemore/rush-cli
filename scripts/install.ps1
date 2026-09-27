@@ -57,21 +57,38 @@ try {
     Expand-Archive -Path $ArchivePath -DestinationPath $WorkDir -Force
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Move-Item -Path (Join-Path $WorkDir "rush.exe") -Destination (Join-Path $InstallDir "rush.exe") -Force
+
+    Write-Host "Installed Rush: $InstallDir\rush.exe"
+
+    $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (($UserPath -split ";") -notcontains $InstallDir) {
+        $NewUserPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
+        [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
+        Write-Host "Added $InstallDir to your PATH. Open a new terminal to run 'rush' directly."
+    }
+    if (($env:Path -split ";") -notcontains $InstallDir) {
+        $env:Path = "$env:Path;$InstallDir"
+    }
+
+    # The handoff runs here, inside `try`, so the verified archive and
+    # SHA256SUMS in $WorkDir still exist when rush.exe checks them against
+    # itself instead of downloading the release again. Guided setup passes
+    # its arguments through a scriptblock, because `irm | iex` cannot:
+    #   & ([scriptblock]::Create((irm <raw-url>/scripts/install.ps1))) --setup --agent claude --project PATH
+    # --agents all is the default only when the caller chose no host; guided
+    # --setup connects its host inside setup, so the install connects none.
+    $Guided = $args -contains "--setup"
+    $HostFlag = @($args | Where-Object { $_ -like "--agent" -or $_ -like "--agent=*" -or $_ -like "--agents" -or $_ -like "--agents=*" }).Count -gt 0
+    if ($Guided) {
+        & (Join-Path $InstallDir "rush.exe") install --agents none --memory on --handoff-archive $ArchivePath --handoff-sums $SumsPath @args
+    }
+    elseif ($HostFlag) {
+        & (Join-Path $InstallDir "rush.exe") install --memory on --handoff-archive $ArchivePath --handoff-sums $SumsPath @args
+    }
+    else {
+        & (Join-Path $InstallDir "rush.exe") install --agents all --memory on --handoff-archive $ArchivePath --handoff-sums $SumsPath @args
+    }
 }
 finally {
     Remove-Item -Path $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-Write-Host "Installed Rush: $InstallDir\rush.exe"
-
-$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (($UserPath -split ";") -notcontains $InstallDir) {
-    $NewUserPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
-    [Environment]::SetEnvironmentVariable("Path", $NewUserPath, "User")
-    Write-Host "Added $InstallDir to your PATH. Open a new terminal to run 'rush' directly."
-}
-if (($env:Path -split ";") -notcontains $InstallDir) {
-    $env:Path = "$env:Path;$InstallDir"
-}
-
-& (Join-Path $InstallDir "rush.exe") install --agents all --memory on @args
