@@ -4015,6 +4015,39 @@ def _render_grant_review(grant: dict[str, Any]) -> Panel:
     )
 
 
+def _memory_expanded_panel(expanded: dict[str, Any]) -> Panel:
+    """T28-D: the exact expanded record as labelled sections -- record fields,
+    Relationships and Receipts, one row per item with its own id and version --
+    never a Python dict repr. Every cell goes through _safe (X3)."""
+    fields = Table(title="Record", expand=True, show_header=False)
+    fields.add_column("field", style="cyan")
+    fields.add_column("value")
+    for key, value in expanded.items():
+        if key in ("relationships", "receipts"):
+            continue
+        shown = (
+            json.dumps(value, sort_keys=True, default=str)
+            if isinstance(value, (dict, list))
+            else value
+        )
+        fields.add_row(_safe(key), _safe(shown))
+    parts: list[Any] = [fields]
+    for key, title in (("relationships", "Relationships"), ("receipts", "Receipts")):
+        section = Table(title=title, expand=True)
+        section.add_column("id", style="cyan")
+        section.add_column("version")
+        section.add_column("kind")
+        for row in expanded.get(key) or []:
+            if isinstance(row, dict):
+                section.add_row(
+                    _safe(row.get("id", "")),
+                    _safe(row.get("artifact_version", "")),
+                    _safe(row.get("kind", "")),
+                )
+        parts.append(section)
+    return Panel(Group(*parts), title="expanded")
+
+
 def _render_memory_admin(state: TuiState) -> Panel:
     """P66-05: real search results, selection, expansion, and pending-delete
     state -- never a static/example row. Render failures already surface via
@@ -4070,8 +4103,18 @@ def _render_memory_admin(state: TuiState) -> Panel:
                 style="bold red",
             )
         )
+        pending = state.memory_pending_delete
+        owner_scope = pending["owner_scope"]
+        for artifact_id in pending["artifact_ids"]:
+            lines.append(
+                _safe(
+                    f"  {artifact_id}  version={pending['expected_revisions'].get(artifact_id, '?')}"
+                    f"  owner={owner_scope['kind']}:{owner_scope['id']}",
+                    "red",
+                )
+            )
     if state.memory_expanded is not None:
-        lines.append(Panel(_safe(state.memory_expanded), title="expanded"))
+        lines.append(_memory_expanded_panel(state.memory_expanded))
     if state.memory_message:
         lines.append(_safe(state.memory_message, "bold magenta"))
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
