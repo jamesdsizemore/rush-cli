@@ -11,6 +11,7 @@ import os
 import sys
 import warnings
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -43,6 +44,7 @@ from .cli_support.rendering import (
 )
 from .config import RushConfigError, load_config
 from .delivery.compact import ViewOptions
+from .integrations.agent_hooks import MAX_PAYLOAD_BYTES, quiet_logging, run_agent_hook
 from .invocation.models import InvocationError
 from .invocation.targets import RootSelection, assert_contained, select_root
 from .logging import setup_logging
@@ -879,6 +881,16 @@ def _logical_cache_db() -> Path:
         "network and model tokens on your host account)."
     ),
 )
+@click.option(
+    "--run-check",
+    is_flag=True,
+    help=(
+        "With --agent: after setup, run a representative `rush check` on a "
+        "Rush-owned fixture (a known faulty file) using the engines setup "
+        "installed for this project, with the build and cache_write grants, "
+        "and report its result."
+    ),
+)
 @permission_options
 @click.option(
     "--json",
@@ -899,6 +911,7 @@ def setup_cmd(
     install_guidance: bool,
     enable_agent_hooks: bool,
     verify_host: bool,
+    run_check: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -937,6 +950,7 @@ def setup_cmd(
         install_guidance=install_guidance,
         enable_hooks=enable_agent_hooks,
         verify_host=verify_host,
+        run_check=run_check,
     )
     click.echo(
         json.dumps(payload, indent=2, default=str)
@@ -4297,6 +4311,30 @@ def agent_list_cmd(as_json: bool) -> None:
     is_flag=True,
     help="Apply the previewed --profile migration without prompting.",
 )
+@click.option(
+    "--enable-agent-hooks",
+    "enable_hooks",
+    is_flag=True,
+    help=(
+        "Opt in to Rush's post-edit check for this host and --project: after "
+        "each edit the Rush plugin's hook runs `rush check` with no grants and "
+        "shows the result to the model."
+    ),
+)
+@click.option(
+    "--disable-agent-hooks",
+    "disable_hooks",
+    is_flag=True,
+    help="Remove this host's Rush post-edit hook activation for --project.",
+)
+@click.option(
+    "--hook-result-cache",
+    is_flag=True,
+    help=(
+        "With --enable-agent-hooks: store each hook check's full result in the "
+        "project's .rush/cache so the model gets a result_handle."
+    ),
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def agent_connect_cmd(
@@ -4309,6 +4347,9 @@ def agent_connect_cmd(
     install_guidance: bool,
     profile: str | None,
     assume_yes: bool,
+    enable_hooks: bool,
+    disable_hooks: bool,
+    hook_result_cache: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -4328,9 +4369,17 @@ def agent_connect_cmd(
     command path is repaired) and a new one runs `mcp serve --profile core`.
     With --profile the entry's migration is previewed first and applied only
     after "y" at the terminal prompt or --yes.
+
+    Post-edit hooks run only after --enable-agent-hooks for this host and
+    --project (a registered project); --disable-agent-hooks or `rush agent
+    disconnect` removes that activation.
     """
     from .tools.agent_connection import AgentConnectionTool
 
+    if enable_hooks and disable_hooks:
+        raise click.UsageError(
+            "--enable-agent-hooks and --disable-agent-hooks are mutually exclusive"
+        )
     interactive = not as_json and os.isatty(0) and _is_terminal(sys.stdout)
     result = AgentConnectionTool().run(
         agent_id,
@@ -4353,6 +4402,8 @@ def agent_connect_cmd(
             allow_artifact_write=allow_artifact_write,
             allow_browser=allow_browser,
         ),
+        agent_hooks="enable" if enable_hooks else "disable" if disable_hooks else None,
+        hook_result_cache=hook_result_cache,
     )
     raw = result.get("raw") or {}
     migration = raw.get("migration")
@@ -4365,6 +4416,11 @@ def agent_connect_cmd(
     guidance = raw.get("guidance")
     if not as_json and isinstance(guidance, dict):
         click.echo(f"guidance: {guidance['state']}")
+    hooks = raw.get("hooks")
+    if not as_json and isinstance(hooks, dict):
+        click.echo(f"agent hooks: {hooks['state']}")
+        if hooks.get("note"):
+            click.echo(f"  {hooks['note']}")
     _render_session_result(dict(result), as_json)
 
 
@@ -4468,16 +4524,31 @@ def agent_hook_cmd(host: str) -> None:
     """Post-edit hook entrypoint the Rush Claude Code/Codex plugins run.
 
     Reads the host's JSON event on stdin. Prints nothing and runs no check
-    unless agent hooks are enabled for this host and project; always exits 0
-    so a hook never changes the edit's result.
+    unless agent hooks are enabled for this host and project (`rush agent
+    connect AGENT --project P --enable-agent-hooks`); then prints the check
+    summary in the host's context field. Always exits 0 so a hook never
+    changes the edit's result.
     """
-    from .integrations.agent_hooks import MAX_PAYLOAD_BYTES, run_agent_hook
-
+    # Both streams are bound before anything runs (the adapter module is
+    # imported with this one, so nothing yields first): the result goes to
+    # the stream this event arrived with.
     stdin = click.get_binary_stream("stdin")
+    stdout = click.get_text_stream("stdout")
     payload = b"" if stdin.isatty() else stdin.read(MAX_PAYLOAD_BYTES + 1)
-    output = run_agent_hook(host, payload)
+    if len(payload) > MAX_PAYLOAD_BYTES:
+        while stdin.read(65536):  # drain, so the host's write never fails
+            pass
+    # Unless a log level was asked for, stderr carries only the hook's own
+    # diagnostics and errors; the check's warnings are in the context text.
+    source = click.get_current_context().find_root().get_parameter_source("log_level")
+    with (
+        quiet_logging()
+        if source == click.core.ParameterSource.DEFAULT
+        else nullcontext()
+    ):
+        output = run_agent_hook(host, payload)
     if output:
-        click.echo(output)
+        click.echo(output, file=stdout)
 
 
 @agent_group.command(name="doctor")

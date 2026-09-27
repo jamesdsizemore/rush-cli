@@ -267,9 +267,13 @@ def test_aislop_unparseable_output_is_error_with_stderr(
 
 @pytest.mark.needs_aislop
 def test_slop_real_aislop_scans_python_project(tmp_path: Path) -> None:
-    """Real-engine acceptance against the installed aislop binary."""
+    """Real-engine acceptance against the installed aislop binary. The
+    download grant lets npx fetch the aislop package on a cold npm cache (CI)."""
+    from rush.permissions import ExecutionPermissions
     from rush.tools.common import clear_binary_cache
     from rush.tools.slop import SlopTool
+
+    grant = ExecutionPermissions(download=True)
 
     clear_binary_cache()
     (tmp_path / "pkg").mkdir()
@@ -278,9 +282,9 @@ def test_slop_real_aislop_scans_python_project(tmp_path: Path) -> None:
     clean = tmp_path / "b.py"
     clean.write_text("def ok() -> int:\n    return 1\n")
 
-    project = SlopTool().run(tmp_path)
-    single_sloppy = SlopTool().run(sloppy)
-    single_clean = SlopTool().run(clean)
+    project = SlopTool().run(tmp_path, permissions=grant)
+    single_sloppy = SlopTool().run(sloppy, permissions=grant)
+    single_clean = SlopTool().run(clean, permissions=grant)
 
     assert project["engine"] == "aislop"
     assert project["status"] == "fail", project["summary"]
@@ -290,3 +294,159 @@ def test_slop_real_aislop_scans_python_project(tmp_path: Path) -> None:
     assert single_sloppy["status"] == "fail", single_sloppy["summary"]
     assert {f["path"] for f in single_sloppy["findings"]} == {str(sloppy)}
     assert single_clean["status"] == "ok", single_clean["summary"]
+
+
+def _fake_npx_aislop(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    """A fake `aislop` on PATH that, like the real npx wrapper on an empty npm
+    cache, fails with ENOTCACHED when npm is offline. It logs the
+    `npm_config_offline` value of every invocation."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "offline.log"
+    fake = bin_dir / "aislop"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'echo "offline=$npm_config_offline" >> "{log}"\n'
+        'if [ "$npm_config_offline" = "true" ]; then\n'
+        "  echo 'npm error code ENOTCACHED' >&2; exit 1\n"
+        "fi\n"
+        'if [ "$1" = "--version" ]; then echo 0.16.1; exit 0; fi\n'
+        "echo '{\"diagnostics\": []}'\n"
+    )
+    fake.chmod(0o755)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "b.py").write_text("def ok() -> int:\n    return 1\n")
+    monkeypatch.delenv("npm_config_offline", raising=False)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(common, "_venv_scripts_dir", lambda: None)
+    return project, log
+
+
+def test_slop_without_download_grant_runs_aislop_offline_and_is_permission_denied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """No download grant: npm runs offline, so an uncached aislop package is
+    a not-run step naming --allow-download -- never an error or a fetch."""
+    from rush.tools.common import clear_binary_cache
+    from rush.tools.slop import SlopTool
+
+    project, log = _fake_npx_aislop(tmp_path, monkeypatch)
+    clear_binary_cache()
+    try:
+        result = SlopTool()(project)
+    finally:
+        clear_binary_cache()
+
+    assert result["status"] == "skipped", result["summary"]
+    assert "--allow-download" in result["summary"]
+    execution = result["metadata"]["execution"]
+    assert execution["disposition"] == "not_run"
+    assert execution["cause"] == "permission_denied"
+    assert execution["requested_permissions"]["download"] is True
+    lines = log.read_text().splitlines()
+    assert lines and set(lines) == {"offline=true"}
+
+
+def test_slop_with_download_grant_lets_aislop_fetch(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from rush.tools.common import clear_binary_cache
+    from rush.tools.slop import SlopTool
+
+    project, log = _fake_npx_aislop(tmp_path, monkeypatch)
+    clear_binary_cache()
+    try:
+        result = SlopTool()(project, allow_download=True)
+    finally:
+        clear_binary_cache()
+
+    assert result["status"] == "ok", result["summary"]
+    lines = log.read_text().splitlines()
+    assert lines and set(lines) == {"offline="}
+
+
+def test_aislop_offline_env_set_only_without_download_grant(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from rush.engines.aislop import aislop_grants
+    from rush.permissions import ExecutionPermissions
+
+    seen: list[object] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/bin/aislop")
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+
+    AislopEngine().run(tmp_path, [], cwd=tmp_path)
+    with aislop_grants(ExecutionPermissions(download=True)):
+        AislopEngine().run(tmp_path, [], cwd=tmp_path)
+
+    offline_env, granted_env = seen
+    assert isinstance(offline_env, dict)
+    assert offline_env["npm_config_offline"] == "true"
+    assert isinstance(granted_env, dict)
+    assert "npm_config_offline" not in granted_env
+    for env in (offline_env, granted_env):
+        assert env["AISLOP_NO_TELEMETRY"] == "1"
+        assert env["DO_NOT_TRACK"] == "1"
+
+
+@pytest.mark.needs_aislop
+def test_ungranted_slop_after_provisioning_runs_offline(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """After the setup engine stage's npm prefetch, a slop run with no
+    download grant runs npm offline and still reports aislop's findings."""
+    import tempfile
+
+    from rush.setup.provision import prefetch_npm_runtime
+    from rush.tools.common import clear_binary_cache, resolve_binary
+    from rush.tools.slop import SlopTool
+
+    (tmp_path / "a.py").write_text(SLOPPY_SOURCE)
+    with tempfile.TemporaryDirectory() as cache:
+        monkeypatch.setenv("npm_config_cache", cache)
+        monkeypatch.delenv("npm_config_offline", raising=False)
+        clear_binary_cache()
+        executable = resolve_binary("aislop")
+        assert executable is not None
+        assert prefetch_npm_runtime("aislop", Path(executable)) == "fetched"
+        result = SlopTool()(tmp_path)
+        clear_binary_cache()
+
+    assert result["engine"] == "aislop"
+    assert result["status"] == "fail", result["summary"]
+    assert (result["metadata"]["execution"].get("cause")) != "permission_denied"
+
+
+@pytest.mark.needs_aislop
+def test_ungranted_slop_without_provisioning_is_permission_denied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Real aislop on an empty npm cache with no download grant: not run,
+    permission_denied, and nothing fetched."""
+    import tempfile
+
+    from rush.tools.common import clear_binary_cache
+    from rush.tools.slop import SlopTool
+
+    (tmp_path / "a.py").write_text(SLOPPY_SOURCE)
+    with tempfile.TemporaryDirectory() as cache:
+        monkeypatch.setenv("npm_config_cache", cache)
+        monkeypatch.delenv("npm_config_offline", raising=False)
+        clear_binary_cache()
+        result = SlopTool()(tmp_path)
+        clear_binary_cache()
+        fetched = list((Path(cache) / "_npx").glob("*/node_modules/aislop"))
+
+    assert result["status"] == "skipped", result["summary"]
+    execution = result["metadata"]["execution"]
+    assert (execution["disposition"], execution["cause"]) == (
+        "not_run",
+        "permission_denied",
+    )
+    assert fetched == []

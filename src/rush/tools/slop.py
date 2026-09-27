@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..permissions import ExecutionPermissions
+from ..runtime.binaries import analysis_scope
+from ..runtime.subprocesses import _engine_analysis_scope
 from .base import Finding, ToolFn, ToolResult
 from .common import elapsed_ms, engine_on_path, now_ms, run_engine
 from .routing import collect_files
@@ -16,11 +19,19 @@ class SlopTool(ToolFn):
     def mcp_description(self) -> str:
         return "Detect Python AI slop and deterministic JS/TS noise at <path>; missing sloppylint returns status='skipped' when no JS/TS fallback applies."
 
-    def __call__(self, path: Path) -> ToolResult:
-        return self.run(path)
+    def __call__(self, path: Path, allow_download: bool = False) -> ToolResult:
+        # aislop may fetch its npm package only under the download grant.
+        return self.run(path, permissions=ExecutionPermissions(download=allow_download))
 
-    def run(self, path: Path, *, config=None) -> ToolResult:
+    def run(
+        self,
+        path: Path,
+        *,
+        config=None,
+        permissions: ExecutionPermissions | None = None,
+    ) -> ToolResult:
         from ..engines import ENGINES
+        from ..engines.aislop import aislop_grants
 
         start = now_ms()
         python_files = collect_files(path, {"py", "pyi"})
@@ -42,9 +53,12 @@ class SlopTool(ToolFn):
                             }
                         )
         if python_files:
-            engine_to_use = (
-                ENGINES["aislop"] if engine_on_path("aislop") else ENGINES["sloppylint"]
-            )
+            aislop = ENGINES["aislop"]
+            # Probe in the same scope run_engine dispatches in, so a verified
+            # setup-provisioned aislop (project manifest) is found like PATH.
+            with analysis_scope(_engine_analysis_scope(aislop, path, None)):
+                has_aislop = engine_on_path(aislop.binary)
+            engine_to_use = aislop if has_aislop else ENGINES["sloppylint"]
             # aislop scans the directory itself (one positional); sloppylint
             # takes the explicit file list.
             files = (
@@ -52,7 +66,8 @@ class SlopTool(ToolFn):
                 if engine_to_use.name == "aislop"
                 else [str(file) for file in python_files]
             )
-            result = run_engine(engine_to_use, path, files, tool_name=self.name)
+            with aislop_grants(permissions or ExecutionPermissions()):
+                result = run_engine(engine_to_use, path, files, tool_name=self.name)
             result["findings"] = sorted(
                 [*result["findings"], *findings],
                 key=lambda item: (

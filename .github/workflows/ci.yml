@@ -30,6 +30,15 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --all-extras --frozen
 
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+
       - name: Lint
         run: uv run ruff check src tests scripts
 
@@ -73,7 +82,7 @@ jobs:
           echo "$RUNNER_TEMP/osv-scanner" >> "$GITHUB_PATH"
 
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_aislop" --deselect "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability"
+        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint" --deselect "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
@@ -112,8 +121,17 @@ jobs:
       - name: Install test dependencies
         run: uv sync --all-extras --frozen
 
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+
       - name: Install Python static-analysis engines
-        run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1 aislop==0.16.1
+        run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
 
       - name: Install Node-based static-analysis and eval engines
         run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0
@@ -142,6 +160,15 @@ jobs:
       - name: Install bounded Python engine set
         run: uv sync --all-extras --frozen
 
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
+
       - name: Run representative real-engine contracts
         run: uv run pytest tests/test_tools.py -q
 
@@ -166,6 +193,15 @@ jobs:
 
       - name: Install test dependencies
         run: uv sync --all-extras --frozen
+
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
 
       - name: Install mutation, fuzz and contract acceptance engines
         run: uv pip install mutmut==3.7.0 atheris==3.1.0 pact-python-cli==2.6.0.1
@@ -200,6 +236,15 @@ jobs:
 
       - name: Install locked dependencies
         run: uv sync --all-extras --frozen
+
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" uv run --no-sync aislop --version
 
       - name: Build distribution artifacts
         run: uv build

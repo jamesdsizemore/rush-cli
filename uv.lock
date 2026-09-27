@@ -15,6 +15,15 @@ wheels = [
 ]
 
 [[package]]
+name = "aislop"
+version = "0.16.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/9a/4b73ec78ce0ca1334e476e47f2a1efcad7e09a5de139a1d401d06feaf172/aislop-0.16.1.tar.gz", hash = "sha256:8d427eae21080dee376ac438b0517e945a5473a526af18f7ac961c2d9dd981da", size = 7010, upload-time = "2026-09-09T23:17:09.377Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/6f/895f9955dd8047cfec6072007d04cd7ed14fcdff1cc0a782a484f2b398eb/aislop-0.16.1-py3-none-any.whl", hash = "sha256:a6edf709bcbe43256909110f7b4aaed2031b8dcd6d0ef5241c7e71cd19de330a", size = 6473, upload-time = "2026-09-09T23:17:08.322Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -983,6 +992,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "agent-client-protocol" },
+    { name = "aislop" },
     { name = "claude-agent-sdk" },
     { name = "mypy" },
     { name = "pip-audit" },
@@ -993,6 +1003,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = "==0.12.1" },
+    { name = "aislop", marker = "extra == 'dev'", specifier = "==0.16.1" },
     { name = "certifi", specifier = "==2026.7.22" },
     { name = "claude-agent-sdk", marker = "extra == 'dev'", specifier = "==0.2.152" },
     { name = "click", specifier = "==8.4.2" },

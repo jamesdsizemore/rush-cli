@@ -2715,6 +2715,11 @@ def _disconnect_component(
         return _disconnect_instruction_block(row, agent_id, remaining)
     if kind == "native_plugin":
         return _uninstall_native_plugin(agent_id, recorded_path)
+    if kind == "hook_activation":
+        # T7: one record per (host, project) in the shared activations file.
+        from .agent_hooks import remove_activation
+
+        return remove_activation(row)
     if kind in _FILE_KINDS:
         path = _entry_physical_path(row)
         if _references(remaining, str(kind), path):

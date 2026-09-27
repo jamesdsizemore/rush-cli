@@ -3,17 +3,53 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
+from ..permissions import ExecutionPermissions, build_execution_metadata
 from ..tools.base import Finding, ToolResult, ToolStatus
-from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult, ownership_kwargs
+from ..tools.common import resolve_binary, run_subprocess, skipped_result
+from .base import Engine, EngineResult, env_kwargs, ownership_kwargs
+
+# aislop runs its npm package through `npx`, which downloads it on a cold npm
+# cache. The calling tool's grants are ambient here (context-local, like
+# `cancel_scope`); without `download`, npm runs offline.
+_GRANTS: ContextVar[ExecutionPermissions | None] = ContextVar(
+    "rush_aislop_grants", default=None
+)
+_REQUIRED = ExecutionPermissions(download=True)
+AISLOP_NO_TELEMETRY_ENV = {"AISLOP_NO_TELEMETRY": "1", "DO_NOT_TRACK": "1"}
+
+
+def _granted() -> ExecutionPermissions:
+    return _GRANTS.get() or ExecutionPermissions()
+
+
+@contextmanager
+def aislop_grants(permissions: ExecutionPermissions) -> Iterator[None]:
+    """Make the calling tool's grants decide whether aislop may download."""
+    token = _GRANTS.set(permissions)
+    try:
+        yield
+    finally:
+        _GRANTS.reset(token)
 
 
 class AislopEngine(Engine):
     name = "aislop"
     binary = "aislop"
     file_extensions = ("py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "c", "cpp")
+
+    def child_env(self) -> dict[str, str] | None:
+        # aislop's npm cli.js honors both telemetry opt-outs; npm runs offline
+        # unless the calling tool holds the download grant.
+        env = {**os.environ, **AISLOP_NO_TELEMETRY_ENV}
+        if not _granted().download:
+            env["npm_config_offline"] = "true"
+        return env
 
     def run(
         self,
@@ -34,10 +70,12 @@ class AislopEngine(Engine):
             target = target.parent
         argv = [binary_path, "scan", "--format=json", *args, *include, str(target)]
 
+        env = self.child_env()
         proc = run_subprocess(
             argv,
             cwd=target,
             timeout=120,
+            **env_kwargs(env),
             **ownership_kwargs(owner_instance_id, run_id),
         )
 
@@ -103,6 +141,41 @@ class AislopEngine(Engine):
             isinstance(parsed, dict) and ("diagnostics" in parsed or "issues" in parsed)
         )
         status: ToolStatus
+        if (
+            not reported
+            and raw.get("exit_code") == 127
+            and "requires Node.js" in (raw.get("stderr") or "")
+        ):
+            # aislop's pip shim runs its npm package through npx: without
+            # Node.js on PATH the engine is not installed, not broken.
+            return skipped_result(
+                tool_name,
+                self.name,
+                "npx (Node.js) not on PATH (install: Node.js; aislop runs its "
+                "pinned npm package through npx)",
+            )
+        if (
+            not reported
+            and not _granted().download
+            and "ENOTCACHED" in (raw.get("stderr") or "")
+        ):
+            # Offline npm and the package is not cached: fetching it needs
+            # the download grant. Not run, never an engine error.
+            return skipped_result(
+                tool_name,
+                self.name,
+                "requires permission: --allow-download (aislop's npm package "
+                "is not in the local npm cache)",
+                metadata={
+                    "execution": build_execution_metadata(
+                        "executed",
+                        requested=_REQUIRED,
+                        granted=_granted(),
+                        producer=self.name,
+                        extra={"disposition": "not_run", "cause": "permission_denied"},
+                    )
+                },
+            )
         if not reported:
             # aislop exits 1 whenever it reports diagnostics, so only a
             # missing/unrecognized JSON report is an engine error.

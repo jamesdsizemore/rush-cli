@@ -33,6 +33,8 @@ import platform
 import shlex
 import shutil
 import tempfile
+import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -40,6 +42,11 @@ from typing import Any, Protocol
 
 from rush.config import RushConfigError, load_config
 from rush.discovery.stack import detect_project_stacks
+from rush.integrations.agent_hooks import (
+    activation_record_path,
+    read_activation_record,
+    set_hook_activation,
+)
 from rush.integrations.agents import (
     ADAPTERS,
     HOST_BINARIES,
@@ -105,16 +112,163 @@ HOST_STAGE_GRANTS: dict[str, tuple[str, ...]] = {
     "host_registration": ("cache_write",),
     "select": ("cache_write",),
     "guidance": ("cache_write", "artifact_write"),
+    # The same grants `rush agent connect` needs to write the activation.
+    "hooks": ("cache_write", "artifact_write"),
     "probe": ("network",),
+    # The representative check: `build` lets its test step run pytest;
+    # `cache_write` covers the Rush-owned fixture under the data root.
+    "check": ("build", "cache_write"),
 }
 _PROJECT_ID_PLACEHOLDER = "<project_id>"
-_HOOKS_UNAVAILABLE = (
-    "agent hook activation (Phase 70 T7) is not available in this build"
-)
-_CHECK_UNAVAILABLE = (
-    "the representative rush_check probe needs the rush_check tool, which is "
-    "not available in this build"
-)
+# The check stage's fixture: a known F401 (unused import) plus one passing
+# test, so every step of the six-step check has something real to run.
+_PROBE_MARKER = ".rush-probe-owner.json"
+_PROBE_FILES = {
+    "pyproject.toml": '[project]\nname = "rush-probe"\nversion = "0.0.0"\n',
+    "probe.py": "import os\n",
+    "test_probe.py": "def test_probe() -> None:\n    assert True\n",
+}
+_CHECK_DEADLINE_SECONDS = 300.0
+
+
+def _check_stage(data_root: Path, requested: bool) -> dict[str, Any]:
+    """T17/T26 representative check: `rush check` on a Rush-owned fixture
+    under `data_root/probes/<nonce>/`, never the user's project, run by setup
+    only on its own consent (--run-check, or "y" to its question)."""
+    fixture = data_root / "probes" / "<nonce>"
+    return {
+        "requested": requested,
+        "state": "pending" if requested else "not_requested",
+        "fixture": str(fixture),
+        "command": f"rush check {_quote(str(fixture))} --json",
+    }
+
+
+def _create_probe_fixture(data_root: Path) -> tuple[Path, str]:
+    """A fresh `data_root/probes/<nonce>/` holding the ownership marker and
+    the known-faulty fixture. Raises OSError."""
+    nonce = uuid.uuid4().hex
+    probes = data_root / "probes"
+    probes.mkdir(parents=True, exist_ok=True)
+    fixture = probes / nonce
+    fixture.mkdir()
+    (fixture / _PROBE_MARKER).write_text(
+        json.dumps({"owner": "rush-setup-check", "nonce": nonce}), encoding="utf-8"
+    )
+    for name, text in _PROBE_FILES.items():
+        (fixture / name).write_text(text, encoding="utf-8")
+    return fixture, nonce
+
+
+def _remove_probe_fixture(fixture: Path, nonce: str) -> bool:
+    """Delete the fixture only while its ownership marker still names this
+    run's nonce; anything else there is left untouched."""
+    try:
+        marker = json.loads((fixture / _PROBE_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(marker, dict) or marker.get("nonce") != nonce:
+        return False
+    shutil.rmtree(fixture, ignore_errors=True)
+    return not fixture.exists()
+
+
+def _check_failed(
+    command: str, blocker: str, detail: str, recovery: str
+) -> dict[str, Any]:
+    return {
+        "state": "failed",
+        "blocker": blocker,
+        "detail": detail,
+        "recovery_actions": [recovery],
+        "command": command,
+    }
+
+
+def _run_check_stage(
+    review: dict[str, Any],
+    choices: dict[str, bool],
+    permissions: ExecutionPermissions | None,
+) -> dict[str, Any]:
+    """Run the shared `CheckTool` once on a Rush-owned fixture (never the
+    user's project) with the check stage's grants only, bounded by a
+    deadline, and report its real result; nothing runs without consent.
+    Callers run this outside `_setup_lock`."""
+    check = review["check"]
+    command = check["command"]
+    if choices.get("check") is False:
+        return {"state": "declined", "command": command}
+    if not choices.get("check"):
+        if not check.get("requested"):
+            return {"state": "not_requested", "command": command}
+        return {
+            "state": "pending",
+            "reason": "not authorized: pass --run-check",
+            "command": command,
+        }
+    from rush.runtime.binaries import AnalysisScope, analysis_scope
+    from rush.tools.check import CheckTool
+
+    granted = permissions or ExecutionPermissions()
+    try:
+        fixture, nonce = _create_probe_fixture(Path(review["data_root"]))
+    except OSError as exc:
+        return _check_failed(
+            command,
+            "probe_fixture_unavailable",
+            str(exc),
+            f"{review['resume_command']} --run-check",
+        )
+    deadline = time.monotonic() + _CHECK_DEADLINE_SECONDS
+    try:
+        # Engines resolve as for the project's own check: from the
+        # toolchains manifests setup provisioned for the project root.
+        with analysis_scope(AnalysisScope(Path(review["project_root"]))):
+            result: dict[str, Any] = dict(
+                CheckTool().run(
+                    fixture,
+                    # Only this stage's grants: the test step's build, no more.
+                    permissions=ExecutionPermissions(build=granted.build),
+                    cancel_check=lambda: time.monotonic() >= deadline,
+                    cancel_cause="setup_check_deadline",
+                    invocation_start_cwd=fixture,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001 -- a failed check is reported, setup completes
+        removed = _remove_probe_fixture(fixture, nonce)
+        return {
+            **_check_failed(
+                command,
+                "check_crashed",
+                f"{type(exc).__name__}: {exc}",
+                f"{review['resume_command']} --run-check",
+            ),
+            "fixture": str(fixture),
+            "fixture_removed": removed,
+        }
+    removed = _remove_probe_fixture(fixture, nonce)
+    children = (result.get("metadata") or {}).get("children") or []
+    return {
+        "state": "ran",
+        "fixture": str(fixture),
+        "fixture_removed": removed,
+        "finding_rules": sorted(
+            {str(f.get("rule")) for f in result.get("findings") or []}
+        ),
+        "status": result.get("status"),
+        "summary": result.get("summary"),
+        "steps": [
+            {
+                "tool": child.get("tool"),
+                "status": child.get("status"),
+                "disposition": (child.get("execution") or {}).get("disposition"),
+                "cause": (child.get("execution") or {}).get("cause"),
+            }
+            for child in children
+        ],
+        "findings": len(result.get("findings") or []),
+        "command": command,
+    }
 
 
 def run_setup_wizard(
@@ -157,7 +311,7 @@ def run_setup_wizard(
     results["unsupported_engines"] = sorted(set(suggested) - set(known_engine_ids))
     resolved_data_root = data_root or default_data_root()
     plan: ProvisionPlan = build_provision_plan(
-        root, known_engine_ids, data_root=resolved_data_root
+        root, known_engine_ids, data_root=resolved_data_root, runner=runner
     )
     results["plan_id"] = plan.plan_id
     if permissions is None:
@@ -330,6 +484,7 @@ def build_setup_review(
     install_guidance: bool = False,
     enable_hooks: bool = False,
     verify_host: bool = False,
+    run_check: bool = False,
 ) -> dict[str, Any]:
     """Read-only preview of every setup stage, its exact change and grants.
 
@@ -341,7 +496,8 @@ def build_setup_review(
     host's project-bound registration (found with ``which``, reading host
     config under ``home``), the separately requested instruction block
     (``install_guidance``), hooks (``enable_hooks``) and capability probe
-    (``verify_host``), and the exact interactive resume command.
+    (``verify_host``), the representative `rush check` (``run_check``), and
+    the exact interactive resume command.
     """
     root = Path(root).resolve()
     data_root = data_root or default_data_root()
@@ -386,6 +542,7 @@ def build_setup_review(
                 "guidance": install_guidance,
                 "hooks": enable_hooks,
                 "probe": verify_host,
+                "check": run_check,
             },
         )
     review["review_id"] = _review_id(review)
@@ -1148,11 +1305,9 @@ def _add_host_stages(
     review["guidance"] = _guidance_stage(
         root, Path(review["data_root"]), agent_id, choices["guidance"]
     )
-    review["hooks"] = {
-        "requested": choices["hooks"],
-        "state": "unavailable",
-        "reason": _HOOKS_UNAVAILABLE,
-    }
+    review["hooks"] = _hooks_stage(
+        root, Path(review["data_root"]), host, choices["hooks"]
+    )
     binary = stage["host_binary"]
     review["probe"] = {
         "requested": choices["probe"],
@@ -1165,11 +1320,9 @@ def _add_host_stages(
             f"billed to your {display} account"
         ),
     }
-    review["check"] = {
-        "requested": False,
-        "state": "unavailable",
-        "reason": _CHECK_UNAVAILABLE,
-    }
+    review["check"] = _check_stage(
+        Path(review["data_root"]), choices.get("check", False)
+    )
     review["grants"] = {**review["grants"], **HOST_STAGE_GRANTS}
     review["resume_command"] = setup_resume_command(root, host)
 
@@ -1180,6 +1333,41 @@ def _registration_needs_write(review: dict[str, Any]) -> bool:
         reg.get("blocker")
         or reg.get("method") == "native_plugin"
         or reg.get("unchanged")
+    )
+
+
+def _hooks_stage(
+    root: Path, data_root: Path, host: str, requested: bool
+) -> dict[str, Any]:
+    """T7 (D3): the post-edit hook activation for this host and project,
+    written only on explicit --enable-agent-hooks consent. The hook runs
+    `rush check` with no grants after each edit, through the Rush plugin."""
+    activation = {
+        "host": host,
+        "canonical_root": str(root.resolve()),
+        # The hooks stage is granted cache_write, so the hook may store its
+        # full redacted result for recovery (T16), as `agent connect` does.
+        "recovery_cache_write": "cache_write" in HOST_STAGE_GRANTS["hooks"],
+    }
+    stage: dict[str, Any] = {
+        "requested": requested,
+        "path": str(activation_record_path(data_root)),
+        "activation": activation,
+    }
+    return {**stage, "state": "unchanged" if _hook_active(stage) else "pending"}
+
+
+def _hook_active(stage: dict[str, Any]) -> bool:
+    """Read-only: the activation file already holds this host's record for
+    this root (no directory or file is created)."""
+    wanted = stage["activation"]
+    document = read_activation_record(Path(stage["path"]).parent.parent)
+    records = document.get("activations") if isinstance(document, dict) else None
+    return any(
+        isinstance(record, dict)
+        and record.get("host") == wanted["host"]
+        and record.get("canonical_root") == wanted["canonical_root"]
+        for record in records or []
     )
 
 
@@ -1201,8 +1389,12 @@ def _host_needed_grants(
         needed["host_registration"] = HOST_STAGE_GRANTS["host_registration"]
     if review["guidance"].get("state") == "pending" and wanted("guidance"):
         needed["guidance"] = HOST_STAGE_GRANTS["guidance"]
+    if review["hooks"].get("state") == "pending" and wanted("hooks"):
+        needed["hooks"] = HOST_STAGE_GRANTS["hooks"]
     if not review["registration"].get("blocker") and wanted("probe"):
         needed["probe"] = HOST_STAGE_GRANTS["probe"]
+    if wanted("check"):
+        needed["check"] = HOST_STAGE_GRANTS["check"]
     return needed
 
 
@@ -1237,11 +1429,14 @@ def _render_host_stages(review: dict[str, Any]) -> list[str]:
         )
         lines.extend(f"       {line}" for line in guidance.get("diff", "").splitlines())
     hooks = review["hooks"]
-    lines.append(
-        f"  7. Hooks: unavailable -- {hooks['reason']}"
-        if hooks["requested"]
-        else "  7. Hooks: not requested (--enable-agent-hooks)"
-    )
+    if not hooks["requested"]:
+        lines.append("  7. Hooks: not requested (--enable-agent-hooks)")
+    else:
+        lines.append(
+            f"  7. Hooks: {hooks['state']} -- after each edit, the Rush plugin's "
+            "hook runs `rush check` on the edited file with no grants and shows "
+            f"the result to the model (activation in {hooks['path']})"
+        )
     lines.append(f"  8. Session: select this project for {reg['session']}")
     probe = review["probe"]
     if probe["requested"] and probe["probe_argv"]:
@@ -1251,6 +1446,13 @@ def _render_host_stages(review: dict[str, Any]) -> list[str]:
         )
     else:
         lines.append("  9. Capability probe: not requested (--verify-host)")
+    check = review["check"]
+    lines.append(
+        f"  10. Check: run the representative `{check['command']}` on a "
+        "Rush-owned fixture after setup, with the build and cache_write grants"
+        if check["requested"]
+        else f"  10. Check: not requested (--run-check); run `{check['command']}` yourself"
+    )
     lines.append(f"  Resume: {review['resume_command']}")
     return lines
 
@@ -1357,6 +1559,8 @@ def _pending_work(review: dict[str, Any]) -> bool:
     data_root = Path(review["data_root"])
     if _selected_project_id(f"{host}:{project_id}", data_root) != project_id:
         return True
+    if review["hooks"].get("requested") and not _hook_active(review["hooks"]):
+        return True
     if (
         review["guidance"].get("requested")
         and review["guidance"]["state"] != "unsupported"
@@ -1367,7 +1571,7 @@ def _pending_work(review: dict[str, Any]) -> bool:
         )
         if plan.conflict is None and plan.new_bytes is not None:
             return True
-    return bool(review["probe"].get("requested"))
+    return bool(review["probe"].get("requested") or review["check"].get("requested"))
 
 
 def _host_questions(review: dict[str, Any]) -> list[tuple[str, str]]:
@@ -1399,11 +1603,36 @@ def _host_questions(review: dict[str, Any]) -> list[tuple[str, str]]:
                 f"Write the Rush instruction block into {guidance['target_path']}? [y/N] ",
             )
         )
+    # D3: hooks are offered only when --enable-agent-hooks bound them.
+    hooks = review["hooks"]
+    if hooks.get("requested") and hooks.get("state") == "pending":
+        questions.append(
+            (
+                "hooks",
+                (
+                    "Enable Rush's post-edit check for this host and project (runs "
+                    "`rush check` with no grants after each edit)? [y/N] "
+                ),
+            )
+        )
     if not reg.get("blocker"):
         questions.append(
             (
                 "probe",
                 f"Verify the connection now? This {review['probe']['boundary']}. [y/N] ",
+            )
+        )
+    # The representative check is offered when the review bound it
+    # (--run-check, or the guided interactive setup).
+    if review["check"].get("requested"):
+        questions.append(
+            (
+                "check",
+                (
+                    f"Run the representative check `{review['check']['command']}` "
+                    "now on a Rush-owned fixture (format, lint, typecheck, dead, "
+                    "slop and test, with the build and cache_write grants)? [y/N] "
+                ),
             )
         )
     return questions
@@ -1508,6 +1737,49 @@ def _run_guidance_stage(
         "target_path": str(applied.target_path),
         "recovery": list(applied.recovery),
     }
+
+
+def _run_hooks_stage(
+    review: dict[str, Any],
+    choices: dict[str, bool],
+    permissions: ExecutionPermissions | None = None,
+) -> dict[str, Any]:
+    """T7: write the hook activation only on explicit consent (the flag, or a
+    "y" to its own question)."""
+    hooks = review["hooks"]
+    if choices.get("hooks") is False:
+        return {"state": "declined"}
+    if not choices.get("hooks"):
+        if not hooks.get("requested"):
+            return {"state": "not_requested"}
+        return {
+            "state": "pending",
+            "reason": "not authorized: pass --enable-agent-hooks",
+        }
+    try:
+        result = set_hook_activation(
+            SETUP_HOSTS[review["host"]],
+            Path(review["project_root"]),
+            enable=True,
+            recovery_cache_write=bool(permissions and permissions.cache_write),
+            data_root=Path(review["data_root"]),
+        )
+    except (AgentConnectionError, ValueError, OSError) as exc:
+        return {
+            "state": "failed",
+            "blocker": "hook_activation_failed",
+            "detail": str(exc),
+            "recovery_actions": [f"{review['resume_command']} --enable-agent-hooks"],
+        }
+    if result.get("state") == "conflict":
+        # not_owned, unreadable, or a CAS conflict on the activation ledger:
+        # the hook is not active, so setup is never reported ok.
+        return {
+            **result,
+            "blocker": "hook_activation_conflict",
+            "recovery_actions": [f"{review['resume_command']} --enable-agent-hooks"],
+        }
+    return result
 
 
 def _run_select_stage(
@@ -1667,6 +1939,7 @@ def _apply_host_stages(
     project_id: str,
     choices: dict[str, bool],
     host_fakes: dict[str, Any],
+    permissions: ExecutionPermissions | None = None,
 ) -> dict[str, Any]:
     host = review.get("host")
     if host is None:
@@ -1679,6 +1952,7 @@ def _apply_host_stages(
     runner: HostRunner = host_fakes.get("runner") or run_host_command
     registration = _run_registration_stage(review, project_id, choices, host_fakes)
     guidance = _run_guidance_stage(review, choices)
+    hooks = _run_hooks_stage(review, choices, permissions)
     select = _run_select_stage(session_id, project_id, data_root)
     probe = _run_probe_stage(review, project_id, choices, registration, runner)
     registration = {
@@ -1690,14 +1964,12 @@ def _apply_host_stages(
         "session": session_id,
         "registration": registration,
         "guidance": guidance,
-        "hooks": (
-            {"state": "pending", "reason": _HOOKS_UNAVAILABLE}
-            if review["hooks"]["requested"]
-            else {"state": "not_requested"}
-        ),
+        "hooks": hooks,
         "select": select,
         "probe": probe,
-        "check": {"state": "unavailable", "reason": _CHECK_UNAVAILABLE},
+        # Filled by the caller after `_setup_lock` is released (the check
+        # runs for minutes and never needs the lock).
+        "check": {"state": "pending", "command": review["check"]["command"]},
         "evidence": {"commands": _evidence_commands(review, registration, probe)},
     }
 
@@ -1710,6 +1982,13 @@ def _host_outcome_status(status: str, raw: dict[str, Any]) -> tuple[str, str | N
         return "error", "session_select_failed"
     if outcome in ("blocked", "declined") and status == "ok":
         return "partial", f"host_{outcome}"
+    if status == "ok":
+        # A stage that failed is never an ok setup: its stage result names
+        # the blocker and the one recovery command.
+        for stage in ("hooks", "check"):
+            state = (raw.get(stage) or {}).get("state")
+            if state in ("failed", "conflict"):
+                return "partial", f"{stage}_{state}"
     return status, None
 
 
@@ -1753,14 +2032,12 @@ def _already_complete(
             if review["guidance"].get("requested")
             else "not_requested"
         },
-        "hooks": (
-            {"state": "pending", "reason": _HOOKS_UNAVAILABLE}
-            if review["hooks"]["requested"]
-            else {"state": "not_requested"}
-        ),
+        "hooks": {
+            "state": "unchanged" if review["hooks"]["requested"] else "not_requested"
+        },
         "select": {"state": "unchanged", "session": f"{review['host']}:{project_id}"},
         "probe": probe,
-        "check": {"state": "unavailable", "reason": _CHECK_UNAVAILABLE},
+        "check": {"state": "not_requested", "command": review["check"]["command"]},
         "evidence": {"commands": _evidence_commands(review, registration, probe)},
     }
     status, reason = _host_outcome_status("ok", raw)
@@ -1843,7 +2120,7 @@ def _apply_setup_envelope(
         }
         unbound = sorted(
             key
-            for key in ("guidance", "hooks", "probe")
+            for key in ("guidance", "hooks", "probe", "check")
             if chosen.get(key) and not review.get(key, {}).get("requested")
         )
         if unbound:
@@ -1868,7 +2145,11 @@ def _apply_setup_envelope(
                     **result,
                     "raw": _pending_host_stages("project setup did not complete"),
                 }
-            raw = _apply_host_stages(review, result["project_id"], chosen, host_fakes)
+            raw = _apply_host_stages(
+                review, result["project_id"], chosen, host_fakes, permissions
+            )
+        if review.get("host") is not None:
+            raw["check"] = _run_check_stage(review, chosen, permissions)
     except _StageConflict as exc:
         return {
             "status": "recovery_required",
@@ -2143,6 +2424,7 @@ def preview_setup(
         install_guidance=choices.get("guidance", False),
         enable_hooks=choices.get("hooks", False),
         verify_host=choices.get("probe", False),
+        run_check=choices.get("check", False),
     )
     needed = {g for stage in _needed_grants(review).values() for g in stage}
     if review["resolution"]["required"]:
@@ -2216,6 +2498,7 @@ def setup_apply_command(
         ("guidance", "--install-guidance"),
         ("hooks", "--enable-agent-hooks"),
         ("probe", "--verify-host"),
+        ("check", "--run-check"),
     ):
         if choices.get(key):
             parts.append(flag)
@@ -2247,6 +2530,7 @@ def save_setup_plan(
         install_guidance=choices.get("guidance", False),
         enable_hooks=choices.get("hooks", False),
         verify_host=choices.get("probe", False),
+        run_check=choices.get("check", False),
     )
     if review["resolution"]["required"]:
         agent = f" --agent {host}" if host else ""
@@ -2315,7 +2599,7 @@ def run_interactive_setup(
         result = apply_setup_review(build_setup_review(root), None, consent)
         return result, _exit_code(result)
     review = build_setup_review(
-        root, host=host, install_guidance=True, verify_host=True
+        root, host=host, install_guidance=True, verify_host=True, run_check=True
     )
     result = apply_setup_review(setup_envelope(review), None, consent)
     return result, _exit_code(result)
@@ -2331,7 +2615,7 @@ def run_guided_setup(
     """The guided bootstrap's setup (`rush install --setup`). Consent comes
     only from the controlling terminal; without one (or when not
     ``interactive``) the result is the full preview and the resume command."""
-    no_choices = {"guidance": False, "hooks": False, "probe": False}
+    no_choices = {"guidance": False, "hooks": False, "probe": False, "check": False}
     terminal = open_terminal() if interactive else None
     if terminal is None:
         reason = "no_terminal" if interactive else "preview_only"
@@ -2362,6 +2646,7 @@ def run_setup_command(
     install_guidance: bool = False,
     enable_hooks: bool = False,
     verify_host: bool = False,
+    run_check: bool = False,
 ) -> tuple[dict[str, Any], int]:
     """Mode selection for `rush setup`. Returns (payload, exit code).
 
@@ -2375,6 +2660,7 @@ def run_setup_command(
         "guidance": install_guidance,
         "hooks": enable_hooks,
         "probe": verify_host,
+        "check": run_check,
     }
     if apply:
         return _apply_saved_review(
@@ -2434,8 +2720,18 @@ def render_setup_result(payload: dict[str, Any]) -> str:
         lines.append(f"  engine {engine} failed: {failure['message']}")
     for engine, path in sorted((provision.get("recovery_required") or {}).items()):
         lines.append(f"  engine {engine}: recover {path} manually, then rerun setup")
+    # Round-2 M1: a reused engine whose npm runtime must be fetched needs the
+    # fetch grants (already CLI flags); one exact recovery command names them
+    # and replaces the generic resume line.
+    blocked = provision.get("permission_blocked") or {}
+    grant_flags: list[str] = []
+    for engine, flags in sorted(blocked.items()):
+        lines.append(f"  engine {engine} needs {' '.join(flags)}")
+        grant_flags.extend(flag for flag in flags if flag not in grant_flags)
     lines.extend(_render_host_outcome(payload.get("raw") or {}))
-    if payload.get("resume_command") and not payload.get("ready"):
+    if payload.get("resume_command") and grant_flags:
+        lines.append(f"  recover: {payload['resume_command']} {' '.join(grant_flags)}")
+    elif payload.get("resume_command") and not payload.get("ready"):
         lines.append(f"  resume: {payload['resume_command']}")
     return "\n".join(lines)
 
@@ -2489,7 +2785,7 @@ def _render_host_outcome(raw: dict[str, Any]) -> list[str]:
     ]
     if registration.get("detail"):
         lines.append(f"    {registration['detail']}")
-    for stage in ("guidance", "hooks", "select", "probe"):
+    for stage in ("guidance", "hooks", "select", "probe", "check"):
         state = (raw.get(stage) or {}).get("state")
         if state and state not in ("not_requested",):
             lines.append(f"  {stage}: {state}")

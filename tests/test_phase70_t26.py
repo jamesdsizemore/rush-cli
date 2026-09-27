@@ -32,7 +32,9 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +69,33 @@ def _isolated_home(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     return home
+
+
+@pytest.fixture(scope="session")
+def warm_npm_cache() -> Iterator[str]:
+    """An npm cache in which aislop's npm runtime runs offline: the
+    already-warm `npm_config_cache` when set (CI warms it after sync), else a
+    temp cache warmed once per session -- never one download per test."""
+    from rush.setup.provision import prefetch_npm_runtime
+    from rush.tools.common import clear_binary_cache, resolve_binary
+
+    def warm(cache: str) -> str:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setenv("npm_config_cache", cache)
+            patch.delenv("npm_config_offline", raising=False)
+            clear_binary_cache()
+            executable = resolve_binary("aislop")
+            clear_binary_cache()
+            assert executable is not None, "aislop is not installed (dev extra)"
+            prefetch_npm_runtime("aislop", Path(executable))
+        return cache
+
+    configured = os.environ.get("npm_config_cache")
+    if configured:
+        yield warm(configured)  # already warm: one offline run, no fetch
+        return
+    with tempfile.TemporaryDirectory() as cache:
+        yield warm(cache)
 
 
 def _fake_host_which(name: str) -> str:
@@ -1307,3 +1336,228 @@ def test_guided_setup_without_terminal_returns_preview_and_resume_command(
     )
     assert shlex.split(payload["resume_command"])[2] == str(root.resolve())
     assert not (root / "rush.toml").exists()
+
+
+def test_t7_setup_hooks_stage_activates_only_on_enable_agent_hooks(
+    tmp_path: Path, _isolated_home: Path
+) -> None:
+    """T7: `rush setup --enable-agent-hooks` previews the post-edit hook
+    activation, asks its own question, writes the activation record on "y",
+    and a completed rerun reports it unchanged without asking again."""
+    from rush.integrations.agent_hooks import activation_record_path
+    from rush.tools.setup_wizard import (
+        apply_setup_review,
+        build_setup_review,
+        render_setup_review,
+    )
+
+    root = tmp_path / "project"
+    root.mkdir()
+    data_root = tmp_path / "data"
+    review = build_setup_review(
+        root,
+        data_root,
+        host="claude",
+        permissions=_FULL_PERMISSIONS,
+        which=_fake_host_which,
+        rush_binary=_FAKE_RUSH_BINARY,
+        enable_hooks=True,
+    )
+    assert review["hooks"]["state"] == "pending"
+    assert "not available" not in render_setup_review(review)
+    assert "7. Hooks: pending" in render_setup_review(review)
+    envelope = {"kind": "setup", "schema_version": 1, "review": review}
+    fake_claude = _fake_claude_runner(_isolated_home, [])
+
+    consent = _ScriptedConsentIO(["y"] * 10)
+    result = apply_setup_review(
+        envelope, _FULL_PERMISSIONS, consent, host_runner=fake_claude
+    )
+
+    raw = result.get("raw", result)
+    assert raw["hooks"]["state"] == "applied", raw["hooks"]
+    assert any("post-edit check" in prompt for prompt in consent.prompts)
+    records = json.loads(activation_record_path(data_root).read_text())["activations"]
+    assert [(r["host"], r["canonical_root"]) for r in records] == [
+        ("claude", str(root.resolve()))
+    ]
+
+    again = _ScriptedConsentIO([])
+    rerun = apply_setup_review(
+        envelope, _FULL_PERMISSIONS, again, host_runner=fake_claude
+    )
+    assert again.prompts == []
+    assert rerun.get("raw", rerun)["hooks"]["state"] == "unchanged"
+
+
+def test_t7_setup_without_enable_agent_hooks_never_activates(
+    tmp_path: Path, _isolated_home: Path
+) -> None:
+    from rush.integrations.agent_hooks import activation_record_path
+    from rush.tools.setup_wizard import apply_setup_review, build_setup_review
+
+    root = tmp_path / "project"
+    root.mkdir()
+    data_root = tmp_path / "data"
+    review = build_setup_review(
+        root,
+        data_root,
+        host="claude",
+        permissions=_FULL_PERMISSIONS,
+        which=_fake_host_which,
+        rush_binary=_FAKE_RUSH_BINARY,
+    )
+    envelope = {"kind": "setup", "schema_version": 1, "review": review}
+    consent = _ScriptedConsentIO(["y"] * 10)
+    result = apply_setup_review(
+        envelope,
+        _FULL_PERMISSIONS,
+        consent,
+        host_runner=_fake_claude_runner(_isolated_home, []),
+    )
+
+    assert result.get("raw", result)["hooks"]["state"] == "not_requested"
+    assert not any("post-edit check" in prompt for prompt in consent.prompts)
+    assert not activation_record_path(data_root).exists()
+
+
+class _AnswerByPrompt(_ScriptedConsentIO):
+    """Answers "n" to any prompt containing one of `decline`, else "y"."""
+
+    def __init__(self, decline: tuple[str, ...]) -> None:
+        super().__init__([])
+        self._decline = decline
+
+    def ask(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return "n" if any(text in prompt for text in self._decline) else "y"
+
+
+def _check_review(root: Path, data_root: Path, *, run_check: bool) -> dict:
+    from rush.tools.setup_wizard import build_setup_review
+
+    return build_setup_review(
+        root,
+        data_root,
+        host="claude",
+        permissions=_FULL_PERMISSIONS,
+        which=_fake_host_which,
+        rush_binary=_FAKE_RUSH_BINARY,
+        run_check=run_check,
+    )
+
+
+@pytest.mark.parametrize("path", ["not_requested", "declined"])
+def test_t17_setup_check_without_consent_previews_and_runs_nothing(
+    path: str,
+    tmp_path: Path,
+    _isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No --run-check, or "n" to the check question: the preview names the
+    exact command, and apply runs no check and spawns nothing for it."""
+    import shlex
+    import subprocess
+
+    from rush.tools.check import CheckTool
+    from rush.tools.setup_wizard import apply_setup_review, render_setup_review
+
+    root = tmp_path / "project dir"
+    root.mkdir()
+    review = _check_review(root, tmp_path / "data", run_check=path == "declined")
+    # The check runs on a Rush-owned fixture, never on the user's project.
+    fixture = Path(review["data_root"]) / "probes" / "<nonce>"
+    command = f"rush check {shlex.quote(str(fixture))} --json"
+    assert review["check"]["command"] == command
+    rendered = render_setup_review(review)
+    assert command in rendered
+    assert "not available in this build" not in rendered
+
+    spawns: list[object] = []
+
+    def spy(*args: object, **kwargs: object) -> object:
+        spawns.append(args[0] if args else kwargs.get("args"))
+        raise AssertionError(f"unexpected spawn: {spawns[-1]!r}")
+
+    checks: list[object] = []
+    monkeypatch.setattr(subprocess, "run", spy)
+    monkeypatch.setattr(subprocess, "Popen", spy)
+    monkeypatch.setattr(CheckTool, "run", lambda *a, **k: checks.append(a))
+
+    consent = _AnswerByPrompt(("Verify the connection", "rush check"))
+    result = apply_setup_review(
+        {"kind": "setup", "schema_version": 1, "review": review},
+        _FULL_PERMISSIONS,
+        consent,
+        host_runner=_fake_claude_runner(_isolated_home, []),
+    )
+
+    check = result.get("raw", result)["check"]
+    assert check["state"] == path
+    assert check["command"] == command
+    assert checks == []
+    assert spawns == []
+    asked = any("rush check" in prompt for prompt in consent.prompts)
+    assert asked is (path == "declined")
+
+
+@pytest.mark.needs_aislop
+def test_t17_setup_check_with_consent_runs_rush_check_and_reports_real_result(
+    tmp_path: Path,
+    _isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    warm_npm_cache: str,
+) -> None:
+    """--run-check plus "y": setup runs the shared six-step check on its own
+    fixture (never the user's root) with the check stage's grants, so every
+    step runs, and reports the fixture's real statuses and findings."""
+    from rush.tools.check import CheckTool
+    from rush.tools.common import clear_binary_cache
+    from rush.tools.setup_wizard import apply_setup_review, render_setup_review
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.0.1"\n')
+    (root / "bad.py").write_text("import os\n")
+    review = _check_review(root, tmp_path / "data", run_check=True)
+    assert review["check"]["state"] == "pending"
+    rendered_review = render_setup_review(review)
+    assert "10. Check: run the representative `rush check" in rendered_review
+    assert "on a Rush-owned fixture" in rendered_review
+
+    checked: list[Path] = []
+    real_run = CheckTool.run
+
+    def spy(self: CheckTool, path: Path, **kwargs: Any) -> Any:
+        checked.append(Path(path))
+        return real_run(self, path, **kwargs)
+
+    monkeypatch.setattr(CheckTool, "run", spy)
+    consent = _AnswerByPrompt(("Verify the connection",))
+    # HOME is a temp dir, so aislop's default npm cache is cold: use the
+    # session's warm one, so the ungranted slop step runs offline.
+    monkeypatch.setenv("npm_config_cache", warm_npm_cache)
+    monkeypatch.delenv("npm_config_offline", raising=False)
+    clear_binary_cache()
+    result = apply_setup_review(
+        {"kind": "setup", "schema_version": 1, "review": review},
+        _FULL_PERMISSIONS,
+        consent,
+        host_runner=_fake_claude_runner(_isolated_home, []),
+    )
+    clear_binary_cache()
+
+    check = result.get("raw", result)["check"]
+    assert check["state"] == "ran", check
+    assert check["status"] == "fail"
+    steps = {step["tool"]: step for step in check["steps"]}
+    assert list(steps) == ["format", "lint", "typecheck", "dead", "slop", "test"]
+    assert all(step["disposition"] == "executed" for step in steps.values()), steps
+    assert steps["lint"]["status"] == "fail"
+    assert "F401" in check["finding_rules"]
+    assert check["findings"] > 0
+    probes = Path(review["data_root"]) / "probes"
+    assert [path.parent for path in checked] == [probes]
+    assert all(root.resolve() not in [path, *path.parents] for path in checked)
+    assert check["fixture_removed"] is True
+    assert not checked[0].exists()
