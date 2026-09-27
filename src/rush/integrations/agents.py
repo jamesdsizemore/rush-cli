@@ -164,11 +164,65 @@ ADAPTERS: dict[str, AgentAdapter] = {
 }
 
 
+# Phase 70 T4 (D1): new registrations request the core profile explicitly; a
+# pre-T4 entry (`mcp serve`, no profile) is the full server.
+MCP_PROFILES = ("core", "full")
+LEGACY_SERVE_ARGS: tuple[str, ...] = ("mcp", "serve")
+CORE_SERVE_ARGS: tuple[str, ...] = ("mcp", "serve", "--profile", "core")
+RegistrationProfile = Literal["legacy_full", "core", "full", "unrecognized"]
+
+
 def build_stdio_entry(
-    rush_binary: str, *, args: tuple[str, ...] = ("mcp", "serve")
+    rush_binary: str, *, args: tuple[str, ...] = CORE_SERVE_ARGS
 ) -> dict[str, Any]:
     """Generic stdio MCP server spec shared by every adapter."""
     return {"command": rush_binary, "args": list(args)}
+
+
+def classify_registration_profile(entry: Any) -> RegistrationProfile:
+    """Which server profile an existing `rush` entry's args launch."""
+    args = entry.get("args") if isinstance(entry, dict) else None
+    if (
+        not isinstance(args, list)
+        or not all(isinstance(arg, str) for arg in args)
+        or args[:2] != list(LEGACY_SERVE_ARGS)
+        # a restricted memory-session receiver is no profile at all
+        or any(arg.split("=", 1)[0] == "--memory-session" for arg in args)
+    ):
+        return "unrecognized"
+    profiles: list[str | None] = []
+    for index, arg in enumerate(args):
+        if arg == "--profile":
+            profiles.append(args[index + 1] if index + 1 < len(args) else None)
+        elif arg.startswith("--profile="):
+            profiles.append(arg.split("=", 1)[1])
+    if not profiles:
+        return "legacy_full"
+    if len(profiles) == 1 and profiles[0] in MCP_PROFILES:
+        return "core" if profiles[0] == "core" else "full"
+    return "unrecognized"
+
+
+def profile_serve_args(current_args: Any, profile: str) -> list[str]:
+    """`current_args` with only its profile changed to `profile`.
+
+    Args of a recognized `mcp serve` entry keep every other flag (e.g. a T26
+    `--project`/`--session` binding); anything else becomes the plain
+    `mcp serve --profile PROFILE`."""
+    if profile not in MCP_PROFILES:
+        raise ValueError(
+            f"unknown MCP profile {profile!r}; valid profiles: {', '.join(MCP_PROFILES)}"
+        )
+    kept: list[str] = list(LEGACY_SERVE_ARGS)
+    if classify_registration_profile({"args": current_args}) != "unrecognized":
+        rest = list(current_args[2:])
+        while rest:
+            arg = rest.pop(0)
+            if arg == "--profile":
+                rest = rest[1:]
+            elif not arg.startswith("--profile="):
+                kept.append(arg)
+    return [*kept, "--profile", profile]
 
 
 def resolve_rush_binary(explicit: str | None = None) -> str:
@@ -446,6 +500,8 @@ class AgentStatus:
     status: AgentDiscoveryStatus
     restart_required: bool
     error: str | None = None
+    # T4: the profile an existing `rush` entry launches; None without one.
+    profile: RegistrationProfile | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -456,6 +512,7 @@ class AgentStatus:
             "status": self.status,
             "restart_required": self.restart_required,
             "error": self.error,
+            "profile": self.profile,
         }
 
 
@@ -512,6 +569,7 @@ def _discover_one(
         config_path,
         status,
         adapter.restart_required,
+        profile=classify_registration_profile(rush_entry),
     )
 
 
@@ -560,6 +618,10 @@ class RegistrationStep:
     diff: str = ""
     requires_consent: bool = False
     unchanged: bool = False
+    # Phase 70 T4: the profile an explicit `agent connect --profile` migration
+    # moves this entry to. For a native step `expected_sha256` is then the
+    # digest of the current user-scope `rush` entry, re-checked before removal.
+    migration_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -571,6 +633,11 @@ class AgentApplyResult:
     backup_path: Path | None
     restart_required: bool
     error: str | None = None
+    # T4: the target changed after the plan was built; nothing was written.
+    conflict: bool = False
+    # T4: a native re-add and the restore of the captured entry both failed;
+    # the captured entry JSON the user must restore by hand.
+    recovery_required: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -581,6 +648,8 @@ class AgentApplyResult:
             "backup_path": str(self.backup_path) if self.backup_path else None,
             "restart_required": self.restart_required,
             "error": self.error,
+            "conflict": self.conflict,
+            "recovery_required": self.recovery_required,
         }
 
 
@@ -619,8 +688,17 @@ def plan_agent_registration(
     config_path: Path | None = None,
     config_format: ConfigFormat | None = None,
     servers_key: tuple[str, ...] | None = None,
+    profile: str | None = None,
 ) -> RegistrationStep:
-    """Plan how to register Rush with one agent, never writing anything yet."""
+    """Plan how to register Rush with one agent, never writing anything yet.
+
+    Phase 70 T4: a new entry launches `mcp serve --profile core`. An existing
+    `rush` entry keeps its args exactly (only a stale command path is
+    repaired; an entry already launching `rush_binary` is left untouched).
+    Only an explicit `profile` -- the previewed migration of `agent connect
+    --profile` -- changes an existing entry's profile, and then nothing else
+    in its args.
+    """
     home = home or Path.home()
     os_name = os_name or platform.system()
     adapter = _resolve_adapter(
@@ -636,26 +714,21 @@ def plan_agent_registration(
     )
 
     if adapter.native_binary and shutil.which(adapter.native_binary):
-        command = (
-            adapter.native_binary,
-            "mcp",
-            "add",
-            "rush",
-            "--scope",
-            "user",
-            "--",
-            rush_binary,
-            "mcp",
-            "serve",
-        )
+        current = _capture_native_entry(resolved_path)
+        entry = _planned_entry(current, rush_binary, profile)
         return RegistrationStep(
             agent_id,
             "native",
             resolved_path,
             None,
-            command,
+            (adapter.native_binary, "mcp", "add", "rush", "--scope", "user", "--")
+            + (entry["command"], *entry["args"]),
             None,
             adapter.restart_required,
+            _entry_digest(current) if current is not None else None,
+            entry=entry,
+            current_entry=current,
+            migration_profile=profile,
         )
 
     existing_bytes = resolved_path.read_bytes() if resolved_path.exists() else None
@@ -667,8 +740,13 @@ def plan_agent_registration(
     if resolved_path.exists() and not os.access(resolved_path, os.W_OK):
         raise ReadOnlyConfigError(f"{agent_id}: config is read-only: {resolved_path}")
 
-    entry = build_stdio_entry(rush_binary)
-    if adapter.config_format == "toml":
+    current = _read_rush_entry(existing_text, adapter)
+    current = current if isinstance(current, dict) else None
+    entry = _planned_entry(current, rush_binary, profile)
+    unchanged = current is not None and same_server_entry(current, entry)
+    if unchanged:
+        new_text = existing_text
+    elif adapter.config_format == "toml":
         new_text = _upsert_toml_table(
             existing_text, (*adapter.servers_key, "rush"), entry
         )
@@ -687,7 +765,52 @@ def plan_agent_registration(
         new_text,
         adapter.restart_required,
         _sha256(existing_bytes) if existing_bytes is not None else None,
+        entry=entry,
+        current_entry=current,
+        unchanged=unchanged,
+        migration_profile=profile,
     )
+
+
+def _planned_entry(
+    current: dict[str, Any] | None, rush_binary: str, profile: str | None
+) -> dict[str, Any]:
+    """The `{command, args}` entry a registration writes (see `plan_agent_registration`)."""
+    if current is None:
+        if profile is None:
+            return build_stdio_entry(rush_binary)
+        return build_stdio_entry(
+            rush_binary, args=tuple(profile_serve_args(LEGACY_SERVE_ARGS, profile))
+        )
+    if profile is not None:
+        return build_stdio_entry(
+            rush_binary, args=tuple(profile_serve_args(current.get("args"), profile))
+        )
+    args = current.get("args")
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        # ponytail: unusable args were always replaced by the full server's.
+        args = list(LEGACY_SERVE_ARGS)
+    return build_stdio_entry(rush_binary, args=tuple(args))
+
+
+def registration_preview(step: RegistrationStep) -> dict[str, Any]:
+    """What an `agent connect --profile` migration will change, shown before consent."""
+    current = step.current_entry
+    return {
+        "agent_id": step.agent_id,
+        "method": step.method,
+        "config_path": str(step.config_path) if step.config_path else None,
+        "current_profile": (
+            classify_registration_profile(current) if current is not None else None
+        ),
+        "current_command": current.get("command") if current is not None else None,
+        "current_args": current.get("args") if current is not None else None,
+        "new_command": step.entry["command"] if step.entry else None,
+        "new_args": step.entry["args"] if step.entry else None,
+        "profile": step.migration_profile,
+        "current_sha256": step.expected_sha256,
+        "unchanged": step.unchanged,
+    }
 
 
 def _capture_native_entry(config_path: Path | None) -> dict[str, Any] | None:
@@ -715,6 +838,19 @@ def apply_agent_registration(step: RegistrationStep) -> AgentApplyResult:
         assert step.native_command is not None
         remove_command = step.native_command[:2] + ("remove", "rush", "--scope", "user")
         captured = _capture_native_entry(step.config_path)
+        if step.migration_profile is not None and step.expected_sha256 != (
+            _entry_digest(captured) if captured is not None else None
+        ):
+            return AgentApplyResult(
+                step.agent_id,
+                False,
+                step.method,
+                step.config_path,
+                None,
+                step.restart_required,
+                error=f"{step.config_path}: changed_since_preview",
+                conflict=True,
+            )
         try:
             subprocess.run(
                 remove_command, capture_output=True, text=True, timeout=30, check=False
@@ -740,6 +876,7 @@ def apply_agent_registration(step: RegistrationStep) -> AgentApplyResult:
                             f"{proc.stderr.strip() or f'exit {proc.returncode}'}; "
                             f"recovery_required: {restore_error}"
                         ),
+                        recovery_required=restore_error,
                     )
         except (OSError, subprocess.SubprocessError) as exc:
             return AgentApplyResult(
@@ -764,6 +901,16 @@ def apply_agent_registration(step: RegistrationStep) -> AgentApplyResult:
         )
 
     assert step.config_path is not None and step.new_text is not None
+    if step.unchanged:
+        # T4: the entry already launches this binary; its bytes stay as they are.
+        return AgentApplyResult(
+            step.agent_id,
+            True,
+            step.method,
+            step.config_path,
+            None,
+            step.restart_required,
+        )
     try:
         step.config_path.parent.mkdir(parents=True, exist_ok=True)
         if step.config_path.exists() and step.backup_path is not None:
@@ -783,6 +930,7 @@ def apply_agent_registration(step: RegistrationStep) -> AgentApplyResult:
             step.backup_path,
             step.restart_required,
             error=str(exc),
+            conflict=isinstance(exc, CASConflictError),
         )
     return AgentApplyResult(
         step.agent_id,
@@ -1970,6 +2118,8 @@ def _apply_instructions_locked(
 
 
 GuidanceConsent = bool | Callable[[AgentInstructionPlan], bool]
+# T4: consent to a previewed profile migration (the preview dict is passed).
+ProfileConsent = bool | Callable[[dict[str, Any]], bool]
 
 
 def reconcile_agent_instructions(
@@ -2165,8 +2315,17 @@ def connect_agent(
     home: Path | None = None,
     data_root: Path | None = None,
     resources: Sequence[OwnedResource] = (),
+    profile: str | None = None,
+    profile_consent: ProfileConsent = False,
 ) -> dict[str, Any]:
     """Registration, memory, instruction block and resources as one transaction.
+
+    Phase 70 T4: with `profile`, this is an explicit migration of the host's
+    `rush` entry to that server profile. Its preview (config path, current
+    and new args, current digest) is built first and passed to
+    `profile_consent` (or `profile_consent` is the answer itself); without
+    consent nothing at all is written and `{"migration": preview}` returns
+    with state `pending`/`declined`. The write re-checks the previewed digest.
 
     The guidance preview and any consent prompt happen first, before the
     ledger lock is taken or anything is written. Then, under the lock, every
@@ -2179,7 +2338,12 @@ def connect_agent(
     `{component, path, expected, actual}`.
     """
     binary = resolve_rush_binary(rush_binary)
-    step = plan_agent_registration(agent_id, rush_binary=binary, home=home)
+    step = plan_agent_registration(
+        agent_id, rush_binary=binary, home=home, profile=profile
+    )
+    migration, refused = _migration_consent(step, profile_consent)
+    if refused is not None:
+        return {"migration": {**(migration or {}), "state": refused}}
     prior_entry: dict[str, Any] | None = None
     if agent_id in ADAPTERS:
         try:
@@ -2252,13 +2416,36 @@ def connect_agent(
             ) from exc
 
     probe = probe_agent_connection(agent_id, home=home, rush_binary=binary)
-    return {
+    connected: dict[str, Any] = {
         "apply": applied.to_dict(),
         "probe": probe.to_dict(),
         "memory": memory_entry,
         "guidance": guidance,
         "resources": resource_reports,
     }
+    if migration is not None:
+        connected["migration"] = {**migration, "state": _migration_state(applied)}
+    return connected
+
+
+def _migration_consent(
+    step: RegistrationStep, consent: ProfileConsent
+) -> tuple[dict[str, Any] | None, str | None]:
+    """A migration step's preview, plus `pending`/`declined` when it must not apply."""
+    if step.migration_profile is None:
+        return None, None
+    preview = registration_preview(step)
+    if callable(consent):
+        return preview, None if consent(preview) else "declined"
+    return preview, None if consent else "pending"
+
+
+def _migration_state(applied: AgentApplyResult) -> str:
+    if applied.ok:
+        return "applied"
+    if applied.conflict:
+        return "conflict"
+    return "recovery_required" if applied.recovery_required else "failed"
 
 
 # --- Disconnect ----------------------------------------------------------------------
@@ -2346,9 +2533,11 @@ def _legacy_owned_entries(agent_id: str) -> list[dict[str, Any]]:
         binary = resolve_rush_binary(None)
     except AgentConnectionError:
         return []
-    entries = [build_stdio_entry(binary)]
+    # Pre-ledger writers always launched the full server (`mcp serve`).
+    legacy = build_stdio_entry(binary, args=LEGACY_SERVE_ARGS)
+    entries = [legacy]
     if agent_id == "claude-code":
-        entries.append({"type": "stdio", **build_stdio_entry(binary), "env": {}})
+        entries.append({"type": "stdio", **legacy, "env": {}})
     return entries
 
 
@@ -3216,8 +3405,16 @@ def project_session_id(agent_id: str, project_id: str) -> str:
 
 
 def project_serve_args(project_id: str, session_id: str) -> tuple[str, ...]:
-    # ponytail: T4 adds `--profile core` here once `mcp serve --profile` exists.
-    return ("mcp", "serve", "--project", project_id, "--session", session_id)
+    return (
+        "mcp",
+        "serve",
+        "--project",
+        project_id,
+        "--session",
+        session_id,
+        "--profile",
+        "core",
+    )
 
 
 def _claude_local_entry(raw: bytes | None, root: Path) -> dict[str, Any] | None:
@@ -3769,11 +3966,14 @@ def observed_status_project_ids(calls: list[dict[str, Any]]) -> list[str]:
 
 __all__ = [
     "ADAPTERS",
+    "CORE_SERVE_ARGS",
     "HOST_BINARIES",
     "HOST_LOGIN_ACTIONS",
     "HOST_PROBE_ARGS",
     "HOST_READBACK_ARGS",
     "INSTRUCTION_TARGETS",
+    "LEGACY_SERVE_ARGS",
+    "MCP_PROFILES",
     "PLUGIN_HOSTS",
     "PLUGIN_ID",
     "PLUGIN_MARKETPLACE",
@@ -3793,7 +3993,9 @@ __all__ = [
     "MalformedConfigError",
     "ManualEntryRemoval",
     "OwnedResource",
+    "ProfileConsent",
     "ReadOnlyConfigError",
+    "RegistrationProfile",
     "RegistrationStep",
     "UnknownAgentError",
     "WriteJournal",
@@ -3806,6 +4008,7 @@ __all__ = [
     "build_stdio_entry",
     "cas_replace_file",
     "cas_unlink",
+    "classify_registration_profile",
     "connect_agent",
     "disconnect_agent",
     "discover_agents",
@@ -3824,6 +4027,7 @@ __all__ = [
     "plan_project_registration",
     "plugin_uninstall_commands",
     "probe_agent_connection",
+    "profile_serve_args",
     "project_serve_args",
     "project_session_id",
     "read_agent_memory_state",
@@ -3832,6 +4036,7 @@ __all__ = [
     "reconcile_agent_instructions",
     "record_native_plugin_install",
     "record_tool_observation",
+    "registration_preview",
     "registration_undo",
     "resolve_rush_binary",
     "run_host_command",

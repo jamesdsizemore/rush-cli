@@ -88,16 +88,64 @@ def _with_binding_defaults(
     return filled
 
 
-def build_server_instructions() -> str:
-    """Describe the live catalog without duplicating a fixed tool list."""
-    tool_names = ", ".join(f"rush_{name.replace('-', '_')}" for name in TOOL_SPECS)
+PROFILES = ("core", "full")
+# Phase 70 D1: the seven tools a `--profile core` server registers.
+CORE_TOOL_NAMES = frozenset(
+    {
+        "rush_status",
+        "rush_check",
+        "rush_lint",
+        "rush_review",
+        "rush_security",
+        "rush_test",
+        "rush_memory",
+    }
+)
+
+
+def validate_profile(profile: str | None) -> str:
+    """`None` means `"full"`; any other value outside `PROFILES` is a `ValueError`."""
+    if profile is None:
+        return "full"
+    if profile not in PROFILES:
+        raise ValueError(
+            f"unknown MCP profile {profile!r}; valid profiles: {', '.join(PROFILES)}"
+        )
+    return profile
+
+
+def _catalog_tool_name(name: str) -> str:
+    return f"rush_{name.replace('-', '_')}"
+
+
+def _profile_include(profile: str) -> frozenset[str] | None:
+    return CORE_TOOL_NAMES if profile == "core" else None
+
+
+def profile_tool_names(profile: str | None = None) -> list[str]:
+    """Every tool name a server of `profile` registers, in registration order:
+    catalog tools, the `rush_attest_generate` alias, then the custom tools."""
+    include = _profile_include(validate_profile(profile))
+    names = [_catalog_tool_name(tool.name) for tool in ALL_TOOLS]
+    if any(tool.name == "attest" for tool in ALL_TOOLS):
+        names.append("rush_attest_generate")
+    names += [name for _, name, _ in _custom_tools()]
+    return [name for name in names if include is None or name in include]
+
+
+def build_server_instructions(profile: str | None = None) -> str:
+    """Describe exactly the tools a server of `profile` registers."""
+    names = profile_tool_names(profile)
+    tool_names = ", ".join(names)
     maturity = "; ".join(
-        f"rush_{name.replace('-', '_')}={spec.maturity}"
+        f"{_catalog_tool_name(name)}={spec.maturity}"
         for name, spec in TOOL_SPECS.items()
+        if _catalog_tool_name(name) in names
     )
 
     return (
         "rush — code-quality tools for coding agents. "
+        f"Profile: {validate_profile(profile)}. "
         f"Available tools: {tool_names}. "
         "Each takes a path (file or directory) and returns a structured JSON "
         "with status (ok|warn|fail|error|skipped), findings, and summary. "
@@ -134,7 +182,9 @@ class RushFastMCP(FastMCP):
             validate_and_normalize,
         )
 
-        if name not in REQUEST_MODEL_TOOLS:
+        # T4: a tool this profile did not register is "Unknown tool" from the
+        # SDK, never a request-model validation envelope.
+        if name not in REQUEST_MODEL_TOOLS or self._tool_manager.get_tool(name) is None:
             return await super().call_tool(name, arguments)
         outcome = validate_and_normalize(name, arguments or {})
         if outcome.rejected:
@@ -169,9 +219,11 @@ def build_server(
 ):
     """Construct and return the FastMCP server with all catalog tools registered.
 
-    `profile` (Phase 70; `None` means `"full"`) names the registered tool set.
-    `"full"` is every catalog tool, including T17's `rush_check`. An unknown
-    profile raises `ValueError` before any server is constructed.
+    `profile` (Phase 70 T4; `None` means `"full"`) names the registered tool
+    set: `"full"` is every catalog, alias and custom tool; `"core"` is exactly
+    `CORE_TOOL_NAMES`. An unknown profile raises `ValueError` before any
+    server is constructed. With `memory_session` the profile is validated and
+    then ignored: the restricted receiver is never widened.
 
     T26: with ``binding`` (`rush mcp serve --project ID --session SID`) the
     registered project root, not the process cwd, anchors every relative
@@ -190,8 +242,7 @@ def build_server(
     path that ever narrows the server below its full catalog; the default (`memory_session
     =None`) is unchanged and still registers every catalog tool.
     """
-    if profile not in (None, "full"):
-        raise ValueError(f"unknown MCP profile {profile!r}; valid profiles: full")
+    profile = validate_profile(profile)
     if memory_session is not None:
         import os
 
@@ -222,8 +273,15 @@ def build_server(
     anchor_cwd = (
         binding.root if binding and binding.root is not None else Path.cwd().resolve()
     )
-    server = RushFastMCP(SERVER_NAME, instructions=build_server_instructions())
-    _register_tools(server, anchor_cwd)
+    expected = profile_tool_names(profile)
+    server = RushFastMCP(SERVER_NAME, instructions=build_server_instructions(profile))
+    _register_tools(server, anchor_cwd, profile=profile)
+    registered = {tool.name for tool in server._tool_manager.list_tools()}
+    if registered != set(expected):
+        raise RuntimeError(
+            f"MCP profile {profile!r} registered {sorted(registered ^ set(expected))} "
+            "differently from its tool list"
+        )
     return server
 
 
@@ -814,19 +872,29 @@ _attest_tool = next((t for t in ALL_TOOLS if t.name == "attest"), None)
 rush_attest_generate = _attest_tool.__call__ if _attest_tool else None
 
 
-def _register_tools(server, anchor_cwd: Path | None = None) -> None:
-    """Register each tool function as an MCP tool, routing via resolve_invocation and InvocationExecutor."""
+def _register_tools(
+    server, anchor_cwd: Path | None = None, *, profile: str = "full"
+) -> None:
+    """Register each tool function of `profile` as an MCP tool, routing via resolve_invocation and InvocationExecutor."""
     from rush.invocation import InvocationExecutor
     from rush.mcp_support.tool_registry import (
         register_all_tools,
         register_custom_tools,
     )
 
+    include = _profile_include(profile)
     executor = InvocationExecutor()
-    register_all_tools(server, executor, ALL_TOOLS, anchor_cwd=anchor_cwd)
+    register_all_tools(
+        server, executor, ALL_TOOLS, anchor_cwd=anchor_cwd, include=include
+    )
+    register_custom_tools(
+        server, executor, _custom_tools(), anchor_cwd=anchor_cwd, include=include
+    )
 
-    # 2. Register custom phase tools
-    custom_tools = [
+
+def _custom_tools() -> list[tuple[Any, str, str]]:
+    """The custom phase tools: `(function, MCP name, description)`."""
+    return [
         (
             rush_ship_clean,
             "rush_ship_clean",
@@ -949,16 +1017,17 @@ def _register_tools(server, anchor_cwd: Path | None = None) -> None:
         ),
     ]
 
-    register_custom_tools(server, executor, custom_tools, anchor_cwd=anchor_cwd)
-
 
 mcp_server = build_server()
 
 
 async def run_stdio(
-    memory_session: str | None = None, *, binding: ServerBinding | None = None
+    memory_session: str | None = None,
+    *,
+    binding: ServerBinding | None = None,
+    profile: str | None = None,
 ) -> None:
     """Entry point for ``rush mcp serve``. Blocks until stdin closes."""
-    server = build_server(memory_session, binding=binding)
+    server = build_server(memory_session, binding=binding, profile=profile)
     get_logger("mcp").debug("starting rush stdio MCP server")
     await server.run_stdio_async()

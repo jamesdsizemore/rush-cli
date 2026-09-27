@@ -1195,6 +1195,8 @@ def test_claude_local_registration_is_recorded_and_disconnect_mirrors_local_scop
         "pid-1",
         "--session",
         "claude:pid-1",
+        "--profile",
+        "core",
     ]
     ledger = json.loads((data_root / "agents" / "owned.json").read_text())["data"]
     [row] = ledger.values()
