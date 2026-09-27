@@ -23,7 +23,7 @@ Layer 9: Packaging & Clean Distribution Tests (Wheel and sdist installation smok
 ## 2. Running Test Suites
 
 ```bash
-# Run all tests quickly (mock-isolated, ~10s)
+# Run the full suite serially (~7 minutes; see below for what makes up that time)
 .venv/Scripts/python.exe -m pytest tests/ -q
 
 # Run specific test category
@@ -35,6 +35,8 @@ Layer 9: Packaging & Clean Distribution Tests (Wheel and sdist installation smok
 .venv/Scripts/ruff.exe check src tests scripts
 .venv/Scripts/ruff.exe format --check src tests scripts
 ```
+
+Session-scoped fixtures in `tests/conftest.py` build this version's wheel and sdist once per session with `uv build`, and the native PyInstaller archive once per session (`uv run --no-sync --with pyinstaller pyinstaller`, or the `PyInstaller` module directly when already installed) — every test that needs a real installed/frozen artifact reuses that one build instead of rebuilding it. Scan-related tests run under a hermetic engine PATH (`hermetic_engine_path`/`hermetic_engine_path_module` fixtures) so host-installed engines never leak into what a test observes. CI additionally provisions the mutation (`mutmut`), load (`k6`), and contract (`pact-python-cli`) acceptance engines before the suite runs.
 
 ---
 

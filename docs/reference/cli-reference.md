@@ -14,6 +14,8 @@ Current authority: generated Click metadata from `uv run rush --help` and `uv ru
 
 `rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `ask`, `list`, and `recall` take positional `SUBJECT QUERY` and require `--session SOURCE`; all apply signature, staleness, and Trojan Source checks. `write`, `promote`, and `maintain` require `--allow-cache-write`. Approved promotions persist the `STATED` tier and checksum. For expiry maintenance, run `rush memory maintain --task expiry_sweep --allow-cache-write --json` from the repository.
 
+Bare `rush memory [--offset N --generation TOKEN] [--include-internal] [--json]` (no subcommand) is a read-only overview: this project's 20 most recent useful memory records, newest first (archived, expired, and internal bookkeeping rows hidden by default; pass `--include-internal` to also show them). `--offset`/`--generation` page through older rows — `--offset` above 0 requires the `--generation` continuation token the previous page printed. A store needing migration reports `migration_required`; an unreadable store reports `corrupt`.
+
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
 ## Which command should I run?
@@ -114,7 +116,7 @@ Evaluation commands expose permission flags according to their own generated hel
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
 | `fix PATH` | [Bounded Ruff remediation](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) for selected Python targets. | `--dry-run`, `--force`, `--allow-artifact-write` | Dry-run preview; apply is denied without artifact-write permission. |
-| `setup [PATH]` | Current stack inspection/setup prototype. Integrated, verified installation remains planned in [P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--install-complete-applicable-toolchains-f3031). | `--non-interactive`, `--json` | Current package-manager identities and execution branches are not accepted installation evidence |
+| `setup [PATH]` | Preview project setup (config, registration, engine provisioning) and apply it after consent: `rush setup PATH` previews; `--save-plan FILE --allow-artifact-write` writes the reviewed plan and prints the exact apply command; `--apply --yes --plan-file FILE --plan-id ID` (plus the plan's own `--allow-*` grants) applies it non-interactively. | `--interactive`/`--non-interactive`, `--apply`, `--yes`, `--plan-file`, `--plan-id`, `--save-plan`, `--agent claude\|codex`, `--install-guidance`, `--enable-agent-hooks`, `--verify-host`, `--allow-*`, `--json`, `--install` (accepted for compatibility, no effect) | Preview writes nothing; `--save-plan` writes the plan file; `--apply` performs the reviewed config/registration/engine writes |
 | `init [PATH]` | Generate starter `rush.toml` for detected project stacks. | `--force` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
@@ -179,7 +181,7 @@ These flags exist on selected commands only. `uv run rush COMMAND --help` is aut
 
 ## MCP
 
-`uv run rush mcp serve` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. See [MCP overview](../integrations/mcp-overview.md).
+`uv run rush mcp serve [--project ID_OR_PATH] [--session SOURCE] [--memory-session SESSION]` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. `--project` anchors every relative path to that one registered project (an unknown project fails at startup); `--session` supplies the default `session_id` for project/scan tools when a caller omits it. See [MCP overview](../integrations/mcp-overview.md).
 
 ## Result and exit behavior
 

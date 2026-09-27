@@ -15,7 +15,7 @@
    uv run rush review . --json
    uv run rush lint .
    uv run rush format . --check
-   uv run rush typecheck .
+   uv run rush typecheck . --allow-cache-write
    uv run rush dead .
    uv run rush complexity .
    uv run rush slop .

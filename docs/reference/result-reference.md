@@ -92,6 +92,16 @@ In legacy TypedDicts, severities were `"info"`, `"warn"`, `"error"`. Under **Pha
 - Unknown top-level keys are rejected with `ValidationErrorV1(code="UNKNOWN_TOP_LEVEL_KEY")`.
 - Non-core fields (`metrics`, `artifacts`, `metadata`, `review_kind`, `review_provider`) reside within `extensions: dict[str, Any]`.
 
+## Phase 70 T16: Scope, Per-Engine Outcomes & Recoverable Output
+
+`metadata.engines` is a list of one entry per engine a catalog tool ran (or refused to run): `engine`, `executable` (`{path, sha256, reason}`, `path`/`sha256` null when never spawned), `version`/`version_unavailable_reason`, `config` (`{path, sha256, reason}`), `analysis_environment` (`{mode: "not_applicable"}` when not applicable), `status`, `summary`, `reason`, `cwd`, `spawns` (`[{kind, path, cwd}, ...]`), and `scope`.
+
+`metadata.scope` (v1) describes what was actually analyzed: `{"version": 1, "kind": "file" | "files" | "aggregate", "coverage": "none" | "partial" | ... | "unavailable", "reason": "...", "logical_root": "...", "matched_file_count": N, "requested_targets": [...]}`. A result that examined nothing (missing target, no supported targets, no git selection matches) reports `coverage: "none"` with the exact reason (`target_not_found`, `no_supported_targets`, `staged_selection`, etc.); a multi-child result's `kind: "aggregate"` scope unions each child's coverage and requested targets.
+
+`metadata.delivery` (`schema_version: 1`) describes a paginated/oversized result's actual delivery state: `complete` (whether this response has everything), `result_handle` (null unless a fuller payload was cached), `view` (`"compact"` or `"bytes"`), `next_cursor` (null when complete), `max_bytes`, and `full_result_bytes`. An error delivery additionally carries `analysis_status` and never a `result_handle`. A malformed or out-of-range request is rejected with one of: `RESULT_VIEW_INVALID`, `RESULT_CURSOR_INVALID`, `RESULT_BUDGET_TOO_SMALL` (even zero findings do not fit the budget), `RESULT_VIEW_CACHE_CONFLICT`, `RESULT_VIEW_REQUIRES_CACHE_WRITE`, `RESULT_MISSING`, or `RESULT_STORE_FAILED`.
+
+`rush cache clean` prints `Purged N cached result(s).` (`N` is `0` when the cache database does not exist, without creating one).
+
 ## Phase 50a Result Shapes
 
 - `error-catalog`: `metadata.catalog` contains normalized RFC 7807 problem details dictionaries (`code`, `status`, `title`, `type`, `occurrences`). Exported markdown appears in `artifacts`.
