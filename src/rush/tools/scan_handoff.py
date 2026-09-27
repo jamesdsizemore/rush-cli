@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from time import monotonic
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from rush.permissions import ExecutionPermissions, check_permissions
 from rush.workflows.project_run import (
@@ -43,6 +43,25 @@ from rush.workflows.project_run import (
 from rush.workflows.projects import ProjectError
 
 from .base import Finding, ToolFn, ToolResult, ToolStatus
+from .routing import attach_memory_attribution, memory_block, memory_receipt
+
+
+def _prepared_memory(data: Any) -> dict[str, Any] | None:
+    """T19: `prepare` commits one handoff artifact (`build_handoff`, source =
+    the project root); its `written` receipt comes from the returned handoff."""
+    if not isinstance(data, dict) or not data.get("artifact_id"):
+        return None
+    return memory_block(
+        written=[
+            memory_receipt(
+                str(data["artifact_id"]),
+                int(data["artifact_version"]),
+                str(data["root"]),
+                "handoff",
+            )
+        ]
+    )
+
 
 ScanHandoffAction = Literal["prepare", "dispatch", "status", "acknowledge", "complete"]
 
@@ -191,7 +210,12 @@ class ScanHandoffTool(ToolFn):
         except ValueError as exc:
             return self._result(started, "error", f"scan-handoff {action}: {exc}")
 
-        return self._result(started, "ok", f"scan-handoff {action}: ok", raw=raw)
+        result = self._result(started, "ok", f"scan-handoff {action}: ok", raw=raw)
+        if action == "prepare":
+            return cast(
+                ToolResult, attach_memory_attribution(result, _prepared_memory(raw))
+            )
+        return result
 
     def _dispatch(
         self,
@@ -287,7 +311,12 @@ class ScanHandoffTool(ToolFn):
                 started, str(operation), status="error", error=exc
             )
 
-        return self._envelope_result(started, str(operation), status="ok", data=data)
+        result = self._envelope_result(started, str(operation), status="ok", data=data)
+        if operation == "prepare":
+            return cast(
+                ToolResult, attach_memory_attribution(result, _prepared_memory(data))
+            )
+        return result
 
     def _handle_request_unsafe(self, request: dict[str, Any]) -> Any:
         if not isinstance(request, dict):

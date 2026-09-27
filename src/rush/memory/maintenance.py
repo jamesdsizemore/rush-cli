@@ -22,6 +22,7 @@ from rush.memory.store import (
     TypedArtifactStore,
     _write_version,
     legacy_owner_scope,
+    note_committed_write,
     promote_stored_artifact,
 )
 from rush.memory.trust import count_corroboration
@@ -209,7 +210,7 @@ def _mutate_promotion_sweep(
     artifact = _artifact_from_row(row)
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
     conn.execute("BEGIN IMMEDIATE")
-    _, decision = promote_stored_artifact(
+    promoted, decision = promote_stored_artifact(
         conn,
         artifact.id,
         user_stated=False,
@@ -218,6 +219,9 @@ def _mutate_promotion_sweep(
     )
     if decision.promoted:
         conn.commit()
+        note_committed_write(
+            promoted.id, promoted.artifact_version, promoted.source, "promote"
+        )
         return True
     recomputed_count = count_corroboration(
         artifact.subject, artifact.symbol_ref, candidate_sources
@@ -237,6 +241,7 @@ def _mutate_promotion_sweep(
             (recomputed_count, new_version, artifact.id),
         )
         conn.commit()
+        note_committed_write(artifact.id, new_version, artifact.source, "maintain")
         return True
     conn.commit()
     return False
@@ -273,6 +278,7 @@ def _mutate_staleness_sweep(
             (new_version, row["id"]),
         )
         conn.commit()
+        note_committed_write(row["id"], new_version, artifact_row["source"], "maintain")
         return True
     return False
 
@@ -290,7 +296,7 @@ def _mutate_skill_admission_check(
 
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
     conn.execute("BEGIN IMMEDIATE")
-    _, decision = promote_stored_artifact(
+    promoted, decision = promote_stored_artifact(
         conn,
         artifact.id,
         user_stated=False,
@@ -298,4 +304,8 @@ def _mutate_skill_admission_check(
         project_root=root,
     )
     conn.commit()
+    if decision.promoted:
+        note_committed_write(
+            promoted.id, promoted.artifact_version, promoted.source, "promote"
+        )
     return decision.promoted

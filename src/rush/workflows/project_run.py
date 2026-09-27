@@ -127,7 +127,12 @@ from rush.tools.common import (
     skipped_result,
 )
 from rush.tools.quality import GuardedQualityTool
-from rush.tools.routing import aggregate_results, child_entry
+from rush.tools.routing import (
+    aggregate_results,
+    child_entry,
+    memory_attribution_of,
+    union_memory_attribution,
+)
 from rush.workflows.projects import ProjectError, resolve_project
 
 Disposition = Literal[
@@ -1044,6 +1049,11 @@ def _execute_attempt_locked(
     # the persisted manifest instead of a second, separate walk at finalize
     # time.
     inventory = _scan_inventory(root)
+    # T19 R19.7 (G4): with no caller config, the project's own `rush.toml` is
+    # loaded best-effort, as single-tool CLI/MCP calls do, so e.g.
+    # `[tools.memory] record` applies inside a scan too.
+    if config is None:
+        config = _load_config_or_none(root)
     with tempfile.TemporaryDirectory(prefix="rush-stage-") as staging_dir:
         staging = stage_inventory(root, Path(staging_dir), inventory)
         with staging_scope(staging):
@@ -1067,7 +1077,52 @@ def _execute_attempt_locked(
             staging_findings=staging.findings,
             file_inventory=inventory,
             staging_failures=staging.staging_failures,
+            retained_ids=frozenset(already_completed),
         )
+
+
+def _attribute_attempt_memory(
+    metadata: dict[str, Any],
+    scheduled: list[CandidateResult],
+    retained_ids: frozenset[str],
+) -> None:
+    """T19 B7/R19.5: `metadata.memory` unions only the children this attempt
+    executed; a resume's retained children ran in an earlier attempt, so
+    their receipts are disclosed as `metadata.cache.original_memory` (with
+    `retained_candidates`), never as this attempt's reads or writes. Each
+    child's own receipt stays in its child entry."""
+    retained = [
+        item for item in scheduled if item.candidate.candidate_id in retained_ids
+    ]
+    current = union_memory_attribution(
+        memory_attribution_of(item.result)
+        for item in scheduled
+        if item.candidate.candidate_id not in retained_ids
+    )
+    metadata.pop("memory", None)
+    if current is not None:
+        metadata["memory"] = current
+    if not retained:
+        return
+    cache = dict(metadata.get("cache") or {})
+    cache["retained_candidates"] = [item.candidate.candidate_id for item in retained]
+    original = union_memory_attribution(
+        memory_attribution_of(item.result) for item in retained
+    )
+    if original is not None:
+        cache["original_memory"] = original
+    metadata["cache"] = cache
+
+
+def _load_config_or_none(root: Path) -> Any:
+    """A malformed `rush.toml` fails open to no config, matching MCP's
+    `_load_config_or_none`."""
+    from rush.config import RushConfigError, load_config
+
+    try:
+        return load_config(start=root)
+    except RushConfigError:
+        return None
 
 
 def _run_candidates(
@@ -1191,6 +1246,7 @@ def _finalize_attempt(
     staging_findings: list[dict[str, Any]] | None = None,
     file_inventory: list[str] | None = None,
     staging_failures: list[dict[str, Any]] | None = None,
+    retained_ids: frozenset[str] = frozenset(),
 ) -> ScanRun:
     children = [item.result for item in scheduled]
     if staging_findings:
@@ -1222,6 +1278,7 @@ def _finalize_attempt(
         "logical_root": str(root),
     }
     scan_metadata["children"] = [child_entry(child) for child in children]
+    _attribute_attempt_memory(scan_metadata, scheduled, retained_ids)
     aggregate["metadata"] = scan_metadata
 
     run_state: RunState

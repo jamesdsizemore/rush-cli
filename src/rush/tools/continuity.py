@@ -36,12 +36,17 @@ from ..invocation.models import AmbiguousRootError, InvocationError
 from ..invocation.targets import RootSelection, select_root
 from ..io.physical_paths import ContainmentError, PhysicalRoot
 from ..memory.checkpoint_journal import CheckpointJournal
-from ..memory.store import MemoryStoreUnreadableError
+from ..memory.store import (
+    MemoryStoreUnreadableError,
+    collect_committed_writes,
+    collect_memory_reads,
+)
 from ..permissions import (
     ExecutionPermissions,
     check_permissions,
 )
 from .base import Finding, ToolFn, ToolResult
+from .routing import attach_memory_attribution, memory_block, memory_receipt
 
 SessionOperation = Literal[
     "save",
@@ -391,11 +396,12 @@ class SessionContinuityTool(ToolFn):
             )
         handoff_receipt = self._save_handoff_receipt(root, handoff or {})
         journal = CheckpointJournal(root)
-        checkpoint = journal.save_checkpoint(
-            name or "",
-            {"cwd": str(root), "handoff": handoff_receipt},
-            list(files or []),
-        )
+        with collect_committed_writes() as committed:
+            checkpoint = journal.save_checkpoint(
+                name or "",
+                {"cwd": str(root), "handoff": handoff_receipt},
+                list(files or []),
+            )
         data = journal.restore_checkpoint(name or "")
         return self._result(
             started,
@@ -407,6 +413,12 @@ class SessionContinuityTool(ToolFn):
             raw=data,
             artifacts=[str(checkpoint)],
             handoff=handoff_receipt,
+            memory=memory_block(
+                written=[
+                    memory_receipt(w["id"], w["revision"], w["source"], "checkpoint")
+                    for w in committed
+                ]
+            ),
         )
 
     def _run_list(
@@ -418,7 +430,8 @@ class SessionContinuityTool(ToolFn):
         # T10 (finding 3): JSON first, then `memory.db` read-only, whether or not
         # `.rush/sessions` exists; `list_checkpoints` never creates anything.
         try:
-            sessions = CheckpointJournal(root).list_checkpoints()
+            with collect_memory_reads() as reads:
+                sessions = CheckpointJournal(root).list_checkpoints()
         except MemoryStoreUnreadableError as exc:
             return self._result(
                 started,
@@ -475,6 +488,12 @@ class SessionContinuityTool(ToolFn):
             granted=granted,
             raw=sessions,
             findings=findings,
+            memory=memory_block(
+                used=[
+                    memory_receipt(r["id"], r["revision"], r["source"], "list")
+                    for r in reads
+                ]
+            ),
         )
 
     def _run_restore(
@@ -493,7 +512,10 @@ class SessionContinuityTool(ToolFn):
                 granted=granted,
             )
         try:
-            data = CheckpointJournal(root).restore_checkpoint(name or "")
+            # T19: a restore served by the migrated-store fallback reads (and
+            # returns) one checkpoint artifact; a JSON-file restore reads none.
+            with collect_memory_reads() as reads:
+                data = CheckpointJournal(root).restore_checkpoint(name or "")
         except MemoryStoreUnreadableError as exc:
             return self._result(
                 started,
@@ -596,6 +618,12 @@ class SessionContinuityTool(ToolFn):
             granted=granted,
             raw=data,
             handoff=handoff_receipt,
+            memory=memory_block(
+                used=[
+                    memory_receipt(r["id"], r["revision"], r["source"], "restore")
+                    for r in reads
+                ]
+            ),
         )
 
     def _context_pack(
@@ -716,8 +744,24 @@ class SessionContinuityTool(ToolFn):
         provider_id: str | None,
         granted: ExecutionPermissions,
     ) -> ContinuityOutput:
-        return resume_provider(
-            started, root, name, provider_id, granted, as_v1=self._as_v1
+        # T19: a checkpoint served from the migrated store is a real read.
+        with collect_memory_reads() as reads:
+            result = resume_provider(
+                started, root, name, provider_id, granted, as_v1=self._as_v1
+            )
+        return cast(
+            ContinuityOutput,
+            attach_memory_attribution(
+                result,
+                memory_block(
+                    used=[
+                        memory_receipt(
+                            r["id"], r["revision"], r["source"], "provider_resume"
+                        )
+                        for r in reads
+                    ]
+                ),
+            ),
         )
 
     def _omniroute_resume(
@@ -784,6 +828,7 @@ class SessionContinuityTool(ToolFn):
         provider_route: dict[str, Any] | None = None,
         findings: list[Finding] | None = None,
         as_v1: bool | None = None,
+        memory: dict[str, Any] | None = None,
     ) -> ContinuityOutput:
         effective_v1 = as_v1 if as_v1 is not None else getattr(self, "_as_v1", False)
         return build_continuity_result(
@@ -802,4 +847,5 @@ class SessionContinuityTool(ToolFn):
             findings=findings,
             as_v1=effective_v1,
             tool_name=self.name,
+            memory=memory,
         )

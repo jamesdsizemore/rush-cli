@@ -359,7 +359,23 @@ def test_legacy_memory_response_remains_compatible(tmp_path: Path) -> None:
     assert legacy["raw"][0]["id"]
     assert "schema_version" not in legacy
     assert not isinstance(legacy["raw"], dict)
-    assert legacy["metadata"] == {"operation": "ask"}
+    # T19 B1: the legacy response's metadata also carries the recall receipt.
+    assert len(legacy["raw"]) == 1
+    assert legacy["metadata"] == {
+        "operation": "ask",
+        "memory": {
+            "version": 1,
+            "used": [
+                {
+                    "id": legacy["raw"][0]["id"],
+                    "revision": 1,
+                    "source": "allowed",
+                    "operation": "ask",
+                }
+            ],
+            "written": [],
+        },
+    }
 
     compact = tool.run(
         tmp_path,

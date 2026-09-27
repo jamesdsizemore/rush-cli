@@ -2,16 +2,141 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import json
 import os
-from collections.abc import Collection, Iterable, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from rush.contracts.results import ToolResultV1
 from rush.discovery.stack import PYTHON_MARKERS
+from rush.safety.redactor import sanitize_value
 
 from .base import Finding, ToolResult, ToolStatus
 from .common import finding_fingerprint
+
+#: §3.2 memory attribution: legacy `metadata.memory`, strict V1
+#: `extensions.metadata.memory`.
+MEMORY_ATTRIBUTION_VERSION = 1
+
+
+def memory_receipt(
+    artifact_id: str, revision: int, source: str, operation: str
+) -> dict[str, Any]:
+    """One §3.2 receipt entry: the artifact identity and the verb that read or
+    wrote it. Never content."""
+    return {
+        "id": artifact_id,
+        "revision": revision,
+        "source": source,
+        "operation": operation,
+    }
+
+
+def _dedup_receipts(entries: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """B3: one entry per `(id, revision, operation)`, first use first."""
+    seen: set[tuple[Any, Any, Any]] = set()
+    unique: list[dict[str, Any]] = []
+    for entry in entries:
+        key = (entry["id"], entry["revision"], entry["operation"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(
+            memory_receipt(
+                entry["id"], entry["revision"], entry["source"], entry["operation"]
+            )
+        )
+    return unique
+
+
+def memory_block(
+    used: Iterable[Mapping[str, Any]] = (),
+    written: Iterable[Mapping[str, Any]] = (),
+) -> dict[str, Any] | None:
+    """§3.2: `{version:1, used, written}`, deduplicated and redacted (B4), or
+    `None` when both arrays are empty (B5: the member is omitted)."""
+    used_list = _dedup_receipts(used)
+    written_list = _dedup_receipts(written)
+    if not used_list and not written_list:
+        return None
+    block = {
+        "version": MEMORY_ATTRIBUTION_VERSION,
+        "used": used_list,
+        "written": written_list,
+    }
+    return cast("dict[str, Any]", sanitize_value(block).value)
+
+
+def memory_attribution_of(result: Any) -> dict[str, Any] | None:
+    """The result's own receipts: legacy `metadata.memory`, or V1
+    `extensions.metadata.memory`; `None` for any other shape."""
+    if isinstance(result, ToolResultV1):
+        metadata = (result.extensions or {}).get("metadata")
+    elif isinstance(result, Mapping):
+        metadata = result.get("metadata")
+    else:
+        return None
+    memory = metadata.get("memory") if isinstance(metadata, Mapping) else None
+    return memory if isinstance(memory, dict) else None
+
+
+def union_memory_attribution(
+    parts: Iterable[Mapping[str, Any] | None],
+) -> dict[str, Any] | None:
+    """B7: the union of several results' receipts, first use first."""
+    used: list[Mapping[str, Any]] = []
+    written: list[Mapping[str, Any]] = []
+    for part in parts:
+        if part:
+            used.extend(part.get("used") or [])
+            written.extend(part.get("written") or [])
+    return memory_block(used, written)
+
+
+def with_v1_extensions(
+    result: ToolResultV1, extensions: dict[str, Any]
+) -> ToolResultV1:
+    """A copy of a strict V1 result with new extensions. A `CachedToolResult`
+    (dataclass and dict at once) is rebuilt from its V1 fields."""
+    from rush.cache import CachedToolResult
+
+    if not isinstance(result, CachedToolResult):
+        return dataclasses.replace(result, extensions=extensions)
+    base = ToolResultV1(
+        **{f.name: getattr(result, f.name) for f in dataclasses.fields(ToolResultV1)}
+    )
+    return CachedToolResult(dataclasses.replace(base, extensions=extensions))
+
+
+def attach_memory_attribution(result: Any, block: Mapping[str, Any] | None) -> Any:
+    """B1: `block` merged after the result's own receipts, on a copy -- the
+    given (possibly cached) object is never mutated. A shape that is not a
+    ToolResult (a service frame, a scalar) is returned unchanged."""
+    if not block:
+        return result
+    merged = union_memory_attribution([memory_attribution_of(result), block])
+    if isinstance(result, ToolResultV1):
+        extensions = copy.deepcopy(result.extensions)
+        metadata = dict(extensions.get("metadata") or {})
+        metadata["memory"] = merged
+        extensions["metadata"] = metadata
+        return with_v1_extensions(result, extensions)
+    if not isinstance(result, dict) or "tool" not in result or "status" not in result:
+        return result
+    updated = copy.copy(result)
+    metadata = dict(updated.get("metadata") or {})
+    metadata["memory"] = merged
+    updated["metadata"] = metadata
+    mirrored = updated.get("extensions")
+    if isinstance(mirrored, dict) and isinstance(mirrored.get("metadata"), dict):
+        # A legacy result that mirrors its metadata into `extensions`
+        # (continuity) keeps both views identical.
+        updated["extensions"] = {**mirrored, "metadata": metadata}
+    return updated
+
 
 #: Python checker configuration files: a finding in one is configuration.
 PYTHON_CONFIG_NAMES = frozenset(
@@ -456,6 +581,12 @@ def aggregate_results(
         "engines": concat_engine_entries(ordered_results),
         "scope": aggregate_scope(ordered_results),
     }
+    # T19 B7: the union of every child's own receipts.
+    memory = union_memory_attribution(
+        memory_attribution_of(result) for result in ordered_results
+    )
+    if memory is not None:
+        metadata["memory"] = memory
     if tool == "review":
         metadata |= {
             "aggregation": {
@@ -532,9 +663,11 @@ def _finding_sort_key(finding: Finding) -> tuple[str, int, int, str, str]:
 
 
 __all__ = [
+    "MEMORY_ATTRIBUTION_VERSION",
     "aggregate_results",
     "aggregate_scope",
     "aggregate_status",
+    "attach_memory_attribution",
     "build_finding_baseline",
     "child_entry",
     "collect_files",
@@ -543,5 +676,10 @@ __all__ = [
     "deduplicate_findings",
     "detect_project_languages",
     "finding_provenance",
+    "memory_attribution_of",
+    "memory_block",
+    "memory_receipt",
     "no_target_scope",
+    "union_memory_attribution",
+    "with_v1_extensions",
 ]

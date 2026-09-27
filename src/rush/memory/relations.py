@@ -27,7 +27,7 @@ from rush.memory.retrieval import (
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_TOKENS,
 )
-from rush.memory.store import TypedArtifactStore
+from rush.memory.store import TypedArtifactStore, sqlite_integer_in_range
 
 RELATION_KINDS: frozenset[str] = frozenset(
     {
@@ -106,6 +106,16 @@ def add_relation(
     """
     if kind not in RELATION_KINDS:
         return {"code": "E_INPUT", "message": f"unsupported relation kind: {kind!r}"}
+    for endpoint_id, endpoint_version in (
+        (source_id, source_version),
+        (target_id, target_version),
+    ):
+        if not sqlite_integer_in_range(endpoint_version):
+            return {
+                "code": "E_INPUT",
+                "message": f"endpoint {endpoint_id!r} version {endpoint_version} "
+                "is outside the storable integer range",
+            }
     with _connect(store) as conn:
         conn.execute("BEGIN IMMEDIATE")
         for endpoint_id, endpoint_version in (

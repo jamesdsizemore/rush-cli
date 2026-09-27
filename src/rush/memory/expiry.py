@@ -19,6 +19,7 @@ from rush.memory.store import (
     TypedArtifactStore,
     _write_version,
     legacy_owner_scope,
+    note_committed_write,
 )
 
 _DAY_SECONDS = 86400
@@ -75,6 +76,7 @@ def sweep_expired(
     legacy_default = legacy_owner_scope(store.project_root)
     now = time.time()
     changed = 0
+    expired: list[tuple[str, int, str]] = []
     ttl_cases = []
     parameters: list[object] = []
     for policy in DEFAULT_POLICIES:
@@ -120,6 +122,9 @@ def sweep_expired(
                     "expired_by = ?, artifact_version = ? WHERE id = ?",
                     (expires_at, now, "expiry_sweep", new_version, row["id"]),
                 )
+                expired.append((row["id"], new_version, row["source"]))
                 changed += 1
         conn.commit()
+    for artifact_id, new_version, source in expired:
+        note_committed_write(artifact_id, new_version, source, "expire")
     return changed
