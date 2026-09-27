@@ -170,8 +170,20 @@ No restart needed -- Codex CLI re-reads `config.toml` per invocation.
   (either on `connect` itself once you have verified the client picked it up, or the same effect via
   a later `rush agent doctor`) -- writing the config file is necessary but not sufficient for
   `connected` to be true.
+- **Guidance consent**: pass `--install-guidance` to `rush install --agent-plugin claude|codex` to write the Rush instruction block into the project's AGENTS.md file. Without it, the instruction block is not written.
+- **Disconnecting**: `rush agent disconnect <agent-id>` removes Rush's MCP entry, instruction block, and Rush-owned skill/hook resources for that agent. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
 - `rush agent doctor [--session <id>] [--project <path>]` re-probes every client's real on-disk
   config and reports the memory scope's current state for that session, without writing anything.
+
+### Project-bound registration via `rush setup` (Phase 70 T26)
+
+`rush setup PATH --agent claude|codex` binds a host's Rush MCP entry to exactly one project: the entry launches the installed Rush with `mcp serve --project ID --session HOST:ID`. Claude Code and Codex CLI register this differently:
+- **Claude Code** keeps the entry in the project's own local scope (`claude mcp add --scope local`, run with the project as cwd), so each project gets its own independent entry.
+- **Codex CLI** has one global `[mcp_servers.rush]` table (`~/.codex/config.toml`) shared across every project. Rebinding that one table from a different project is a host-change diff, and setup asks for consent before writing it.
+
+Readiness progresses through explicit states: `configured` (host config written) → `restart_required` (if the host needs a reload) → `authenticated` → `connected` → `capability_verified`. Reaching `capability_verified` requires `--verify-host`, which launches the host once and asks it to call `rush_status`, confirming the model itself can actually reach Rush (this uses the host's network and consumes model tokens on your account); without `--verify-host` the state stays `pending`, reason `not authorized: pass --verify-host`.
+
+`rush mcp serve --project ID_OR_PATH --session SOURCE` is what a project-bound registration actually launches: `--project` anchors every relative path to that one registered project (an unknown project fails at startup), and `--session` supplies the default `session_id` for project/scan tools when a caller omits it.
 
 ---
 

@@ -37,6 +37,8 @@ uv run rush cache stats
 uv run rush cache clean
 ```
 
+`rush cache stats` is read-only and never creates the cache database: it reports `exists: false` with the database's path when `.rush/cache.db` does not exist, and `entries`/`size_bytes`/`size_mb` alongside `exists: true` when it does. `rush cache clean` against a missing database reports 0 purged entries without creating one.
+
 The cache uses cryptographic SHA-256 content hashing combined with command-line flags to guarantee you never receive stale or incorrect results.
 
 ---

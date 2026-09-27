@@ -16,6 +16,10 @@ Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the cont
 
 For `operation: "provider_resume"`, pass `name`, `provider_id`, and `allow_network: true`. `claude_code`, `codex_cli`, and `antigravity_cli` use an existing local authenticated profile; `9router_cli` runs Codex through fixed local 9Router with `RUSH_9ROUTER_API_KEY` copied only to the child process and no model argument; `omniroute_api` uses one fixed loopback OpenAI-compatible request with `model: "auto"` and semantic response validation. The response exposes only `metadata.provider_route` and never model output or credentials. `zai` is deferred; direct `9router_api` remains unavailable.
 
+## Strict published schemas for `rush_project`, `rush_scan`, `rush_memory`
+
+`tools/list` publishes a top-level object schema for these three tools with `additionalProperties: false` and a full `operation` enum; every field declares an exact type, enum, and bounds. `rush_project`/`rush_scan` accept either the legacy `{"request": {"schema_version": 1, "operation": ..., ...}}` envelope or named top-level fields (`operation` plus that operation's own fields); `rush_memory` stays flat as today with the same per-operation fields typed. A call is rejected before any project resolution, reservation, lock, or write when it mixes the legacy `request` form with named fields, sends an unknown key, sends an explicit `null` where the field forbids it, sends a non-boolean value for a boolean grant, or sends `schema_version` as anything but the integer `1`. The rejection is returned as structured content, never a thrown protocol error: `rush_project`/`rush_scan` return `{"schema_version": 1, "operation": ..., "data": null, "error": {"code": "INVALID_REQUEST", "message": ..., "retryable": false, "details": [...]}}`; `rush_memory` returns `{"schema_version": 1, "operation": ..., "data": {"message": ..., "details": [...]}, "code": "E_INPUT"}`. On `rush_memory`, an empty `session_allowlist` on `ask`, `recall`, or `list` is rejected the same way (`code: "E_INPUT"`, "requires a non-empty session_allowlist"). Non-MCP callers (CLI, TUI, dashboard) enforce the same strict checks against the same request models.
+
 ## `rush_memory` (Phase 61)
 
 Use `operation: "ask" | "write" | "promote" | "list" | "recall" | "maintain"` over the unified `TypedArtifactStore` (`.rush/memory.db`, 7 memory subjects, 4 trust tiers). `ask`, `list`, and `recall` require `subject`, `query`, and a non-empty `session_allowlist`; all run signature re-verification, Trojan Source scanning, and staleness checks before returning content. `write`, `promote`, and `maintain` require `allow_cache_write: true`. Approved promotions persist `STATED`, a checksum, and a promotion timestamp. Maintenance accepts `task` and `batch_size`, and uses the repository selected by `path`. Denied calls return a canonical `ToolResult` with `status="skipped"`, never prose on stdio.
@@ -106,7 +110,7 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 
 * **`rush_context_pack(path, symbol="", budget=4000, allow_cache_write=false)`**: Pack graph-pruned context outline under a strict token budget.
 
-* **`rush_context_gain_stats()`**: Return local token/compression estimates; no measured provider billing or cache-hit guarantee.
+* **`rush_context_gain_stats()`**: Return local token/compression estimates; no measured provider billing or cache-hit guarantee. Read-only and anchored at the logical root; a missing telemetry DB is never created and returns `available: false` with a `reason` and the DB's `path` instead of an error.
 
 * **`rush_blast_radius(path, depth=5)`**: Calculate downstream transitive blast radius for a changed file.
 * **`rush_arch_guard()`**: Validate codebase against clean architecture layer boundaries.
@@ -159,6 +163,8 @@ Administrative operations for plugin management check user ledger authorization 
 ## Core Tool Parity & Schemas (Phase 57)
 
 All 10 core quality tools (`continuity`, `semantic-drift`, `review`, `lint`, `format`, `test`, `security`, `typecheck`, `dead`, `complexity`) provide identical schemas, input normalization, and `ToolResultV1` output shapes across FastMCP stdio and CLI.
+
+`rush_typecheck` additionally accepts `environment: "project" | "isolated"` (which interpreter `mypy`/`pyrefly` analyze against; `project` requires `allow_build`), `typecheck_config` (an explicit tsconfig/mypy/pyrefly config path inside the project root, matching the target CLI's `--typecheck-config`), and `allow_cache_write` (required before the `tsc` child runs at all, including its own config discovery — without it, `tsc` is `skipped`).
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 

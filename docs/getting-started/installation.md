@@ -49,7 +49,9 @@ uv run rush review .
 
 ## Standalone and package-manager installation
 
-**Status: planned — implementation [P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-standalone-release-artifacts-f28).** Current Homebrew, Scoop, Winget, wheel, and archive assets are not verified installation routes. Use the editable source checkout above. Phase 65 retains the accepted cross-platform installer requirement and its clean-OS verification gates.
+The install script (`curl -fsSL .../scripts/install.sh | sh` on macOS/Linux, `irm .../scripts/install.ps1 | iex` on Windows PowerShell — see the [project README](../../README.md#install)) downloads a checksum-checked, self-contained `rush` binary; a checksum mismatch or a binary that fails to start leaves any previously installed executable untouched. Current Homebrew, Scoop, Winget, wheel, and archive assets are separate, standalone routes this install script does not cover — use the install script or the editable source checkout above.
+
+For a fully guided route straight to a working Claude Code or Codex CLI connection, add `--setup --agent claude|codex --project PATH` to the same install script invocation: it installs the binary, connects no agent itself, then runs `rush setup` for that project/agent and asks for consent on the terminal (`--non-interactive` prints the full setup preview instead of prompting). Installing without `--setup`, or declining its prompt, prints the exact command to resume setup later: `rush setup PATH --agent claude`.
 
 ## Optional quality tools
 
@@ -63,7 +65,7 @@ uv add --dev ruff pytest pip-audit mypy
 npm install --save-dev eslint prettier vitest typescript
 ```
 
-Current `rush setup` does not provide a verified installer for these dependencies. Install chosen helpers yourself. See the [engine directory](../reference/engine-directory.md) for supported helpers and prerequisites. Integrated detection, installation, readiness, and agent connection remain planned in [Phase 65, P65-02 through P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
+`rush setup PATH` previews the project's config, agent registration, and engine provisioning, then asks before writing anything. `--json` and `--non-interactive` only preview — they never apply. To apply non-interactively (for example, from a script or CI), first save the reviewed plan with `rush setup PATH --save-plan FILE --allow-artifact-write`, then run the exact apply command it prints: `rush setup PATH --apply --yes --plan-file FILE --plan-id ID` plus whatever `--allow-*` grants the saved plan needs. See the [engine directory](../reference/engine-directory.md) for supported helpers and prerequisites.
 
 ## Corporate proxy and offline environments
 

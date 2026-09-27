@@ -142,7 +142,7 @@ The following explicit permission flags are available across tools:
 | `setup PATH` | Reports detected stacks and recommended engines. | `--non-interactive` (default true; no false CLI spelling) | Current CLI cannot enter installation branch; installer planned in P65-02 |
 | `init PATH` | Generate tailored `rush.toml` for detected project stacks. | `--overwrite` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
-| `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
+| `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. Per required engine reports `disposition`: `installed`, `missing`, or `unsupported` (no Rush-managed package for it). Findings: `engine-missing`, `engine-unsupported`, `binary-shadowing` (a project-root binary shadows the trusted resolution), `engine-integrity` (a `.rush/toolchains.json` manifest failed verification). A missing/shadowed engine's suggested action is the saved-plan route: `rush setup PATH --save-plan FILE --allow-artifact-write`, then the printed `rush setup PATH --apply --yes --plan-file FILE --plan-id ID` with every needed grant. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
 | `scan --project ID_OR_PATH` | Plan (and, with `--full`, execute) a full-project scan across every catalog candidate. | `--full`, `--install`, Permissions | `--full` persists an immutable run manifest under `<root>/.rush/runs/`; `--install` applies the project's provision plan first |
 | `ui [PATH ...]` | At a TTY, launches the persistent interactive terminal UI (project map, scans/findings, memory, tokens, Git, artifacts); accepts one or more project paths to switch between, defaults to the current directory. `--json` runs the check suite once, emits JSON, and exits; redirected stdout without `--json` runs the check suite once and prints a text summary, then exits. | `--json`, Permissions | none |
@@ -171,14 +171,15 @@ Status: P65-04/P65-06/P65-08 (Phase 65, [project provisioning, scan, and agent w
 
 Registered MCP reaches `rush_scan(request)` for `plan`/`run`/`status`/`rescan`, and `rush_scan_handoff(request)` for the handoff lifecycle (`prepare`/`dispatch`/`status`/`acknowledge`/`complete`) — both single-`dict` envelopes over the same `handle_request` contract (plan §6.1). `rush_scan` does not auto-compose `--full`'s convenience workflow — callers stage `plan`, execute `run` with the returned `plan_id`, and poll `status` with the returned `run_id` for coverage totals and the paginated candidate cursor.
 
-### `rush install [--agents all|none] [--memory on|off] [--project PATH_OR_ID] [--create NAME [--parent DIR]] [--init-git] [--session-id ID] [--version V] [--json]`
+### `rush install [--agents all|none] [--memory on|off] [--project PATH_OR_ID] [--create NAME [--parent DIR]] [--init-git] [--install-guidance] [--session-id ID] [--version V] [--json]`
 
 Status: P65-10 (Phase 65 §3.1/§6.2). The one-command global install: downloads and checksum-verifies the current platform's release archive, installs a self-contained `rush` executable under a user-owned binary directory, and (independent of any project choice) discovers/connects every supported local agent client and activates Phase 63 user-scoped memory. `--agents none` skips agent connection entirely; `--memory off` still connects agents but withholds tool-observation consent. Omitting `--project` completes a successful global install with no active project — the current working directory is never auto-registered. `--project PATH_OR_ID` selects or registers an existing folder and applies its provision plan (P65-02); `--create NAME [--parent DIR] [--init-git]` creates and registers a new project folder instead. A checksum mismatch, failed extraction, or a new binary that fails to start all leave the previously installed executable untouched, and no agent config is written before the binary is verified to run. Re-running `rush install` on an existing installation upgrades/repairs/connects idempotently — it never duplicates an agent registration or memory scope. Not registered over MCP (installation is a one-time host bootstrap step, not a per-session tool call).
 
-### `rush agent list|connect|doctor` (Phase 65 P65-05)
+### `rush agent list|connect|disconnect|doctor` (Phase 65 P65-05)
 
 - `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
-- `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. `--consent` allows real tool-observation payloads to be recorded for that scope; without it, only the connection itself is registered. `--acknowledge` is required before the connection reports `connected: true` — writing the config file is necessary but not sufficient.
+- `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] [--install-guidance] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. `--consent` allows real tool-observation payloads to be recorded for that scope; without it, only the connection itself is registered. `--acknowledge` is required before the connection reports `connected: true` — writing the config file is necessary but not sufficient. `--install-guidance` writes the project's Rush instruction block into `CLAUDE.md`/`AGENTS.md` without prompting; without it, a terminal asks `[y/N]` and a non-interactive run leaves guidance pending.
+- `rush agent disconnect AGENT_ID [--project PATH] [--json]` removes Rush's own, unchanged components for `AGENT_ID` — the MCP entry, the instruction block (or this agent from a shared block), and Rush skill/hook resources recorded as Rush-owned. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
 - `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.
 
 Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envelope over `AgentConnectionTool.handle_request` (`src/rush/tools/agent_connection.py`).
@@ -207,14 +208,15 @@ Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envel
 ## Advanced Scoping, Caching & Monorepo Options
 
 Flags vary by registered command. Generic catalog commands expose `--workspace`, `--all-workspaces`, `--no-cache`, `--staged`, `--changed` and `--since`; dedicated review/lint/test commands have different surfaces. Use that command's `--help`. The following historical proposed shared flags are not universally implemented:
-- `--workspace`, `-w <NAME>`: Scope execution to a specific monorepo workspace package.
-- `--all-workspaces`: Execute evaluation across all discovered monorepo packages in topological order.
+- `--workspace`, `-w <NAME>`: Scope execution to a specific monorepo workspace package. An unknown workspace name is `TARGET_NOT_FOUND` (`reason: "workspace_not_found"`), exit 2.
+- `--all-workspaces`: Execute evaluation across all discovered monorepo packages in topological order, one child result per workspace. Zero discovered packages is a `skipped` result (`reason: "no_workspaces"`), exit 0.
 - `--no-cache` exists on generic catalog commands; `--cache` is not registered.
 - `--cache-dir` is not a shared CLI option; `[cache].dir` is configuration.
 - `--clear-cache` is not a shared CLI option; inspect `rush cache --help`.
 - `--staged`: Restrict analysis scope to git staged files.
 - `--since <REF>`: Restrict analysis scope to files modified since the specified git revision.
 - `--branch` is not a shared CLI option. Generic commands expose `--since REF`.
+- An empty `--staged`/`--changed`/`--since` selection is a `skipped` result, exit 0, with reason `no_staged_files`/`no_changed_files`/`no_files_since_ref` respectively. A non-empty selection analyzes only those selected files (one invocation each, never the whole tree), and every selected file is a path inside the target.
 
 ## Workflow commands
 
@@ -232,7 +234,7 @@ Flags vary by registered command. Generic catalog commands expose `--workspace`,
 
 ## Result and exit behavior
 
-`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](reference/result-reference.md).
+`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. A missing target is `TARGET_NOT_FOUND` and a malformed one is `TARGET_INVALID`, both exit 2 with no engine run. See [Result reference](reference/result-reference.md).
 
 
 ## Context Intelligence & Ship Commands (Phases 41–43)
@@ -253,6 +255,8 @@ Query and write the unified `TypedArtifactStore` (`.rush/memory.db`) — the sam
 * `write`: requires `--allow-cache-write` and never accepts `trust_tier=STATED` directly.
 * `promote`: requires `--allow-cache-write`; approved candidates persist as `STATED` with a checksum and promotion timestamp after the screen, schema, grounding, and corroboration checks.
 * `maintain`: requires `--task promotion_sweep|staleness_sweep|skill_admission_check|expiry_sweep` and `--allow-cache-write`. Runs a bounded sweep in the selected repository; defaults to 500 rows via `--batch-size`.
+
+Bare `rush memory [--offset N --generation TOKEN] [--include-internal] [--json]` (no subcommand) is a read-only overview of this project's 20 most recent useful memory records, newest first — archived, expired, and internal bookkeeping rows are hidden unless `--include-internal` is passed. `--offset` above 0 requires `--generation` set to the continuation token the previous page printed. A store needing migration reports `migration_required`; an unreadable store reports `corrupt`. The dashboard's memory section accepts the same toggle as an `include_internal=true` query parameter, restoring internal bookkeeping sources to its browse/query results.
 
 ### `rush memory delete --input FILE` (Phase 65 P65-07.3)
 Batch-deletes memory artifacts through the plan §6.4 transaction/outbox algorithm. `--input FILE` is a JSON object `{"artifact_ids": [...], "expected_revisions": {"<id>": <int>, ...}, "scope": "<subject>", "owner_scope": {"kind": "project", "id": "<registered-project-id>"}, "apply": false}`:
@@ -369,7 +373,7 @@ Synthesize runtime type guards for unvalidated function arguments.
 Scan codebase and specs to output requirement-to-test traceability matrix.
 
 ### `rush flight-recorder`
-Record and replay agent JSON-RPC sessions.
+Record and replay agent JSON-RPC sessions. Status and replay are read-only and anchored at the logical root — this command never creates the flights directory. Bare `rush flight-recorder` prints `Flight Recorder: Active (recording to <dir>).` when `<logical_root>/.rush/sessions/flights` exists, or `Flight Recorder: No recordings yet (<dir> does not exist).` when it does not.
 * `--replay, -r`: Replay a specific session ID.
 
 ### `rush swarm-merge`

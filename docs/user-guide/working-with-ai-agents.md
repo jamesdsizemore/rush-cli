@@ -51,6 +51,23 @@ Add Rush to your assistant's MCP configuration (`settings.json` or `claude_deskt
 
 Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Automatic client connection is **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42).**
 
+### Installing the native Claude Code or Codex CLI plugin
+
+Instead of a manual MCP entry, Claude Code and Codex CLI can install Rush through their own plugin CLI:
+
+```bash
+rush install --agent-plugin claude
+rush install --agent-plugin codex
+# both, and remove an existing manual "rush" MCP entry Rush did not record:
+rush install --agent-plugin claude --agent-plugin codex --convert-manual-entry
+```
+
+`--agent-plugin` is repeatable. Without `--convert-manual-entry`, a host with an existing unrecorded `rush` MCP entry is left unchanged and reported, so Rush never runs two servers for the same host at once; the flag consents to removing that entry (shown as a diff) before the plugin installs, and Rush restores the manual entry if the install fails. Each host's own CLI performs the install under native approval — `claude plugin marketplace add`/`claude plugin install` for Claude Code, `codex plugin marketplace add`/`codex plugin add` for Codex — so a policy denial or a missing host CLI is reported, not faked.
+
+Upgrading to a new Rush version needs more than the host's own `update` command, because it re-reads the marketplace's already-registered source and reports "already at the latest version" otherwise. Re-run the same `rush install --agent-plugin <host>` command after upgrading Rush: it re-points the marketplace at the new version directory first (`claude plugin marketplace add` again to replace the source, or `codex plugin marketplace remove` then re-`add` since Codex refuses a second source under one name) before running the host's update/add step.
+
+`rush agent hook claude|codex` is the post-edit hook entrypoint the installed plugin's `hooks.json` invokes; it reads the host's JSON event on stdin and always exits 0, so a hook never changes the edit's result.
+
 ---
 
 ## 2. The 3-Step AI Workflow Loop

@@ -4,6 +4,9 @@ All notable changes to Rush are documented here.
 
 ## [0.3.0]
 
+### Phase 70: Dashboard Request-Body Rejection Safety
+- **Lingering close after a rejected request body (C2):** the dashboard's local HTTP server now half-closes and drains up to a bounded byte cap for at most 2.0 seconds in total (not per read) before closing a connection whose request was rejected early (oversized or chunked body). Closing immediately with unread input would make the kernel send `RST`, which can destroy the error response before a still-sending client reads it; the bounded total deadline prevents a client trickling its body from holding the handler thread open indefinitely.
+
 ### Phase 59: Truthful Build Provenance, Cryptographic Attestation, and Engine Conformance
 - **Truthful Build Provenance Drafts (R-013):** Default output of `rush attest` produces explicit unsigned drafts (`provenance_draft` with `assurance: "unsigned_draft"`). Prohibits unverified claims of SLSA Level 3, verified builders, or signatures.
 - **Physical Artifact Subject Binding (R-013):** Subjects bound to physical distribution package files (wheel/sdist) with real SHA-256 digests; forbids commit hashes as primary subjects.

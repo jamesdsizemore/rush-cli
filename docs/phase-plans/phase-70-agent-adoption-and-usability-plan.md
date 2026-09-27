@@ -85,7 +85,7 @@ Verified official documentation on 2026-09-23 establishes native packaging and f
 |---|---|---|
 | Claude Code | `.claude-plugin/plugin.json`, `.mcp.json`, `skills/rush/SKILL.md`, `hooks/hooks.json`. `PostToolUse`, Write/Edit matcher; JSON `hookSpecificOutput.additionalContext`. | Bundled local marketplace named `rush-local`; one proposed Rush command `rush install --agent-plugin claude` performs supported marketplace-add then `claude plugin install rush@rush-local`, subject to native approval. No imaginary published marketplace. |
 | Cursor | `.cursor-plugin/plugin.json`, `mcp.json`, skill and hooks files. `postToolUse` feedback uses `additional_context`; do not substitute afterFileEdit input-only evidence. | Native local plugin path `~/.cursor/plugins/local/rush` with reload, or native marketplace Customize flow. Policy denial is visible; no invented cursor-plugin CLI. Equivalent skill/MCP/check content remains mandatory. |
-| Codex | Root `plugin.json`, `mcp.json`, skill and hooks files; OpenAI settings under `extensions.com.openai`. `PostToolUse` for apply_patch/Edit/Write; JSON `hookSpecificOutput.additionalContext`; ordinary stdout is not model feedback. | Prepare local native package; supported marketplace-add route and desktop local installation/trust flow. Do not invent a plugin-install CLI. Equivalent content and actual model feedback remain mandatory. |
+| Codex | `.codex-plugin/plugin.json`, `mcp.json`, skill and hooks files; OpenAI settings under `extensions.com.openai`. `PostToolUse` for apply_patch/Edit/Write; JSON `hookSpecificOutput.additionalContext`; ordinary stdout is not model feedback. | Prepare local native package; `codex plugin marketplace add` then `codex plugin add rush@rush-local` (real CLI, subject to native trust). Equivalent content and actual model feedback remain mandatory. |
 
 Sources: [Claude plugin reference](https://code.claude.com/docs/en/plugins-reference), [Claude hooks](https://code.claude.com/docs/en/hooks), [Cursor plugins](https://prod.cursor.com/docs/reference/plugins), [Cursor installation](https://prod.cursor.com/docs/plugins), [Cursor hooks](https://prod.cursor.com/docs/hooks), [Codex plugins](https://developers.openai.com/plugins/build/plugins), [Codex hooks](https://learn.chatgpt.com/docs/hooks).
 
@@ -481,12 +481,12 @@ Task packet Deliverables are edit allowlists, with these finite expansions. T27 
 - `src/rush/integrations/agent_assets/claude/.mcp.json`
 - `src/rush/integrations/agent_assets/claude/skills/rush/SKILL.md`
 - `src/rush/integrations/agent_assets/claude/hooks/hooks.json`
-- `src/rush/integrations/agent_assets/.claude-plugin/marketplace.json`
+- `src/rush/integrations/agent_assets/claude/.claude-plugin/marketplace.json`
 - `src/rush/integrations/agent_assets/cursor/.cursor-plugin/plugin.json`
 - `src/rush/integrations/agent_assets/cursor/mcp.json`
 - `src/rush/integrations/agent_assets/cursor/skills/rush/SKILL.md`
 - `src/rush/integrations/agent_assets/cursor/hooks/hooks.json`
-- `src/rush/integrations/agent_assets/codex/plugin.json`
+- `src/rush/integrations/agent_assets/codex/.codex-plugin/plugin.json`
 - `src/rush/integrations/agent_assets/codex/mcp.json`
 - `src/rush/integrations/agent_assets/codex/skills/rush/SKILL.md`
 - `src/rush/integrations/agent_assets/codex/hooks/hooks.json`

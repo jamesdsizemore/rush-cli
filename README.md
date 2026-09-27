@@ -54,6 +54,14 @@ rush install --agents none --memory off
 rush install --agents all --memory on --project /path/to/your/project
 ```
 
+For a fully guided route straight to a working Claude Code or Codex CLI connection, pass `--setup` (with `--agent` and `--project`) to the same install script — it installs the binary, connects no agent itself, then runs `rush setup` for that project/agent and asks for consent on the terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jamesdsizemore/rush-cli/main/scripts/install.sh | sh -s -- --setup --agent claude --project /path/to/your/project
+```
+
+If you install without `--setup` (or decline setup's prompt), the result prints the exact command to resume it later: `rush setup /path/to/your/project --agent claude`.
+
 > **Windows on ARM64** isn't available yet — a dependency (`cryptography`) doesn't currently publish a prebuilt wheel for that platform. Every other combination (macOS Intel/Apple Silicon, Linux x86_64/ARM64, Windows x86_64) is fully supported.
 
 **Verify it worked:**
