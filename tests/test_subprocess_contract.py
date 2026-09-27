@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -195,6 +196,52 @@ def test_release_payload_actually_causes_the_real_engine_binary_to_launch_not_me
     assert sentinel.exists()
     assert result.returncode == 0
     assert "fake-engine 1.2.3" in result.stdout
+
+
+def test_gate_releases_under_dash_even_when_the_gate_pipe_fd_is_multi_digit(
+    tmp_path: Path, monkeypatch, owned_data_root: Path
+) -> None:
+    """Ubuntu's `/bin/sh` is dash, which rejects any multi-digit fd in a
+    redirection (`<&12` -> "Bad fd number"). A gate that names its pipe by
+    fd number then never execs the engine once the owner has 10+ fds open,
+    as pytest and any long-lived coordinator do. macOS's `/bin/sh` (bash)
+    accepts it, which hid this locally. Falls back to `/bin/sh` only where
+    dash itself is not installed."""
+    monkeypatch.setattr(subprocesses, "_GATE_SHELL", shutil.which("dash") or "/bin/sh")
+    sentinel = tmp_path / "engine-started"
+    binary = _sentinel_binary(tmp_path, sentinel)
+    # Fill the lowest free descriptors so the gate's `os.pipe()` is >= 10.
+    fillers = [os.open(os.devnull, os.O_RDONLY) for _ in range(10)]
+    try:
+        result = subprocesses.run_subprocess(
+            [str(binary)], owner_instance_id="owner-dash", run_id="run-dash"
+        )
+    finally:
+        for fd in fillers:
+            os.close(fd)
+
+    assert sentinel.exists(), result.stderr
+    assert result.returncode == 0
+    assert "fake-engine 1.2.3" in result.stdout
+
+
+def test_gated_engine_stdin_is_devnull_not_the_gate_pipe(
+    tmp_path: Path, owned_data_root: Path
+) -> None:
+    """The owned path's `stdin=DEVNULL` contract survives the gate: the real
+    engine reads immediate EOF, never the gate pipe."""
+    script = tmp_path / f"stdin-probe-{uuid.uuid4().hex}.sh"
+    script.write_text(
+        '#!/bin/sh\nif read -r line; then echo "stdin:$line"; else echo stdin-eof; fi\n'
+    )
+    script.chmod(0o755)
+
+    result = subprocesses.run_subprocess(
+        [str(script)], owner_instance_id="owner-stdin", run_id="run-stdin", timeout=10
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "stdin-eof"
 
 
 def test_owner_death_before_gate_release_including_before_popen_returns_means_the_real_engine_binary_never_launches_at_all(
@@ -779,6 +826,7 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
             [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
         )
 
+    started_pgids: list[int] = []
     pid_a = _fork_and_run(_run_a)
     pid_b = _fork_and_run(_run_b)
     try:
@@ -790,6 +838,7 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
             for r in subprocesses.read_owned_process_records(owner_id)
         }
         pgid_a, pgid_b = records["run-a"], records["run-b"]
+        started_pgids = [pgid_a, pgid_b]
         assert _wait_until(sentinel_a.exists)
         assert _wait_until(sentinel_b.exists)
         assert _group_alive(pgid_a)
@@ -810,6 +859,19 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
     finally:
         _kill_and_reap(pid_a)
         _kill_and_reap(pid_b)
+        # run-b was deliberately left running above; its engine group lives
+        # in its own session, so killing the owner alone never ends it.
+        for pgid in started_pgids:
+            with suppress(ProcessLookupError):
+                os.killpg(pgid, signal.SIGKILL)
+
+    # Nothing this test started may outlive it.
+    for pgid in started_pgids:
+        assert _wait_until(lambda pgid=pgid: not _group_alive(pgid)), (
+            f"process group {pgid} started by this test is still alive"
+        )
+        with pytest.raises(ProcessLookupError):
+            os.kill(pgid, 0)
 
 
 def test_reap_owner_processes_with_no_run_id_filter_keeps_existing_owner_wide_behavior_for_dead_owner_recovery(
