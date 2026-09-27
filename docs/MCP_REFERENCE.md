@@ -10,6 +10,14 @@ Use `operation: "save" | "list" | "restore"` with the project `path`. `save` add
 
 `rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Registered names use underscores, for example `rush_semantic_drift` and `rush_ai_eval`. CLI groups are not automatically MCP tools. `rush mcp serve --profile core|full` (Phase 70) narrows that registration: `core` registers exactly `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory`; `full` (the default) registers every tool below. A call naming a tool the running profile did not register returns "Unknown tool".
 
+## `rush_check` (Phase 70)
+
+Before commit/after edits: format-check, lint, typecheck, dead, slop, and test at `path`. The test step runs only with `allow_build`; otherwise it is skipped and the result is never `ok` (`warn` if every other step passes). Accepts `fail_fast` (default `false`; stop at the first failing step), the seven permission flags, and the common `project`/`result_view`/`limit`/`max_bytes`/`no_cache` fields above.
+
+## `rush_status` (Phase 70)
+
+Call first each session: read-only, no grant required. Reports `path`'s project setup, engines, scans, results, agents, and memory state without changing anything; an agent being registered does not by itself confirm the agent is actually active. `operation: "status"` (default) or `"result"` (reads a stored result via `result_handle`, `view: "result"|"bytes"`, `cursor`, `offset`, and the common `limit`/`max_bytes` fields); also accepts `session_id` and `project`.
+
 Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the continuity implementation and return the same `ToolResult` envelope as their CLI equivalents.
 
 `rush_continuity` additionally supports `coordination_check`, `coordination_merge_preview`, and `coordination_recovery`. `metadata.coordination.state` is `available`, `conflict`, `stale`, `merge_conflict`, `recovery_evidence`, or `unavailable`. The response is evidence, not an instruction to release locks, merge, replay, or retry work.
@@ -70,6 +78,8 @@ Most tools accept:
   "allow_browser": false
 }
 ```
+
+Most catalog tools also accept (Phase 70): `project` (registered project ID or root path; when given, every relative path in the call resolves against that project root instead of the server-start working directory), `result_view` (`"full"`, the default, returns the whole result; `"compact"` stores it, requires `allow_cache_write`, and returns a bounded page and handle), `limit` (findings per page, 1-50, default 50), `max_bytes` (size budget of the whole serialized response, 4096-65536 bytes, default 32768), and `no_cache` (bypass the result cache; not allowed with `result_view="compact"`).
 
 Special callable options include:
 

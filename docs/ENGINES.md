@@ -131,7 +131,7 @@ Python install commands work on Windows, macOS, and Linux inside an appropriate 
 
 | Engine | What / who | Command | Catalog install hint | Applicability and recovery |
 |---|---|---|---|---|
-| OSV-Scanner (`osv-scanner`) | Multi-ecosystem advisories | `security` | `install osv-scanner` | Known lockfiles (`poetry.lock`, `package-lock.json`, `Cargo.lock`, `go.sum`, etc.); offline scan default. |
+| OSV-Scanner (`osv-scanner`) | Multi-ecosystem advisories | `security` | `install osv-scanner` | Known lockfiles (`poetry.lock`, `requirements.txt`, `uv.lock`, `package-lock.json`, `Cargo.lock`, `go.sum`); offline scan default. |
 | Semgrep (`semgrep`) | SAST code scanning | `security` | `pip install semgrep` | Code files; local auto rules default; `--allow-network` for registry rules. |
 | Trivy (`trivy`) | Vulnerability scanner | `security` | `install trivy` | Filesystem scan; offline by default; `--allow-download` for updates. |
 | Grype (`grype`) | Vulnerability scanner | `security` | `install grype` | Offline directory vulnerability scanning. |

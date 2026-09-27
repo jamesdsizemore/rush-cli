@@ -52,6 +52,8 @@ rush mcp serve
 
 `PATH` must exist. Human output is the default; `--json` returns the canonical result. Most commands do not modify files. The exception is `format` without `--check`, which can invoke formatter write modes; use version control and inspect the diff.
 
+Most catalog commands also accept `--result-view [full|compact]` (full, the default, prints the whole result and writes nothing; compact stores the full redacted result in `.rush/cache/ccr.db`, requires `--allow-cache-write`, and is not allowed with `--no-cache`), `--limit N` (compact view: findings per page, 1-50, default 50), `--max-bytes N` (compact view: size budget of the whole printed result, 4096-65536 bytes, default 32768), and `--no-cache` (bypass and do not write to the result cache).
+
 ## Core code-quality commands
 
 | Command | Purpose / when | Optional helpers | Results and modification |
@@ -61,7 +63,7 @@ rush mcp serve
 | `format PATH --check` | Verify formatter conformance. | Ruff format, Prettier, Squoosh, Critical, Font-Spider, PyClean. | Check-only with `--check`; omit only when you intentionally allow formatting. |
 | `test PATH` | Run applicable project tests. | pytest, Vitest, Newman. | `fail` on test failures; test code may have project-defined side effects. |
 | `security PATH` | Dependency vulnerability, privacy SAST, container and env checks. | pip-audit, npm audit, OSV-Scanner, Semgrep, Trivy, Grype, Bearer, Horusec, Pa11y, OWASP ZAP, Deadfinder, A11yWatch, Dockle, Safe-Env, NCU. | Read-only normalization; scanner behavior depends on installed tool. |
-| `typecheck PATH` | Static type checks. | mypy, TypeScript `tsc`. | Read-only; missing helper skips. |
+| `typecheck PATH` | Static type checks. | mypy, TypeScript `tsc`; `--environment project\|isolated` selects which interpreter analyzes Python (`project` uses `.venv` and requires `--allow-build`; default prefers `project`, falling back to `isolated` without `--allow-build`), `--typecheck-config FILE` names an explicit tsconfig/mypy/pyrefly config inside the project root. | Read-only; missing helper skips. |
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
@@ -135,11 +137,12 @@ The following explicit permission flags are available across tools:
 
 | Command | Purpose | Options | Modification |
 |---|---|---|---|
-| `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
+| `check PATH` | Run the check suite: format (check-only), lint, typecheck, dead, slop, test; the test step needs `--allow-build`. | `--fail-fast`/`--no-fail-fast` (default: every step runs and is reported), `--result-view`, `--limit`, `--max-bytes`, Permissions, `--json` | none |
+| `status [PATH]` | Show the project's status without changing anything. | `--session`, `--result HANDLE` (read a stored result), `--view [result\|bytes]`, `--cursor`, `--offset`, `--limit`, `--max-bytes`, `--json` | none |
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
 | `fix PATH` | Formats and lints Ruff-selected Python targets. | `--dry-run`, `--force`, `--allow-artifact-write` | Dry run is non-mutating. Apply requires artifact-write permission and restores invocation-owned targets on covered failure paths. |
-| `setup PATH` | Reports detected stacks and recommended engines. | `--non-interactive` (default true; no false CLI spelling) | Current CLI cannot enter installation branch; installer planned in P65-02 |
+| `setup [PATH]` | Preview project setup (config, registration, engines) and apply it after consent. | `--non-interactive`/`--interactive` (default: interactive when stdin and stdout are terminals, otherwise preview only), `--apply`, `--yes`, `--plan-file`, `--plan-id`, `--save-plan`, `--agent claude\|codex`, `--install-guidance`, `--enable-agent-hooks`, `--verify-host`, Permissions, `--json` | Preview writes nothing; `--save-plan` writes the plan file; `--apply` performs the reviewed config/registration/engine writes |
 | `init PATH` | Generate tailored `rush.toml` for detected project stacks. | `--overwrite` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. Per required engine reports `disposition`: `installed`, `missing`, or `unsupported` (no Rush-managed package for it). Findings: `engine-missing`, `engine-unsupported`, `binary-shadowing` (a project-root binary shadows the trusted resolution), `engine-integrity` (a `.rush/toolchains.json` manifest failed verification). A missing/shadowed engine's suggested action is the saved-plan route: `rush setup PATH --save-plan FILE --allow-artifact-write`, then the printed `rush setup PATH --apply --yes --plan-file FILE --plan-id ID` with every needed grant. | none | none |
@@ -175,12 +178,13 @@ Registered MCP reaches `rush_scan(request)` for `plan`/`run`/`status`/`rescan`, 
 
 Status: P65-10 (Phase 65 §3.1/§6.2). The one-command global install: downloads and checksum-verifies the current platform's release archive, installs a self-contained `rush` executable under a user-owned binary directory, and (independent of any project choice) discovers/connects every supported local agent client and activates Phase 63 user-scoped memory. `--agents none` skips agent connection entirely; `--memory off` still connects agents but withholds tool-observation consent. Omitting `--project` completes a successful global install with no active project — the current working directory is never auto-registered. `--project PATH_OR_ID` selects or registers an existing folder and applies its provision plan (P65-02); `--create NAME [--parent DIR] [--init-git]` creates and registers a new project folder instead. A checksum mismatch, failed extraction, or a new binary that fails to start all leave the previously installed executable untouched, and no agent config is written before the binary is verified to run. Re-running `rush install` on an existing installation upgrades/repairs/connects idempotently — it never duplicates an agent registration or memory scope. Not registered over MCP (installation is a one-time host bootstrap step, not a per-session tool call).
 
-### `rush agent list|connect|disconnect|doctor` (Phase 65 P65-05)
+### `rush agent list|connect|disconnect|doctor|hook` (Phase 65 P65-05)
 
 - `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
 - `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] [--install-guidance] [--profile core|full] [--yes] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. `--consent` allows real tool-observation payloads to be recorded for that scope; without it, only the connection itself is registered. `--acknowledge` is required before the connection reports `connected: true` — writing the config file is necessary but not sufficient. `--install-guidance` writes the project's Rush instruction block into `CLAUDE.md`/`AGENTS.md` without prompting; without it, a terminal asks `[y/N]` and a non-interactive run leaves guidance pending. A new registration always launches `mcp serve --profile core`; an existing entry keeps its own args unless `--profile core|full` is also given, which previews the migration (config path, current and new command/args, current profile, current config sha256) first and applies it only after `--yes` or a terminal `[y/N]`. A preview-only run, a decline, a stale-config conflict, or a failed write whose prior entry was restored is `skipped`, exit 0; a failed write that could not restore the prior entry is `error`, exit 2.
 - `rush agent disconnect AGENT_ID [--project PATH] [--json]` removes Rush's own, unchanged components for `AGENT_ID` — the MCP entry, the instruction block (or this agent from a shared block), and Rush skill/hook resources recorded as Rush-owned. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
 - `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.
+- `rush agent hook {claude|codex}` is the post-edit hook entrypoint the Rush Claude Code/Codex plugins run. It reads the host's JSON event on stdin, prints nothing, and runs no check unless agent hooks are enabled for this host and project; it always exits 0 so a hook never changes the edit's result.
 
 Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envelope over `AgentConnectionTool.handle_request` (`src/rush/tools/agent_connection.py`).
 

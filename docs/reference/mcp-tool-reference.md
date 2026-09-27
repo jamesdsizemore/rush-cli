@@ -10,6 +10,12 @@ Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional che
 
 `uv run rush mcp serve` registers each catalog tool through the shared invocation executor. Catalog hyphens become underscores in MCP names, for example `rush_semantic_drift` and `rush_ai_eval`. `rush mcp serve --profile core|full` (Phase 70) registers only `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory` for `core`, or every tool below for `full` (the default); a call naming a tool outside the running profile returns "Unknown tool".
 
+### `rush_check` (Phase 70)
+Before commit/after edits: format-check, lint, typecheck, dead, slop, and test at `path`. The test step runs only with `allow_build`; otherwise it is skipped and the result is never `ok` (`warn` if every other step passes). Accepts `fail_fast` (default `false`), the seven permission flags, and the common `project`/`result_view`/`limit`/`max_bytes`/`no_cache` fields below.
+
+### `rush_status` (Phase 70)
+Call first each session: read-only, no grant required. Reports `path`'s project setup, engines, scans, results, agents, and memory state without changing anything. `operation: "status"` (default) or `"result"` (reads a stored result via `result_handle`, `view: "result"|"bytes"`, `cursor`, `offset`, and the common `limit`/`max_bytes` fields); also accepts `session_id` and `project`.
+
 ## Common result
 
 Catalog tools return canonical `ToolResultV1` data (`schema_version: "1.0.0"`) documented in [Result reference](result-reference.md). Service operations remain JSON-RPC protocol frames. Some legacy custom MCP tools still return specialized strings or dictionaries; MCP discovery and each tool's generated schema are authoritative. A missing optional engine in a catalog tool is a structured `skipped` result.
@@ -17,6 +23,8 @@ Catalog tools return canonical `ToolResultV1` data (`schema_version: "1.0.0"`) d
 ## Inputs
 
 Catalog wrappers commonly accept `path`, permission flags, and tool-specific options. Defaults are false for permission flags. Inspect the generated MCP schema before invocation; not every tool accepts every field.
+
+Most catalog tools also accept (Phase 70): `project` (registered project ID or root path; relative paths in the call resolve against it instead of the server-start working directory), `result_view` (`"full"`, the default, returns the whole result; `"compact"` stores it, requires `allow_cache_write`, and returns a bounded page and handle), `limit` (findings per page, 1-50, default 50), `max_bytes` (size budget of the whole serialized response, 4096-65536 bytes, default 32768), and `no_cache` (bypass the result cache; not allowed with `result_view="compact"`).
 
 ```json
 {
