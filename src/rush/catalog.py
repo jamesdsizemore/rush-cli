@@ -138,8 +138,6 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         engine_names=(),
         maturity="real_adapter",
         scope_kind="operation",
-        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
-        target_validation=True,
     ),
     "memory": ToolSpec(
         name="memory",

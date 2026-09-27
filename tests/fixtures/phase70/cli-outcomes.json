@@ -1402,14 +1402,17 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "processes": "clean-engines",
       "json_paths": {
         "tool": "complexity",
-        "status": "error"
+        "status": "ok",
+        "engine": "radon+tach+sentrux"
       },
       "human_contains": [
-        "complexity error"
+        "complexity ok",
+        "complexity [radon+tach+sentrux]: 0 finding(s)"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -2650,14 +2653,17 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "processes": "clean-engines",
       "json_paths": {
         "tool": "format",
-        "status": "error"
+        "status": "ok",
+        "engine": "ruff"
       },
       "human_contains": [
-        "format error"
+        "format ok",
+        "format [ruff]: all formatted"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -3544,14 +3550,17 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "processes": "clean-engines",
       "json_paths": {
         "tool": "lint",
-        "status": "error"
+        "status": "ok",
+        "engine": "ruff"
       },
       "human_contains": [
-        "lint error"
+        "lint ok",
+        "lint [ruff]: clean"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -5432,14 +5441,17 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "processes": "clean-engines",
       "json_paths": {
         "tool": "offline-review",
-        "status": "error"
+        "status": "ok",
+        "engine": "offline-runner"
       },
       "human_contains": [
-        "offline-review error"
+        "offline-review ok",
+        "found 0 issue(s)."
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -7865,14 +7877,17 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "processes": "clean-engines",
       "json_paths": {
         "tool": "slop",
-        "status": "error"
+        "status": "ok",
+        "engine": "aislop"
       },
       "human_contains": [
-        "slop error"
+        "slop ok",
+        "aislop: 0 anti-pattern finding(s)"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"
@@ -8789,14 +8804,17 @@
     "family": "analysis",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "processes": "clean-engines",
       "json_paths": {
         "tool": "typecheck",
-        "status": "error"
+        "status": "ok",
+        "engine": "mypy+pyrefly"
       },
       "human_contains": [
-        "typecheck error"
+        "typecheck ok",
+        "typecheck [mypy+pyrefly]: 0 finding(s)"
       ],
-      "exit": 2
+      "exit": 0
     },
     "empty": {
       "not_applicable": "analysis route: not a record collection"

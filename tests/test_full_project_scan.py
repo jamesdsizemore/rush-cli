@@ -408,9 +408,11 @@ def test_scantool_flat_plan_run_status_round_trip(
         permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
         data_root=data_root,
     )
-    assert run_result["status"] == "ok"
-    run_id = run_result["raw"]["run_id"]
+    # T27/R27.1: an incomplete run reports its own aggregate, never a bare ok.
     assert run_result["raw"]["run_state"] == "incomplete"
+    assert run_result["status"] == run_result["raw"]["aggregate"]["status"]
+    assert run_result["status"] != "ok"
+    run_id = run_result["raw"]["run_id"]
 
     status_page = tool.run(
         Path(project_id), action="status", run_id=run_id, limit=1, data_root=data_root
@@ -466,8 +468,10 @@ def test_scantool_handle_request_plan_and_run_envelope(
     finally:
         projects_module.default_data_root = original_default_data_root
 
-    assert run_response["status"] == "ok"
-    assert run_response["raw"]["data"]["plan_id"] == plan_id
+    run_data = run_response["raw"]["data"]
+    assert run_data["plan_id"] == plan_id
+    assert run_response["status"] == run_data["aggregate"]["status"]
+    assert run_data["run_state"] != "complete" or run_response["status"] == "ok"
 
 
 def test_scantool_handle_request_run_denied_without_scope(

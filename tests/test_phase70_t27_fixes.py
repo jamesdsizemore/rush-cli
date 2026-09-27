@@ -1165,3 +1165,38 @@ def test_blast_radius_accepts_a_deleted_file_inside_the_project(
     result = CliRunner().invoke(cli, ["blast-radius", "--path", "gone.py"])
     assert result.exit_code == 0, result.output
     assert "user.py" in result.output
+
+
+@pytest.mark.parametrize("aggregate_status", ["error", "warn", "fail", "skipped"])
+def test_scan_run_reports_the_runs_own_aggregate_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aggregate_status: str
+) -> None:
+    """T27 R2: an executed scan reports the run's aggregate outcome; an
+    incomplete run with failed or unavailable candidates is never a bare ok."""
+    from types import SimpleNamespace
+
+    import rush.tools.scan as scan_module
+    from rush.permissions import ExecutionPermissions
+
+    run = {
+        "run_id": "r1",
+        "run_state": "incomplete",
+        "aggregate": {"tool": "scan", "status": aggregate_status, "summary": "agg"},
+    }
+    monkeypatch.setattr(
+        scan_module, "resolve_project", lambda *a, **k: {"root": str(tmp_path)}
+    )
+    monkeypatch.setattr(scan_module, "load_scan_plan", lambda *a, **k: object())
+    monkeypatch.setattr(
+        scan_module,
+        "execute_scan",
+        lambda *a, **k: SimpleNamespace(to_dict=lambda: dict(run)),
+    )
+    result = scan_module.ScanTool().run(
+        tmp_path,
+        action="run",
+        plan_id="p1",
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+    )
+    assert result["status"] == aggregate_status, result
+    assert result["summary"].startswith(f"scan run: {aggregate_status}"), result

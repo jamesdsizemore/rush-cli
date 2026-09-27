@@ -91,6 +91,62 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 _REAL_SUBPROCESS_TESTS = {"test_t27_gain_terminates_within_10s_under_non_tty_stdout"}
 
+# The external-process boundary for engine routes (plan T27: "stub external
+# transport/process only"): a row declaring `"processes": "clean-engines"`
+# gets each engine's real clean-run output for exactly its argv; any other
+# spawn stays blocked. The tools' own parsing and normalization run for real.
+_ENGINE_REPORTS = Path(__file__).parent / "fixtures" / "engine_reports"
+_ENGINE_VERSIONS = {
+    "ruff": "0.6.9",
+    "mypy": "1.11.2",
+    "pyrefly": "0.40.0",
+    "radon": "6.0.1",
+    "tach": "0.14.0",
+    "sentrux": "0.5.0",
+    "aislop": "0.16.1",
+    "ollama": "0.3.0",
+}
+
+
+def _clean_engine_stdout(name: str, args: list[str]) -> str | None:
+    if name == "ruff" and args[:1] in (["check"], ["format"]):
+        return "[]"
+    if name == "radon" and args[:1] == ["cc"]:
+        return json.dumps({args[-1]: []})
+    if name == "mypy":
+        return "Success: no issues found in 1 source file\n"
+    if name == "ollama" and args[:1] == ["run"]:
+        return ""
+    if name == "pyrefly" and args[1:2] == ["--help"]:
+        return "--python-interpreter-path --skip-interpreter-query\n"
+    if name in ("tach", "sentrux", "pyrefly", "aislop"):
+        return (_ENGINE_REPORTS / name / "clean.json").read_text(encoding="utf-8")
+    return None
+
+
+def _clean_engines(exec_argv: list[str], argv: list[str], **_kwargs: Any) -> Any:
+    name, args = Path(argv[0]).name, list(argv[1:])
+    if args == ["--version"] and name in _ENGINE_VERSIONS:
+        stdout: str | None = f"{name} {_ENGINE_VERSIONS[name]}\n"
+    else:
+        stdout = _clean_engine_stdout(name, args)
+    if stdout is None:
+        raise FileNotFoundError(f"phase70-t27: no stub for {name} {args[:2]}")
+    return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+
+def _process_stub(spec: dict[str, Any]) -> Any:
+    from contextlib import ExitStack
+    from unittest import mock
+
+    stack = ExitStack()
+    if spec.get("processes") == "clean-engines":
+        for target in ("_run_subprocess_blocking", "_run_subprocess_cancellable"):
+            stack.enter_context(
+                mock.patch(f"rush.runtime.subprocesses.{target}", _clean_engines)
+            )
+    return stack
+
 
 @pytest.fixture(autouse=True)
 def _no_spawn(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -418,7 +474,10 @@ def _assert_outcome(
         nonlocal ran
         ran = True
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=fixture_dir) as cwd:
+        with (
+            runner.isolated_filesystem(temp_dir=fixture_dir) as cwd,
+            _process_stub(spec),
+        ):
             for rel, text in spec.get("setup", {}).items():
                 _write(Path(cwd), rel, text)
             result = runner.invoke(cli, _materialize(args, fixture_dir))
@@ -1221,7 +1280,8 @@ def test_t27_matrix_route_writes_only_its_allowed_paths(
         for rel, text in case["expect"].get("setup", {}).items():
             _write(Path(cwd), rel, text)
         before |= set(tmp_path.rglob("*"))
-        result = runner.invoke(cli, argv)
+        with _process_stub(case["expect"]):
+            result = runner.invoke(cli, argv)
         written = _new_leaf_paths(tmp_path, before, Path(cwd))
     _assert_real_exercise(result)
     assert result.exit_code == case["expect"]["exit"], (

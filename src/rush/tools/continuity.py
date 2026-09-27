@@ -300,6 +300,22 @@ class SessionContinuityTool(ToolFn):
             )
         from ..workflows.projects import ProjectError
 
+        if project_id is None and not Path(path).exists():
+            # T27: a missing explicit root is reported, never walked up to the
+            # nearest existing directory. (Checkpoint `files` may name paths
+            # that no longer exist; only the root is a target.)
+            from rush.invocation.executor import target_error_result
+
+            return cast(
+                ContinuityOutput,
+                target_error_result(
+                    self.name,
+                    "TARGET_NOT_FOUND",
+                    f"target not found: {path}",
+                    target=str(path),
+                    reason="target_not_found",
+                ),
+            )
         try:
             root, base = state_location(path, project_id)
         except (InvocationError, ProjectError, ValueError) as exc:
