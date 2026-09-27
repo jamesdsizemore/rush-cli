@@ -1628,6 +1628,115 @@ def test_simulate_ci_with_a_missing_workflow_is_an_error(
     assert "missing.yml" in result.output
 
 
+_WF_PREFIX = "on: push\njobs:\n  build:\n    runs-on: x\n"
+
+_WF_A = _WF_PREFIX + "    steps:\n      - run: make test\n"
+_WF_C = _WF_PREFIX + "    steps:\n      - run: make test\n        shell: bash\n"
+_WF_D = _WF_PREFIX + "    steps:\n      - run: make test\n        shell: sh\n"
+_WF_E = _WF_PREFIX + "    steps:\n      - run: make test\n        shell: pwsh\n"
+_WF_F = _WF_PREFIX + "    steps:\n      - run: make test\n        shell: powershell\n"
+_WF_G = _WF_PREFIX + "    steps:\n      - run: make test\n        shell: cmd\n"
+_WF_H = _WF_PREFIX + "    steps:\n      - run: print(1)\n        shell: python\n"
+_WF_I = (
+    _WF_PREFIX
+    + "    defaults:\n      run:\n        shell: sh\n    steps:\n      - run: make test\n"
+)
+_WF_J = (
+    "on: push\n"
+    "defaults:\n"
+    "  run:\n"
+    "    shell: sh\n"
+    "jobs:\n"
+    "  build:\n"
+    "    runs-on: x\n"
+    "    defaults:\n"
+    "      run:\n"
+    "        shell: bash\n"
+    "    steps:\n"
+    "      - run: make test\n"
+)
+_WF_K = (
+    _WF_PREFIX
+    + "    steps:\n      - run: |\n          make lint\n          make test\n"
+)
+
+_BASH = ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c"]
+
+
+@pytest.mark.parametrize(
+    ("workflow", "windows", "expected"),
+    [
+        (_WF_A, False, ["bash", "-e", "-c", "make test"]),
+        (_WF_A, True, ["pwsh", "-Command", "make test"]),
+        (_WF_C, False, [*_BASH, "make test"]),
+        (_WF_D, False, ["sh", "-e", "-c", "make test"]),
+        (_WF_E, False, ["pwsh", "-Command", "make test"]),
+        (_WF_F, False, ["powershell", "-Command", "make test"]),
+        (_WF_G, False, ["cmd", "/D", "/E:ON", "/V:OFF", "/S", "/C", "make test"]),
+        (_WF_H, False, ["python", "-c", "print(1)"]),
+        (_WF_I, False, ["sh", "-e", "-c", "make test"]),
+        (_WF_J, False, [*_BASH, "make test"]),
+        (_WF_K, False, ["bash", "-e", "-c", "make lint\nmake test"]),
+    ],
+)
+def test_simulate_ci_runs_each_step_through_its_named_shell(
+    workflow: str,
+    windows: bool,
+    expected: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    from rush.tools import simulate_ci
+
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text(workflow)
+    monkeypatch.setattr(simulate_ci, "_IS_WINDOWS", windows, raising=False)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        simulate_ci,
+        "run_subprocess",
+        lambda argv, cwd=None: (
+            calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
+    res = simulate_ci.SimulateCi(tmp_path).run_workflow("ci.yml")
+    assert res["passed"] is True, res
+    assert calls == [expected]
+
+
+def test_simulate_ci_step_without_a_shell_template_placeholder_uses_the_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from rush.tools import simulate_ci
+
+    workflow = (
+        _WF_PREFIX + "    steps:\n      - run: print(1)\n        shell: perl {0}\n"
+    )
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    (wf_dir / "ci.yml").write_text(workflow)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        simulate_ci,
+        "run_subprocess",
+        lambda argv, cwd=None: (
+            calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+    )
+    res = simulate_ci.SimulateCi(tmp_path).run_workflow("ci.yml")
+    assert res["passed"] is True, res
+    assert len(calls) == 1
+    argv = calls[0]
+    assert argv[0] == "perl"
+    assert len(argv) == 2
+    assert not Path(argv[1]).exists()
+
+
 def test_mcp_serve_with_an_unknown_project_says_why(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
