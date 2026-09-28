@@ -199,4 +199,3 @@ Post-edit checks are opt-in and run only once two things are both true: the host
 - **Timeout**: the host wraps the hook call in a 30-second timeout; Rush's own check stops at an internal ~25-second deadline and reports whichever of the six steps (`format`, `lint`, `typecheck`, `dead`, `slop`, `test`) did not run, rather than hang or block the edit.
 - **Byte budget**: the report the model sees is bounded to at most 8,192 bytes in the host's context field: an invocation ID, the checked scope, overall status (plus an incomplete-step count when the deadline or a cancellation cut it short), each step's status, and findings (or `findings: none`). Add `--hook-result-cache` to also store the full result, so the report includes a `result_handle`.
 - **Disabling**: `--disable-agent-hooks` on `rush agent connect`, or `rush agent disconnect <agent-id> --project <path>`, removes the activation; loading or installing the plugin alone never runs a check.
-

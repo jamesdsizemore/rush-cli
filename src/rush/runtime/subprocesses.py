@@ -326,6 +326,13 @@ def _windows_confirm_terminated(record: dict[str, Any]) -> bool:  # pragma: no c
 _OWNED_EXECUTION: contextvars.ContextVar[tuple[str, str] | None] = (
     contextvars.ContextVar("rush_owned_execution", default=None)
 )
+# (owner_instance_id, data_root) resolved once when the owned execution began:
+# every `.procs` read/write for that owner inside the scope uses it, never a
+# late `default_data_root()` that may have changed by the time a child is
+# recorded or released.
+_OWNED_DATA_ROOT: contextvars.ContextVar[tuple[str, Path] | None] = (
+    contextvars.ContextVar("rush_owned_data_root", default=None)
+)
 
 
 @dataclass
@@ -384,10 +391,22 @@ def owned_execution_scope(
     if owner_instance_id is None or run_id is None:
         yield
         return
+    bound = _OWNED_DATA_ROOT.get()
+    if bound is None or bound[0] != owner_instance_id:
+        from rush.setup.provision import DataRootUnavailableError, default_data_root
+
+        try:
+            bound = (owner_instance_id, Path(default_data_root()))
+        except DataRootUnavailableError:
+            # Keep today's behavior: the error surfaces only if a child is
+            # actually recorded.
+            bound = None
     token = _OWNED_EXECUTION.set((owner_instance_id, run_id))
+    root_token = _OWNED_DATA_ROOT.set(bound)
     try:
         yield
     finally:
+        _OWNED_DATA_ROOT.reset(root_token)
         _OWNED_EXECUTION.reset(token)
 
 
@@ -398,9 +417,13 @@ def _owner_procs_path(owner_instance_id: str, *, data_root: Path | None = None) 
     owner's lock says its *process* exited, this file says which of its
     *children* still need reaping."""
     if data_root is None:
-        from rush.setup.provision import default_data_root
+        bound = _OWNED_DATA_ROOT.get()
+        if bound is not None and bound[0] == owner_instance_id:
+            data_root = bound[1]
+        else:
+            from rush.setup.provision import default_data_root
 
-        data_root = default_data_root()
+            data_root = default_data_root()
     owners_dir = Path(data_root) / "owners"
     owners_dir.mkdir(parents=True, exist_ok=True)
     return owners_dir / f"{owner_instance_id}.procs"
