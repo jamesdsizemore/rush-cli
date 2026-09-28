@@ -23,6 +23,7 @@ import io
 import json
 import os
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -43,8 +44,14 @@ from rich.tree import Tree
 from rush import __version__
 from rush.dashboard.keymaps import DEFAULT_KEYBINDINGS, KeybindingAction, KeymapManager
 from rush.dashboard.state import AdmissionResult, MutationLedger
-from rush.dashboard.terminal_input import KeyReader, make_key_reader, raw_terminal
-from rush.dashboard.theme import THEME
+from rush.dashboard.terminal_input import (
+    EOF,
+    PASTE_PREFIX,
+    KeyReader,
+    make_key_reader,
+    raw_terminal,
+)
+from rush.dashboard.theme import MOTION, THEME
 from rush.permissions import ExecutionPermissions
 from rush.runtime.subprocesses import (
     OWNED_TERMINATION_TIMEOUT_SECONDS,
@@ -216,6 +223,29 @@ _CHOOSER_EXTRAS: tuple[tuple[str, str], ...] = (
 # THEME is the sole source of these values (see that module's docstring).
 _HEADER_STYLE = f"bold {THEME['blue']}"
 _FOOTER_STYLE = THEME["surface_raised"]
+# T28-F: the terminal's motion timings, from the shared MOTION tokens where
+# one exists; the row reveal steps one row per 40ms, capped at 240ms.
+_TERMINAL_MOTION: dict[str, int] = {
+    "selection_ms": MOTION["hover_focus_ms"],
+    "detail_ms": MOTION["detail_row_fade_ms"],
+    "row_reveal_ms": 40,
+    "row_reveal_cap_ms": 240,
+}
+
+
+def _reduced_motion() -> bool:
+    return bool(os.environ.get("RUSH_REDUCED_MOTION"))
+
+
+def _row_reveal_progress(
+    elapsed_ms: float, total_rows: int, *, reduced_motion: bool
+) -> int:
+    """How many of `total_rows` rows the reveal shows `elapsed_ms` after it
+    started: one more row every `row_reveal_ms`, all of them once the cap is
+    reached, and all of them in the first frame under reduced motion."""
+    if reduced_motion or elapsed_ms >= _TERMINAL_MOTION["row_reveal_cap_ms"]:
+        return total_rows
+    return min(total_rows, 1 + int(elapsed_ms // _TERMINAL_MOTION["row_reveal_ms"]))
 
 
 def _severity_style(severity: str) -> str:
@@ -708,6 +738,11 @@ class ProjectState:
     pending: dict[Any, tuple[int, tuple[Any, ...]]] = field(
         default_factory=dict, repr=False
     )
+    # T28-F: the DashboardOwner a dashboard-owned run was started on (or first
+    # found by polling), reused every tick instead of rediscovered.
+    dashboard_owner_handle: Any = field(default=None, repr=False, compare=False)
+    # T28-F: monotonic start of the findings-row reveal; None = final state.
+    row_reveal_started: float | None = field(default=None, repr=False, compare=False)
 
     def identity(self) -> tuple[Any, ...]:
         # A section load is keyed by project and root only: starting a scan
@@ -849,6 +884,13 @@ class TuiState:
     map_selected_index: int = 0
     # T28-C: the `/` query typed in `mode == "map_search"`.
     map_query: str = ""
+    # T28-F: the overlay `resize_guidance` covers while the terminal is below
+    # the minimum size; restored unchanged once it is large enough again.
+    overlay_under_resize: str | None = None
+    # T28-F: non-blocking Detach -- the `detaching` overlay's deadline, and
+    # the event its worker sets once the reap and ledger outcome are done.
+    detach_deadline: float | None = None
+    detach_done: threading.Event | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.active_index is None and self.projects:
@@ -1445,6 +1487,7 @@ def _start_dashboard_owned(
     own durable status record is what a later `rush ui`/`rush dashboard`
     invocation reads to find the result."""
     project.owner = "dashboard"
+    project.dashboard_owner_handle = owner
     project.work_kind = "dashboard"
     project.status = "scanning"
     project.progress = None
@@ -1737,7 +1780,9 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
     `DashboardOwner.operation_status`, never inferred from `plan_total`."""
     if not project.operation_id:
         return
-    owner = _dashboard_owner_for(project, actions)
+    owner = project.dashboard_owner_handle
+    if owner is None:
+        owner = project.dashboard_owner_handle = _dashboard_owner_for(project, actions)
     if owner is None or not hasattr(owner, "operation_status"):
         return
     try:
@@ -2806,7 +2851,9 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         return
     try:
         if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
-            owner = _dashboard_owner_for(project, actions)
+            owner = project.dashboard_owner_handle or _dashboard_owner_for(
+                project, actions
+            )
             if owner is None:
                 project.last_message = "cancel failed: dashboard owner not reachable"
                 return
@@ -2827,7 +2874,12 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
 
 
 def _wait_for_cancel_ack(
-    state: TuiState, project: ProjectState, actions: ScanActions, *, timeout: float
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    *,
+    timeout: float,
+    poll: bool = True,
 ) -> bool:
     """P69-06g: blocks up to `timeout` seconds for the cooperative-cancel
     marker to be acknowledged (a real terminal status transition), polling
@@ -2836,10 +2888,15 @@ def _wait_for_cancel_ack(
     polling call at all, since it writes `project.status` itself and that
     write is visible across threads without one. Returns True the instant
     `project.status` leaves `"cancelling"`, False once `timeout` is
-    exhausted with no acknowledgment observed."""
+    exhausted with no acknowledgment observed.
+
+    T28-F: `poll=False` (the non-blocking Detach worker) only watches
+    `project.status` -- the render loop's own tick keeps polling, so the
+    worker thread never runs `_poll_running_scans` concurrently with it."""
     deadline = time.monotonic() + timeout
     while True:
-        _poll_running_scans(state, actions)
+        if poll:
+            _poll_running_scans(state, actions)
         if project.status != "cancelling":
             return True
         if time.monotonic() >= deadline:
@@ -2852,14 +2909,23 @@ def _handle_detach(
     project: ProjectState,
     actions: ScanActions,
     *,
-    timeout: float = OWNED_TERMINATION_TIMEOUT_SECONDS,
+    timeout: float | None = None,
+    poll: bool = True,
 ) -> None:
     """P69-06g/h/i: Detach's two genuinely different behaviors per Phase 66
     S3.9's superseding clause (this plan's own S3) -- case (a) dashboard-owned
     is a trivial background continuation (the work was never TUI-owned);
     case (b) locally-owned is Cancel-with-saved-partial-result, since no
     mechanism this phase can build keeps a bare CLI process's work alive
-    past its own exit."""
+    past its own exit.
+
+    T28-F: `_begin_detach` runs this on a worker thread under the
+    `detaching` overlay's deadline, so the loop keeps rendering. The run's
+    subprocess groups are reaped right away (bounded SIGTERM-then-SIGKILL)
+    while the cooperative cancel is acknowledged; the ledger outcome is
+    unchanged: `recovery_required` when no acknowledgment lands in time."""
+    if timeout is None:
+        timeout = OWNED_TERMINATION_TIMEOUT_SECONDS
     if project.owner == "dashboard" or not project.owner_instance_id:
         state.mode = "list"
         state.should_quit = True
@@ -2867,33 +2933,98 @@ def _handle_detach(
 
     state.message = "detaching -- cancelling local run..."
     _request_cancel(project, actions)
-    acknowledged = _wait_for_cancel_ack(state, project, actions, timeout=timeout)
-    if not acknowledged:
-        # The worker never acknowledged within the deadline: force-stop every
-        # subprocess group *this run* owns (subsection h). U03: this
-        # coordinator process can own more than one project's run at once,
-        # so the `run_id` filter is required here -- owner-only filtering
-        # would reap a sibling project's still-running subprocesses too.
-        # Reaping acts on `.procs` records, real for every local run
-        # regardless of ledger admission -- never assume termination
-        # succeeded just because a signal was sent.
-        reap_owner_processes(
-            project.owner_instance_id, timeout=timeout, run_id=project.run_id
-        )
-        if project.ledger_admitted and _resolve_local_run(project):
-            with suppress(Exception):
-                # `_admit_local_run`/`_finalize_local_run`'s contract: this
-                # process exits regardless of whether the ledger write lands.
-                MutationLedger().record_status_transition(
-                    project.operation_id,
-                    "recovery_required",
-                    {
-                        "status": "recovery_required",
-                        "code": "detach_force_exit_timeout",
-                    },
-                )
+    # Force-stop every subprocess group *this run* owns (subsection h).
+    # U03: this coordinator process can own more than one project's run at
+    # once, so the `run_id` filter is required here -- owner-only filtering
+    # would reap a sibling project's still-running subprocesses too.
+    # Reaping acts on `.procs` records, real for every local run regardless
+    # of ledger admission -- never assume termination succeeded just
+    # because a signal was sent.
+    reap_owner_processes(
+        project.owner_instance_id, timeout=timeout, run_id=project.run_id
+    )
+    acknowledged = _wait_for_cancel_ack(
+        state, project, actions, timeout=timeout, poll=poll
+    )
+    if not acknowledged and project.ledger_admitted and _resolve_local_run(project):
+        with suppress(Exception):
+            # `_admit_local_run`/`_finalize_local_run`'s contract: this
+            # process exits regardless of whether the ledger write lands.
+            MutationLedger().record_status_transition(
+                project.operation_id,
+                "recovery_required",
+                {
+                    "status": "recovery_required",
+                    "code": "detach_force_exit_timeout",
+                },
+            )
     state.mode = "list"
     state.should_quit = True
+
+
+def _begin_detach(state: TuiState, project: ProjectState, actions: ScanActions) -> None:
+    """T28-F: Detach without blocking the render loop. A locally-owned run
+    gets the `detaching` overlay and a deadline the loop polls every tick
+    (`_poll_detach`) while `_handle_detach` runs on a worker thread."""
+    if project.owner == "dashboard" or not project.owner_instance_id:
+        _handle_detach(state, project, actions)  # nothing to wait for
+        return
+    timeout = OWNED_TERMINATION_TIMEOUT_SECONDS
+    _request_cancel(project, actions)
+    done = threading.Event()
+
+    def _worker() -> None:
+        try:
+            _handle_detach(state, project, actions, timeout=timeout, poll=False)
+        except Exception as exc:  # noqa: BLE001 -- a failed reap or ledger
+            # write must still end the detach at once, visibly, never leave
+            # the loop waiting on a dead worker until the deadline.
+            state.message = f"detach failed: {exc}"
+        finally:
+            done.set()
+
+    state.mode = "list"
+    state.overlay = "detaching"
+    state.message = "detaching -- cancelling local run..."
+    state.detach_done = done
+    # The reap's SIGTERM and SIGKILL waits, then the acknowledgment wait.
+    state.detach_deadline = time.monotonic() + 3 * timeout
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _poll_detach(state: TuiState) -> None:
+    """T28-F: end the loop once the Detach worker is done or its deadline
+    passed -- the process exits regardless, as Phase 69's Detach did."""
+    if state.detach_deadline is None:
+        return
+    done = state.detach_done is not None and state.detach_done.is_set()
+    if done or time.monotonic() >= state.detach_deadline:
+        state.detach_deadline = None
+        state.mode = "list"
+        state.should_quit = True
+
+
+def _handle_sigint(state: TuiState, actions: ScanActions) -> None:
+    """T28-F: Ctrl-C caught in the loop is the `q` quit flow: idle quits,
+    running work opens `quit_confirm`, a second Ctrl-C there Detaches, and
+    one while detaching stops waiting."""
+    if state.detach_deadline is not None:
+        state.should_quit = True
+    elif state.mode == "quit_confirm" and state.projects:
+        _begin_detach(state, state.active_project, actions)
+    else:
+        _quit(state, actions)
+    _sync_section(state)
+
+
+def _handle_eof(state: TuiState, actions: ScanActions) -> None:
+    """T28-F: input reached end-of-file -- Detach (the loop then restores
+    the terminal and prints the cause on stderr)."""
+    if state.projects and _has_running_work(state.active_project):
+        _begin_detach(state, state.active_project, actions)
+    else:
+        state.should_quit = True
+    _sync_section(state)
 
 
 def _handle_cancel_and_stay(
@@ -2912,7 +3043,7 @@ def _handle_cancel_and_stay(
 def _handle_quit_confirm_key(state: TuiState, key: str, actions: ScanActions) -> None:
     project = state.active_project
     if key in ("d", "enter"):
-        _handle_detach(state, project, actions)
+        _begin_detach(state, project, actions)
     elif key == "c":
         _handle_cancel_and_stay(state, project, actions)
     elif key in ("r", "n", "escape"):
@@ -3435,8 +3566,28 @@ def _sync_section(state: TuiState) -> None:
         state.section = "overview"
     if state.projects:
         state.active_project.section = state.section
-    if state.overlay not in ("sections", "form"):
+    _uncover_resize_overlay(state)
+    if state.overlay not in ("sections", "form", "detaching"):
         state.overlay = _MODE_OVERLAYS.get(state.mode)
+    _sync_resize_overlay(state)
+
+
+def _sync_resize_overlay(state: TuiState) -> None:
+    """T28-F: below the minimum size `resize_guidance` covers whatever
+    overlay is open; it comes back unchanged once the terminal is large
+    enough, so no state is lost across a resize."""
+    if _too_small(state):
+        if state.overlay != "resize_guidance":
+            state.overlay_under_resize = state.overlay
+            state.overlay = "resize_guidance"
+    else:
+        _uncover_resize_overlay(state)
+
+
+def _uncover_resize_overlay(state: TuiState) -> None:
+    if state.overlay == "resize_guidance":
+        state.overlay = state.overlay_under_resize
+        state.overlay_under_resize = None
 
 
 def _chooser_rows() -> list[tuple[str, str]]:
@@ -3571,6 +3722,11 @@ class Action:
     sections: tuple[str, ...]
     run: Callable[[TuiState, ScanActions], None]
     enabled: Callable[[TuiState], tuple[bool, str]] = lambda state: (True, "")
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """T28-F: the keys `_KEYMAP` binds to this action."""
+        return tuple(b.key for b in _BINDINGS if b.action_name == self.id)
 
 
 def _run_action(state: TuiState, action: Action, actions: ScanActions) -> None:
@@ -4048,6 +4204,7 @@ ACTIONS: tuple[Action, ...] = (
 )
 _ACTIONS_BY_ID = {action.id: action for action in ACTIONS}
 _MIN_COLUMNS, _MIN_ROWS = 60, 20
+_FOOTER_ACTIONS = 6  # section actions the keymap footer line lists
 _RESIZE_KEYS = ("q", "c", "f2", "escape")
 # q and F2 open these below the minimum size too; their own keys answer them.
 _RESIZE_MODALS = ("quit_confirm", "project_selector")
@@ -4056,8 +4213,35 @@ _KEYMAP = KeymapManager(_BINDINGS)
 
 
 def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    _uncover_resize_overlay(state)
     _dispatch_key_inner(state, key, actions)
     _sync_section(state)
+
+
+def _insert_paste(state: TuiState, text: str) -> None:
+    """T28-F: pasted text lands literally in the active text field and is
+    ignored anywhere else -- never replayed as keys (so never a scan, a
+    quit, or a navigation). Renderers show text fields via `_safe`."""
+    if state.overlay == "form" and state.form is not None:
+        form = state.form
+        name = _FORM_FIELDS[form["kind"]][form["field"]]
+        form["values"][name] += text
+        return
+    if not state.projects or state.overlay == "sections":
+        return
+    if state.mode == "search":
+        project = state.active_project
+        project.filter_text += text
+        project.selected_index = 0
+        project.detail_page = 0
+    elif state.mode == "map_search":
+        state.map_query += text
+    elif state.mode == "memory_search":
+        state.memory_query_buffer += text
+    elif state.mode == "memory_edit":
+        state.memory_edit_buffer = (state.memory_edit_buffer or "") + text
+    elif state.mode == "memory_owner":
+        state.memory_owner_buffer = (state.memory_owner_buffer or "") + text
 
 
 def _too_small(state: TuiState) -> bool:
@@ -4072,6 +4256,11 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         and state.mode not in _RESIZE_MODALS
     ):
         return  # resize_guidance: every other key waits; all state is kept
+    if state.detach_deadline is not None:
+        return  # detaching: keys wait for the deadline; Ctrl-C exits now
+    if key.startswith(PASTE_PREFIX):
+        _insert_paste(state, key[len(PASTE_PREFIX) :])
+        return
     if not state.projects:
         if state.overlay == "form":
             _handle_form_key(state, key)
@@ -4117,7 +4306,9 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
 
 def _keymap_footer(state: TuiState) -> Text:
     parts = []
-    for action in _section_actions(state.section)[:6] if state.projects else []:
+    for action in (
+        _section_actions(state.section)[:_FOOTER_ACTIONS] if state.projects else []
+    ):
         keys = [b.key for b in _BINDINGS if b.action_name == action.id]
         ok, reason = action.enabled(state)
         parts.append(f"{keys[0]}:{action.label}" + ("" if ok else f" ({reason})"))
@@ -4138,6 +4329,13 @@ def _render_progress_bar(progress: ScanProgress) -> Text:
 def _render_project_table(project: ProjectState) -> Panel:
     rows = project.visible_findings()
     page_items, total_pages = paginate(rows, project.detail_page)
+    if project.row_reveal_started is not None:
+        elapsed_ms = (time.monotonic() - project.row_reveal_started) * 1000
+        page_items = page_items[
+            : _row_reveal_progress(
+                elapsed_ms, len(page_items), reduced_motion=_reduced_motion()
+            )
+        ]
     table = Table(expand=True)
     table.add_column("", width=2)
     table.add_column("Tool", style="cyan", width=12)
@@ -4954,7 +5152,7 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
     `_keymap_footer()` (previously grew to 3+ whenever any of these was
     present, since each used to insert its own extra line)."""
     if state.mode == "search":
-        return Text(f"/{project.filter_text}", style="bold yellow")
+        return _safe(f"/{project.filter_text}", "bold yellow")
     if state.mode == "map_search":
         return _safe(f"map search /{state.map_query}", "bold yellow")
     if state.mode == "quit_confirm":
@@ -4975,7 +5173,21 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
         return _render_progress_bar(project.progress)
     if state.message:
         return _safe(state.message, "bold magenta")
-    return Text("")
+    return _unavailable_line(state)
+
+
+def _unavailable_line(state: TuiState) -> Text:
+    """T28-F: every disabled action the keymap footer line does not list,
+    with its reason -- so each disabled action discloses why."""
+    listed = {a.id for a in _section_actions(state.section)[:_FOOTER_ACTIONS]}
+    parts = []
+    for action in ACTIONS:
+        ok, reason = action.enabled(state)
+        if not ok and action.id not in listed:
+            parts.append(f"{action.label}: {reason}")
+    if not parts:
+        return Text("")
+    return _safe("Unavailable -- " + " | ".join(parts), THEME["text_muted"])
 
 
 def _set_footer(layout: Layout, state: TuiState, status: Text) -> None:
@@ -5006,9 +5218,23 @@ def _render_resize_guidance(state: TuiState) -> Panel:
     return Panel(Group(*lines), title="Resize", style=THEME["border"])
 
 
+class _Frame(Layout):
+    """T28-F: a rendered TUI frame; `str()` is the plain text the terminal
+    shows at `terminal_size`."""
+
+    terminal_size: tuple[int, int] = (80, 24)
+
+    def __str__(self) -> str:
+        columns, rows = self.terminal_size
+        out = io.StringIO()
+        Console(width=columns, height=rows, file=out, color_system=None).print(self)
+        return out.getvalue()
+
+
 def _render_no_projects(state: TuiState) -> Layout:
     """No project open at all: only the workspace chooser (or its form)."""
-    layout = Layout()
+    layout = _Frame()
+    layout.terminal_size = state.terminal_size
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="main", ratio=1),
@@ -5037,7 +5263,24 @@ def _render_no_projects(state: TuiState) -> Layout:
     return layout
 
 
+def _render_detaching(state: TuiState) -> Panel:
+    remaining = max(0.0, (state.detach_deadline or 0.0) - time.monotonic())
+    return Panel(
+        Group(
+            Text(
+                "Detaching -- cancelling the local run and stopping its processes.",
+                style="bold yellow",
+            ),
+            Text(f"Exits within {remaining:.0f}s. Ctrl-C exits now."),
+        ),
+        title="Detaching",
+        style=THEME["border"],
+    )
+
+
 def _render_body(state: TuiState, project: ProjectState) -> Any:
+    if state.overlay == "detaching":
+        return _render_detaching(state)
     if state.overlay == "sections":
         return _render_section_chooser(state)
     if state.overlay == "form":
@@ -5071,14 +5314,17 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
 
 
 def render_app(state: TuiState) -> Layout:
+    _sync_resize_overlay(state)
     if _too_small(state):
-        guidance = Layout()
+        guidance = _Frame()
+        guidance.terminal_size = state.terminal_size
         guidance.update(_render_resize_guidance(state))
         return guidance
     if not state.projects:
         return _render_no_projects(state)
     project = state.active_project
-    layout = Layout()
+    layout = _Frame()
+    layout.terminal_size = state.terminal_size
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="main", ratio=1),
@@ -5193,6 +5439,13 @@ def run_interactive_tui(
     seen_statuses = {id(p): p.status for p in state.projects}
 
     ticks = 0
+    # T28-F: EOF sets the cause printed on stderr once the terminal is
+    # restored; a closed input is never read again (it would spin).
+    exit_cause = ""
+    input_closed = False
+    # Carries a Ctrl-C handled mid-tick into the next tick's refresh.
+    interrupted = False
+    reveal_key = _row_reveal_key(state)
     with raw_terminal():
         live = (
             Live(
@@ -5211,56 +5464,114 @@ def run_interactive_tui(
                 if max_ticks is not None and ticks >= max_ticks:
                     break
                 ticks += 1
+                try:
+                    size = reader.get_size()
+                    resized = size != state.terminal_size
+                    if resized:
+                        state.terminal_size = size
 
-                size = reader.get_size()
-                resized = size != state.terminal_size
-                if resized:
-                    state.terminal_size = size
+                    applied = _pump(state, actions)
+                    _poll_running_scans(state, actions)
+                    _poll_detach(state)
 
-                applied = _pump(state, actions)
-                _poll_running_scans(state, actions)
-
-                key = reader.read_key(tick_seconds)
-                if key is not None:
-                    _dispatch_key(state, key, actions)
-                status_changed = _reload_after_finished_work(state, seen_statuses)
-
-                if live is not None:
-                    setup_events = sum(
-                        len(p.setup_apply_events) for p in state.projects
-                    )
-                    has_activity = (
-                        key is not None
-                        or applied
-                        or resized
-                        or setup_events != seen_setup_events
-                        or status_changed
-                        or any(
-                            p.status in ("scanning", "cancelling")
-                            for p in state.projects
-                        )
-                    )
-                    seen_setup_events = setup_events
-                    # U04 fix: reduced motion renders the final state
-                    # (already shown once by `Live(render_app(state), ...)`
-                    # above) and never refreshes again on an idle timer --
-                    # only a real key/scan event re-renders. Normal motion
-                    # keeps its active/idle heartbeat regardless.
-                    if reduced_motion:
-                        if has_activity:
-                            live.update(render_app(state), refresh=True)
+                    key: str | None = None
+                    if input_closed:
+                        time.sleep(tick_seconds)
                     else:
-                        interval = (
-                            _ACTIVE_REFRESH_INTERVAL
-                            if has_activity
-                            else _IDLE_REFRESH_INTERVAL
+                        key = reader.read_key(tick_seconds)
+                    if key == EOF:
+                        input_closed = True
+                        exit_cause = (
+                            "rush ui: input reached end-of-file; detached and "
+                            "restored the terminal"
                         )
-                        now = time.monotonic()
-                        if now - last_refresh >= interval:
-                            live.update(render_app(state), refresh=True)
-                            last_refresh = now
+                        _handle_eof(state, actions)
+                    elif key is not None:
+                        _dispatch_key(state, key, actions)
+                    status_changed = _reload_after_finished_work(state, seen_statuses)
+
+                    # T28-F: a changed findings view reveals its rows one per
+                    # 40ms (capped at 240ms); reduced motion shows them all.
+                    new_reveal_key = _row_reveal_key(state)
+                    if new_reveal_key != reveal_key:
+                        reveal_key = new_reveal_key
+                        if state.projects and not reduced_motion:
+                            state.active_project.row_reveal_started = time.monotonic()
+                    revealing = _row_reveal_active(state)
+
+                    if live is not None:
+                        setup_events = sum(
+                            len(p.setup_apply_events) for p in state.projects
+                        )
+                        has_activity = (
+                            key is not None
+                            or interrupted
+                            or applied
+                            or resized
+                            or revealing
+                            or setup_events != seen_setup_events
+                            or status_changed
+                            or state.detach_deadline is not None
+                            or any(
+                                p.status in ("scanning", "cancelling")
+                                for p in state.projects
+                            )
+                        )
+                        seen_setup_events = setup_events
+                        # U04 fix: reduced motion renders the final state
+                        # (already shown once by `Live(render_app(state), ...)`
+                        # above) and never refreshes again on an idle timer --
+                        # only a real key/scan event re-renders. Normal motion
+                        # keeps its active/idle heartbeat regardless.
+                        if reduced_motion:
+                            if has_activity:
+                                live.update(render_app(state), refresh=True)
+                                interrupted = False
+                        else:
+                            interval = (
+                                _ACTIVE_REFRESH_INTERVAL
+                                if has_activity
+                                else _IDLE_REFRESH_INTERVAL
+                            )
+                            now = time.monotonic()
+                            if now - last_refresh >= interval:
+                                live.update(render_app(state), refresh=True)
+                                last_refresh = now
+                                interrupted = False
+                except KeyboardInterrupt:
+                    # T28-F: Ctrl-C is the quit flow, never an uncaught
+                    # interrupt tearing down the loop mid-frame.
+                    interrupted = True
+                    _handle_sigint(state, actions)
         finally:
             if live is not None:
                 live.stop()
 
+    if exit_cause:
+        print(exit_cause, file=sys.stderr)
     return state
+
+
+def _row_reveal_key(state: TuiState) -> tuple[Any, ...]:
+    """T28-F: what the findings table shows; a change restarts the reveal."""
+    if not state.projects:
+        return ()
+    project = state.active_project
+    return (
+        state.active_index,
+        state.section,
+        state.mode,
+        project.detail_page,
+        project.filter_text,
+        len(project.results),
+    )
+
+
+def _row_reveal_active(state: TuiState) -> bool:
+    if not state.projects:
+        return False
+    started = state.active_project.row_reveal_started
+    if started is None:
+        return False
+    elapsed_ms = (time.monotonic() - started) * 1000
+    return elapsed_ms < _TERMINAL_MOTION["row_reveal_cap_ms"]

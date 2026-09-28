@@ -2530,7 +2530,9 @@ def read_project_artifact_page(
     except (ContainmentError, ValueError):
         return error("invalid_path", rel_path)
     except FileNotFoundError:
-        return error("not_found", rel_path)
+        # The manifest records this snapshot but its captured bytes are gone:
+        # the immutable content is unavailable (never a live-file fallback).
+        return error("immutable_content_unavailable", rel_path)
     except OSError:
         return error("invalid_path", rel_path)
     try:
