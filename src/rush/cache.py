@@ -23,6 +23,7 @@ from rush.contracts.results import (
 from rush.invocation.cache_policy import decide_cache
 from rush.logging import get_logger, log_subsystem
 from rush.safety.redactor import sanitize_value
+from rush.sqlite_util import ClosingConnection
 from rush.tools.base import ToolResult
 
 logger = get_logger("cache")
@@ -100,7 +101,9 @@ class ResultCache:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        conn = sqlite3.connect(
+            str(self.db_path), timeout=10.0, factory=ClosingConnection
+        )
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -265,6 +268,30 @@ class ResultCache:
                 }
         except Exception as exc:  # noqa: BLE001
             return {"entries": 0, "size_bytes": 0, "size_mb": 0.0, "error": str(exc)}
+
+    @staticmethod
+    def stats_readonly(db_path: Path) -> dict[str, Any]:
+        """T10 (S10.6): `stats()` without constructing a cache. A missing DB is
+        reported with its path and never created; an existing one is read through
+        the X1 read-only opener, so no `-wal`/`-shm` or byte change is left."""
+        from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+        def count(conn: sqlite3.Connection) -> int:
+            if not sqlite_has_table(conn, "cache_entries"):
+                return 0
+            return int(conn.execute("SELECT count(*) FROM cache_entries").fetchone()[0])
+
+        entries = read_sqlite_readonly(db_path, count)
+        if entries is None:
+            return {"path": str(db_path), "exists": False, "entries": 0}
+        size_bytes = db_path.stat().st_size
+        return {
+            "entries": entries,
+            "size_bytes": size_bytes,
+            "size_mb": round(size_bytes / (1024 * 1024), 2),
+            "path": str(db_path),
+            "exists": True,
+        }
 
     def decide(self, context: Any, pure: bool = True) -> Any:
         """Evaluate cache eligibility and derive cache key for an InvocationContext."""

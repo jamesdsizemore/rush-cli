@@ -51,6 +51,10 @@ class CacheGateResult:
     hit: bool
     artifact_id: str | None
     content: dict[str, Any] | None
+    #: T19: the hit artifact's exact stored revision and source (`None` on a
+    #: miss), so a consumer can attribute exactly what it read.
+    revision: int | None = None
+    source: str | None = None
 
 
 def _cache_key(context_path: str, target_symbol: str) -> str:
@@ -80,13 +84,21 @@ def check_memory_before_pack(
     starts varying packed content by view.
     """
     cache_key = _cache_key(context_path, target_symbol)
-    store = TypedArtifactStore(project_root)
+    # T10: a read-only view (T20 `open_readonly_view`), so a lookup never creates
+    # `.rush`, `memory.db`, a sidecar or a migrated schema. No usable store (absent,
+    # legacy, busy or corrupt) is a miss, like any failed defended read.
+    store, _state = TypedArtifactStore.open_readonly_view(project_root or Path.cwd())
+    if store is None:
+        return CacheGateResult(hit=False, artifact_id=None, content=None)
     artifacts: list[MemoryArtifact] = []
     # Failed defended reads are cache misses; never reuse unverified content.
-    with suppress(Exception):
-        artifacts = defended_recall(
-            store, subject, cache_key, [_CACHE_SOURCE], memo=memo
-        )
+    try:
+        with suppress(Exception):
+            artifacts = defended_recall(
+                store, subject, cache_key, [_CACHE_SOURCE], memo=memo
+            )
+    finally:
+        store.close()
     for artifact in artifacts:
         if artifact.stale or not artifact.content_hash or not artifact.symbol_ref:
             continue
@@ -115,7 +127,13 @@ def check_memory_before_pack(
             for k, v in artifact.content.items()
             if k not in (_CACHE_KEY_FIELD, _CACHE_IDENTITY_FIELD)
         }
-        return CacheGateResult(hit=True, artifact_id=artifact.id, content=content)
+        return CacheGateResult(
+            hit=True,
+            artifact_id=artifact.id,
+            content=content,
+            revision=artifact.artifact_version,
+            source=artifact.source,
+        )
     return CacheGateResult(hit=False, artifact_id=None, content=None)
 
 
@@ -129,17 +147,18 @@ def write_cache_fill(
     token_budget: int | None = None,
     encoding: str | None = None,
     view: str | None = None,
-) -> None:
+) -> MemoryArtifact | None:
     """Write a `pack_context()` miss's real result back as a `DERIVED` cache row.
 
     Caller must already have confirmed `granted.cache_write is True` — this
-    function performs no permission check of its own.
+    function performs no permission check of its own. Returns the committed
+    row (T19), or `None` when nothing was written.
     """
     # The producer hashes the same source read used to build packed_text. A later
     # read here could pair changed source bytes with an already-obsolete payload.
     content_hash = packed.get("source_content_hash")
     if not isinstance(content_hash, str) or not content_hash:
-        return
+        return None
     cache_key = _cache_key(context_path, target_symbol)
     store = TypedArtifactStore(project_root)
     identity: dict[str, Any] = {
@@ -153,7 +172,7 @@ def write_cache_fill(
         identity["encoding"] = encoding
     if view is not None:
         identity["view"] = view
-    store.write(
+    return store.write(
         MemoryArtifact(
             id=str(uuid.uuid4()),
             family="memory",

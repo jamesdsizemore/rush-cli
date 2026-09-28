@@ -596,13 +596,14 @@ def run_project_journey(tmp_root: Path) -> dict[str, Any]:
     project_b_id = register_project(project_b_root, data_root=data_root).project_id
 
     provision_plan = build_provision_plan(
-        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS)
+        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS), data_root=data_root
     )
     provision_result = apply_provision_plan(
         provision_plan,
         full_permissions,
         project_id=project_a_id,
         data_root=data_root,
+        reviewed_plan_id=provision_plan.plan_id,
         which=lambda _name: None,
     )
 
@@ -802,13 +803,30 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         operation: str,
         arguments: dict[str, Any] | None = None,
         grants: dict[str, Any] | None = None,
+        expected: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
+        # P69-07 (round-7 correction, moved from P69-02): every memory-mutation call this
+        # helper makes carries a real `owner_scope` -- P69-07's own ownership contract
+        # (subsection a) accepts `owner_scope=None` gracefully (legacy default), so this
+        # is additive, never a behavior change to what the dashboard already accepts.
+        # M08 (T024): a `project`-kind owner's id must equal this request's own
+        # URL-selected project id, not the filesystem root path -- the dashboard
+        # boundary now rejects a mismatched id outright.
+        final_arguments = dict(arguments or {})
+        if operation.startswith("memory_") and "owner_scope" not in final_arguments:
+            final_arguments["owner_scope"] = {
+                "kind": "project",
+                "id": project_id,
+            }
+        if operation.startswith("memory_"):
+            memory_mutation_arguments_sent.append(dict(final_arguments))
         body = json.dumps(
             {
                 "schema_version": 1,
                 "operation": operation,
-                "arguments": arguments or {},
+                "arguments": final_arguments,
                 "grants": grants or {},
+                "expected": expected or {},
                 "request_id": str(uuid.uuid4()),
             }
         ).encode("utf-8")
@@ -824,6 +842,27 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         )
         return resp.status, json.loads(resp.read())
 
+    def _poll_operation(
+        base_url: str,
+        project_id: str,
+        cookie: str,
+        operation_id: str,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            resp = _get(
+                f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+                headers={"Cookie": cookie},
+            )
+            if resp.status == 200:
+                payload = json.loads(resp.read())
+                if (payload.get("data") or {}).get("status") == "terminal":
+                    return payload
+            time.sleep(0.05)
+        return None
+
     def _snapshot(
         base_url: str, project_id: str, cookie: str, section: str, **query: str
     ) -> tuple[int, dict[str, Any]]:
@@ -837,6 +876,10 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
     timings_ms: dict[str, float] = {}
     coverage: dict[str, bool] = {}
     errors: list[str] = []
+    # P69-07 (round-7 correction): every `_action()` call whose operation starts with
+    # "memory_" records its actual sent arguments here, so a caller can assert
+    # `owner_scope` was really on the wire, not just injected in the code.
+    memory_mutation_arguments_sent: list[dict[str, Any]] = []
     grants_all = {"cache_write": True, "artifact_write": True, "download": True}
 
     def _mark(stage: str, ok: bool, detail: str = "") -> None:
@@ -886,7 +929,9 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         ),
     ):
         server, ctx, token = create_dashboard_server({})
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         try:
             base_url = ctx.launch_origin
@@ -1022,11 +1067,10 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                 },
                 grants=grants_all,
             )
-            handoff_id = body.get("data", {}).get("handoff_id")
-            session_capability = body.get("data", {}).get("session_capability")
+            content_hash = body.get("data", {}).get("handoff_id")
             send_status = None
-            send_body: dict[str, Any] = {}
-            if status == 200 and handoff_id and session_capability:
+            handoff_delivered = False
+            if status == 200 and content_hash:
                 send_status, send_body = _action(
                     base_url,
                     project_id,
@@ -1034,16 +1078,24 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                     csrf,
                     operation="handoff_send",
                     arguments={
-                        "handoff_id": handoff_id,
-                        "session_capability": session_capability,
+                        "run_id": run_id,
+                        "agent_id": "ui-journey-agent",
+                        "finding_ids": finding_ids,
+                        "handoff_id": content_hash,
                     },
                     grants=grants_all,
                 )
+                operation_id = send_body.get("data", {}).get("operation_id")
+                if send_status == 202 and operation_id:
+                    terminal = _poll_operation(
+                        base_url, project_id, cookie, operation_id
+                    )
+                    outcome = ((terminal or {}).get("data") or {}).get("payload") or {}
+                    handoff_delivered = outcome.get("status") == "success"
             timings_ms["handoff"] = round((time.monotonic() - start) * 1000, 3)
             _mark(
                 "handoff",
-                send_status == 200
-                and send_body.get("data", {}).get("state") == "delivered",
+                handoff_delivered,
                 f"preview_status={status} send_status={send_status}",
             )
 
@@ -1165,6 +1217,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         "timings_ms": timings_ms,
         "coverage": coverage,
         "errors": errors,
+        "memory_mutation_arguments_sent": memory_mutation_arguments_sent,
         "blockers": [
             (
                 "actual pixel layout at 360px/1280px and a real visual "

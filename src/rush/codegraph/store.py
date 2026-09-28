@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
+
+from rush.sqlite_util import ClosingConnection
 
 
 @dataclass(frozen=True)
@@ -28,13 +31,23 @@ class GraphEdge:
 class CodeGraphStore:
     """Manages SQLite storage for symbols, classes, functions, and call graph edges."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
+        """`read_only=True` opens an existing index for queries only: no
+        directory, database or table is ever created (T27)."""
         self.db_path = db_path.resolve()
+        self.read_only = read_only
+        if read_only:
+            if not self.db_path.is_file():
+                raise FileNotFoundError(f"no code graph index at {self.db_path}")
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+        if self.read_only:
+            uri = f"file:{urllib.parse.quote(str(self.db_path))}?mode=ro"
+            return sqlite3.connect(uri, uri=True, factory=ClosingConnection)
+        return sqlite3.connect(str(self.db_path), factory=ClosingConnection)
 
     def _init_db(self) -> None:
         with self._get_conn() as conn:

@@ -10,7 +10,7 @@ Provider resume returns canonical `ToolResult`: `ok` only for a successful suppo
 
 ## Continuity outcome rules
 
-The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` carrying a `trust_tier` (Phase 61's unified typed-artifact schema — never `STATED` on entry, replacing the earlier binary quarantine flag), dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
+The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save, and `error` for invalid operations, invalid checkpoint names, and a restore of a checkpoint that does not exist ("Session checkpoint 'NAME' was not found."). `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` carrying a `trust_tier` (Phase 61's unified typed-artifact schema — never `STATED` on entry, replacing the earlier binary quarantine flag), dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
 
 Context operations use `ok` for a bounded pack or recovered handle and `skipped` for insufficient budget or a missing handle. Their `metadata.context_envelope` identifies selected evidence, local token values, omissions, and recovery state.
 
@@ -91,6 +91,36 @@ In legacy TypedDicts, severities were `"info"`, `"warn"`, `"error"`. Under **Pha
 - `schema_version: "1.0.0"`
 - Unknown top-level keys are rejected with `ValidationErrorV1(code="UNKNOWN_TOP_LEVEL_KEY")`.
 - Non-core fields (`metrics`, `artifacts`, `metadata`, `review_kind`, `review_provider`) reside within `extensions: dict[str, Any]`.
+
+## Phase 70 T16: Scope, Per-Engine Outcomes & Recoverable Output
+
+`metadata.engines` is a list of one entry per engine a catalog tool ran (or refused to run): `engine`, `executable` (`{path, sha256, reason}`, `path`/`sha256` null when never spawned), `version`/`version_unavailable_reason`, `config` (`{path, sha256, reason}`), `analysis_environment` (`{mode: "not_applicable"}` when not applicable), `status`, `summary`, `reason`, `cwd`, `spawns` (`[{kind, path, cwd}, ...]`), and `scope`.
+
+`metadata.scope` (v1) describes what was actually analyzed: `{"version": 1, "kind": "file" | "files" | "aggregate", "coverage": "none" | "partial" | ... | "unavailable", "reason": "...", "logical_root": "...", "matched_file_count": N, "requested_targets": [...]}`. A result that examined nothing (missing target, no supported targets, no git selection matches) reports `coverage: "none"` with the exact reason (`target_not_found`, `no_supported_targets`, `staged_selection`, etc.); a multi-child result's `kind: "aggregate"` scope unions each child's coverage and requested targets.
+
+`metadata.delivery` (`schema_version: 1`) describes a paginated/oversized result's actual delivery state: `complete` (whether this response has everything), `result_handle` (null unless a fuller payload was cached), `view` (`"compact"` or `"bytes"`), `next_cursor` (null when complete), `max_bytes`, and `full_result_bytes`. An error delivery additionally carries `analysis_status` and never a `result_handle`. A malformed or out-of-range request is rejected with one of: `RESULT_VIEW_INVALID`, `RESULT_CURSOR_INVALID`, `RESULT_BUDGET_TOO_SMALL` (even zero findings do not fit the budget), `RESULT_VIEW_CACHE_CONFLICT`, `RESULT_VIEW_REQUIRES_CACHE_WRITE`, `RESULT_MISSING`, or `RESULT_STORE_FAILED`.
+
+`rush cache clean` prints `Purged N cached result(s).` (`N` is `0` when the cache database does not exist, without creating one).
+
+## Phase 70 T19: Memory Receipts
+
+`metadata.memory` (legacy) / `extensions.metadata.memory` (ToolResultV1) attributes exactly which memory artifacts a result actually read or wrote -- identity and verb only, never content: `{"version": 1, "used": [...], "written": [...]}`. Each entry in `used` (a recall/ask/restore-style read) and `written` (a write/promote/observation-style commit) has the same shape: `{"id": "<artifact_id>", "revision": <int>, "source": "<string>", "operation": "<string>"}`. Both arrays are deduplicated to one entry per `(id, revision, operation)`, first use first; a citation of the same artifact from two different targets in one result still yields one receipt. The `memory` member is omitted entirely (not an empty object) when a tool touches no memory at all. A multi-child aggregate result unions its children's receipts the same way, first use first. Observed `operation` values include `recall`, `ask`, `write`, `promote`, `observation`, and `restore`; a checkpoint restore that falls back to a migrated checkpoint-journal row (rather than a fresh write) reports it as a `used` entry with `operation: "restore"`.
+
+On `rush scan resume`, `metadata.cache.original_memory` holds the retained (unre-executed) children's own receipts from the prior run, in the same `{"version": 1, "used": [...], "written": [...]}` shape; `metadata.memory` holds only the current resume attempt's own receipts, never blended with the retained children's.
+
+## Phase 70 T7: Post-edit hook result
+
+The opt-in post-edit hook (`rush agent hook claude|codex`) prints a bounded plain-text report to the host's context field, not a JSON `ToolResult`, so the model reads it without another call. Fixed lines, in order:
+
+- `Rush post-edit check (invocation <hex>)` -- a fresh `uuid4().hex` per event.
+- `scope: <what was checked>` -- `edited file <relative path>` when exactly one edited path resolves inside the activated project, or `project root <root> (<reason>)` when it cannot (`the event names several edited files`, or `the event carries no trustworthy edited path` -- the `apply_patch` case).
+- `overall: <status>` -- `ok`, `warn`, `fail`, `error`, or `skipped`, plus `; incomplete: N of 6 steps did not run` whenever the hook's own ~25-second internal deadline or a cancellation cut steps short; an incomplete run is never reported clean.
+- `steps:` followed by one line per check step in order -- `format`, `lint`, `typecheck`, `dead`, `slop`, `test` -- each `  <name>: <status>`, with its own one-line summary appended when the step reported one, and `(not reported)` or `(<disposition>: <cause>)` when a step never ran.
+- one `excluded edited path (outside the project or via a symlink): <raw path>` line per excluded path.
+- when the connection's `--hook-result-cache` stored the full result: `full result: result_handle <handle>` followed by the recovery calls, `rush_status(operation="result", result_handle="<handle>")` or `rush status <root> --result <handle> --json`; otherwise `full result: rush check <root> --json` (preceded by `recovery: <reason>` if storing was attempted and failed).
+- `findings (shown M of N):` then one `- <path[:line]> <rule> [<severity>] <message>` line per shown finding, worst severity first, as many as still fit the report's 8,192-byte budget; `findings: none` when there are none.
+
+A report that cannot fit even its fixed fields, or a check that raised an unhandled exception, prints a single bounded line instead: `Rush post-edit check (invocation <hex>) did not complete: <reason>. Full result: rush check <root> --json`; if even that does not fit, it shortens further to `Rush post-edit check (invocation <hex>) did not complete. Run rush check --json in the project.`
 
 ## Phase 50a Result Shapes
 

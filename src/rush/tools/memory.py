@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import json
+import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 from ..memory.consolidation import consolidate_episodes
 from ..memory.embeddings import EmbeddingConfig
@@ -18,7 +21,11 @@ from ..memory.handoff import (
     receive_handoff,
 )
 from ..memory.intent import check_intent, record_intent, supersede_intent
-from ..memory.maintenance import MaintenanceTask, run_maintenance_cycle
+from ..memory.maintenance import (
+    MaintenanceTask,
+    preview_maintenance_candidates,
+    run_maintenance_cycle,
+)
 from ..memory.recipes import record_recipe, record_recipe_outcome, resolve_recipe
 from ..memory.relations import add_relation, related_artifacts
 from ..memory.retrieval import (
@@ -33,17 +40,34 @@ from ..memory.retrieval import DEFAULT_LIMIT as _COMPACT_DEFAULT_LIMIT
 from ..memory.store import (
     MemoryArtifact,
     MemoryFamily,
+    MemoryMigrationRequiredError,
     MemoryScopeError,
+    MemoryStoreUnreadableError,
     MemorySubject,
+    OwnerScope,
+    OwnerScopeError,
     SignatureMismatchError,
     TrojanSourceFoundError,
+    TrustTier,
     TypedArtifactStore,
     VersionConflictError,
+    _inspect_text_for_trojan_chars,
+    _row_to_artifact,
+    artifact_version_sources,
+    collect_committed_writes,
+    compute_content_signature,
+    internal_source_exclusion_sql,
+    legacy_owner_scope,
+    owner_scope_for_row,
+    readonly_state_code,
+    readonly_view_reason,
+    store_generation,
 )
 from ..memory.trust import default_entry_tier
 from ..permissions import ExecutionPermissions, check_permissions
 from ..token_economy.telemetry import TelemetryStore
 from .base import ToolFn, ToolResult
+from .routing import attach_memory_attribution, memory_block, memory_receipt
 
 MemoryOperation = Literal[
     "ask",
@@ -125,6 +149,13 @@ _CODE_STATUS: dict[str, str] = {
     "E_EMBEDDING_UNAVAILABLE": "warn",
     "UNRESOLVED": "warn",
     "E_SCOPE": "fail",
+    # P69-07 ownership contract: an owner mismatch is a rejected mutation, exactly
+    # like E_VERSION -- deliberately distinct from E_SCOPE, which means wrong `subject`.
+    "E_OWNER": "fail",
+    # T20 read-only overview: an unreadable store is an error (exit 2), never a warn.
+    "E_STORE_CORRUPT": "error",
+    "E_SCHEMA_UNSUPPORTED": "error",
+    "E_STORE_BUSY": "error",
 }
 _COMPACT_REQUEST_KEYS = {
     "view",
@@ -213,10 +244,57 @@ _HANDOFF_REQUEST_KEYS = {
     "handoff_id",
 }
 _HANDOFF_ACTIONS = {"prepare", "dispatch", "status"}
-_DELETE_REQUEST_KEYS = {"artifact_ids", "expected_revisions", "scope", "apply"}
+# `owner_scope` (P69-07) is accepted by all three request-gated operations below --
+# each has its own independent allowlist, so adding it to only one would silently
+# reject it on the other two.
+_DELETE_REQUEST_KEYS = {
+    "artifact_ids",
+    "expected_revisions",
+    "scope",
+    "owner_scope",
+    "apply",
+    "receipt_operation_id",
+    "receipt_operation_ids",
+    "required_grants",
+}
 _DELETE_MAX_BATCH = 100
-_EDIT_REQUEST_KEYS = {"scope", "id", "expected_version", "content", "apply"}
-_ARCHIVE_REQUEST_KEYS = {"scope", "id", "expected_version", "apply", "archived"}
+_EDIT_REQUEST_KEYS = {
+    "scope",
+    "id",
+    "expected_version",
+    "content",
+    "owner_scope",
+    "apply",
+    "receipt_operation_id",
+    "required_grants",
+}
+_ARCHIVE_REQUEST_KEYS = {
+    "scope",
+    "id",
+    "expected_version",
+    "owner_scope",
+    "apply",
+    "archived",
+    "receipt_operation_id",
+    "required_grants",
+}
+# T28-D: `write`/`promote`/`maintain` take their data as named parameters; `request`
+# carries only the review contract -- `apply` (default False once a request is sent;
+# `request=None` keeps the legacy apply-immediately behavior), the grants pinned at
+# review time, and (maintain) the previewed candidate set.
+_WRITE_REQUEST_KEYS = {"apply", "required_grants"}
+# T28-D: a TUI promote of a listed row names that row and the version reviewed.
+_PROMOTE_REQUEST_KEYS = _WRITE_REQUEST_KEYS | {"source_id", "expected_version"}
+_MAINTAIN_REQUEST_KEYS = {
+    "apply",
+    "required_grants",
+    "candidate_ids",
+    "expected_revisions",
+}
+_GRANT_NAMES = frozenset(f.name for f in dataclasses.fields(ExecutionPermissions))
+_TRUST_TIERS = frozenset(get_args(TrustTier))
+_FRESHNESS_FILTERS = {"fresh", "stale"}
+_LIST_SCAN_PAGE = 512
 
 # Subject -> family mapping (Phase 61 §6.1): active_context/handoff rows, episodic/experience
 # rows, preference/failure/architectural_decision/domain_knowledge/memory rows, skill_pattern/skill rows.
@@ -240,13 +318,17 @@ class MemoryTool(ToolFn):
 
     name = "memory"
 
+    def __init__(self, readonly_store: TypedArtifactStore | None = None) -> None:
+        # R20.G8: a local read surface (dashboard GET) passes an
+        # `open_readonly_view()` store; `expand`/`related` then read through it
+        # instead of constructing a writable `TypedArtifactStore(root)`.
+        self._readonly_store = readonly_store
+
     @property
     def mcp_description(self) -> str:
-        return (
-            "Query, write, or promote a cross-tool memory artifact in the typed artifact "
-            "store. Returns {status, findings[], summary}; write/promote/maintain/verify_attempt "
-            "require explicit permissions."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["memory"].mcp_description
 
     def __call__(
         self,
@@ -264,6 +346,7 @@ class MemoryTool(ToolFn):
         task: MaintenanceTask | None = None,
         batch_size: int = 500,
         include_archived: bool = False,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
         allow_cache_write: bool = False,
         allow_artifact_write: bool = False,
         allow_build: bool = False,
@@ -272,6 +355,11 @@ class MemoryTool(ToolFn):
         allow_slow: bool = False,
         allow_browser: bool = False,
         request: dict[str, Any] | None = None,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         return self.run(
             path,
@@ -288,6 +376,7 @@ class MemoryTool(ToolFn):
             task=task,
             batch_size=batch_size,
             include_archived=include_archived,
+            owner_scope=owner_scope,
             permissions=ExecutionPermissions(
                 cache_write=allow_cache_write,
                 artifact_write=allow_artifact_write,
@@ -298,6 +387,11 @@ class MemoryTool(ToolFn):
                 browser=allow_browser,
             ),
             request=request,
+            invocation_id=invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
         )
 
     def run(
@@ -317,12 +411,36 @@ class MemoryTool(ToolFn):
         task: MaintenanceTask | None = None,
         batch_size: int = 500,
         include_archived: bool = False,
+        # P69-07: `write`/`promote` take their inputs as named parameters (not a
+        # request dict with an allowlist), so ownership has to be a real parameter
+        # here, threaded through the dispatch lambdas below, to reach storage at all.
+        owner_scope: dict[str, str] | OwnerScope | None = None,
         permissions: ExecutionPermissions | None = None,
         request: dict[str, Any] | None = None,
+        receipt_operation_ids: dict[str, str] | None = None,
+        # M11: the public invocation boundary. A caller reusing the same `invocation_id`
+        # (a genuine retry of this exact call) dedupes against the earlier telemetry row
+        # instead of minting a fresh identity every call; two distinct calls (the caller
+        # omits `invocation_id`, or passes a different one) each count. `project_id`/
+        # `run_id`/`agent_id`/`session_id` are pure caller-supplied attribution, threaded
+        # unchanged into retrieval's telemetry writes -- never guessed from `path`.
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+        # T28-D reviewable listing: legacy (`request=None`) `list` only. Each set
+        # filter narrows the result to exactly the rows matching it; see `_list_filtered`.
+        trust_filter: str | None = None,
+        source_filter: str | None = None,
+        freshness_filter: str | None = None,
+        archived_filter: bool | None = None,
+        owner_filter: str | None = None,
     ) -> ToolResult:
         started = time.monotonic()
         root = Path(path).resolve()
         granted = permissions or ExecutionPermissions()
+        real_invocation_id = invocation_id or str(uuid.uuid4())
 
         if operation not in VALID_OPERATIONS:
             return self._result(
@@ -331,6 +449,16 @@ class MemoryTool(ToolFn):
                 f"Unsupported memory operation: {operation}.",
                 operation=str(operation),
             )
+        list_filters = {
+            "trust_filter": trust_filter,
+            "source_filter": source_filter,
+            "freshness_filter": freshness_filter,
+            "archived_filter": archived_filter,
+            "owner_filter": owner_filter,
+        }
+        filter_error = self._list_filter_error(operation, request, list_filters)
+        if filter_error:
+            return self._result(started, "error", filter_error, operation=operation)
 
         dispatch_table = {
             "ask": lambda: (
@@ -343,6 +471,11 @@ class MemoryTool(ToolFn):
                     "ask",
                     request,
                     granted,
+                    invocation_id=real_invocation_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
                 )
                 if request is not None
                 else self._query(
@@ -359,6 +492,11 @@ class MemoryTool(ToolFn):
                     "recall",
                     request,
                     granted,
+                    invocation_id=real_invocation_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
                 )
                 if request is not None
                 else self._query(
@@ -375,8 +513,29 @@ class MemoryTool(ToolFn):
                     "list",
                     request,
                     granted,
+                    invocation_id=real_invocation_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
                 )
                 if request is not None
+                else self._list_filtered(
+                    started,
+                    root,
+                    subject,
+                    query,
+                    session_allowlist,
+                    include_archived,
+                    trust_filter=trust_filter,
+                    source_filter=source_filter,
+                    freshness_filter=freshness_filter,
+                    archived_filter=archived_filter,
+                    owner_filter=owner_filter,
+                )
+                # T28-D: an unqueried list browses every live row of `subject`.
+                if not query
+                or any(value is not None for value in list_filters.values())
                 else self._query(
                     started,
                     root,
@@ -388,7 +547,16 @@ class MemoryTool(ToolFn):
                 )
             ),
             "expand": lambda: self._expand(
-                started, root, session_allowlist, request, granted
+                started,
+                root,
+                session_allowlist,
+                request,
+                granted,
+                invocation_id=real_invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
             ),
             "write": lambda: self._run_write(
                 started,
@@ -399,6 +567,8 @@ class MemoryTool(ToolFn):
                 symbol_ref,
                 source_kind,
                 granted,
+                owner_scope,
+                request,
             ),
             "promote": lambda: self._run_promote(
                 started,
@@ -411,9 +581,12 @@ class MemoryTool(ToolFn):
                 user_stated,
                 candidate_sources,
                 granted,
+                receipt_operation_ids,
+                owner_scope,
+                request,
             ),
             "maintain": lambda: self._run_maintain(
-                started, root, task, batch_size, granted
+                started, root, task, batch_size, granted, owner_scope, request
             ),
             "link": lambda: self._link(started, root, granted, request),
             "related": lambda: self._related(started, root, session_allowlist, request),
@@ -441,7 +614,228 @@ class MemoryTool(ToolFn):
             "edit": lambda: self._run_edit(started, root, granted, request),
             "archive": lambda: self._run_archive(started, root, granted, request),
         }
-        return dispatch_table[operation]()
+        with collect_committed_writes() as committed:
+            result = dispatch_table[operation]()
+        if operation in _MUTATION_VIEW_OPERATIONS:
+            result = _with_mutation_view(root, result, committed)
+        return cast(
+            ToolResult,
+            attach_memory_attribution(
+                result, _memory_attribution(root, operation, result, committed)
+            ),
+        )
+
+    @staticmethod
+    def _list_filter_error(
+        operation: str, request: dict[str, Any] | None, filters: dict[str, Any]
+    ) -> str:
+        """Validate T28-D listing filters; empty string when valid. A filter is never
+        silently ignored: one sent to any other operation, or with `request`, is an
+        error rather than an unfiltered result."""
+        present = sorted(name for name, value in filters.items() if value is not None)
+        if not present:
+            return ""
+        if operation != "list" or request is not None:
+            return (
+                f"{', '.join(present)} apply only to legacy memory list (no request)."
+            )
+        trust = filters["trust_filter"]
+        if trust is not None and trust not in _TRUST_TIERS:
+            return f"trust_filter must be one of {sorted(_TRUST_TIERS)}."
+        source = filters["source_filter"]
+        if source is not None and (not isinstance(source, str) or not source):
+            return "source_filter must be a non-empty string."
+        freshness = filters["freshness_filter"]
+        if freshness is not None and freshness not in _FRESHNESS_FILTERS:
+            return f"freshness_filter must be one of {sorted(_FRESHNESS_FILTERS)}."
+        archived = filters["archived_filter"]
+        if archived is not None and not isinstance(archived, bool):
+            return "archived_filter must be a boolean."
+        owner = filters["owner_filter"]
+        if owner is not None and not (
+            isinstance(owner, str) and all(owner.partition(":")[0::2])
+        ):
+            return "owner_filter must be 'kind:id'."
+        return ""
+
+    def _list_filtered(
+        self,
+        started: float,
+        root: Path,
+        subject: MemorySubject | None,
+        query: str,
+        session_allowlist: list[str] | None,
+        include_archived: bool,
+        *,
+        trust_filter: str | None,
+        source_filter: str | None,
+        freshness_filter: str | None,
+        archived_filter: bool | None,
+        owner_filter: str | None = None,
+    ) -> ToolResult:
+        """T28-D reviewable `list`: exactly the `subject` rows matching every set filter,
+        read through `open_readonly_view()` (never creates `.rush/` or a DB).
+
+        - `source_filter` names the one source to list (the caller's own explicit
+          scope, same authority as `session_allowlist`); unset, the allowlist scopes.
+        - `trust_filter`: exact trust tier. `freshness_filter`: `"fresh"`/`"stale"`
+          against the stored `stale` marker the staleness sweep maintains.
+        - `archived_filter`: `True` only archived rows, `False` only live rows; unset
+          falls back to `include_archived`. Expired rows are never listed.
+        - `owner_filter`: `"kind:id"`, exactly the rows whose owner scope (a legacy
+          row resolves to this project's own owner) matches.
+        - A non-empty `query` further keeps only the rows its FTS match returns.
+        Every returned row passes `recall()`'s signature and Trojan-source checks."""
+        if not subject:
+            return self._result(
+                started, "error", "memory list requires subject.", operation="list"
+            )
+        if not session_allowlist:
+            return self._result(
+                started,
+                "skipped",
+                "memory list requires a non-empty session_allowlist "
+                "(fail-closed, no default cross-session access).",
+                operation="list",
+            )
+        view, state = TypedArtifactStore.open_readonly_view(root)
+        if state is not None:
+            return self._result(
+                started, "error", readonly_view_reason(state), operation="list"
+            )
+        if view is None:
+            return self._result(
+                started, "ok", "Found 0 memory artifact(s).", operation="list", raw=[]
+            )
+        want_archived = include_archived if archived_filter is None else archived_filter
+        try:
+            rows: list[sqlite3.Row] = []
+            offset = 0
+            while True:
+                page = view.scope_artifacts(
+                    subject,
+                    source_allowlist=[source_filter]
+                    if source_filter
+                    else session_allowlist,
+                    trust_tiers=[trust_filter] if trust_filter else None,
+                    include_archived=want_archived,
+                    scan_offset=offset,
+                    scan_limit=_LIST_SCAN_PAGE,
+                )
+                rows.extend(page)
+                if len(page) < _LIST_SCAN_PAGE:
+                    break
+                offset += _LIST_SCAN_PAGE
+            matched = (
+                {
+                    a.id
+                    for a in view.search(subject, query, include_archived=want_archived)
+                }
+                if query
+                else None
+            )
+        finally:
+            view.close()
+        artifacts: list[MemoryArtifact] = []
+        for row in rows:
+            if archived_filter is True and row["archived_at"] is None:
+                continue
+            if freshness_filter is not None and bool(row["stale"]) != (
+                freshness_filter == "stale"
+            ):
+                continue
+            if matched is not None and row["id"] not in matched:
+                continue
+            artifact = _row_to_artifact(
+                row, default_owner_scope=legacy_owner_scope(root)
+            )
+            if owner_filter is not None and (
+                artifact.owner_scope is None
+                or f"{artifact.owner_scope.kind}:{artifact.owner_scope.id}"
+                != owner_filter
+            ):
+                continue
+            if artifact.trust_tier == "STATED" and (
+                artifact.signature is None
+                or compute_content_signature(artifact.content) != artifact.signature
+            ):
+                return self._result(
+                    started,
+                    "error",
+                    f"signature mismatch for STATED artifact {artifact.id}",
+                    operation="list",
+                )
+            findings = _inspect_text_for_trojan_chars(
+                json.dumps(artifact.content, ensure_ascii=False)
+            )
+            if findings:
+                return self._result(
+                    started,
+                    "error",
+                    f"Trojan Source characters detected in artifact {artifact.id}: "
+                    f"{findings}",
+                    operation="list",
+                )
+            artifacts.append(artifact)
+        return self._result(
+            started,
+            "ok",
+            f"Found {len(artifacts)} memory artifact(s).",
+            operation="list",
+            raw=[self._artifact_dict(a) for a in artifacts],
+        )
+
+    @staticmethod
+    def _parse_mutation_request(
+        request: dict[str, Any] | None, valid_keys: set[str]
+    ) -> tuple[bool, list[str] | None, list[str] | None, str]:
+        """T28-D review contract for `write`/`promote`/`maintain`: returns
+        `(apply, required_grants, candidate_ids, error)`. `request=None` is the legacy
+        apply-immediately call; a sent request previews unless `apply` is True."""
+        if request is None:
+            return True, None, None, ""
+        unknown = set(request) - valid_keys
+        if unknown:
+            return False, None, None, f"unknown request field(s): {sorted(unknown)}"
+        apply = request.get("apply", False)
+        if not isinstance(apply, bool):
+            return False, None, None, "apply must be a boolean."
+        grants, error = _reviewed_grants(request)
+        if error:
+            return False, None, None, error
+        candidate_ids = request.get("candidate_ids")
+        if candidate_ids is not None and not (
+            isinstance(candidate_ids, list)
+            and all(isinstance(c, str) and c for c in candidate_ids)
+            and len(set(candidate_ids)) == len(candidate_ids)
+        ):
+            return False, None, None, "candidate_ids must be unique non-empty IDs."
+        return apply, grants, candidate_ids, ""
+
+    def _grant_refusal(
+        self,
+        started: float,
+        operation: str,
+        grants: list[str],
+        granted: ExecutionPermissions,
+    ) -> ToolResult | None:
+        """Refuse a `write`/`promote`/`maintain` apply whose permissions lack a
+        reviewed grant, before anything is opened for writing."""
+        missing = _missing_grants(grants, granted)
+        if not missing:
+            return None
+        message = _grant_refusal_message(operation, missing)
+        return self._result(
+            started,
+            "skipped",
+            message,
+            operation=operation,
+            raw={
+                "message": message,
+                "required_grants": grants,
+                "missing_grants": missing,
+            },
+        )
 
     def _query(
         self,
@@ -494,6 +888,12 @@ class MemoryTool(ToolFn):
         operation: str,
         request: dict[str, Any],
         granted: ExecutionPermissions,
+        *,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         """MC02 §9.0 bounded `view=compact` mode for `ask`/`recall`/`list`. Only reachable
         when a caller passes `request` — legacy calls (`request=None`) always take `_query()`
@@ -620,6 +1020,11 @@ class MemoryTool(ToolFn):
                 telemetry=telemetry,
                 request_id=f"{operation}:{subject}:{query}:hybrid",
                 event_id="retrieval",
+                invocation_id=invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
                 opt_in=False,
             )
         else:
@@ -636,6 +1041,11 @@ class MemoryTool(ToolFn):
                 telemetry=telemetry,
                 request_id=f"{operation}:{subject}:{query}:{cursor}",
                 event_id="retrieval",
+                invocation_id=invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
                 opt_in=False,
                 cache_write=granted.cache_write,
             )
@@ -649,6 +1059,12 @@ class MemoryTool(ToolFn):
         session_allowlist: list[str] | None,
         request: dict[str, Any] | None,
         granted: ExecutionPermissions,
+        *,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> ToolResult:
         """MC02 §9.0 `expand` operation: exact-byte expansion of one artifact version.
 
@@ -705,7 +1121,11 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = TypedArtifactStore(root)
+        store = (
+            self._readonly_store
+            if self._readonly_store is not None
+            else TypedArtifactStore(root)
+        )
         telemetry = TelemetryStore(root) if granted.cache_write else None
         result = expand_artifact(
             store,
@@ -719,6 +1139,11 @@ class MemoryTool(ToolFn):
             telemetry=telemetry,
             request_id=f"{artifact_id}:{version}:{offset}",
             event_id="expansion",
+            invocation_id=invocation_id,
+            project_id=project_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
             opt_in=False,
             cache_write=granted.cache_write,
         )
@@ -853,7 +1278,11 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = TypedArtifactStore(root)
+        store = (
+            self._readonly_store
+            if self._readonly_store is not None
+            else TypedArtifactStore(root)
+        )
         result = related_artifacts(
             store,
             artifact_id=artifact_id,
@@ -994,6 +1423,31 @@ class MemoryTool(ToolFn):
             metadata={"operation": operation},
         )
 
+    @staticmethod
+    def _parse_owner_scope(
+        value: dict[str, str] | OwnerScope | None, root: Path
+    ) -> OwnerScope | None:
+        """Validate a caller-supplied `owner_scope` (P69-07 subsection a).
+
+        Structural validation only for `user`/`agent`/`session` kinds -- this phase has
+        no identity provider to authenticate an opaque id against. A `project`-kind id
+        written as a filesystem path must be *this* request's own project: a registered
+        project's canonical id is a registry UUID (resolved a layer up, in the dashboard
+        adapter, which is the only layer that knows it), so a UUID passes through here
+        untouched while a path naming a different project is rejected outright.
+        """
+        if value is None:
+            return None
+        owner_scope = OwnerScope.from_value(value)
+        if owner_scope.kind == "project":
+            candidate = Path(owner_scope.id)
+            if candidate.is_absolute() and candidate.resolve() != root:
+                raise ValueError(
+                    f"project-kind owner_scope {owner_scope.id!r} names a different "
+                    f"project than {str(root)!r}"
+                )
+        return owner_scope
+
     def _run_write(
         self,
         started: float,
@@ -1004,15 +1458,32 @@ class MemoryTool(ToolFn):
         symbol_ref: str | None,
         source_kind: SourceKind,
         granted: ExecutionPermissions,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
+        request: dict[str, Any] | None = None,
     ) -> ToolResult:
-        allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
-        if not allowed:
+        apply, grants, _, request_error = self._parse_mutation_request(
+            request, _WRITE_REQUEST_KEYS
+        )
+        if request_error:
             return self._result(
                 started,
-                "skipped",
-                f"Memory write requires {', '.join(missing)}.",
+                "error",
+                request_error,
                 operation="write",
+                raw={"message": request_error},
             )
+        if apply:
+            allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
+            if not allowed:
+                return self._result(
+                    started,
+                    "skipped",
+                    f"Memory write requires {', '.join(missing)}.",
+                    operation="write",
+                )
+            refusal = self._grant_refusal(started, "write", grants or [], granted)
+            if refusal is not None:
+                return refusal
         if not subject or content is None or not source:
             return self._result(
                 started,
@@ -1020,17 +1491,73 @@ class MemoryTool(ToolFn):
                 "memory write requires subject, content, and source.",
                 operation="write",
             )
-        store = TypedArtifactStore(root)
-        stored = store.write(
-            self._build_artifact(subject, content, source, symbol_ref, source_kind)
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation="write"
+            )
+        artifact = self._build_artifact(
+            subject, content, source, symbol_ref, source_kind, owner
         )
+        if not apply:
+            return self._result(
+                started,
+                "ok",
+                f"Preview: would write a new memory artifact to subject '{subject}'.",
+                operation="write",
+                raw=_new_artifact_preview(artifact, root, grants, granted),
+            )
+        store = TypedArtifactStore(root)
+        stored = store.write(artifact)
+        raw = self._artifact_dict(stored)
+        if grants is not None:
+            raw["required_grants"] = grants
         return self._result(
             started,
             "ok",
             f"Wrote memory artifact to subject '{subject}'.",
             operation="write",
-            raw=self._artifact_dict(stored),
+            raw=raw,
         )
+
+    @staticmethod
+    def _promote_source_conflict(
+        root: Path, source_id: str, expected_version: int
+    ) -> dict[str, Any] | None:
+        """T28-D: the reviewed promote source must still be the live row at the
+        reviewed version; otherwise the candidate would carry content nobody
+        reviewed (or revive an archived row)."""
+        base = {"source_id": source_id, "expected_version": expected_version}
+        view, store_state = TypedArtifactStore.open_readonly_view(root)
+        if store_state is not None:
+            return {
+                **base,
+                "actual_version": None,
+                "reason": f"the store is {store_state}: {readonly_view_reason(store_state)}",
+            }
+        try:
+            current = view.get_current(source_id) if view is not None else None
+        finally:
+            if view is not None:
+                view.close()
+        if current is None:
+            return {**base, "actual_version": None, "reason": "it no longer exists"}
+        if current.archived_at is not None:
+            return {
+                **base,
+                "actual_version": current.artifact_version,
+                "reason": "it was archived",
+            }
+        if current.artifact_version != expected_version:
+            return {
+                **base,
+                "actual_version": current.artifact_version,
+                "reason": (
+                    f"reviewed v{expected_version}, now v{current.artifact_version}"
+                ),
+            }
+        return None
 
     def _run_promote(
         self,
@@ -1044,15 +1571,50 @@ class MemoryTool(ToolFn):
         user_stated: bool,
         candidate_sources: list[str] | None,
         granted: ExecutionPermissions,
+        receipt_operation_ids: dict[str, str] | None = None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
+        request: dict[str, Any] | None = None,
     ) -> ToolResult:
-        allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
-        if not allowed:
+        apply, grants, _, request_error = self._parse_mutation_request(
+            request, _PROMOTE_REQUEST_KEYS
+        )
+        source_id = (request or {}).get("source_id")
+        expected_version = (request or {}).get("expected_version")
+        if not request_error and (source_id is None) != (expected_version is None):
+            request_error = "source_id and expected_version are given together."
+        if (
+            not request_error
+            and source_id is not None
+            and not (
+                isinstance(source_id, str)
+                and source_id
+                and type(expected_version) is int
+                and expected_version >= 1
+            )
+        ):
+            request_error = (
+                "source_id must be a non-empty ID and expected_version a positive int."
+            )
+        if request_error:
             return self._result(
                 started,
-                "skipped",
-                f"Memory promote requires {', '.join(missing)}.",
+                "error",
+                request_error,
                 operation="promote",
+                raw={"message": request_error},
             )
+        if apply:
+            allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
+            if not allowed:
+                return self._result(
+                    started,
+                    "skipped",
+                    f"Memory promote requires {', '.join(missing)}.",
+                    operation="promote",
+                )
+            refusal = self._grant_refusal(started, "promote", grants or [], granted)
+            if refusal is not None:
+                return refusal
         if not subject or content is None or not source:
             return self._result(
                 started,
@@ -1060,33 +1622,71 @@ class MemoryTool(ToolFn):
                 "memory promote requires subject, content, and source.",
                 operation="promote",
             )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation="promote"
+            )
         artifact = self._build_artifact(
-            subject, content, source, symbol_ref, source_kind
+            subject, content, source, symbol_ref, source_kind, owner
         )
+        if source_id is not None and isinstance(expected_version, int):
+            stale = self._promote_source_conflict(root, source_id, expected_version)
+            if stale is not None:
+                return self._result(
+                    started,
+                    "fail",
+                    f"Promotion source {source_id} changed since review: {stale['reason']}.",
+                    operation="promote",
+                    raw={"code": "E_VERSION", **stale},
+                )
+        if not apply:
+            preview = _new_artifact_preview(artifact, root, grants, granted)
+            preview["user_stated"] = user_stated
+            preview["candidate_sources"] = list(candidate_sources or [])
+            return self._result(
+                started,
+                "ok",
+                f"Preview: would create a candidate in subject '{subject}' and "
+                "request its promotion to STATED.",
+                operation="promote",
+                raw=preview,
+            )
         store = TypedArtifactStore(root)
-        stored = store.write(artifact)
+        # P69-01.2f/S04: promotion is two separately-committed effects (candidate
+        # creation, then a distinct promotion decision) -- each consumes its own
+        # independently-reserved effect id (`_s04_effect_ids`'s `candidate_create`/
+        # `promotion` keys) so recovery can tell "created" apart from "created and
+        # promoted" via two independently-addressable receipts, never one shared
+        # base id suffixed into two derived strings.
+        reserved = receipt_operation_ids or {}
+        stored = store.write(
+            artifact,
+            receipt_operation_id=reserved.get("candidate_create"),
+        )
         stored, decision = store.promote(
             stored.id,
             user_stated=user_stated,
             candidate_sources=candidate_sources,
+            receipt_operation_id=reserved.get("promotion"),
         )
         summary = (
             f"Promoted subject '{subject}' to STATED."
             if decision.promoted
             else f"Promotion denied for subject '{subject}': {decision.denial_reason}."
         )
+        promote_raw: dict[str, Any] = {
+            "promoted": decision.promoted,
+            "new_tier": decision.new_tier,
+            "denial_reason": decision.denial_reason,
+            "corroboration_count": decision.corroboration_count,
+            "artifact": self._artifact_dict(stored),
+        }
+        if grants is not None:
+            promote_raw["required_grants"] = grants
         return self._result(
-            started,
-            "ok",
-            summary,
-            operation="promote",
-            raw={
-                "promoted": decision.promoted,
-                "new_tier": decision.new_tier,
-                "denial_reason": decision.denial_reason,
-                "corroboration_count": decision.corroboration_count,
-                "artifact": self._artifact_dict(stored),
-            },
+            started, "ok", summary, operation="promote", raw=promote_raw
         )
 
     def _run_maintain(
@@ -1096,6 +1696,8 @@ class MemoryTool(ToolFn):
         task: MaintenanceTask | None,
         batch_size: int,
         granted: ExecutionPermissions,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
+        request: dict[str, Any] | None = None,
     ) -> ToolResult:
         if task is None:
             return self._result(
@@ -1104,22 +1706,133 @@ class MemoryTool(ToolFn):
                 "memory maintain requires task.",
                 operation="maintain",
             )
-        allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
-        if not allowed:
+        apply, grants, candidate_ids, request_error = self._parse_mutation_request(
+            request, _MAINTAIN_REQUEST_KEYS
+        )
+        expected_revisions = (request or {}).get("expected_revisions")
+        if not request_error and expected_revisions is not None:
+            if not (
+                isinstance(expected_revisions, dict)
+                and all(
+                    isinstance(k, str)
+                    and k
+                    and isinstance(v, int)
+                    and not isinstance(v, bool)
+                    and v >= 1
+                    for k, v in expected_revisions.items()
+                )
+            ):
+                request_error = "expected_revisions must map non-empty IDs to versions."
+            elif candidate_ids is not None and set(candidate_ids) != set(
+                expected_revisions
+            ):
+                request_error = "expected_revisions must cover exactly candidate_ids."
+        if request_error:
             return self._result(
                 started,
-                "skipped",
-                f"Memory maintain requires {', '.join(missing)}.",
+                "error",
+                request_error,
+                operation="maintain",
+                raw={"message": request_error},
+            )
+        if apply:
+            allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
+            if not allowed:
+                return self._result(
+                    started,
+                    "skipped",
+                    f"Memory maintain requires {', '.join(missing)}.",
+                    operation="maintain",
+                )
+            refusal = self._grant_refusal(started, "maintain", grants or [], granted)
+            if refusal is not None:
+                return refusal
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation="maintain"
+            )
+        if owner is None:
+            return self._result(
+                started,
+                "error",
+                "memory maintain requires owner_scope (M09: no silent "
+                "legacy-owner default at this boundary).",
                 operation="maintain",
             )
-        result = run_maintenance_cycle(task, batch_size=batch_size, project_root=root)
+        if not apply:
+            try:
+                candidates = preview_maintenance_candidates(
+                    task,
+                    batch_size=batch_size,
+                    project_root=root,
+                    owner_scope=owner,
+                    candidate_ids=candidate_ids,
+                )
+            except (MemoryStoreUnreadableError, MemoryMigrationRequiredError) as exc:
+                return self._result(
+                    started,
+                    "error",
+                    str(exc),
+                    operation="maintain",
+                    raw={"message": str(exc)},
+                )
+            ids = [str(c["id"]) for c in candidates]
+            effective = grants if grants is not None else ["cache_write"]
+            return self._result(
+                started,
+                "ok",
+                f"Preview: maintenance cycle '{task}' would visit {len(ids)} row(s).",
+                operation="maintain",
+                raw={
+                    "task": task,
+                    "apply": False,
+                    "candidate_ids": ids,
+                    "target_ids": ids,
+                    "expected_revisions": {
+                        str(c["id"]): c["artifact_version"] for c in candidates
+                    },
+                    "owner_scope": {"kind": owner.kind, "id": owner.id},
+                    "required_grants": effective,
+                    "missing_grants": _missing_grants(effective, granted),
+                },
+            )
+        # Restricted only when a reviewed candidate set was sent; otherwise the
+        # legacy unrestricted call is unchanged.
+        restriction: dict[str, Any] = (
+            {} if candidate_ids is None else {"candidate_ids": candidate_ids}
+        )
+        if expected_revisions is not None:
+            restriction["expected_revisions"] = expected_revisions
+        result = run_maintenance_cycle(
+            task,
+            batch_size=batch_size,
+            project_root=root,
+            owner_scope=owner,
+            **restriction,
+        )
+        maintain_raw = dataclasses.asdict(result)
+        if grants is not None:
+            maintain_raw["required_grants"] = grants
+        if candidate_ids is not None:
+            maintain_raw["candidate_ids"] = candidate_ids
+        summary = (
+            f"Maintenance cycle '{task}' processed {result.processed} row(s), "
+            f"changed {result.changed}."
+        )
+        if result.refused:
+            summary += " Refused (changed since review, left unchanged): " + ", ".join(
+                f"{c.id} reviewed v{c.expected}, now "
+                + ("deleted" if c.actual is None else f"v{c.actual}")
+                for c in result.refused
+            )
         return self._result(
             started,
-            "ok",
-            f"Maintenance cycle '{task}' processed {result.processed} row(s), "
-            f"changed {result.changed}.",
+            "warn" if result.refused else "ok",
+            summary,
             operation="maintain",
-            raw=dataclasses.asdict(result),
+            raw=maintain_raw,
         )
 
     def _verify_attempt(
@@ -1909,7 +2622,12 @@ class MemoryTool(ToolFn):
         artifact_ids = request.get("artifact_ids")
         expected_revisions = request.get("expected_revisions")
         scope = request.get("scope")
-        apply = bool(request.get("apply", False))
+        raw_apply = request.get("apply", False)
+        if not isinstance(raw_apply, bool):
+            return self._envelope_result(
+                started, "delete", "E_INPUT", {"message": "apply must be a boolean."}
+            )
+        apply = raw_apply
 
         valid_ids = (
             isinstance(artifact_ids, list)
@@ -1958,6 +2676,18 @@ class MemoryTool(ToolFn):
 
         assert isinstance(expected_revisions, dict)  # narrowed by valid_revisions above
 
+        try:
+            owner = self._parse_owner_scope(request.get("owner_scope"), root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started, "delete", "E_INPUT", {"message": f"invalid owner_scope: {exc}"}
+            )
+        grants, grants_error = _reviewed_grants(request)
+        if grants_error:
+            return self._envelope_result(
+                started, "delete", "E_INPUT", {"message": grants_error}
+            )
+
         if apply:
             allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
             if not allowed:
@@ -1967,18 +2697,31 @@ class MemoryTool(ToolFn):
                     "E_PERMISSION",
                     {"message": f"memory delete apply requires {', '.join(missing)}."},
                 )
+            refused = self._envelope_grant_refusal(started, "delete", grants, granted)
+            if refused is not None:
+                return refused
 
+        receipt_operation_ids = request.get("receipt_operation_ids")
+        if not isinstance(receipt_operation_ids, dict):
+            receipt_operation_ids = None
         store = TypedArtifactStore(root)
         try:
             result = store.delete_batch(
                 artifact_ids,
                 expected_revisions=expected_revisions,
                 scope=scope,
+                owner_scope=owner,
                 apply=apply,
+                receipt_operation_id=request.get("receipt_operation_id"),
+                receipt_operation_ids=receipt_operation_ids,
             )
         except KeyError as exc:
             return self._envelope_result(
                 started, "delete", "E_INPUT", {"message": f"unknown artifact_id: {exc}"}
+            )
+        except OwnerScopeError as exc:
+            return self._envelope_result(
+                started, "delete", "E_OWNER", {"message": str(exc)}
             )
         except MemoryScopeError as exc:
             return self._envelope_result(
@@ -2009,6 +2752,8 @@ class MemoryTool(ToolFn):
         }
         if cleanup:
             data["blob_cleanup"] = cleanup
+        if grants is not None:
+            data["required_grants"] = grants
         return self._envelope_result(started, "delete", "OK", data)
 
     def _run_edit(
@@ -2066,7 +2811,12 @@ class MemoryTool(ToolFn):
         scope = request.get("scope")
         artifact_id = request.get("id")
         expected_version = request.get("expected_version")
-        apply = bool(request.get("apply", False))
+        raw_apply = request.get("apply", False)
+        if not isinstance(raw_apply, bool):
+            return self._envelope_result(
+                started, operation, "E_INPUT", {"message": "apply must be a boolean."}
+            )
+        apply = raw_apply
 
         if scope not in _SUBJECT_FAMILY:
             return self._envelope_result(
@@ -2116,6 +2866,21 @@ class MemoryTool(ToolFn):
                 )
             archived = requested_archived
 
+        try:
+            owner = self._parse_owner_scope(request.get("owner_scope"), root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        grants, grants_error = _reviewed_grants(request)
+        if grants_error:
+            return self._envelope_result(
+                started, operation, "E_INPUT", {"message": grants_error}
+            )
+
         if apply:
             allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
             if not allowed:
@@ -2127,24 +2892,44 @@ class MemoryTool(ToolFn):
                         "message": f"memory {operation} apply requires {', '.join(missing)}."
                     },
                 )
+            refused = self._envelope_grant_refusal(started, operation, grants, granted)
+            if refused is not None:
+                return refused
 
-        store = TypedArtifactStore(root)
+        receipt_operation_id = request.get("receipt_operation_id")
         try:
-            if operation == "edit":
-                result = store.edit(
+            if not apply:
+                # P69-07 subsection f: a preview is genuinely read-only -- it never
+                # constructs a writable `TypedArtifactStore`, whose mere construction
+                # creates `.rush/`, runs the schema script, mints a cursor key, and
+                # (as of this packet) runs the `owner_scope` migration.
+                result = TypedArtifactStore.preview_mutation(
+                    root,
+                    artifact_id,
+                    expected_version=expected_version,
+                    scope=scope,
+                    owner_scope=owner,
+                    operation=operation,
+                )
+            elif operation == "edit":
+                result = TypedArtifactStore(root).edit(
                     artifact_id,
                     content,
                     expected_version=expected_version,
                     scope=scope,
-                    apply=apply,
+                    owner_scope=owner,
+                    apply=True,
+                    receipt_operation_id=receipt_operation_id,
                 )
             else:
-                result = store.archive(
+                result = TypedArtifactStore(root).archive(
                     artifact_id,
                     expected_version=expected_version,
                     scope=scope,
-                    apply=apply,
+                    owner_scope=owner,
+                    apply=True,
                     archived=archived,
+                    receipt_operation_id=receipt_operation_id,
                 )
         except KeyError as exc:
             return self._envelope_result(
@@ -2152,6 +2937,18 @@ class MemoryTool(ToolFn):
                 operation,
                 "E_INPUT",
                 {"message": f"unknown artifact_id: {exc}"},
+            )
+        except MemoryMigrationRequiredError as exc:
+            return self._envelope_result(
+                started, operation, "E_MIGRATION", {"message": str(exc)}
+            )
+        except MemoryStoreUnreadableError as exc:
+            return self._envelope_result(
+                started, operation, exc.code, {"message": str(exc)}
+            )
+        except OwnerScopeError as exc:
+            return self._envelope_result(
+                started, operation, "E_OWNER", {"message": str(exc)}
             )
         except MemoryScopeError as exc:
             return self._envelope_result(
@@ -2162,7 +2959,32 @@ class MemoryTool(ToolFn):
                 started, operation, "E_VERSION", {"message": str(exc)}
             )
 
+        if grants is not None:
+            result = {**result, "required_grants": grants}
         return self._envelope_result(started, operation, "OK", result)
+
+    def _envelope_grant_refusal(
+        self,
+        started: float,
+        operation: str,
+        grants: list[str] | None,
+        granted: ExecutionPermissions,
+    ) -> ToolResult | None:
+        """T28-D: `E_PERMISSION` for an `edit`/`archive`/`delete` apply whose
+        permissions lack a reviewed grant, before any store is opened for writing."""
+        missing = _missing_grants(grants or [], granted)
+        if not missing:
+            return None
+        return self._envelope_result(
+            started,
+            operation,
+            "E_PERMISSION",
+            {
+                "message": _grant_refusal_message(operation, missing),
+                "required_grants": grants,
+                "missing_grants": missing,
+            },
+        )
 
     @staticmethod
     def _build_artifact(
@@ -2171,6 +2993,7 @@ class MemoryTool(ToolFn):
         source: str,
         symbol_ref: str | None,
         source_kind: SourceKind,
+        owner_scope: OwnerScope | None = None,
     ) -> MemoryArtifact:
         return MemoryArtifact(
             id=str(uuid.uuid4()),
@@ -2181,6 +3004,7 @@ class MemoryTool(ToolFn):
             source=source,
             created_at=time.time(),
             symbol_ref=symbol_ref,
+            owner_scope=owner_scope,
         )
 
     @staticmethod
@@ -2207,3 +3031,484 @@ class MemoryTool(ToolFn):
             raw=raw,
             metadata={"operation": operation},
         )
+
+
+# --- T28-D: reviewed grants ----------------------------------------------------------
+#
+# A mutation request may pin the `ExecutionPermissions` grant names reviewed in its
+# preview. Apply is refused, before any store is opened for writing, when the call's
+# own permissions lack any of them.
+
+
+def _reviewed_grants(request: dict[str, Any]) -> tuple[list[str] | None, str]:
+    grants = request.get("required_grants")
+    if grants is None:
+        return None, ""
+    if not isinstance(grants, list) or not all(
+        isinstance(g, str) and g in _GRANT_NAMES for g in grants
+    ):
+        return None, f"required_grants must be a list of {sorted(_GRANT_NAMES)}."
+    return list(grants), ""
+
+
+def _missing_grants(grants: list[str], granted: ExecutionPermissions) -> list[str]:
+    return [g for g in grants if not getattr(granted, g)]
+
+
+def _grant_refusal_message(operation: str, missing: list[str]) -> str:
+    return (
+        f"memory {operation} apply refused: reviewed required_grants not granted: "
+        f"{', '.join(missing)}."
+    )
+
+
+def _new_artifact_preview(
+    artifact: MemoryArtifact,
+    root: Path,
+    grants: list[str] | None,
+    granted: ExecutionPermissions,
+) -> dict[str, Any]:
+    """Read-only preview of a `write`/`promote` that would create a new row: no
+    existing row is targeted (its id is minted at apply time), so `target_ids` and
+    `expected_revisions` are empty."""
+    owner = artifact.owner_scope or legacy_owner_scope(root)
+    effective = grants if grants is not None else ["cache_write"]
+    return {
+        "apply": False,
+        "target_ids": [],
+        "expected_revisions": {},
+        "owner_scope": {"kind": owner.kind, "id": owner.id},
+        "required_grants": effective,
+        "missing_grants": _missing_grants(effective, granted),
+        "draft": {
+            "family": artifact.family,
+            "subject": artifact.subject,
+            "trust_tier": artifact.trust_tier,
+            "source": artifact.source,
+            "symbol_ref": artifact.symbol_ref,
+            "content": artifact.content,
+        },
+    }
+
+
+# --- T19: memory attribution ---------------------------------------------------------
+#
+# `written` is every MemoryArtifact revision the operation committed (noted by the store
+# only after each commit, so a denied, failed or preview-only mutation reports nothing).
+# `used` is every artifact whose identity or content the operation's successful result
+# actually returns -- after its own access checks, never an unreturned candidate.
+
+_Ref = tuple[str, int, str | None]
+
+
+def _ref(
+    entry: Any, *, id_key: str = "id", version_key: str = "version"
+) -> _Ref | None:
+    if not isinstance(entry, dict):
+        return None
+    artifact_id = entry.get(id_key)
+    version = entry.get(version_key)
+    if not isinstance(artifact_id, str) or not isinstance(version, int):
+        return None
+    source = entry.get("source")
+    return artifact_id, version, source if isinstance(source, str) else None
+
+
+def _refs(entries: Any, **keys: str) -> list[_Ref]:
+    if not isinstance(entries, list):
+        return []
+    return [
+        ref for ref in (_ref(entry, **keys) for entry in entries) if ref is not None
+    ]
+
+
+def _plan_check_refs(data: dict[str, Any]) -> list[_Ref]:
+    refs = [
+        ref
+        for check in data.get("checks") or []
+        if isinstance(check, dict)
+        for ref in _refs(check.get("refs"))
+    ]
+    refs.extend(
+        ref
+        for gap in data.get("coverage_gaps") or []
+        if isinstance(gap, dict) and (ref := _ref(gap.get("ref"))) is not None
+    )
+    return refs
+
+
+def _handoff_prepare_refs(data: dict[str, Any]) -> list[_Ref]:
+    delta = data.get("delta") or {}
+    constraints = delta.get("constraints") or {}
+    return _refs(delta.get("changes")) + _refs(constraints.get("intent_refs"))
+
+
+def _envelope_read_refs(operation: str, code: Any, data: dict[str, Any]) -> list[_Ref]:
+    """The artifacts one successful envelope operation returned."""
+    if operation in ("ask", "recall", "list", "related"):
+        return _refs(data.get("items"))
+    if operation == "expand":
+        ref = _ref(data)
+        return [ref] if code == "OK" and ref is not None else []
+    if operation in ("prepare", "resume"):
+        return _refs(data.get("evidence_refs"))
+    if operation == "receive":
+        return _refs(data.get("changes"))
+    if operation == "handoff":
+        return _handoff_prepare_refs(data)
+    if operation == "last_success_diagnose":
+        ref = _ref(data.get("baseline_ref"))
+        return [ref] if ref is not None else []
+    if operation == "plan_checks":
+        return _plan_check_refs(data)
+    if operation == "recipe" and "usable" in data:
+        ref = _ref(data, id_key="recipe_id")
+        return [ref] if ref is not None else []
+    if operation == "intent":
+        ref = _ref(data.get("evidence_ref"))
+        return [ref] if ref is not None else []
+    return []
+
+
+def _read_refs(operation: str, result: ToolResult) -> list[_Ref]:
+    if result.get("status") not in ("ok", "warn"):
+        return []
+    raw = result.get("raw")
+    if isinstance(raw, list):
+        # Legacy (`request=None`) ask/recall/list: the returned artifacts.
+        return _refs(raw, version_key="artifact_version")
+    if isinstance(raw, dict) and isinstance(raw.get("data"), dict):
+        return _envelope_read_refs(operation, raw.get("code"), raw["data"])
+    return []
+
+
+_MUTATION_VIEW_OPERATIONS = frozenset({"write", "promote", "archive", "edit", "delete"})
+
+
+def _with_mutation_view(
+    root: Path, result: ToolResult, committed: list[dict[str, Any]]
+) -> ToolResult:
+    """T27: `changed` (the revisions this call committed, per id) plus
+    `readback` (each changed id's current row, re-read after the write), or
+    `unchanged` with the reason when nothing was committed. Added to
+    `raw.data` for an operation envelope, else to `raw`."""
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        return result
+    envelope = "operation" in raw and "data" in raw
+    payload = raw["data"] if envelope else raw
+    if not isinstance(payload, dict):
+        return result
+    view: dict[str, Any]
+    if committed:
+        changed: dict[str, dict[str, Any]] = {}
+        for entry in committed:
+            prior = changed.get(entry["id"])
+            kind = (
+                entry["kind"] if prior is None else f"{prior['kind']}, {entry['kind']}"
+            )
+            changed[entry["id"]] = {"revision": entry["revision"], "kind": kind}
+        store = TypedArtifactStore(root)
+        memories, _generation = store.snapshot_memories(include_internal=True)
+        archived = {m["id"]: m["archived"] for m in memories if m["id"] in changed}
+        view = {
+            "changed": changed,
+            "readback": {
+                i: _readback_row(store.get_current(i), archived.get(i)) for i in changed
+            },
+        }
+    elif payload.get("applied") is False:
+        view = {"unchanged": "preview only (apply=false); nothing committed"}
+    elif payload.get("promoted") is False:
+        view = {"unchanged": f"promotion denied: {payload.get('denial_reason')}"}
+    else:
+        view = {"unchanged": str(payload.get("message") or result.get("summary"))}
+    updated = {**payload, **view}
+    new_raw = {**raw, "data": updated} if envelope else updated
+    return cast(ToolResult, {**result, "raw": new_raw})
+
+
+def _readback_row(
+    artifact: MemoryArtifact | None, archived: bool | None
+) -> dict[str, Any]:
+    """`archived` comes from the archived-aware inventory reader
+    (`snapshot_memories`); a row that reader no longer lists is not present."""
+    if artifact is None or archived is None:
+        return {"present": False}
+    return {
+        "present": True,
+        "archived": archived,
+        "revision": artifact.artifact_version,
+        "subject": artifact.subject,
+        "trust_tier": artifact.trust_tier,
+        "source": artifact.source,
+    }
+
+
+def _memory_attribution(
+    root: Path,
+    operation: str,
+    result: ToolResult,
+    committed: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The operation name is the verb; `promote` keeps its two committed effects
+    apart (candidate `write`, then `promote`)."""
+    refs = _read_refs(operation, result)
+    missing = [(i, v) for i, v, source in refs if source is None]
+    sources = artifact_version_sources(root, missing) if missing else {}
+    used = [
+        memory_receipt(i, v, source or sources[(i, v)], operation)
+        for i, v, source in refs
+        if source is not None or (i, v) in sources
+    ]
+    written = [
+        memory_receipt(
+            entry["id"],
+            entry["revision"],
+            entry["source"],
+            entry["kind"] if operation == "promote" else operation,
+        )
+        for entry in committed
+    ]
+    return memory_block(used, written)
+
+
+# --- T20: bare `rush memory` read-only overview --------------------------------------
+#
+# A module function, deliberately not a `MemoryOperation`: the overview is a local-admin
+# terminal browse, never an agent retrieval channel, so no MCP schema or restricted
+# memory-session server can reach it (R20.1).
+
+OVERVIEW_LIMIT = 20
+_OVERVIEW_TOKEN_KEYS = {"v", "root", "generation", "filters", "limit"}
+
+
+def _overview_token(root: str, generation: int, include_internal: bool) -> str:
+    payload = {
+        "v": 1,
+        "root": root,
+        "generation": generation,
+        "filters": {"include_internal": include_internal},
+        "limit": OVERVIEW_LIMIT,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _overview_token_error(
+    token: str, root: str, include_internal: bool
+) -> tuple[str, int | None]:
+    """Validate a continuation token before any DB open. Returns `(reason, None)` on
+    rejection, `("", generation)` when valid."""
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+    except ValueError:
+        return "malformed_token", None
+    if not isinstance(payload, dict) or set(payload) != _OVERVIEW_TOKEN_KEYS:
+        return "malformed_token", None
+    filters = payload["filters"]
+    generation = payload["generation"]
+    if (
+        type(payload["v"]) is not int
+        or payload["v"] != 1
+        or not isinstance(payload["root"], str)
+        or type(generation) is not int
+        or generation < 0
+        or type(payload["limit"]) is not int
+        or not isinstance(filters, dict)
+        or set(filters) != {"include_internal"}
+        or type(filters["include_internal"]) is not bool
+    ):
+        return "malformed_token", None
+    if payload["root"] != root:
+        return "project_mismatch", None
+    if (
+        filters["include_internal"] != include_internal
+        or payload["limit"] != OVERVIEW_LIMIT
+    ):
+        return "filter_mismatch", None
+    return "", generation
+
+
+_OVERVIEW_REJECTIONS = {
+    "token_required": "--offset greater than 0 requires --generation from a previous page",
+    "malformed_token": "--generation is not a valid overview token",
+    "project_mismatch": "--generation belongs to a different project",
+    "filter_mismatch": "--generation was issued for different filters",
+    "stale_generation": "memory changed since --generation was issued",
+}
+
+
+def memory_overview(
+    root: Path,
+    *,
+    offset: int = 0,
+    generation: str | None = None,
+    include_internal: bool = False,
+) -> ToolResult:
+    """T20: the project's most recent useful memory rows, newest first, read-only.
+
+    Excludes archived, expired and (unless `include_internal`) bookkeeping rows. Rows
+    carry metadata only (no content, no author), with `source`/owner redacted. Paging is
+    `offset` plus the `generation` token the previous page returned; a token for another
+    project, other filters, or an older store generation is rejected with `E_INPUT` and
+    a restart-at-offset-0 hint. Never creates or modifies any file."""
+    from ..safety.redactor import sanitize_value
+    from ..workflows.projects import ProjectNotFoundError, resolve_project
+
+    started = time.monotonic()
+    tool = MemoryTool()
+    try:
+        canonical = Path(resolve_project(root)["root"])
+    except ProjectNotFoundError:
+        canonical = Path(root).resolve()
+    canonical_str = str(canonical)
+    db = canonical / ".rush" / "memory.db"
+
+    def _reject(reason: str) -> ToolResult:
+        message = (
+            f"{_OVERVIEW_REJECTIONS[reason]}; restart with `rush memory` at offset 0."
+        )
+        return tool._envelope_result(
+            started,
+            "overview",
+            "E_INPUT",
+            {"message": message, "reason": reason, "restart": {"offset": 0}},
+        )
+
+    def _fail(code: str, reason: str, message: str) -> ToolResult:
+        return tool._envelope_result(
+            started,
+            "overview",
+            code,
+            sanitize_value(
+                {"message": message, "reason": reason, "restart": {"offset": 0}}
+            ).value,
+        )
+
+    token_generation: int | None = None
+    if generation is not None:
+        reason, token_generation = _overview_token_error(
+            generation, canonical_str, include_internal
+        )
+        if reason:
+            return _reject(reason)
+    elif offset > 0:
+        return _reject("token_required")
+
+    opened = TypedArtifactStore.open_readonly(canonical)
+    if opened.state is not None:
+        code = readonly_state_code(opened.state, db)
+        state = "corrupt" if code == "E_STORE_CORRUPT" else "busy"
+        return _fail(code, f"store_{state}", readonly_view_reason(state))
+    if opened.migration_required:
+        return _fail(
+            "E_SCHEMA_UNSUPPORTED",
+            "migration_required",
+            readonly_view_reason("migration_required"),
+        )
+
+    rows: list[dict[str, Any]] = []
+    total = hidden_internal = current_generation = 0
+    reason_text: str | None = None
+    conn = opened.connection
+    if conn is None:
+        if token_generation not in (None, 0):
+            return _reject("stale_generation")
+        reason_text = f"no memory store at {db}"
+    else:
+        try:
+            conn.execute("BEGIN")
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+            }
+            current_generation = store_generation(conn)
+            if token_generation is not None and token_generation != current_generation:
+                conn.rollback()
+                return _reject("stale_generation")
+            live = [
+                f"{c} IS NULL" for c in ("archived_at", "expired_at") if c in columns
+            ]
+            internal_sql, internal_params = internal_source_exclusion_sql()
+            where = live if include_internal else [*live, internal_sql]
+            params: tuple[str, ...] = () if include_internal else internal_params
+            where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+            total = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM memory_artifacts {where_sql}", params
+                ).fetchone()[0]
+            )
+            owner_columns = [
+                c for c in ("owner_scope_kind", "owner_scope_id") if c in columns
+            ]
+            selected = ", ".join(
+                ["id", "subject", "source", "created_at", "trust_tier", *owner_columns]
+            )
+            page = conn.execute(
+                f"SELECT {selected} FROM memory_artifacts {where_sql} "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, OVERVIEW_LIMIT, offset),
+            ).fetchall()
+            if not include_internal:
+                hidden_where = " AND ".join([*live, f"NOT ({internal_sql})"])
+                hidden_internal = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM memory_artifacts WHERE {hidden_where}",
+                        internal_params,
+                    ).fetchone()[0]
+                )
+            conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc) or "busy" in str(exc):
+                return _fail(
+                    "E_STORE_BUSY", "store_busy", f"{db} is busy: {exc}; retry."
+                )
+            return _fail(
+                "E_STORE_CORRUPT", "store_corrupt", f"{db} is unreadable: {exc}"
+            )
+        except sqlite3.DatabaseError as exc:
+            return _fail(
+                "E_STORE_CORRUPT", "store_corrupt", f"{db} is unreadable: {exc}"
+            )
+        finally:
+            conn.close()
+        rows = [
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "source": row["source"],
+                "owner_scope": owner_scope_for_row(row, canonical).as_dict(),
+                "created_at": row["created_at"],
+                "trust_tier": row["trust_tier"],
+            }
+            for row in page
+        ]
+        if total == 0:
+            reason_text = (
+                "no memory records"
+                if include_internal
+                else f"no useful memory records; {hidden_internal} internal record(s) "
+                "hidden (use --include-internal to show them)"
+            )
+
+    end = offset + len(rows)
+    data: dict[str, Any] = {
+        "project_root": canonical_str,
+        "total": total,
+        "offset": offset,
+        "limit": OVERVIEW_LIMIT,
+        "include_internal": include_internal,
+        "rows": rows,
+        "next_offset": end if rows and end < total else None,
+    }
+    if not include_internal:
+        data["hidden_internal"] = hidden_internal
+    if reason_text is not None:
+        data["reason"] = reason_text
+    data = sanitize_value(data).value
+    # Added after redaction: the token is opaque base64 and must round-trip byte-exact.
+    data["generation_token"] = _overview_token(
+        canonical_str, current_generation, include_internal
+    )
+    return tool._envelope_result(started, "overview", "OK", data)

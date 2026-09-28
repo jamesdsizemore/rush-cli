@@ -9,18 +9,70 @@ from __future__ import annotations
 import copy
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from rush.contracts.results import ToolResultV1
 from rush.invocation.models import (
+    InvalidTargetError,
     InvocationContext,
     InvocationError,
     SignatureAdaptationError,
 )
+from rush.safety.redactor import sanitize_value
 
 _SENTINEL = object()
+
+# T10 (R10.1, finding 4): ambient roots of the executing invocation, set by
+# `InvocationExecutor.execute` around the handler call -- never a handler
+# parameter, so nothing new is published into any MCP schema.
+_INVOCATION_ROOT: ContextVar[Path | None] = ContextVar(
+    "rush_invocation_root", default=None
+)
+_EXECUTION_ROOT: ContextVar[Path | None] = ContextVar(
+    "rush_execution_root", default=None
+)
+
+
+def current_invocation_root() -> Path | None:
+    """The executing invocation's logical project root (the original root inside a
+    staged scan), or `None` outside `InvocationExecutor.execute`."""
+    return _INVOCATION_ROOT.get()
+
+
+def current_execution_root() -> Path | None:
+    """The tree the executing invocation actually analyzes (the staged root inside a
+    staged scan), or `None` outside `InvocationExecutor.execute`."""
+    return _EXECUTION_ROOT.get()
+
+
+def _invocation_roots(context: InvocationContext) -> tuple[Path, Path]:
+    """(logical, execution) roots: a workspace root inside the active staging
+    copy maps its logical root back to `staging.original_root`."""
+    from rush.engines.staging import active_staging
+
+    execution = context.workspace_root
+    staging = active_staging()
+    if staging is not None and execution.is_relative_to(staging.staged_root):
+        return staging.original_root, execution
+    return execution, execution
+
+
+@contextmanager
+def _invocation_root_scope(context: InvocationContext) -> Iterator[None]:
+    logical, execution = _invocation_roots(context)
+    logical_token = _INVOCATION_ROOT.set(logical)
+    execution_token = _EXECUTION_ROOT.set(execution)
+    try:
+        yield
+    finally:
+        _EXECUTION_ROOT.reset(execution_token)
+        _INVOCATION_ROOT.reset(logical_token)
+
 
 RECOGNIZED_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
     {
@@ -32,6 +84,8 @@ RECOGNIZED_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
         "paths",
         "target_paths",
         "targets",
+        # T10 (R10.5): the contained targets built from the request's `files`.
+        "files",
         "workspace_root",
         "root",
         "transport",
@@ -44,8 +98,19 @@ RECOGNIZED_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
         "effective_config_digest",
         "config_digest",
         "environment_digest",
+        # P69-01.2j: bound from the context only. A tool whose `__call__`
+        # doesn't declare them is unaffected.
+        "owner_instance_id",
+        "run_id",
     }
 )
+
+OWNERSHIP_CONTEXT_PARAM_NAMES: frozenset[str] = frozenset(
+    {"owner_instance_id", "run_id"}
+)
+"""P69-01.2j: structural execution ownership. Filtered out of every tool
+argument path so a request can never smuggle a forged owner identity in as a
+tool argument, and so an unopted-in `**kwargs` handler never receives them."""
 
 POSITIONAL_BINDABLE_NAMES: frozenset[str] = frozenset(
     {
@@ -109,10 +174,20 @@ def _parse_ordered_args(ordered_args: tuple[str, ...]) -> dict[str, Any]:
 
 
 def invocation_arguments(context: InvocationContext) -> dict[str, Any]:
-    """Return typed request arguments, falling back only for legacy ordered records."""
+    """Return typed request arguments, falling back only for legacy ordered records.
+
+    P69-01.2j: the ownership pair is stripped here, inside the one function
+    both `general_signature_adapter` and `var_args_adapter` call, and in both
+    branches -- a legacy request smuggling `--owner-instance-id=leak` through
+    hyphen-normalization is blocked exactly like a modern typed-args one.
+    """
     if context.typed_args is not None:
-        return copy.deepcopy(dict(context.typed_args))
-    return _parse_ordered_args(context.ordered_args)
+        arguments = copy.deepcopy(dict(context.typed_args))
+    else:
+        arguments = _parse_ordered_args(context.ordered_args)
+    for name in OWNERSHIP_CONTEXT_PARAM_NAMES:
+        arguments.pop(name, None)
+    return arguments
 
 
 def _is_bindable_context_param(
@@ -165,6 +240,14 @@ def _resolve_context_val(
     if name == "targets":
         return context.targets
 
+    if name == "files":
+        # T10 (R10.5): `files` is a reserved request key, so it never reaches the
+        # typed arguments; bind the contained targets built from it instead, as
+        # root-relative POSIX strings (what CLI `--file` from the root carries).
+        if context.file_targets is None:
+            return _SENTINEL
+        return [t.relative_path.as_posix() for t in context.file_targets]
+
     if name in ("workspace_root", "root"):
         return context.workspace_root
 
@@ -191,6 +274,12 @@ def _resolve_context_val(
 
     if name == "environment_digest":
         return context.environment_digest
+
+    if name == "owner_instance_id":
+        return context.owner_instance_id or None
+
+    if name == "run_id":
+        return context.run_id or None
 
     return _SENTINEL
 
@@ -357,6 +446,76 @@ def adapt_signature_at_registration(
     return general_signature_adapter
 
 
+def _redacted(text: str) -> str:
+    return str(sanitize_value(text).value)
+
+
+def target_error_result(
+    tool: str,
+    code: str,
+    message: str,
+    *,
+    target: str,
+    reason: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """T9: the canonical not-run ToolResult for a target that cannot be
+    analyzed -- `status:"error"`, no findings, no engine, no cache entry."""
+    from rush.permissions import build_execution_metadata
+    from rush.runtime.result_helpers import error_result
+    from rush.tools.routing import no_target_scope
+
+    return dict(
+        error_result(
+            tool,
+            None,
+            _redacted(message),
+            metadata={
+                "error": {"code": code, "target": _redacted(target), **(extra or {})},
+                "execution": build_execution_metadata(
+                    "executed", extra={"disposition": "not_run", "cause": reason}
+                ),
+                "scope": no_target_scope(reason),
+            },
+        )
+    )
+
+
+def invalid_target_result(tool: str, exc: InvalidTargetError) -> dict[str, Any]:
+    """T9/R9.2: a malformed target (`TARGET_INVALID`), never a traceback."""
+    return target_error_result(
+        tool, exc.code, str(exc), target=exc.target, reason="target_invalid"
+    )
+
+
+def missing_explicit_target(context: InvocationContext) -> dict[str, Any] | None:
+    """T9/R9.1: the shared validation point for every transport. A catalog
+    tool that validates its target (`ToolSpec.validates_target`) never runs
+    against an explicitly requested target that does not exist. A `deleted`
+    target with any other provenance (e.g. a staged deletion) stays legal."""
+    from rush.catalog import TOOL_SPECS
+
+    spec = TOOL_SPECS.get(context.operation_id)
+    if spec is None or not spec.supports_path or not spec.validates_target:
+        return None
+    originals = context.original_requested_targets
+    for index, target in enumerate(context.targets):
+        if target.state == "deleted" and target.provenance == "explicit":
+            shown = (
+                originals[index]
+                if index < len(originals)
+                else target.relative_path.as_posix()
+            )
+            return target_error_result(
+                context.operation_id,
+                "TARGET_NOT_FOUND",
+                f"target not found: {shown}",
+                target=shown,
+                reason="target_not_found",
+            )
+    return None
+
+
 class InvocationExecutor:
     """Single execution boundary with registration-time signature adaptation and cache gating."""
 
@@ -406,6 +565,10 @@ class InvocationExecutor:
                 f"Operation '{context.operation_id}' is not registered in InvocationExecutor"
             )
 
+        missing = missing_explicit_target(context)
+        if missing is not None:
+            return missing
+
         from rush.invocation.cache_policy import decide_cache
 
         decision = decide_cache(context, pure=operation.pure)
@@ -417,27 +580,42 @@ class InvocationExecutor:
         ):
             cached_result = self._cache.get(decision.cache_key)
             if cached_result is not None:
-                return cached_result
+                return mark_cache_hit(cached_result, decision.cache_key)
 
         args, kwargs = operation.signature_adapter(context)
+
+        # S01: the shared ownership boundary for every registered operation.
+        # Individual tool call sites need not forward owner_instance_id/run_id
+        # themselves -- `run_subprocess` already adopts this ambient pair
+        # when no explicit one reaches it (see `owned_execution_scope`).
+        owner_instance_id = context.owner_instance_id or None
+        run_id = context.run_id or None
+        if (owner_instance_id is None) != (run_id is None):
+            raise InvocationError(
+                "owner_instance_id and run_id must be supplied together, or not at all"
+            )
+
+        from rush.runtime.subprocesses import owned_execution_scope
+
         # Invokes handler(*args, **kwargs) exactly once. Zero retry on TypeError.
-        result = operation.handler(*args, **kwargs)
+        with (
+            owned_execution_scope(owner_instance_id, run_id),
+            _invocation_root_scope(context),
+        ):
+            result = operation.handler(*args, **kwargs)
+        result = with_default_scope(result, context)
 
         # MC05 §6.4: capture one real observation after execution, before the
         # result-cache write, only when opted in and host-granted cache_write.
         # Memory/telemetry operations never recursively record themselves.
         # Never converts or reruns the original result on any observation failure.
+        # T23: read-only status never records either.
         if (
             context.memory_record
             and "cache_write" in context.permissions
-            and context.operation_id != "memory"
+            and context.operation_id not in ("memory", "status")
         ):
-            try:
-                from rush.memory.experience import record_observation
-
-                record_observation(context, result)
-            except Exception:  # noqa: BLE001, S110
-                pass
+            result = _record_observation(context, result)
 
         if (
             decision.decision == "eligible"
@@ -450,6 +628,146 @@ class InvocationExecutor:
                 pass
 
         return result
+
+
+def _record_observation(context: InvocationContext, result: Any) -> Any:
+    """MC05/T19: commit one observation and attach its `written` receipt after
+    the tool's own receipts. A failed write (`None` or a raise) attaches
+    nothing and never converts or reruns the original result."""
+    try:
+        from rush.memory.experience import record_observation
+        from rush.tools.routing import (
+            attach_memory_attribution,
+            memory_block,
+            memory_receipt,
+        )
+
+        artifact = record_observation(context, result)
+        if artifact is None:
+            return result
+        return attach_memory_attribution(
+            result,
+            memory_block(
+                written=[
+                    memory_receipt(
+                        artifact.id,
+                        artifact.artifact_version,
+                        artifact.source,
+                        "observation",
+                    )
+                ]
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        return result
+
+
+def _with_metadata(result: Any, update: Callable[[dict[str, Any]], None]) -> Any:
+    """Apply `update` to a copy of the result's metadata: legacy
+    `metadata`, or `extensions.metadata` of a strict ToolResultV1."""
+    if isinstance(result, ToolResultV1):
+        from rush.tools.routing import with_v1_extensions
+
+        extensions = copy.deepcopy(result.extensions)
+        metadata = dict(extensions.get("metadata") or {})
+        update(metadata)
+        extensions["metadata"] = metadata
+        return with_v1_extensions(result, extensions)
+    if not isinstance(result, dict):
+        return result
+    updated = dict(result)
+    metadata = dict(updated.get("metadata") or {})
+    update(metadata)
+    updated["metadata"] = metadata
+    return updated
+
+
+def _current_metadata(result: Any) -> dict[str, Any]:
+    if isinstance(result, ToolResultV1):
+        return dict(result.extensions.get("metadata") or {})
+    if isinstance(result, dict):
+        return dict(result.get("metadata") or {})
+    return {}
+
+
+def mark_cache_hit(result: Any, cache_key: str) -> Any:
+    """T16 §3 item 4: a cache hit returns a copy carrying
+    `metadata.execution.cache={"hit": true, "cache_key": key}`; the cached
+    object -- and its original scope -- is never rewritten.
+
+    T19 B6: the original invocation's memory receipts move to
+    `metadata.cache.original_memory`; this invocation consumed and committed
+    nothing, so the copy carries no `metadata.memory`."""
+    result = copy.deepcopy(result)
+
+    def update(metadata: dict[str, Any]) -> None:
+        execution = dict(metadata.get("execution") or {})
+        execution["cache"] = {"hit": True, "cache_key": cache_key}
+        metadata["execution"] = execution
+        original_memory = metadata.pop("memory", None)
+        if original_memory is not None:
+            metadata["cache"] = {
+                **(metadata.get("cache") or {}),
+                "original_memory": original_memory,
+            }
+
+    return _with_metadata(result, update)
+
+
+def default_scope(result: Any, context: InvocationContext) -> dict[str, Any]:
+    """R16.2: the scope of a catalog result whose tool reports none --
+    `unavailable` with a reason, never a guessed count."""
+    from rush.catalog import TOOL_SPECS
+
+    logical, _ = _invocation_roots(context)
+    kind = TOOL_SPECS[context.operation_id].scope_kind
+    engines = _current_metadata(result).get("engines") or []
+    originals = context.original_requested_targets
+    scope: dict[str, Any] = {
+        "version": 1,
+        "kind": kind,
+        "logical_root": str(logical),
+        "requested_targets": [t.relative_path.as_posix() for t in context.targets],
+        "original_requested_targets": [_redacted(o) for o in originals]
+        if originals
+        else None,
+        "invocation_start_cwd": str(context.invocation_start_cwd)
+        if context.invocation_start_cwd is not None
+        else None,
+        "execution_cwds": list(
+            dict.fromkeys(str(e["cwd"]) for e in engines if e.get("cwd"))
+        ),
+        "requested_file_count": None,
+        "matched_file_count": None,
+        "consumed_file_count": None,
+        "coverage": "unavailable",
+        "reason": "tool_reports_no_file_consumption",
+    }
+    if kind == "operation":
+        scope["file_count"] = None
+        scope["reason"] = "not_file_analysis"
+    return scope
+
+
+def with_default_scope(result: Any, context: InvocationContext) -> Any:
+    """S16.1: every catalog ToolResult carries a v1 `metadata.scope` (strict
+    V1: `extensions.metadata.scope`); a tool's own v1 scope is kept."""
+    from rush.catalog import TOOL_SPECS
+
+    if context.operation_id not in TOOL_SPECS:
+        return result
+    if not isinstance(result, (dict, ToolResultV1)):
+        return result
+    metadata = _current_metadata(result)
+    scope = metadata.get("scope")
+    if isinstance(scope, dict) and scope.get("version") == 1:
+        return result
+    # T23: a T16 retrieval page (`result`/`bytes` view) is a stored result,
+    # returned as stored -- never this invocation's own analysis scope.
+    if (metadata.get("delivery") or {}).get("view") in ("result", "bytes"):
+        return result
+    fallback = default_scope(result, context)
+    return _with_metadata(result, lambda metadata: metadata.update(scope=fallback))
 
 
 def format_signature_error_diagnostic(
@@ -475,6 +793,11 @@ __all__ = [
     "RegisteredOperation",
     "ToolResultV1",
     "adapt_signature_at_registration",
+    "current_execution_root",
+    "current_invocation_root",
     "format_signature_error_diagnostic",
+    "invalid_target_result",
     "invocation_arguments",
+    "missing_explicit_target",
+    "target_error_result",
 ]

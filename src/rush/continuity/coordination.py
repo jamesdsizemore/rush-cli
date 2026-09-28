@@ -9,6 +9,7 @@ from typing import Any
 
 from ..mcp_mesh.lock_manager import MeshLockManager
 from ..memory.failure_ledger import FailureLedger
+from ..memory.store import MemoryStoreUnreadableError, collect_memory_reads
 from ..permissions import ExecutionPermissions
 from ..safety.redactor import SecretRedactor
 from .results import ContinuityOutput, build_continuity_result, valid_name
@@ -144,16 +145,26 @@ def preview_merge(
 
 def _fetch_replay_events(
     root: Path, session_id: str | None
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """`(state, events, used)`: `used` holds a T19 `replay` receipt for every
+    stored flight-event artifact the replay returned (the fallback after the
+    session's JSONL was migrated); a JSONL replay reads no memory."""
     if not session_id:
-        return "not_found", []
+        return "not_found", [], []
+    from ..tools.routing import memory_receipt
+
     try:
         from ..tools.flight_recorder import FlightRecorder
 
-        events = FlightRecorder(root, create=False).replay_session(session_id)
-        return ("recorded" if events else "not_found"), events
-    except (OSError, ValueError):
-        return "unavailable", []
+        with collect_memory_reads() as reads:
+            events = FlightRecorder(root, create=False).replay_session(session_id)
+    except (OSError, ValueError, MemoryStoreUnreadableError):
+        return "unavailable", [], []
+    used = [
+        memory_receipt(read["id"], read["revision"], read["source"], "replay")
+        for read in reads
+    ]
+    return ("recorded" if events else "not_found"), events, used
 
 
 def _fetch_failure_receipt(
@@ -162,8 +173,8 @@ def _fetch_failure_receipt(
     if not isinstance(failure_fingerprint, str):
         return None, False
     try:
-        return FailureLedger(root).get_receipt(failure_fingerprint), False
-    except (OSError, sqlite3.DatabaseError):
+        return FailureLedger.read_receipt(root, failure_fingerprint), False
+    except (OSError, sqlite3.DatabaseError, MemoryStoreUnreadableError):
         return None, True
 
 
@@ -196,7 +207,9 @@ def recover_coordination(
             },
             as_v1=as_v1,
         )
-    replay_state, events = _fetch_replay_events(root, session_id)
+    from ..tools.routing import memory_block
+
+    replay_state, events, replay_used = _fetch_replay_events(root, session_id)
     failure, failure_unavailable = _fetch_failure_receipt(root, failure_fingerprint)
 
     from ..memory.mistake_miner import MistakeMiner
@@ -245,6 +258,7 @@ def recover_coordination(
             "recovery": recovery,
         },
         as_v1=as_v1,
+        memory=memory_block(used=replay_used),
     )
 
 

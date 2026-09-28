@@ -10,7 +10,7 @@ from ..io.physical_paths import PhysicalRoot
 from ..safety.redactor import sanitize_value
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class GarakEngine(Engine):
@@ -23,6 +23,9 @@ class GarakEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         physical = PhysicalRoot(cwd or path)
         report_file = physical.open_contained(
@@ -34,7 +37,12 @@ class GarakEngine(Engine):
         default_args = ["--report_prefix", str(physical.root_path / "garak_report")]
         argv = [binary_path, *default_args, *args]
 
-        proc = run_subprocess(argv, cwd=cwd or path, timeout=300)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd or path,
+            timeout=300,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         findings_raw: list[dict] = []
         report_file = physical.open_contained(report_file.name, purpose="read")

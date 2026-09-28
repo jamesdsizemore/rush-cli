@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class TachEngine(Engine):
@@ -20,12 +20,20 @@ class TachEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         default_args = ["check", "--output=json"]
         argv = [binary_path, *default_args, *args]
 
-        proc = run_subprocess(argv, cwd=cwd or path, timeout=120)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd or path,
+            timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         parsed = None
         findings_raw: list[dict] = []
@@ -50,6 +58,20 @@ class TachEngine(Engine):
         )
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        # tach exits 1 with no JSON when this project has no tach.toml -- a
+        # real not-configured state, not a crash.
+        if "Configuration file not found" in (raw.get("stderr") or ""):
+            return ToolResult(
+                tool=tool_name,
+                engine=self.name,
+                engine_version=self.version(),
+                status="skipped",
+                duration_ms=raw.get("duration_ms", 0),
+                summary="tach: no configuration file found (run 'tach init')",
+                findings=[],
+                raw=None,
+            )
+
         findings: list[Finding] = []
         for item in raw.get("findings", []):
             findings.append(

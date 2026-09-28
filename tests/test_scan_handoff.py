@@ -13,6 +13,7 @@ manifest-schema fixtures below are never the only path exercised.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -33,9 +34,12 @@ from rush.workflows.project_run import (
     dispatch_handoff,
     execute_scan,
     plan_scan,
+    recover_prepared_handoff,
     status_handoff,
 )
 from rush.workflows.projects import register_project
+
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -385,3 +389,431 @@ def test_scanhandofftool_flat_run_full_lifecycle(tmp_path: Path) -> None:
     )
     assert ack_result["status"] == "ok"
     assert ack_result["raw"]["state"] == "acknowledged"
+
+
+# --- S05: ledger operation_id correlation + no persisted plaintext capability
+
+
+def test_scan_handoff_carries_operation_id_field(tmp_path: Path) -> None:
+    """S05: `ScanHandoff` persists a dashboard-preallocated `operation_id`
+    so a crash after 202 can recover/replay against the same ledger
+    operation rather than reminting one."""
+    project_id, data_root = _register(tmp_path)
+    from rush.workflows.projects import resolve_project
+
+    root = Path(resolve_project(project_id, data_root=data_root)["root"])
+    _write_manifest(root, "run-op", findings=[_finding("finding-1")])
+
+    handoff = build_handoff(
+        project_id,
+        "run-op",
+        "codex-cli",
+        data_root=data_root,
+        operation_id="ledger-op-123",
+    )
+    assert handoff.operation_id == "ledger-op-123"
+
+    reloaded = status_handoff(project_id, handoff.handoff_id, data_root=data_root)
+    assert reloaded["operation_id"] == "ledger-op-123"
+
+
+def test_handoff_send_artifact_and_session_receipts_are_not_clobbered(
+    tmp_path: Path,
+) -> None:
+    """S04 bullet 3: `build_handoff` persists two distinct effects (the
+    handoff artifact write, then the handoff session create) under one
+    ledger `operation_id`. Both go through `TypedArtifactStore`'s
+    `mutation_receipts` table, keyed `operation_id TEXT PRIMARY KEY` -- if
+    both effects reused that one shared id, the second `INSERT OR REPLACE`
+    would silently clobber the first receipt, leaving crash recovery unable
+    to tell "artifact written, session not yet created" apart from "both
+    created" (S05's own recovery bullet 2 needs this distinction). Passing
+    `effect_ids` from the reservation gives each sub-effect its own id, so
+    both receipts survive independently."""
+    from rush.memory.store import TypedArtifactStore
+
+    project_id, data_root = _register(tmp_path)
+    from rush.workflows.projects import resolve_project
+
+    root = Path(resolve_project(project_id, data_root=data_root)["root"])
+    _write_manifest(root, "run-receipts", findings=[_finding("finding-1")])
+
+    effect_ids = {
+        "artifact_create": "receipt-artifact-1",
+        "session_create": "receipt-session-1",
+    }
+    build_handoff(
+        project_id,
+        "run-receipts",
+        "codex-cli",
+        data_root=data_root,
+        operation_id="ledger-op-shared",
+        effect_ids=effect_ids,
+    )
+
+    store = TypedArtifactStore(root)
+    artifact_receipt = store.get_receipt("receipt-artifact-1")
+    session_receipt = store.get_receipt("receipt-session-1")
+    assert artifact_receipt is not None
+    assert artifact_receipt["kind"] == "create"
+    assert session_receipt is not None
+    assert session_receipt["kind"] == "handoff_session"
+    # The shared, coarser ledger operation_id was never used as either
+    # receipt's key -- proving the two effects didn't collide on one row.
+    assert store.get_receipt("ledger-op-shared") is None
+
+
+def _prepared_handoff_with_effect_ids(
+    tmp_path: Path, run_id: str = "run-recover", owner_instance_id: str = ""
+) -> tuple[str, Path, dict[str, str], object]:
+    """S05 bullets 2-3 fixture: a handoff `build_handoff` persisted (real
+    S04 effect receipts committed) but never `dispatch_handoff`ed --
+    exactly what a dead owner leaves behind if it crashes between prepare
+    and dispatch."""
+    project_id, data_root = _register(tmp_path)
+    from rush.workflows.projects import resolve_project
+
+    root = Path(resolve_project(project_id, data_root=data_root)["root"])
+    _write_manifest(root, run_id, findings=[_finding("finding-1")])
+    effect_ids = {
+        "artifact_create": "artifact-receipt-1",
+        "session_create": "session-receipt-1",
+        "delivery_transition": "delivery-receipt-1",
+    }
+    handoff = build_handoff(
+        project_id,
+        run_id,
+        "codex-cli",
+        data_root=data_root,
+        operation_id="dead-owner-op-1",
+        effect_ids=effect_ids,
+        owner_instance_id=owner_instance_id,
+    )
+    assert handoff.state == "prepared"
+    return project_id, data_root, effect_ids, handoff
+
+
+def test_recover_prepared_handoff_delivers_via_verified_delta_without_capability(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+
+    recovered = recover_prepared_handoff(
+        project_id,
+        handoff.handoff_id,
+        claimed_operation_id="dead-owner-op-1",
+        artifact_create_receipt_id=effect_ids["artifact_create"],
+        session_create_receipt_id=effect_ids["session_create"],
+        delivery_receipt_id=effect_ids["delivery_transition"],
+        data_root=data_root,
+    )
+
+    assert recovered is not None
+    assert recovered.state == "delivered"
+    reloaded = status_handoff(project_id, handoff.handoff_id, data_root=data_root)
+    assert reloaded["state"] == "delivered"
+
+
+def test_recover_prepared_handoff_returns_none_on_operation_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+
+    recovered = recover_prepared_handoff(
+        project_id,
+        handoff.handoff_id,
+        claimed_operation_id="some-other-operation",
+        artifact_create_receipt_id=effect_ids["artifact_create"],
+        session_create_receipt_id=effect_ids["session_create"],
+        delivery_receipt_id=effect_ids["delivery_transition"],
+        data_root=data_root,
+    )
+
+    assert recovered is None
+    reloaded = status_handoff(project_id, handoff.handoff_id, data_root=data_root)
+    assert reloaded["state"] == "prepared"
+
+
+def test_recover_prepared_handoff_returns_none_when_a_receipt_is_missing(
+    tmp_path: Path,
+) -> None:
+    """S04's artifact_create/session_create receipts are the proof
+    `build_handoff` actually committed both writes -- a missing one means
+    a partial crash mid-write, never safe to recover from."""
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+
+    recovered = recover_prepared_handoff(
+        project_id,
+        handoff.handoff_id,
+        claimed_operation_id="dead-owner-op-1",
+        artifact_create_receipt_id="never-committed-receipt",
+        session_create_receipt_id=effect_ids["session_create"],
+        delivery_receipt_id=effect_ids["delivery_transition"],
+        data_root=data_root,
+    )
+
+    assert recovered is None
+
+
+def test_recover_prepared_handoff_returns_none_when_source_changed(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+    (Path(handoff.root) / "app.py").write_text(
+        "def changed():\n    pass\n", encoding="utf-8"
+    )
+
+    recovered = recover_prepared_handoff(
+        project_id,
+        handoff.handoff_id,
+        claimed_operation_id="dead-owner-op-1",
+        artifact_create_receipt_id=effect_ids["artifact_create"],
+        session_create_receipt_id=effect_ids["session_create"],
+        delivery_receipt_id=effect_ids["delivery_transition"],
+        data_root=data_root,
+    )
+
+    assert recovered is None
+
+
+def test_recover_prepared_handoff_returns_none_when_session_revoked(
+    tmp_path: Path,
+) -> None:
+    from rush.memory.store import TypedArtifactStore
+
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+    store = TypedArtifactStore(Path(handoff.root))
+    store.revoke_handoff_session(handoff.memory_session_id)
+
+    recovered = recover_prepared_handoff(
+        project_id,
+        handoff.handoff_id,
+        claimed_operation_id="dead-owner-op-1",
+        artifact_create_receipt_id=effect_ids["artifact_create"],
+        session_create_receipt_id=effect_ids["session_create"],
+        delivery_receipt_id=effect_ids["delivery_transition"],
+        data_root=data_root,
+    )
+
+    assert recovered is None
+
+
+def test_dispatch_handoff_recovers_from_crash_between_receipt_commit_and_descriptor_write(
+    tmp_path: Path,
+) -> None:
+    """S05 bullet 3: the delivery receipt and the `prepared` -> `delivered`
+    file descriptor write are not one transaction -- a death between them
+    must repair from the matching receipt without redispatch (never a
+    second, conflicting delivery). Simulated by pre-committing the exact
+    receipt `dispatch_handoff` would have written, then calling it for
+    real: it must succeed using the pre-existing receipt, not error."""
+    from rush.memory.handoff import receive_handoff
+    from rush.memory.store import TypedArtifactStore
+
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+    store = TypedArtifactStore(Path(handoff.root))
+    # The exact delta `dispatch_handoff` will itself compute -- receive_handoff
+    # is idempotent/replayable, so calling it here first doesn't disturb the
+    # real dispatch below.
+    real_delta = receive_handoff(
+        store,
+        session_id=handoff.memory_session_id,
+        capability=handoff.session_capability,
+    )
+    digest = hashlib.sha256(
+        json.dumps(real_delta.get("changes", []), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    pre_existing = store.write_handoff_delivery_receipt(
+        effect_ids["delivery_transition"],
+        artifact_id=handoff.memory_session_id,
+        payload={
+            "handoff_id": handoff.handoff_id,
+            "operation_id": handoff.operation_id,
+            "run_id": handoff.run_id,
+            "attempt_id": handoff.attempt_id,
+            "memory_session_id": handoff.memory_session_id,
+            "delivery_nonce": handoff.delivery_nonce,
+            "delta_digest": digest,
+        },
+    )
+    assert pre_existing is not None
+
+    delivered = dispatch_handoff(
+        project_id,
+        handoff.handoff_id,
+        handoff.session_capability,
+        data_root=data_root,
+        delivery_receipt_id=effect_ids["delivery_transition"],
+    )
+    assert delivered.state == "delivered"
+
+
+def test_dispatch_handoff_rejects_conflicting_delivery_receipt_binding(
+    tmp_path: Path,
+) -> None:
+    """A delivery receipt already recorded under this id for a *different*
+    handoff/binding is a genuine conflict -- recovery-required, never
+    silently accepted as if it were this handoff's own receipt."""
+    from rush.memory.store import TypedArtifactStore
+
+    project_id, data_root, effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path
+    )
+    store = TypedArtifactStore(Path(handoff.root))
+    store.write_handoff_delivery_receipt(
+        effect_ids["delivery_transition"],
+        artifact_id="a-different-session-id",
+        payload={"handoff_id": "some-other-handoff-entirely"},
+    )
+
+    with pytest.raises(ScanHandoffInvalidStateError):
+        dispatch_handoff(
+            project_id,
+            handoff.handoff_id,
+            handoff.session_capability,
+            data_root=data_root,
+            delivery_receipt_id=effect_ids["delivery_transition"],
+        )
+
+
+def test_session_capability_never_appears_in_persisted_descriptor_or_status_serialization(
+    tmp_path: Path,
+) -> None:
+    """S05: the durable `.rush/handoffs/<id>.json` descriptor and the
+    `handoff_status` read path both carry only a digest -- the raw
+    one-time capability is never written to disk. Real dispatch (which
+    presents the raw value from the same in-process `build_handoff` call)
+    still succeeds, since comparison is now digest-based."""
+    project_id, data_root = _register(tmp_path)
+    from rush.workflows.projects import resolve_project
+
+    root = Path(resolve_project(project_id, data_root=data_root)["root"])
+    _write_manifest(root, "run-cap", findings=[_finding("finding-1")])
+
+    handoff = build_handoff(project_id, "run-cap", "codex-cli", data_root=data_root)
+    raw_capability = handoff.session_capability
+    assert raw_capability
+
+    descriptor_path = root / ".rush" / "handoffs" / f"{handoff.handoff_id}.json"
+    on_disk = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    assert "session_capability" not in on_disk
+    assert on_disk.get("session_capability_digest")
+    assert on_disk["session_capability_digest"] != raw_capability
+
+    status = status_handoff(project_id, handoff.handoff_id, data_root=data_root)
+    assert "session_capability" not in status
+
+    dispatched = dispatch_handoff(
+        project_id, handoff.handoff_id, raw_capability, data_root=data_root
+    )
+    assert dispatched.state == "delivered"
+
+
+# --- T038: owner_instance_id linkage from a dead owner to its prepared handoff
+
+
+def test_build_handoff_carries_owner_instance_id_field(tmp_path: Path) -> None:
+    """T038: `build_handoff` threads the caller's own dashboard owner
+    identity onto the persisted `ScanHandoff` -- the only linkage
+    `reconcile_admissions`/`list_prepared_handoffs` have from a dead
+    `owner_instance_id` to a handoff it left `prepared`."""
+    project_id, data_root, _effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path, owner_instance_id="dashboard:owner-1"
+    )
+    assert handoff.owner_instance_id == "dashboard:owner-1"
+
+    reloaded = status_handoff(project_id, handoff.handoff_id, data_root=data_root)
+    assert reloaded["owner_instance_id"] == "dashboard:owner-1"
+
+
+def test_list_prepared_handoffs_matches_prepared_state_and_owner(
+    tmp_path: Path,
+) -> None:
+    """T038: `list_prepared_handoffs` returns only handoffs still `prepared`
+    for the exact `owner_instance_id` given -- a different owner's handoff,
+    and this same owner's already-dispatched handoff, are both excluded."""
+    project_id, data_root, effect_ids, handoff_a = _prepared_handoff_with_effect_ids(
+        tmp_path, run_id="run-owner-a", owner_instance_id="dashboard:owner-a"
+    )
+    root = Path(handoff_a.root)
+
+    # Same owner, but already dispatched -- must not be recovered again.
+    dispatch_handoff(
+        project_id,
+        handoff_a.handoff_id,
+        handoff_a.session_capability,
+        data_root=data_root,
+        delivery_receipt_id=effect_ids["delivery_transition"],
+    )
+
+    _write_manifest(root, "run-owner-a-2", findings=[_finding("finding-2")])
+    handoff_a2 = build_handoff(
+        project_id,
+        "run-owner-a-2",
+        "codex-cli",
+        data_root=data_root,
+        operation_id="dead-owner-op-2",
+        effect_ids={
+            "artifact_create": "artifact-receipt-2",
+            "session_create": "session-receipt-2",
+        },
+        owner_instance_id="dashboard:owner-a",
+    )
+    assert handoff_a2.state == "prepared"
+
+    _write_manifest(root, "run-owner-b", findings=[_finding("finding-3")])
+    build_handoff(
+        project_id,
+        "run-owner-b",
+        "codex-cli",
+        data_root=data_root,
+        operation_id="dead-owner-op-3",
+        effect_ids={
+            "artifact_create": "artifact-receipt-3",
+            "session_create": "session-receipt-3",
+        },
+        owner_instance_id="dashboard:owner-b",
+    )
+
+    matches = project_run.list_prepared_handoffs(root, "dashboard:owner-a")
+
+    assert [m.handoff_id for m in matches] == [handoff_a2.handoff_id]
+
+
+def test_list_prepared_handoffs_skips_a_pre_schema_handoff_missing_owner_instance_id(
+    tmp_path: Path,
+) -> None:
+    """T038: a handoff persisted before `owner_instance_id` existed has no
+    such key in its on-disk JSON -- `ScanHandoff.from_dict`/
+    `list_prepared_handoffs` must degrade to "never matches a real owner",
+    never raise, when reading it back."""
+    project_id, data_root, _effect_ids, handoff = _prepared_handoff_with_effect_ids(
+        tmp_path, owner_instance_id=""
+    )
+    root = Path(handoff.root)
+    descriptor_path = root / ".rush" / "handoffs" / f"{handoff.handoff_id}.json"
+    payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    assert "owner_instance_id" in payload
+    del payload["owner_instance_id"]
+    descriptor_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    reloaded = status_handoff(project_id, handoff.handoff_id, data_root=data_root)
+    assert reloaded["owner_instance_id"] == ""
+
+    matches = project_run.list_prepared_handoffs(root, "dashboard:some-owner")
+    assert matches == []
+    # An empty/unknown owner_instance_id must never match either -- an
+    # empty string is never treated as a wildcard.
+    assert project_run.list_prepared_handoffs(root, "") == []

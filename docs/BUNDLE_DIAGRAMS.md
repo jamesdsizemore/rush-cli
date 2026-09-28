@@ -4,7 +4,7 @@ Rush is engineered as a unified, modular quality intelligence platform. To help 
 
 ---
 
-Current status: design diagrams below retain subsystem intent, not executed acceptance. Current exceptions: destructive fix preview (F01), simulated workloads (F11), one-shot Rich UI and broken stdlib web API (F36–F40). See [Known issues](KNOWN_ISSUES.md); safe runtime and interactive interfaces remain planned in [Phase 64](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) and [Phase 66](phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
+Current status: design diagrams below retain subsystem intent, not executed acceptance. Current exceptions: destructive fix preview (F01), simulated workloads (F11). The persistent Rich TUI and authenticated web dashboard are implemented; several ownership, admission, and header findings remain open — see [Known issues](KNOWN_ISSUES.md) and the [dashboard/TUI review](reports/69-dashboard-tui-codex-implementation-review.md); safe runtime work remains planned in [Phase 64](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md).
 
 ## 1. Core Code Quality & Automated Remediation Bundle
 
@@ -268,7 +268,7 @@ flowchart TB
     subgraph Dashboard["Local In-Memory Dashboard (rush dashboard)"]
         HTTPServer["Ephemeral HTTP Server on 127.0.0.1"]
         SecurityGating["CSRF Origin Check + Ephemeral Token Auth"]
-        RichTUI["One-shot Rich layout (rush ui)"]
+        RichTUI["Persistent Rich TUI (rush ui)"]
     end
 
     Manifests --> WorkspaceDetect
@@ -288,7 +288,7 @@ flowchart TB
 
 ## 7. Agentic Safety, Sandboxing & Skills Bundle
 
-The Agentic Safety bundle surrounds autonomous coding agents (Cursor, Claude Code, Cline, Windsurf, Hermes) with strict safety boundaries, destructive command interception, ephemeral worktree sandboxes, atomic patch rollbacks, and multi-turn session memory.
+The Agentic Safety bundle surrounds autonomous coding agents (Claude Code, Cline, Windsurf, Hermes) with strict safety boundaries, destructive command interception, ephemeral worktree sandboxes, atomic patch rollbacks, and multi-turn session memory.
 
 ```mermaid
 sequenceDiagram
@@ -383,7 +383,7 @@ flowchart TD
     subgraph IntelligenceEngines["Repository Intelligence Engines"]
         Hotspots["Hotspot Analyzer (Churn x McCabe Complexity = Defect Risk)"]
         HookGuard["Pre-Commit Hook Guard (AST lint, Trojan Source Unicode, Merge Markers)"]
-        Governance["Rule Synchronizer (Emits .cursorrules, .clinerules, .windsurfrules)"]
+        Governance["Rule Synchronizer (Emits .clinerules, .windsurfrules)"]
     end
 
     subgraph ConsensusSubsystem["Multi-Model Consensus (rush consensus)"]

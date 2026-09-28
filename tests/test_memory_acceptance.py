@@ -22,8 +22,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from rush.memory.experience import write_observation
 from rush.memory.handoff import prepare_handoff
 from rush.memory.intent import check_intent
@@ -173,7 +171,6 @@ def test_end_to_end_intent_repair_recipe_check_and_real_receiver(
     attempt, a real verified sandbox repair, a recipe carrying that receipt as evidence,
     ranked required-check evidence, and a real restricted handoff receiver reading the
     result back through the actual MCP-bridge subprocess."""
-    pytest.importorskip("mcp.client.stdio")
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 

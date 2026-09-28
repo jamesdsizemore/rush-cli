@@ -24,12 +24,16 @@ from rush.tools.review import ReviewTool
 from rush.workflows import project_run
 from rush.workflows.project_run import (
     ScanInvalidRequestError,
+    cancel_scan_run,
     compare_runs,
     execute_scan,
     plan_scan,
     rescan_project_run,
+    resume_scan_run,
 )
 from rush.workflows.projects import register_project, resolve_project
+
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -200,3 +204,56 @@ def test_rescan_project_run_against_a_real_execute_scan_run(
     assert baseline_finding_ids, "expected at least one seeded finding"
     assert set(comparison["persisting"]) == baseline_finding_ids
     assert comparison["resolved"] == []
+
+
+def test_old_cancellation_intent_cannot_cancel_a_later_resume_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S10: the cooperative cancel marker is scoped to the exact attempt it
+    was requested against -- cancelling a completed baseline attempt, then
+    resuming (which mints a brand-new attempt id under the same run_id),
+    must never carry that old intent into the new attempt."""
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [ReviewTool()])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    baseline = execute_scan(
+        plan, permissions=ExecutionPermissions(), data_root=data_root
+    )
+
+    cancel_payload = cancel_scan_run(project_id, baseline.run_id, data_root=data_root)
+    assert cancel_payload["attempt_id"] == baseline.attempt_id
+
+    root = Path(resolve_project(project_id, data_root=data_root)["root"])
+    baseline_marker = (
+        root
+        / ".rush"
+        / "runs"
+        / baseline.run_id
+        / "attempts"
+        / baseline.attempt_id
+        / "cancel_requested.json"
+    )
+    assert baseline_marker.is_file()
+
+    resumed = resume_scan_run(
+        project_id,
+        baseline.run_id,
+        permissions=ExecutionPermissions(),
+        data_root=data_root,
+    )
+    assert resumed.attempt_id != baseline.attempt_id
+    # The old attempt's cancellation intent must never reach this new
+    # attempt -- whatever real terminal state resume lands on for an
+    # unmodified re-run, it is never "cancelled".
+    assert resumed.run_state != "cancelled"
+
+    new_marker = (
+        root
+        / ".rush"
+        / "runs"
+        / baseline.run_id
+        / "attempts"
+        / resumed.attempt_id
+        / "cancel_requested.json"
+    )
+    assert not new_marker.is_file()

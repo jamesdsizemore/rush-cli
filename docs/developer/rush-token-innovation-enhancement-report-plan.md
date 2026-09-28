@@ -218,7 +218,7 @@ A release is ready only when all 7 deterministic pre-flight vectors (`clean`, `e
 2. **Quality-Adjusted Efficiency**: Never sacrifice task success for token savings. Retain full-fidelity edit targets while compressing background noise.
 3. **Lossless On-Demand Reversibility**: Every compressed context packet is content-addressed and restorable with byte-exact accuracy via CCR.
 4. **Anti-Slop & Grounding First**: Proactively prevent hallucinations, phantom imports, and defensive slop before code is written to disk.
-5. **Universal Agent Interoperability**: Provide identical capabilities over Click CLI, FastMCP stdio, and agent rule configs (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules`).
+5. **Universal Agent Interoperability**: Provide identical capabilities over Click CLI, FastMCP stdio, and agent rule configs (`AGENTS.md`, `CLAUDE.md`).
 6. **Zero-Configuration Developer Ergonomics**: Sensible out-of-the-box defaults that work instantly with single-command invocation (`rush ship`, `rush context pack`).
 
 ---
@@ -1517,7 +1517,7 @@ Below are the exhaustive 34-point specifications for every capability in the uni
 ### Feature I23: `rush mcp mesh` — Multi-Agent FastMCP Mesh Daemon
 1. **Feature Name**: Local Multi-Agent FastMCP Mesh Daemon & Coordinated Lock Manager
 2. **Unique Identifier**: `INNO-MESH-023` (I23)
-3. **Purpose**: Background daemon over domain sockets/named pipes that federates the SQLite cache, manages mutual exclusion file locks, and broadcasts AST mutation events across concurrent agent instances (Claude Code, Cursor, Windsurf).
+3. **Purpose**: Background daemon over domain sockets/named pipes that federates the SQLite cache, manages mutual exclusion file locks, and broadcasts AST mutation events across concurrent agent instances (Claude Code, Windsurf).
 4. **User Problem Solved**: Multiple agents connecting to local tools perform redundant scans, thrash caches, and overwrite files concurrently without locks.
 5. **User-Facing Behavior**: Running `rush mcp mesh` starts a lightweight background coordinator; agent FastMCP connections automatically attach to the mesh.
 6. **Inputs and Outputs**: Input: Named pipe / domain socket connections. Output: Lock grants, cache query responses, AST mutation broadcasts.
@@ -2276,7 +2276,7 @@ Below are the exhaustive 34-point specifications for every capability in the uni
 
 ## 12. Agent Interaction Model
 
-Autonomous AI coding agents (Claude Code, Cursor, Windsurf, Cline, Hermes, Antigravity) interact with the Rush ecosystem through two unified interfaces:
+Autonomous AI coding agents (Claude Code, Windsurf, Cline, Hermes, Antigravity) interact with the Rush ecosystem through two unified interfaces:
 1. **Click CLI Commands**: Invoked via terminal subprocesses.
 2. **FastMCP Stdio Transport**: Invoked via JSON-RPC stdio protocol over `rush mcp serve`.
 

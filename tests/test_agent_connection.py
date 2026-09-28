@@ -297,7 +297,7 @@ def test_malformed_codex_toml_reported(tmp_path: Path) -> None:
     assert codex_status.error is not None
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.posix_only
 def test_read_only_config_reported_without_crashing_others(tmp_path: Path) -> None:
     home = _home_with(tmp_path, "windsurf", WINDSURF_JSON)
     path = ADAPTERS["windsurf"].config_paths("Darwin", home)[0]
@@ -359,7 +359,10 @@ def test_generic_stdio_client_registration(tmp_path: Path) -> None:
 
 def test_build_stdio_entry_generic_spec() -> None:
     entry = build_stdio_entry(RUSH_BINARY)
-    assert entry == {"command": RUSH_BINARY, "args": ["mcp", "serve"]}
+    assert entry == {
+        "command": RUSH_BINARY,
+        "args": ["mcp", "serve", "--profile", "core"],
+    }
     custom = build_stdio_entry(RUSH_BINARY, args=("mcp", "serve", "--stdio"))
     assert custom["args"] == ["mcp", "serve", "--stdio"]
 
@@ -392,9 +395,9 @@ def test_native_registration_idempotent_with_fake_claude(
     calls = log_path.read_text(encoding="utf-8").strip().splitlines()
     assert calls == [
         "mcp remove rush --scope user",
-        f"mcp add rush --scope user -- {RUSH_BINARY} mcp serve",
+        f"mcp add rush --scope user -- {RUSH_BINARY} mcp serve --profile core",
         "mcp remove rush --scope user",
-        f"mcp add rush --scope user -- {RUSH_BINARY} mcp serve",
+        f"mcp add rush --scope user -- {RUSH_BINARY} mcp serve --profile core",
     ]
 
 

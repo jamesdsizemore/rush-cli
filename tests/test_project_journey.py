@@ -31,9 +31,13 @@ _NAMING = "naming"
 
 
 @pytest.fixture(scope="module")
-def journey(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def journey(
+    tmp_path_factory: pytest.TempPathFactory, hermetic_engine_path_module: None
+) -> dict[str, Any]:
     """Runs the whole real pipeline exactly once; every test below asserts
-    a different facet of this single, shared execution."""
+    a different facet of this single, shared execution. Engines resolve
+    only from this venv (`hermetic_engine_path_module`, conftest.py), never
+    the host's PATH."""
     tmp_root = tmp_path_factory.mktemp("project-journey")
     return run_project_journey(tmp_root)
 
@@ -102,27 +106,45 @@ def test_scan_produces_exact_seeded_coverage_with_source_identities(
 ) -> None:
     findings_a = journey["run_a"].aggregate.get("findings")
     assert findings_a is not None
+    # Engines resolve only from this venv (the hermetic PATH above), so no
+    # host engine (detect-secrets, a local LLM, ...) adds findings. M17's
+    # CACHEDIR.TAG exclusion still keeps an installed entropy scanner from
+    # flagging that fixed signature string, so only the 3 seeded review
+    # findings are present.
     assert len(findings_a) == 3
-    by_line = {finding["line"]: finding for finding in findings_a}
+    review_findings = [
+        f for f in findings_a if f["provenance"] == "review/heuristic-v1"
+    ]
+    assert len(review_findings) == 3
+    by_line = {finding["line"]: finding for finding in review_findings}
     assert by_line[1]["rule"] == _MISSING_DOCSTRING
     assert by_line[1]["message"] == "function 'unreviewed' has no docstring"
     assert by_line[5]["rule"] == _MISSING_DOCSTRING
     assert by_line[5]["message"] == "function 'compute_value' has no docstring"
     assert by_line[9]["rule"] == _NAMING
-    assert all(f["provenance"] == "review/heuristic-v1" for f in findings_a)
     assert len({f["finding_id"] for f in findings_a}) == 3
 
     findings_b = journey["run_b"].aggregate.get("findings")
     assert findings_b is not None
+    # Same hermetic engine set and CACHEDIR.TAG exclusion here, so no extra
+    # finding is added.
     assert len(findings_b) == 1
-    assert findings_b[0]["rule"] == _MISSING_DOCSTRING
-    assert findings_b[0]["message"] == "function 'also_unreviewed' has no docstring"
+    review_findings_b = [
+        f for f in findings_b if f["provenance"] == "review/heuristic-v1"
+    ]
+    assert len(review_findings_b) == 1
+    assert review_findings_b[0]["rule"] == _MISSING_DOCSTRING
+    assert (
+        review_findings_b[0]["message"] == "function 'also_unreviewed' has no docstring"
+    )
 
     # Cross-project isolation: no finding_id from A ever appears in B.
     assert {f["finding_id"] for f in findings_a}.isdisjoint(
         {f["finding_id"] for f in findings_b}
     )
-    assert journey["run_a"].aggregate["status"] == "ok"
+    # Phase 70 T16 S16.3 and the owner's finding-9 decision (every engine is
+    # required): executed-ok candidates next to skipped ones aggregate to warn.
+    assert journey["run_a"].aggregate["status"] == "warn"
     # The real 121-engine registry is scheduled too (not just ReviewTool) --
     # every JS/IaC/docs-class engine candidate is honestly "unavailable" in
     # this sandbox, so the run's own real state is "incomplete", never a

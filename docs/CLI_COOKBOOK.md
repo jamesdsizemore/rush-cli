@@ -215,12 +215,15 @@ rush watch .
 rush watch . --tool lint --debounce 500
 ```
 
-### Terminal snapshot & currently broken web dashboard
+### Terminal UI and web dashboard
 
-`ui` prints one Rich layout and exits. The stdlib HTTP dashboard has mismatched client/server API and authentication; use CLI results. Persistent TUI and working web controls are planned in [Phase 66](phase-plans/phase-66-interactive-tui-and-local-web-plan.md).
+At a TTY, `ui` starts a persistent Rich UI with background checks and keyboard navigation; `--json` runs checks once, emits JSON, and exits, and redirected stdout without `--json` runs checks once and prints a text summary. `dashboard` starts an authenticated, CSRF-hardened HTTP server on `127.0.0.1` behind a single-use bootstrap URL, per server instance; mutations require an explicit grant per action. See the [dashboard/TUI review](reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings.
 ```bash
-# Print one terminal findings layout
+# Persistent interactive terminal UI
 rush ui .
+
+# Non-TTY: one-shot JSON
+rush ui . --json
 
 # Launch authenticated local web dashboard on 127.0.0.1
 rush dashboard . --port 8080
@@ -332,7 +335,7 @@ rush hotspots analyze
 
 ### Synchronize Multi-IDE Agent Governance & Scaffold Projects
 ```bash
-# Compile canonical AGENTS.md to .cursorrules, .clinerules, etc.
+# Compile canonical AGENTS.md to .clinerules, etc.
 rush governance sync
 
 # Initialize new repository with canonical AI governance templates

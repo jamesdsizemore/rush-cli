@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class TextLintEngine(Engine):
@@ -15,7 +15,15 @@ class TextLintEngine(Engine):
     command_prefix: tuple[str, ...] = ()
     command_suffix: tuple[str, ...] = ()
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         proc = run_subprocess(
             [
                 resolve_binary(self.binary) or self.binary,
@@ -25,6 +33,7 @@ class TextLintEngine(Engine):
             ],
             cwd=cwd,
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr

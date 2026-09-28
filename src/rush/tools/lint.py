@@ -14,6 +14,7 @@ findings. Sequential execution per architecture §13 Q2 (determinism > speed).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +25,24 @@ from .common import (
     now_ms,
     run_engine,
 )
-from .routing import collect_files, combine_status, detect_project_languages
+from .routing import (
+    aggregate_status,
+    collect_files,
+    concat_engine_entries,
+    deduplicate_findings,
+    detect_project_languages,
+    finding_provenance,
+    no_target_scope,
+)
 
 
-def _build_skipped_result(start: int, summary: str) -> ToolResult:
-    return ToolResult(
+def _build_skipped_result(
+    start: int,
+    summary: str,
+    scope: dict[str, Any] | None = None,
+    children: list[ToolResult] | None = None,
+) -> ToolResult:
+    result = ToolResult(
         tool="lint",
         engine=None,
         engine_version=None,
@@ -38,6 +52,12 @@ def _build_skipped_result(start: int, summary: str) -> ToolResult:
         findings=[],
         raw=None,
     )
+    if scope is not None:
+        result["metadata"] = {
+            "scope": scope,
+            "engines": concat_engine_entries(children or []),
+        }
+    return result
 
 
 def _select_engines(
@@ -64,31 +84,161 @@ def _run_selected_engines(
     targets: list[Path],
     path: Path,
     engine_args: list[str] | None = None,
-) -> tuple[list[Finding], ToolStatus, list[str]]:
-    """Execute each applicable engine sequentially and aggregate findings."""
+    *,
+    owner_instance_id: str | None = None,
+    run_id: str | None = None,
+    skip_reasons: list[str] | None = None,
+) -> tuple[list[ToolResult], list[str]]:
+    """Execute each applicable engine sequentially and keep every child.
+
+    T9: an engine that returned `skipped` (e.g. `ruff not on PATH`) has its
+    own reason appended to `skip_reasons`, so the lint summary can name it.
+    T16 (finding 24): ruff also runs its `--show-files` scope probe."""
     from ..engines import ENGINES
 
-    findings_all: list[Finding] = []
-    last_status: ToolStatus = "skipped"
+    children: list[ToolResult] = []
     engines_used: list[str] = []
+    reasons = skip_reasons if skip_reasons is not None else []
 
     for name in ("ruff", "eslint"):
         files = engine_files.get(name, [])
         if files:
             args = [str(p) for p in files] + (engine_args or [])
-            r = run_engine(ENGINES[name], path, args, tool_name="lint")
-            findings_all.extend(r.get("findings", []))
+            r = run_engine(
+                ENGINES[name],
+                path,
+                args,
+                tool_name="lint",
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+                consumed_paths=[str(p) for p in files],
+                scope_probe=name == "ruff",
+            )
+            children.append(r)
             engines_used.append(name)
-            last_status = combine_status(last_status, r.get("status", "ok"))
+            if r.get("status") == "skipped":
+                reasons.append(str(r.get("summary", "")).removeprefix("skipped: "))
 
     if engine_on_path("globstar"):
         globstar_args = [str(p) for p in targets] + (engine_args or [])
-        r = run_engine(ENGINES["globstar"], path, globstar_args, tool_name="lint")
-        findings_all.extend(r.get("findings", []))
+        children.append(
+            run_engine(
+                ENGINES["globstar"],
+                path,
+                globstar_args,
+                tool_name="lint",
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+                consumed_paths=[str(p) for p in targets],
+            )
+        )
         engines_used.append("globstar")
-        last_status = combine_status(last_status, r.get("status", "ok"))
 
-    return findings_all, last_status, engines_used
+    return children, engines_used
+
+
+def _identity(path: str | Path) -> tuple[int, int] | None:
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _consumed_files(children: list[ToolResult]) -> tuple[list[str], list[str], str]:
+    """Every file an executed engine reported consuming, its configuration
+    inputs, and where the list came from (T16 design step 5, finding 24)."""
+    consumed: list[str] = []
+    configuration: list[str] = []
+    source = "explicit_arguments"
+    for entry in concat_engine_entries(children):
+        scope = entry.get("scope") or {}
+        if scope.get("consumption_source") == "engine_show_files":
+            source = "engine_show_files"
+            consumed.extend(scope.get("consumed_files") or [])
+            configuration.extend(scope.get("configuration_files") or [])
+    return consumed, sorted(set(configuration)), source
+
+
+def _executed_engines(children: list[ToolResult]) -> set[str]:
+    return {
+        str(entry.get("engine"))
+        for entry in concat_engine_entries(children)
+        if (entry.get("executable") or {}).get("path")
+    }
+
+
+def _explicit_consumption(
+    engine_files: dict[str, list[Path]], children: list[ToolResult]
+) -> list[str]:
+    """Files handed explicitly to an executed engine without a listing."""
+    listed = {
+        entry.get("engine")
+        for entry in concat_engine_entries(children)
+        if (entry.get("scope") or {}).get("consumption_source") == "engine_show_files"
+    }
+    executed = _executed_engines(children)
+    return [
+        str(file)
+        for name, files in engine_files.items()
+        if name in executed and name not in listed
+        for file in files
+    ]
+
+
+def _excluded_files(
+    engine_files: dict[str, list[Path]],
+    children: list[ToolResult],
+    consumed: dict[tuple[int, int], str],
+) -> list[dict[str, str]]:
+    """Requested files no engine consumed: `engine_excluded` when their
+    engine ran (its own configuration left them out), `engine_unavailable`
+    when it never ran (missing, denied or crashed before spawning)."""
+    executed = _executed_engines(children)
+    excluded: dict[str, dict[str, str]] = {}
+    for name, files in engine_files.items():
+        for file in files:
+            if _identity(file) in consumed or str(file) in excluded:
+                continue
+            reason = "engine_excluded" if name in executed else "engine_unavailable"
+            excluded[str(file)] = {"path": str(file), "reason": reason}
+    return list(excluded.values())
+
+
+def lint_scope(
+    requested: list[Path],
+    engine_files: dict[str, list[Path]],
+    children: list[ToolResult],
+    root: Path,
+) -> dict[str, Any]:
+    """T16 design step 5: requested = files matched under the target;
+    consumed = files the executed engines consumed (finding 24: ruff's own
+    `--show-files` listing), as physical identities `(st_dev, st_ino)`."""
+    listed, configuration, source = _consumed_files(children)
+    consumed = {
+        ident: path
+        for path in [*listed, *_explicit_consumption(engine_files, children)]
+        if (ident := _identity(path))
+    }
+    excluded = _excluded_files(engine_files, children, consumed)
+    if not consumed:
+        coverage = "none"
+    else:
+        coverage = "partial" if excluded else "complete"
+    return {
+        "version": 1,
+        "kind": "file",
+        "logical_root": str(root),
+        "requested_targets": [str(root)],
+        "requested_file_count": len(requested),
+        "matched_file_count": len(requested),
+        "consumed_file_count": len(consumed),
+        "consumption_source": source,
+        "configuration_files": configuration,
+        "excluded_files": excluded,
+        "coverage": coverage,
+        "reason": None if coverage == "complete" else "requested_files_not_consumed",
+    }
 
 
 def _check_missing_engines_result(
@@ -102,28 +252,74 @@ def _check_missing_engines_result(
         engines_missing.append("ruff")
     if eslint_files and not engine_on_path("eslint"):
         engines_missing.append("eslint")
-    summary = (
-        f"lint: engines not installed ({', '.join(engines_missing)})"
-        if engines_missing
-        else "lint: no engines could run on these files"
+    if engines_missing:
+        return _build_skipped_result(
+            start,
+            f"lint: engines not installed ({', '.join(engines_missing)})",
+            no_target_scope(
+                "engine_unavailable",
+                matched_file_count=len(ruff_files) + len(eslint_files),
+                consumed_file_count=0,
+            ),
+        )
+    return _build_skipped_result(
+        start,
+        "lint: no engines could run on these files",
+        no_target_scope(
+            "no_supported_targets", matched_file_count=0, consumed_file_count=0
+        ),
     )
-    return _build_skipped_result(start, summary)
 
 
 def _assemble_lint_result(
-    findings_all: list[Finding],
-    last_status: ToolStatus,
+    children: list[ToolResult],
     engines_used: list[str],
     start: int,
+    skip_reasons: list[str] | None = None,
+    scope: dict[str, Any] | None = None,
+    matched_file_count: int = 0,
 ) -> ToolResult:
-    """Assemble canonical ToolResult from aggregated engine findings and status."""
-    status = last_status
+    """Assemble canonical ToolResult from every engine child.
+
+    T9: when every engine that should have run was skipped, the summary names
+    each engine's own reason (e.g. `ruff not on PATH`) and the scope records
+    that nothing was consumed (`engine_unavailable`). T16 (S16.3): the status
+    aggregates every child once (mixed ok+skipped is warn)."""
+    tagged: list[Finding] = []
+    for child in children:
+        engine_name = child.get("engine")
+        for original in child.get("findings", []):
+            tagged_finding: Finding = Finding(**original)
+            tagged_finding["provenance"] = tagged_finding.get(
+                "provenance"
+            ) or finding_provenance("lint", engine_name)
+            tagged.append(tagged_finding)
+    # T13 (finding 22): collapse identical repeated emissions from the same
+    # producer; never merge across producers (each producer's `provenance`
+    # is part of the dedupe key).
+    findings_all: list[Finding] = deduplicate_findings(tagged)
+    status: ToolStatus = aggregate_status(
+        str(child.get("status", "ok")) for child in children
+    )
     n_findings = len(findings_all)
     if status == "ok" and n_findings > 0:
         has_non_error = any(f.get("severity") != "error" for f in findings_all)
         status = "warn" if has_non_error else "fail"
 
     engine_str = "+".join(engines_used)
+    if status == "skipped" and not n_findings and skip_reasons:
+        result = _build_skipped_result(
+            start,
+            f"lint [{engine_str}]: {'; '.join(skip_reasons)}",
+            no_target_scope(
+                "engine_unavailable",
+                matched_file_count=matched_file_count,
+                consumed_file_count=0,
+            ),
+            children,
+        )
+        result["engine"] = engine_str
+        return result
     summary = (
         f"lint [{engine_str}]: {n_findings} issue(s)"
         if n_findings
@@ -143,6 +339,7 @@ def _assemble_lint_result(
         summary=summary,
         findings=findings_all,
         raw=None,
+        metadata={"engines": concat_engine_entries(children), "scope": scope},
     )
 
 
@@ -151,16 +348,32 @@ class LintTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Lint Python/JS/TS files at <path>. Returns {status, findings[], summary}. "
-            "Engines: ruff (Python), eslint (JS/TS). status='skipped' means engine not on PATH."
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["lint"].mcp_description
+
+    def __call__(
+        self,
+        path: Path,
+        engine_args: list[str] | None = None,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> ToolResult:
+        return self.run(
+            path,
+            engine_args=engine_args,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
         )
 
-    def __call__(self, path: Path, engine_args: list[str] | None = None) -> ToolResult:
-        return self.run(path, engine_args=engine_args)
-
     def run(
-        self, path: Path, *, engine_args: list[str] | None = None, config=None
+        self,
+        path: Path,
+        *,
+        engine_args: list[str] | None = None,
+        config=None,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> ToolResult:
         start = now_ms()
         targets, engine_files, languages = _select_engines(path, config)
@@ -172,12 +385,39 @@ class LintTool(ToolFn):
                 if languages
                 else f"lint: no Python/JS/TS files found under {path}"
             )
-            return _build_skipped_result(start, summary)
+            return _build_skipped_result(
+                start,
+                summary,
+                no_target_scope(
+                    "no_supported_targets", matched_file_count=0, consumed_file_count=0
+                ),
+            )
 
-        findings, last_status, engines_used = _run_selected_engines(
-            engine_files, targets, path, engine_args
+        skip_reasons: list[str] = []
+        children, engines_used = _run_selected_engines(
+            engine_files,
+            targets,
+            path,
+            engine_args,
+            owner_instance_id=owner_instance_id,
+            run_id=run_id,
+            skip_reasons=skip_reasons,
         )
         if not engines_used:
             return _check_missing_engines_result(engine_files, start)
 
-        return _assemble_lint_result(findings, last_status, engines_used, start)
+        dispatched = dict(engine_files)
+        if "globstar" in engines_used:
+            dispatched["globstar"] = targets
+        requested = list(
+            dict.fromkeys(file for files in dispatched.values() for file in files)
+        )
+        root = path if path.is_dir() else path.parent
+        return _assemble_lint_result(
+            children,
+            engines_used,
+            start,
+            skip_reasons,
+            scope=lint_scope(requested, dispatched, children, root),
+            matched_file_count=sum(len(files) for files in engine_files.values()),
+        )

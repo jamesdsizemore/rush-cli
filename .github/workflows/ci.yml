@@ -30,6 +30,18 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --all-extras --frozen
 
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
+
       - name: Lint
         run: uv run ruff check src tests scripts
 
@@ -43,12 +55,12 @@ jobs:
         run: |
           uv pip install pyinstaller
           cat > rush_entry.py <<'PYEOF'
-          from rush.cli import cli
+          from rush.entry import main
 
           if __name__ == "__main__":
-              cli()
+              main()
           PYEOF
-          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
           uv run --no-sync python -c "
           from pathlib import Path
           from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
@@ -57,8 +69,26 @@ jobs:
           write_sha256sums([archive], Path('dist/SHA256SUMS'))
           "
 
+      - name: Install pinned engines the test suite executes
+        run: uv pip install vulture==2.16
+
+      - name: Install verified osv-scanner release
+        run: |
+          mkdir -p "$RUNNER_TEMP/osv-scanner"
+          cd "$RUNNER_TEMP/osv-scanner"
+          curl --fail --silent --show-error --location --remote-name https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          curl --fail --silent --show-error --location --remote-name https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_SHA256SUMS
+          sha256sum --check --ignore-missing osv-scanner_SHA256SUMS
+          mv osv-scanner_linux_amd64 osv-scanner
+          chmod +x osv-scanner
+          ./osv-scanner --version
+          echo "$RUNNER_TEMP/osv-scanner" >> "$GITHUB_PATH"
+
+      # Every needs_* marker deselected here (conftest.py also deselects, never
+      # skips, a needs_* test whose binary is not on PATH) is installed and run
+      # by the static-tool-acceptance job below.
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint"
+        run: uv run pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
@@ -97,14 +127,26 @@ jobs:
       - name: Install test dependencies
         run: uv sync --all-extras --frozen
 
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
+
       - name: Install Python static-analysis engines
         run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
 
       - name: Install Node-based static-analysis and eval engines
-        run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0
+        run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0 typescript@5.9.3
 
       - name: Run static-tool and ai-eval acceptance
-        run: uv run --no-sync pytest tests/test_static_tools.py tests/test_ai_eval.py tests/test_engines.py -q
+        run: uv run --no-sync pytest tests/test_static_tools.py tests/test_aislop_reference.py tests/test_ai_eval.py tests/test_engines.py -q
 
   representative-engines:
     name: Representative Python engine smoke
@@ -126,6 +168,18 @@ jobs:
 
       - name: Install bounded Python engine set
         run: uv sync --all-extras --frozen
+
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Run representative real-engine contracts
         run: uv run pytest tests/test_tools.py -q
@@ -151,6 +205,18 @@ jobs:
 
       - name: Install test dependencies
         run: uv sync --all-extras --frozen
+
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
 
       - name: Install mutation, fuzz and contract acceptance engines
         run: uv pip install mutmut==3.7.0 atheris==3.1.0 pact-python-cli==2.6.0.1
@@ -186,6 +252,18 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --all-extras --frozen
 
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
+
       - name: Build distribution artifacts
         run: uv build
 
@@ -194,12 +272,12 @@ jobs:
         run: |
           uv pip install pyinstaller
           cat > rush_entry.py <<'PYEOF'
-          from rush.cli import cli
+          from rush.entry import main
 
           if __name__ == "__main__":
-              cli()
+              main()
           PYEOF
-          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression rush_entry.py
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
           uv run --no-sync python -c "
           from pathlib import Path
           from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
@@ -210,6 +288,9 @@ jobs:
 
       - name: Verify Windows contracts
         run: uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py -q
+
+      - name: Verify Windows dashboard data-directory ACL contract
+        run: uv run pytest "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability" -q
 
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})

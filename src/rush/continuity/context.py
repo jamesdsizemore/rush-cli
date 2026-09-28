@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import tiktoken
 
 from ..codegraph.context_packer import ContextPacker
+from ..memory.store import MemoryArtifact
 from ..permissions import (
     ExecutionPermissions,
     check_permissions,
 )
 from ..safety.redactor import SecretRedactor
 from ..token_economy.ccr_store import CCRStore
-from ..token_economy.memory_cache_gate import check_memory_before_pack, write_cache_fill
+from ..token_economy.memory_cache_gate import (
+    CacheGateResult,
+    check_memory_before_pack,
+    write_cache_fill,
+)
 from ..token_economy.telemetry import TelemetryStore
 from .results import _WRITE_PERMISSION, ContinuityOutput, build_continuity_result
 
@@ -71,6 +76,65 @@ def _build_recovery_envelope(
     }
 
 
+class _MemoryEventAttribution(TypedDict, total=False):
+    project_id: str
+    run_id: str
+    agent_id: str
+    session_id: str
+
+
+def _memory_event_attribution(
+    project_id: str | None,
+    run_id: str | None,
+    agent_id: str | None,
+    session_id: str | None,
+) -> _MemoryEventAttribution:
+    """M11: `project_id`/`run_id`/`agent_id`/`session_id` are pure caller-
+    supplied attribution -- never invented from a project root path (a
+    filesystem path is not a registered project UUID). Omitted dimensions
+    are left out so `TelemetryStore.record_memory_event()`'s own
+    `_UNSCOPED` default applies, mirroring `memory/retrieval.py`'s own
+    `_record_memory_event` helper."""
+    attribution: _MemoryEventAttribution = {}
+    if project_id is not None:
+        attribution["project_id"] = project_id
+    if run_id is not None:
+        attribution["run_id"] = run_id
+    if agent_id is not None:
+        attribution["agent_id"] = agent_id
+    if session_id is not None:
+        attribution["session_id"] = session_id
+    return attribution
+
+
+def _cache_fill_receipts(filled: MemoryArtifact | None) -> list[dict[str, Any]]:
+    from ..tools.routing import memory_receipt
+
+    if filled is None:
+        return []
+    return [
+        memory_receipt(filled.id, filled.artifact_version, filled.source, "cache_fill")
+    ]
+
+
+def _cache_hit_receipts(gate: CacheGateResult) -> list[dict[str, Any]]:
+    from ..tools.routing import memory_receipt
+
+    if not gate.hit or gate.artifact_id is None or gate.revision is None:
+        return []
+    return [
+        memory_receipt(gate.artifact_id, gate.revision, gate.source or "", "cache_hit")
+    ]
+
+
+def _pack_memory(
+    used: list[dict[str, Any]], written: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    from ..tools.routing import memory_block
+
+    return memory_block(used, written)
+
+
 def pack_context(
     started: float,
     project_root: Path,
@@ -79,6 +143,12 @@ def pack_context(
     token_budget: int,
     granted: ExecutionPermissions,
     as_v1: bool = False,
+    *,
+    invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> ContinuityOutput:
     """Pack bounded context evidence, spilling to CCR cache if over budget."""
     if not context_path or token_budget < 1:
@@ -107,6 +177,7 @@ def pack_context(
         token_budget=token_budget,
         encoding=_DEFAULT_ENCODING,
     )
+    filled = None
     if gate.hit:
         if gate.content is None:
             return build_continuity_result(
@@ -123,7 +194,7 @@ def pack_context(
             target, target_symbol=target_symbol, max_tokens=1_000_000
         )
         if granted.cache_write:
-            write_cache_fill(
+            filled = write_cache_fill(
                 project_root,
                 context_path,
                 target_symbol,
@@ -132,6 +203,9 @@ def pack_context(
                 encoding=_DEFAULT_ENCODING,
                 view="v1" if as_v1 else "v2",
             )
+    # T19: a committed cache fill is `written` whether or not the pack is then
+    # delivered; the gate hit is `used` only when delivered (below).
+    written = _cache_fill_receipts(filled)
     estimated = int(packed.get("tokens", 0))
     selected_evidence = [{"path": context_path, "selection": "target_file"}]
     if estimated > token_budget:
@@ -172,6 +246,7 @@ def pack_context(
             requested=_WRITE_PERMISSION,
             context_envelope=envelope,
             as_v1=as_v1,
+            memory=_pack_memory([], written),
         )
     safe_packed, redactions = SecretRedactor.redact_value(packed)
     if not gate.hit and granted.cache_write:
@@ -183,7 +258,9 @@ def pack_context(
             estimated,
             request_id=f"{context_path}:{target_symbol}:{token_budget}",
             event_id="packing",
+            invocation_id=invocation_id,
             cache_write=True,
+            **_memory_event_attribution(project_id, run_id, agent_id, session_id),
         )
     envelope = {
         "selected_evidence": selected_evidence,
@@ -201,6 +278,7 @@ def pack_context(
         raw=safe_packed,
         context_envelope=envelope,
         as_v1=as_v1,
+        memory=_pack_memory(_cache_hit_receipts(gate), written),
     )
 
 
@@ -210,6 +288,12 @@ def retrieve_context(
     handle: str | None,
     granted: ExecutionPermissions,
     as_v1: bool = False,
+    *,
+    invocation_id: str | None = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> ContinuityOutput:
     """Retrieve CCR chunk by handle."""
     database = root / ".rush" / "cache" / "ccr.db"
@@ -230,7 +314,9 @@ def retrieve_context(
             handoff_tokens,
             request_id=handle,
             event_id="handoff",
+            invocation_id=invocation_id,
             cache_write=True,
+            **_memory_event_attribution(project_id, run_id, agent_id, session_id),
         )
     recovery = {
         "state": "recovered" if content is not None else "not_found",
@@ -238,7 +324,7 @@ def retrieve_context(
     }
     return build_continuity_result(
         started,
-        "ok" if content is not None else "skipped",
+        "ok" if content is not None else "error",
         "Recovered context handle."
         if content is not None
         else "Context handle was not found.",
@@ -254,6 +340,160 @@ def retrieve_context(
         },
         as_v1=as_v1,
     )
+
+
+def _read_stored(db: Path, handle: str) -> str | None:
+    """One CCR row over a genuinely read-only connection: no constructor, no
+    LRU touch, no telemetry (X1: `ccr.db` uses a rollback journal, so
+    `mode=ro` leaves no side files)."""
+    import sqlite3
+    import urllib.parse
+
+    uri = f"file:{urllib.parse.quote(str(db))}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        row = conn.execute(
+            "SELECT content FROM chunks WHERE hash = ?", (handle,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return None if row is None else str(row[0])
+
+
+def _load_result(root: Path, handle: str) -> tuple[dict[str, Any], bytes]:
+    """§3 item 10 steps 1-6: the stored T16 object for `handle`, or a
+    RESULT_MISSING / RESULT_CORRUPT view error. Never reruns an engine."""
+    import hashlib
+    import re
+    import sqlite3
+
+    from ..delivery.compact import ViewError, ccr_path, is_storage_object
+
+    if not re.fullmatch(r"[0-9a-f]{64}", handle or ""):
+        raise ViewError(
+            "RESULT_VIEW_INVALID", "handle must be 64 lowercase hex characters"
+        )
+    db = ccr_path(root, "read")
+    if not db.is_file():
+        raise ViewError("RESULT_MISSING", f"no stored result for handle {handle}")
+    try:
+        content = _read_stored(db, handle)
+    except sqlite3.Error as exc:
+        raise ViewError("RESULT_CORRUPT", f"result store is unreadable: {exc}") from exc
+    if content is None:
+        raise ViewError("RESULT_MISSING", f"no stored result for handle {handle}")
+    data = content.encode("utf-8")
+    if hashlib.sha256(data).hexdigest() != handle or not is_storage_object(content):
+        raise ViewError("RESULT_CORRUPT", "stored result does not match its handle")
+    return json.loads(content), data
+
+
+def _result_page(
+    root: Path,
+    handle: str,
+    stored: dict[str, Any],
+    data: bytes,
+    *,
+    view: str,
+    cursor: str | None,
+    offset: int | None,
+    limit: int,
+    max_bytes: int,
+    serialize: Any,
+) -> dict[str, Any]:
+    from ..delivery.compact import ViewError, decode_cursor, project_page, slice_bytes
+
+    total = (
+        len(stored["full_result"].get("findings") or [])
+        if view == "result"
+        else len(data)
+    )
+    start = offset or 0
+    if cursor is not None:
+        start = decode_cursor(
+            cursor,
+            root=root,
+            handle=handle,
+            view=view,
+            limit=limit,
+            max_bytes=max_bytes,
+            total=total,
+        )
+    if isinstance(start, bool) or not isinstance(start, int) or not 0 <= start <= total:
+        raise ViewError("RESULT_VIEW_INVALID", f"offset must be between 0 and {total}")
+    if view == "bytes":
+        return slice_bytes(
+            stored,
+            data,
+            root=root,
+            handle=handle,
+            offset=start,
+            limit=limit,
+            max_bytes=max_bytes,
+            serialize=serialize,
+        )
+    return project_page(
+        stored["full_result"],
+        list(stored["finding_ids"]),
+        root=root,
+        handle=handle,
+        view="result",
+        start=start,
+        limit=limit,
+        max_bytes=max_bytes,
+        full_bytes=len(data),
+        serialize=serialize,
+    )
+
+
+def retrieve_result_view(
+    root: Path,
+    handle: str,
+    *,
+    view: str,
+    cursor: str | None = None,
+    offset: int | None = None,
+    limit: int | None = None,
+    max_bytes: int | None = None,
+    serialize: Any = None,
+) -> dict[str, Any]:
+    """T16 §3 item 10 (S16.6): a `result` page (findings with the compact
+    projection) or a `bytes` slice of a stored compact result. Missing or
+    corrupt stores are errors, never a rerun; a symlinked `.rush/cache`
+    raises `ContainmentError`. T23's `rush_status(operation="result")`
+    calls this same function."""
+    from ..delivery.compact import (
+        ViewError,
+        error_payload,
+        retrieval_size,
+        validate_budget,
+    )
+
+    try:
+        if view not in ("result", "bytes"):
+            raise ViewError(
+                "RESULT_VIEW_INVALID", f"view must be 'result' or 'bytes'; got {view!r}"
+            )
+        page_limit, budget = validate_budget(limit, max_bytes)
+        if cursor is not None and offset is not None:
+            raise ViewError(
+                "RESULT_VIEW_INVALID", "pass either cursor or offset, not both"
+            )
+        stored, data = _load_result(root, handle)
+        return _result_page(
+            root,
+            handle,
+            stored,
+            data,
+            view=view,
+            cursor=cursor,
+            offset=offset,
+            limit=page_limit,
+            max_bytes=budget,
+            serialize=serialize or retrieval_size,
+        )
+    except ViewError as exc:
+        return error_payload("continuity", exc.code, exc.message)
 
 
 _context_pack = pack_context

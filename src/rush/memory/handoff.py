@@ -26,7 +26,11 @@ from pathlib import Path
 from typing import Any
 
 from rush.memory import intent as intent_module
-from rush.memory.store import TypedArtifactStore, VersionConflictError
+from rush.memory.store import (
+    TypedArtifactStore,
+    VersionConflictError,
+    sqlite_integer_in_range,
+)
 
 SESSION_TTL_SECONDS = 900.0
 DEFAULT_PAGE_SIZE = 50
@@ -73,6 +77,7 @@ def prepare_handoff(
     namespace: str = "",
     budgets: Mapping[str, Any] | None = None,
     now: float | None = None,
+    receipt_operation_id: str | None = None,
 ) -> tuple[HandoffSession, str, dict[str, Any]]:
     """Create a brand-new bounded handoff session bound to `root`/`audience`/`granted_ids`
     (versions authorized are always the artifacts' *current* version, re-checked fresh on
@@ -126,6 +131,7 @@ def prepare_handoff(
         constraints=constraints_payload,
         created_at=ts,
         expires_at=ts + SESSION_TTL_SECONDS,
+        receipt_operation_id=receipt_operation_id,
     )
     delta = receive_handoff(
         store, session_id=session_id, capability=raw_capability, now=ts
@@ -163,6 +169,11 @@ def load_session(
     row = store.get_handoff_session(session_id)
     if row is None:
         raise HandoffError("Unknown or revoked handoff session.", code="E_PERMISSION")
+    # S05 bullet 4: reject a revoked session on load -- denied the same way
+    # (E_PERMISSION) as "unknown" so a caller can't distinguish revoked from
+    # never-existed, matching this function's existing denial contract.
+    if row.get("revoked_at") is not None:
+        raise HandoffError("Unknown or revoked handoff session.", code="E_PERMISSION")
     if not hmac.compare_digest(row["capability_hash"], _hash_capability(capability)):
         raise HandoffError("Invalid handoff capability.", code="E_PERMISSION")
     ts = now if now is not None else time.time()
@@ -180,22 +191,18 @@ def load_session(
     )
 
 
-def receive_handoff(
+def _bounded_session_delta(
     store: TypedArtifactStore,
+    session: HandoffSession,
     *,
     session_id: str,
-    capability: str,
-    cursor: str | None = None,
-    page_size: int = DEFAULT_PAGE_SIZE,
-    now: float | None = None,
+    cursor: str | None,
+    page_size: int,
 ) -> dict[str, Any]:
-    """Read-only bounded delta: exactly the `granted_ids` whose *current* version exceeds
-    this session's already-acknowledged version, ordered by artifact ID for a deterministic,
-    replayable page. Carries no content -- only `id`/`version`/`trust_tier`/`source` -- so a
-    receiver must call `expand` for the exact bytes before it can prove a read-back. Never
-    writes, so calling this twice (a replay, or an interrupted page) is trivially atomic and
-    idempotent (`test_partial_page_and_replay_are_atomic`)."""
-    session = load_session(store, session_id, capability, now=now)
+    """Shared delta computation behind `receive_handoff` (public, capability-
+    checked) and `recover_session_delta_without_capability` (S05 bullet 2,
+    internal dead-owner recovery only) -- identical bounded, read-only
+    result; only how the caller is authorized to reach it differs."""
     receipts = store.get_handoff_receipts(session_id)
     candidate_ids = sorted(session.granted_ids)
     if cursor is not None:
@@ -228,6 +235,82 @@ def receive_handoff(
     }
 
 
+def receive_handoff(
+    store: TypedArtifactStore,
+    *,
+    session_id: str,
+    capability: str,
+    cursor: str | None = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Read-only bounded delta: exactly the `granted_ids` whose *current* version exceeds
+    this session's already-acknowledged version, ordered by artifact ID for a deterministic,
+    replayable page. Carries no content -- only `id`/`version`/`trust_tier`/`source` -- so a
+    receiver must call `expand` for the exact bytes before it can prove a read-back. Never
+    writes, so calling this twice (a replay, or an interrupted page) is trivially atomic and
+    idempotent (`test_partial_page_and_replay_are_atomic`)."""
+    session = load_session(store, session_id, capability, now=now)
+    return _bounded_session_delta(
+        store, session, session_id=session_id, cursor=cursor, page_size=page_size
+    )
+
+
+def recover_session_delta_without_capability(
+    store: TypedArtifactStore,
+    session_id: str,
+    *,
+    expected_root: str,
+    expected_audience: str,
+    expected_session_allowlist: Sequence[str],
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    """S05 bullet 2: the one internal path allowed to read a handoff
+    session's bounded delta without its raw capability -- a crashed
+    `prepare` loses the in-memory-only capability forever, so normal
+    `receive_handoff` can never be called again for that session. NOT an
+    HTTP/CLI/MCP entry point; callable only from a process's own dead-owner
+    reconciliation path (`rush.workflows.project_run.recover_prepared_handoff`,
+    itself only reachable from inside a won `claim_dead_owner` claim), which
+    has already independently verified operation/artifact/session receipts,
+    project, and source run/attempt before calling this. This function
+    still independently re-verifies session-row state itself (never trusts
+    the caller alone): existence, not revoked, not expired, and that
+    `root`/`audience`/`session_allowlist` match the caller's own recovered
+    expectations -- returns `None` (recovery-required, never a fabricated
+    or partial result) if the session row disagrees on any of them, rather
+    than calling `load_session` with an empty or invented capability."""
+    row = store.get_handoff_session(session_id)
+    if row is None:
+        return None
+    if row.get("revoked_at") is not None:
+        return None
+    ts = now if now is not None else time.time()
+    if ts >= row["expires_at"]:
+        return None
+    if row["root"] != expected_root or row["audience"] != expected_audience:
+        return None
+    if sorted(row["session_allowlist"]) != sorted(expected_session_allowlist):
+        return None
+    session = HandoffSession(
+        session_id=row["session_id"],
+        root=row["root"],
+        audience=row["audience"],
+        granted_ids=tuple(row["granted_ids"]),
+        session_allowlist=tuple(row["session_allowlist"]),
+        constraints=row["constraints"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+    )
+    return _bounded_session_delta(
+        store,
+        session,
+        session_id=session_id,
+        cursor=None,
+        page_size=DEFAULT_PAGE_SIZE,
+    )
+
+
 def acknowledge_readback(
     store: TypedArtifactStore,
     *,
@@ -244,6 +327,11 @@ def acknowledge_readback(
     session = load_session(store, session_id, capability, now=now)
     updates: list[tuple[str, int, str]] = []
     for entry in readbacks:
+        if not isinstance(entry, Mapping):
+            raise HandoffError(
+                "Each readback must be an object with id, version and digest.",
+                code="E_INPUT",
+            )
         artifact_id = entry.get("id")
         version = entry.get("version")
         digest = entry.get("digest")
@@ -255,6 +343,11 @@ def acknowledge_readback(
         ):
             raise HandoffError(
                 "Each readback requires id (str), version (int) and digest (str).",
+                code="E_INPUT",
+            )
+        if not sqlite_integer_in_range(version):
+            raise HandoffError(
+                f"Readback version {version} is outside the storable integer range.",
                 code="E_INPUT",
             )
         if artifact_id not in session.granted_ids:

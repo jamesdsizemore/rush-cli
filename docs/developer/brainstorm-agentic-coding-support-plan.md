@@ -15,7 +15,7 @@ Autonomous AI coding agents have fundamentally transformed modern software devel
 
 1. **Context Window Flooding & Token Exhaustion**: Agents reading full 2,000-line source modules or ingesting verbose diagnostic tool dumps quickly overflow context windows, incurring massive API costs and inducing LLM amnesia.
 2. **Destructive Git & Filesystem Operations**: Hallucinating agents attempting to resolve merge conflicts or revert broken edits execute destructive commands (`git reset --hard`, `git push --force`, `rm -rf`), destroying uncommitted developer progress.
-3. **Governance & Instruction Tampering**: Malicious prompts or hallucinating models alter their own governing instructions in `AGENTS.md`, `CLAUDE.md`, or `.cursorrules` to bypass security and testing gates.
+3. **Governance & Instruction Tampering**: Malicious prompts or hallucinating models alter their own governing instructions in `AGENTS.md` or `CLAUDE.md` to bypass security and testing gates.
 4. **Context Injection via Adversarial Code Comments**: Hostile source files containing prompt injection attacks trick agents into executing unauthorized actions.
 5. **stdio Stream Pollution**: External linters or hooks writing unformatted text to standard output corrupt FastMCP JSON-RPC transport.
 
@@ -85,7 +85,7 @@ The agentic support suite is partitioned across 5 specialized domains:
 6. **`rush_token_budget_enforce(text, max_tokens)`**: Enforces strict token limits on diagnostic responses, appending structured pagination cursors.
 
 ### Domain B: Agent Safety, Sandboxing & Command Filtering (Phase 31)
-7. **`rush_guard_check_mutation(file_path)`**: Enforces read-only protection over `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `rush.toml`.
+7. **`rush_guard_check_mutation(file_path)`**: Enforces read-only protection over `AGENTS.md`, `CLAUDE.md`, and `rush.toml`.
 8. **`rush_interceptor_check_command(cmd)`**: Detects and intercepts destructive Git commands (`git reset --hard`, `git push -f`, `clean -fdx`).
 9. **`rush_sandbox_spawn(task_id)`**: Spawns an isolated Git worktree sandbox under `.rush/worktrees/<task-id>`.
 10. **`rush_sandbox_destroy(task_id)`**: Cleans up and deletes an ephemeral Git worktree sandbox.
@@ -110,7 +110,7 @@ The agentic support suite is partitioned across 5 specialized domains:
 23. **`rush_score_calculate()`**: Aggregates all quality findings into a weighted 0–100% repository health index.
 24. **`rush_score_pr_card()`**: Generates a clean, collapsible Markdown comment card for pull requests.
 25. **`rush_consensus_reconcile(findings)`**: Reconciles findings across multiple models (Claude, Codex, DeepSeek) requiring majority agreement.
-26. **`rush_governance_sync()`**: Synchronizes canonical `AGENTS.md` rules into all IDE rule manifests (`CLAUDE.md`, `.cursorrules`, etc.).
+26. **`rush_governance_sync()`**: Synchronizes canonical `AGENTS.md` rules into all IDE rule manifests (`CLAUDE.md`, etc.).
 27. **`rush_hook_staged_scan()`**: Executes a sub-second pre-commit check on staged Git index files.
 
 ---
@@ -212,7 +212,6 @@ class GovernanceGuard:
     IMMUTABLE_PATTERNS = {
         "AGENTS.md",
         "CLAUDE.md",
-        ".cursorrules",
         ".windsurfrules",
         "rush.toml",
         ".rush/trust.json",

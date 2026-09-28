@@ -12,7 +12,7 @@
 
 Welcome to **Agentic Rush**.
 
-Whether you are building with **Cursor, Claude Code, Cline, Windsurf, Roo Code, GitHub Copilot Workspace**, or custom autonomous agent frameworks, you've likely encountered the reality of AI coding assistants: they are incredibly fast, but without guardrails, they can introduce subtle bugs, hallucinatory code ("AI slop"), destructive commands, out-of-sync types, and bloated token context costs.
+Whether you are building with **Claude Code, Cline, Windsurf, Roo Code, GitHub Copilot Workspace**, or custom autonomous agent frameworks, you've likely encountered the reality of AI coding assistants: they are incredibly fast, but without guardrails, they can introduce subtle bugs, hallucinatory code ("AI slop"), destructive commands, out-of-sync types, and bloated token context costs.
 
 **Agentic Rush is the safety harness, intelligence engine, and quality accelerator for autonomous AI coding agents and the humans who steer them.**
 
@@ -38,7 +38,7 @@ Status: planned — this complete autonomous patch/agent journey remains require
 sequenceDiagram
     autonumber
     participant Human as Developer
-    participant Agent as AI Coding Agent (Cursor/Claude/Cline)
+    participant Agent as AI Coding Agent (Claude/Cline)
     participant Rush as Rush Agentic Engine
     participant Repo as Codebase Repository
 
@@ -73,7 +73,7 @@ Explore the dedicated in-depth guides for every agentic subsystem:
 | **Token Economy & Context** | BPE token budgeting & AST outline compression | Shrinks code prompts by 70–90%, dramatically reducing LLM costs and eliminating context window amnesia. | [Read Guide](agentic-rush/token-economy-and-context.md) |
 | **CodeGraph & Symbol Slicing** | Code Property Graph & verbatim symbol extraction | Lets agents query exact function implementations and call paths in sub-milliseconds without reading full files. | [Read Guide](agentic-rush/codegraph-and-semantic-slicing.md) |
 | **Codebase Hygiene & AST Merges** | Dead code scanning & 3-way AST merge solver | Cleans up unreferenced code and automatically resolves merge conflicts when multiple agents edit in parallel. | [Read Guide](agentic-rush/codebase-hygiene-and-ast-merging.md) |
-| **Governance & Multi-IDE Rules** | Canonical `AGENTS.md` compilation | Compiles one single rules file into `.cursorrules`, `.clinerules`, and Windsurf rules so all agents follow team standards. | [Read Guide](agentic-rush/governance-and-multi-ide-rules.md) |
+| **Governance & Multi-IDE Rules** | Canonical `AGENTS.md` compilation | Compiles one single rules file into `.clinerules` and Windsurf rules so all agents follow team standards. | [Read Guide](agentic-rush/governance-and-multi-ide-rules.md) |
 | **Pre-Commit Intelligence** | Sub-second staged AST linting & Trojan Source detection | Catches invisible Unicode exploits, merge conflict markers, and syntax errors before commits hit git history. | [Read Guide](agentic-rush/pre-commit-intelligence.md) |
 | **Multi-Model Consensus & Score** | Cross-model agreement voting & 6-pillar scorecard | Reconciles reviews from Claude, GPT-4o, and Gemini while computing a deterministic 0–100% repo health grade. | [Read Guide](agentic-rush/multi-model-consensus-and-scoring.md) |
 | **Plugins & Agent Skills** | Trust-gated tools & exportable agent skill definitions | Extends agent capabilities with custom scripts secured by cryptographic SHA-256 trust verification. | [Read Guide](agentic-rush/plugins-and-agent-skills.md) |
@@ -91,7 +91,7 @@ Give your AI agent superpowers in two minutes:
    rush governance sync
    ```
 2. **Launch the FastMCP server for your IDE**:
-   Add Rush to your Cursor / Claude Code / Cline MCP configuration:
+   Add Rush to your Claude Code / Cline MCP configuration:
    ```json
    {
      "mcpServers": {

@@ -147,7 +147,7 @@ Every tool returns structured `metadata.execution` capturing:
 | Safe-Env | `security` | safe-env 0.4+ (environment secret sanity checker) | `tests/test_safe_env_reference.py` |
 | Wait-On | `e2e` | wait-on 7.2+ (port & HTTP health endpoint poller) | `tests/test_wait_on_reference.py` |
 | NCU | `security` | npm-check-updates 16.14+ (dependency upgrade checker) | `tests/test_ncu_reference.py` |
-| aislop | `slop` | aislop 0.4+ (AST AI anti-pattern scanner) | `tests/test_aislop_reference.py` |
+| aislop | `slop` | aislop 0.16.1+ (AST AI anti-pattern scanner; directory-scan `diagnostics` report contract) | `tests/test_aislop_reference.py` |
 | Tach (`tach`) | `complexity` | tach 0.8+ (modular boundary checker) | `tests/test_tach_reference.py` |
 | Undercover (`undercover`) | `coverage` | undercover 0.6+ (git diff coverage checker) | `tests/test_undercover_reference.py` |
 | Medusa (`medusa`) | `security` | medusa 1.0+ (agent hook & prompt injection auditor) | `tests/test_medusa_reference.py` |

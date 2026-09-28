@@ -422,6 +422,9 @@ def _prerequisites(engine_id: str, source: EngineSource) -> tuple[str, ...]:
         return ("node", "npm")
     if engine_id == "git-guard":
         return ("git",)
+    if engine_id == "aislop":
+        # The PyPI package runs its pinned npm package through npx.
+        return ("uv", "python", "node", "npm")
     if engine_id == "semantic-drift":
         return ()
     return _SOURCE_PREREQUISITES[source]
@@ -430,6 +433,19 @@ def _prerequisites(engine_id: str, source: EngineSource) -> tuple[str, ...]:
 def _version_policy(engine_id: str, source: EngineSource) -> str:
     if engine_id == "zally":
         return "pinned:v2.1.1"
+    # T14 (S14.2/S14.3): osv-scanner's `scan source --lockfile` and the
+    # explicit `--lockfile <parser>:<path>` prefix require >=2.0.0; pip-audit
+    # project mode requires >=2.10.1 for the `dependencies` JSON envelope
+    # `_parse_dependencies` already expects.
+    if engine_id == "osv-scanner":
+        return "minimum:2.0.0"
+    if engine_id == "pip-audit":
+        return "minimum:2.10.1"
+    if engine_id == "pyrefly":
+        # First release whose `check --help` offers both interpreter-selection
+        # flags T11 relies on (0.36.2 has neither); enforced at runtime by
+        # `PyreflyEngine.support_problem`.
+        return "minimum:0.37.0"
     if source == "maven":
         return "project_locked"
     if source == "internal":

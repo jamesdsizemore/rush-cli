@@ -26,7 +26,9 @@ def test_catalog_path_command_uses_the_tool_name_and_standard_options() -> None:
 
 
 def test_cli_help_contains_every_registered_catalog_tool() -> None:
-    result = CliRunner().invoke(cli, ["--help"])
+    # T25: the default --help shows the everyday set; --help-all lists every
+    # registered command.
+    result = CliRunner().invoke(cli, ["--help-all"])
 
     assert result.exit_code == 0
     for name in ("review", "lint", "format", "test", "security"):
@@ -81,6 +83,8 @@ def test_review_cli_passes_only_explicit_changed_files_to_shared_tool(
 
 
 def test_mcp_instructions_are_generated_from_catalog(monkeypatch) -> None:
+    import rush.mcp as mcp_module
+
     monkeypatch.setitem(
         TOOL_SPECS,
         "example",
@@ -92,6 +96,10 @@ def test_mcp_instructions_are_generated_from_catalog(monkeypatch) -> None:
             engine_names=(),
         ),
     )
+    # Phase 70 T4: instructions name the tools a server registers, so the
+    # probe is a registered catalog tool, not only a spec.
+    probe = type("ExampleTool", (), {"name": "example"})()
+    monkeypatch.setattr(mcp_module, "ALL_TOOLS", [*mcp_module.ALL_TOOLS, probe])
 
     assert "rush_example" in build_server_instructions()
 
@@ -127,7 +135,8 @@ def test_session_continuity_lifecycle_is_permission_gated_and_canonical(
     missing = tool.run(tmp_path, operation="restore", name="missing")
 
     assert {result["status"] for result in (saved, listed, restored)} == {"ok"}
-    assert missing["status"] == "skipped"
+    # T27 (R27.1): restoring an unknown checkpoint is an error, never skipped.
+    assert missing["status"] == "error"
     assert saved["raw"]["name"] == restored["raw"]["name"] == "handoff"
     assert listed["raw"] == [restored["raw"]]
     invalid = tool.run(

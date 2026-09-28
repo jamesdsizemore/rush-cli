@@ -28,6 +28,7 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,10 @@ from rush.memory.store import (
     MemorySubject,
     TypedArtifactStore,
     _write_version,
+    note_committed_write,
+    note_memory_read,
+    read_sqlite_readonly,
+    sqlite_has_table,
 )
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import sanitize_value
@@ -48,7 +53,7 @@ def artifact_exists(
     store: TypedArtifactStore, origin_kind: str, origin_id: str
 ) -> bool:
     """Idempotency key check (T-61.22, T-61.37): True if this origin was already migrated."""
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         row = conn.execute(
             "SELECT 1 FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ? LIMIT 1",
             (origin_kind, origin_id),
@@ -102,7 +107,7 @@ def replace_origin_content(
     `artifact_version`.
     """
     clean_content = sanitize_value(content).value
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -136,6 +141,7 @@ def replace_origin_content(
                 origin_id,
             ),
         )
+    note_committed_write(row["id"], new_version, row["source"], "update")
     return True
 
 
@@ -144,7 +150,7 @@ def read_origin(
 ) -> dict[str, Any] | None:
     """Compatibility-view read fallback: a migrated row's content by its exact origin key."""
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ? LIMIT 1",
@@ -157,7 +163,7 @@ def read_origin_kind(project_root: Path, origin_kind: str) -> list[dict[str, Any
     """Compatibility-view read fallback: every migrated row's content for one `origin_kind`,
     ordered by `created_at` (session_memory.py's `format_for_mcp` needs chronological order)."""
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT content FROM memory_artifacts WHERE origin_kind = ? ORDER BY created_at",
@@ -171,7 +177,7 @@ def read_origin_kind_by_symbol(
 ) -> list[dict[str, Any]]:
     """Compatibility-view read fallback scoped to a shared `symbol_ref` (e.g. a flight session id)."""
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(store.db_path)) as conn:
+    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND symbol_ref = ? "
@@ -179,6 +185,92 @@ def read_origin_kind_by_symbol(
             (origin_kind, symbol_ref),
         ).fetchall()
     return [json.loads(row["content"]) for row in rows]
+
+
+_ORIGIN_SQL = "SELECT * FROM memory_artifacts WHERE origin_kind = ?"
+_ORIGIN_ID_SQL = _ORIGIN_SQL + " AND origin_id = ? ORDER BY created_at"
+_ORIGIN_SYMBOL_SQL = _ORIGIN_SQL + " AND symbol_ref = ? ORDER BY created_at"
+_ORIGIN_KIND_SQL = _ORIGIN_SQL + " ORDER BY created_at"
+
+
+def _origin_rows_readonly(
+    project_root: Path, sql: str, params: tuple[str, ...]
+) -> list[tuple[dict[str, Any], tuple[str, int, str] | None]]:
+    """T10: the non-creating compatibility-view read. One `read_sqlite_readonly`
+    connection (no `.rush`, DB, `-wal`/`-shm` or migration is ever created); a
+    legacy DB predating `artifact_version` still yields its origin rows, because
+    `origin_kind`/`origin_id`/`symbol_ref` are base-schema columns. A missing DB
+    or table gives no rows.
+
+    T19: each row is paired with its `(id, revision, source)` ref, or `None`
+    for a legacy row with no `artifact_version`; the public readers note the
+    refs of the rows they actually return (`note_memory_read`)."""
+    db = Path(project_root).resolve() / ".rush" / "memory.db"
+
+    def read(
+        conn: sqlite3.Connection,
+    ) -> list[tuple[dict[str, Any], tuple[str, int, str] | None]]:
+        if not sqlite_has_table(conn, "memory_artifacts"):
+            return []
+        cursor = conn.execute(sql, params)
+        # A legacy DB predating `artifact_version` has rows but no revision.
+        versioned = any(col[0] == "artifact_version" for col in cursor.description)
+        return [
+            (
+                json.loads(row["content"]),
+                (row["id"], row["artifact_version"], row["source"])
+                if versioned
+                else None,
+            )
+            for row in cursor.fetchall()
+        ]
+
+    return read_sqlite_readonly(db, read) or []
+
+
+def _returned(
+    rows: list[tuple[dict[str, Any], tuple[str, int, str] | None]],
+) -> list[dict[str, Any]]:
+    for _content, ref in rows:
+        if ref is not None:
+            note_memory_read(*ref)
+    return [content for content, _ref in rows]
+
+
+def read_origin_readonly(
+    project_root: Path, origin_kind: str, origin_id: str
+) -> dict[str, Any] | None:
+    """Non-creating `read_origin`."""
+    rows = _origin_rows_readonly(project_root, _ORIGIN_ID_SQL, (origin_kind, origin_id))
+    returned = _returned(rows[:1])
+    return returned[0] if returned else None
+
+
+def read_origin_kind_readonly(
+    project_root: Path, origin_kind: str
+) -> list[dict[str, Any]]:
+    """Non-creating `read_origin_kind`."""
+    return _returned(read_origin_kind_refs_readonly(project_root, origin_kind))
+
+
+def read_origin_kind_refs_readonly(
+    project_root: Path, origin_kind: str
+) -> list[tuple[dict[str, Any], tuple[str, int, str] | None]]:
+    """Non-creating `read_origin_kind`, each row paired with its
+    `(id, revision, source)` ref and nothing noted: a caller that returns only
+    some rows notes those itself (`note_memory_read`)."""
+    return _origin_rows_readonly(project_root, _ORIGIN_KIND_SQL, (origin_kind,))
+
+
+def read_origin_kind_by_symbol_readonly(
+    project_root: Path, origin_kind: str, symbol_ref: str
+) -> list[dict[str, Any]]:
+    """Non-creating `read_origin_kind_by_symbol`."""
+    return _returned(
+        _origin_rows_readonly(
+            project_root, _ORIGIN_SYMBOL_SQL, (origin_kind, symbol_ref)
+        )
+    )
 
 
 def _rename_migrated(path: Path) -> None:
@@ -329,7 +421,7 @@ def migrate_failure_ledger(project_root: Path) -> int:
     if not db_path.exists():
         return 0
     store = TypedArtifactStore(project_root)
-    with sqlite3.connect(str(db_path)) as conn:
+    with closing(sqlite3.connect(str(db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(

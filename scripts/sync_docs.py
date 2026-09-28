@@ -237,6 +237,12 @@ def _json_default(value: Any) -> Any:
         return text
     if type(value).__name__ == "Sentinel":
         return {"sentinel": value.name}
+    if callable(value):
+        # A callable default (e.g. a lazy Click default) has no stable str():
+        # its repr carries a memory address. Record its dotted name instead.
+        module = getattr(value, "__module__", None) or type(value).__module__
+        name = getattr(value, "__qualname__", None) or type(value).__qualname__
+        return {"callable": f"{module}.{name}"}
     return str(value)
 
 
@@ -312,11 +318,16 @@ def _schema_type(schema: dict[str, Any]) -> str:
 
 
 def _mcp_contracts() -> dict[str, Any]:
+    import asyncio
+
     from rush.mcp import mcp_server
 
+    # X9/T6: the published `tools/list` schema, not the SDK manager's -- the
+    # request-model tools publish their own schema over the public list_tools.
     contracts: dict[str, Any] = {}
-    for name, tool in sorted(mcp_server._tool_manager._tools.items()):
-        schema = tool.parameters
+    published = asyncio.run(mcp_server.list_tools())
+    for tool in sorted(published, key=lambda item: item.name):
+        name, schema = tool.name, tool.inputSchema
         required = set(schema.get("required", []))
         parameters = [
             {

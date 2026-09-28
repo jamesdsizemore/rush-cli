@@ -2,11 +2,15 @@
 # One-command Rush install (Phase 65 P65-10, F35/F42).
 #
 # Streamed usage: curl -fsSL <raw-url>/scripts/install.sh | sh
+# Guided setup: curl -fsSL <raw-url>/scripts/install.sh | sh -s -- --setup --agent claude|codex --project PATH
 # No source checkout, no Python, no uv: this script only needs curl/wget,
 # tar, and a sha256 tool, all of which it detects on PATH. It downloads a
 # verified, self-contained `rush` release archive, installs it under a
 # user-local data directory, and hands off to the installed binary's own
 # `rush install` command for agent connection and (optional) project setup.
+# The handoff passes this script's own verified archive and SHA256SUMS, so
+# the installed binary checks them against itself instead of downloading
+# the release a second time.
 set -eu
 
 repo="jamesdsizemore/rush-cli"
@@ -110,4 +114,21 @@ case ":$PATH:" in
         ;;
 esac
 
-"${install_dir}/rush" install --agents all --memory on "$@"
+# --agents all is the default only when the caller chose no host themselves;
+# guided --setup connects its host inside setup, so the install connects none.
+guided=0
+host_flag=0
+for arg in "$@"; do
+    case "$arg" in
+        "--setup") guided=1 ;;
+        "--agent"|"--agent="*|"--agents"|"--agents="*) host_flag=1 ;;
+    esac
+done
+
+if [ "$guided" = 1 ]; then
+    "${install_dir}/rush" install --agents none --memory on --handoff-archive "${work_dir}/${asset}" --handoff-sums "${work_dir}/SHA256SUMS" "$@"
+elif [ "$host_flag" = 1 ]; then
+    "${install_dir}/rush" install --memory on --handoff-archive "${work_dir}/${asset}" --handoff-sums "${work_dir}/SHA256SUMS" "$@"
+else
+    "${install_dir}/rush" install --agents all --memory on --handoff-archive "${work_dir}/${asset}" --handoff-sums "${work_dir}/SHA256SUMS" "$@"
+fi

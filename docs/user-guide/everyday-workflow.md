@@ -10,19 +10,22 @@ Here is the narrative of a typical, productive day using Rush.
 
 ## 1. Starting Your Day: Checking the Ground Beneath You
 
-Before you begin editing code on a new branch, it is always a good idea to ensure that your environment is clean and that the repository's baseline is healthy.
+Before you begin editing code on a new branch, start with a read-only look at where the project stands:
+
+```bash
+uv run rush status .
+```
+
+`rush status` (bare `uv run rush` from inside the project does the same thing) shows registration/config state, detected engines, current activity, the latest attempt and published result, agent registration state, and useful memory count, without changing anything. Then check that the repository's baseline is healthy:
 
 ```bash
 uv run rush check . --json
 ```
 
 ### What happens:
-Rush runs its current fixed check suite across the project:
-- **Linting**: Did anyone leave syntax mistakes or unused imports behind?
-- **Formatting**: Is all the code consistently formatted?
-- **Type Checking**: Do all function signatures and data types match up?
+Rush runs its six-step check suite across the project, in order: `format` (check-only), `lint`, `typecheck`, `dead`, `slop`, `test` (needs `--allow-build`, otherwise `skipped` with the permission reason). Every step runs and is reported by default. If the run actually used or wrote memory records, its summary ends with one clause naming how many prior records it read and wrote (for example `memory: read 1 prior record, wrote 1 record`); the clause is absent when neither happened.
 
-Inspect every child result. A `skipped` optional engine is non-execution evidence, so exit code alone does not prove every applicable check ran.
+Inspect every child result. A `skipped` optional or denied step is non-execution evidence, so exit code alone does not prove every applicable check ran: `ok`/`skipped` exit 0, `warn`/`fail` exit 1, `error` exits 2.
 
 ---
 
@@ -82,7 +85,7 @@ uv run rush score compute
 uv run rush dashboard --help
 ```
 
-Current dashboard browser/server integration is broken at this baseline, and persistent workflow remains planned in [Phase 66](../phase-plans/phase-66-interactive-tui-and-local-web-plan.md). Use command JSON and executed checks as evidence.
+`rush dashboard` starts an authenticated, CSRF-hardened server on `127.0.0.1` behind a single-use bootstrap URL, with an explicit grant required per mutation. See the [dashboard/TUI review](../reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings.
 
 ---
 
@@ -90,7 +93,8 @@ Current dashboard browser/server integration is broken at this baseline, and per
 
 | When You Want To... | Run This Command | Why It's Great |
 |---|---|---|
-| Run current check suite | `uv run rush check . --json` | Shows child execution and skip evidence. |
+| Check project status | `uv run rush status .` | Read-only registration, engine, activity, and memory summary. |
+| Run current check suite | `uv run rush check . --json` | Shows all six step outcomes and skip evidence. |
 | Trigger checks on file changes | `uv run rush watch .` | Runs configured suite after debounce. |
 | Preview Ruff remediation | `uv run rush fix . --dry-run --force` | Preserves Git state; apply requires `--allow-artifact-write`. |
 | Run applicable project tests | `uv run rush test . --json` | Shows executed, failed, and skipped evidence. |

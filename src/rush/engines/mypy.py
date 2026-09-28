@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
+
+# R12.1/S12.3: never a durable `.mypy_cache` without a grant, and absolute
+# finding paths whatever the cwd.
+DEFAULT_FLAGS = (
+    "--hide-error-context",
+    "--show-absolute-path",
+    f"--cache-dir={os.devnull}",
+)
 
 
 class MypyEngine(Engine):
@@ -15,15 +24,21 @@ class MypyEngine(Engine):
     binary = "mypy"
     file_extensions = ("py", "pyi")
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         proc = run_subprocess(
-            [
-                resolve_binary(self.binary) or self.binary,
-                "--hide-error-context",
-                *args,
-            ],
-            cwd=cwd,
+            [resolve_binary(self.binary) or self.binary, *DEFAULT_FLAGS, *args],
+            # S12.1: always a directory cwd, never a file.
+            cwd=cwd or (path if path.is_dir() else path.parent),
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
 
         return EngineResult(

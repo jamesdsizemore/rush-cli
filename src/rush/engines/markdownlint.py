@@ -8,7 +8,7 @@ from typing import Any
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 DEFAULT_CONFIG = Path(__file__).with_name("_markdownlint-empty.json")
 DEFAULT_IGNORE = Path(__file__).with_name("_markdownlint-empty.ignore")
@@ -21,7 +21,15 @@ class MarkdownlintEngine(Engine):
     binary = "markdownlint"
     file_extensions = ("md", "mdx")
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         cmd_args = [
             resolve_binary(self.binary) or self.binary,
             "--config",
@@ -36,6 +44,7 @@ class MarkdownlintEngine(Engine):
             cmd_args,
             cwd=cwd or (path.parent if path.is_file() else path),
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
 
         return EngineResult(

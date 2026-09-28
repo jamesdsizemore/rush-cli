@@ -8,7 +8,7 @@ from typing import Any
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 DEFAULT_CONFIG = Path(__file__).with_name("_sqlfluff.ini")
 
@@ -18,7 +18,15 @@ class SqlfluffEngine(Engine):
     binary = "sqlfluff"
     file_extensions = ("sql",)
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         sources = [Path(arg) for arg in args] or [path]
         proc = run_subprocess(
             [
@@ -39,6 +47,7 @@ class SqlfluffEngine(Engine):
             ],
             cwd=cwd or path.parent,
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr

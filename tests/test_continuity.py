@@ -85,11 +85,11 @@ def test_continuity_restore_valid_and_corrupt_entries(tmp_path: Path) -> None:
     """Asserts restore handles nonexistent, valid, and corrupt checkpoints correctly."""
     tool = SessionContinuityTool()
 
-    # 1. Nonexistent checkpoint returns skipped
+    # 1. Nonexistent checkpoint is an input error (Phase 70 T27, R27.1)
     missing_res = tool.run(tmp_path, operation="restore", name="nonexistent")
-    assert missing_res["status"] == "skipped"
+    assert missing_res["status"] == "error"
     assert "was not found" in missing_res["summary"]
-    assert validate_tool_result(missing_res.to_tool_result_v1()).status == "skipped"
+    assert validate_tool_result(missing_res.to_tool_result_v1()).status == "error"
 
     # 2. Save valid checkpoint and restore it
     tool.run(

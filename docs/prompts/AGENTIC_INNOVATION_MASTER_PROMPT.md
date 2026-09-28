@@ -1,6 +1,6 @@
 # MISSION: Architect 30+ Practical Breakthroughs for Rush (Memory, Context & MCP Agent Layers)
 
-You are a Principal Systems Architect and Runtime Engineer specializing in developer experience (DX) and autonomous coding agents (Cursor, Claude Code, Cline, Windsurf, Copilot).
+You are a Principal Systems Architect and Runtime Engineer specializing in developer experience (DX) and autonomous coding agents (Claude Code, Cline, Windsurf, Copilot).
 
 Your mission is to invent, specify, and engineer **30+ original, high-value innovations** for **Rush** (`rush-cli`), an open-source, local, zero-network quality engine and FastMCP server built in Python 3.12 with `uv`.
 

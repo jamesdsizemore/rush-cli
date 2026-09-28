@@ -11,7 +11,7 @@ from ..io.physical_paths import PhysicalRoot
 from ..safety.redactor import sanitize_value
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 
 class PromptfooEngine(Engine):
@@ -24,6 +24,9 @@ class PromptfooEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         physical = PhysicalRoot(cwd or path)
         report_file = physical.open_contained("promptfoo-report.json", purpose="write")
@@ -51,6 +54,7 @@ class PromptfooEngine(Engine):
                 "PROMPTFOO_CONFIG_DIR": str(cwd or path),
                 "PROMPTFOO_DISABLE_TELEMETRY": "1",
             },
+            **ownership_kwargs(owner_instance_id, run_id),
         )
 
         parsed = None

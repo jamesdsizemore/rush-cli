@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 188
+total_operations = 194
 
 [[operations]]
 id = "admin.agent_connect"
@@ -13,6 +13,26 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush agent connect --help"
+
+[[operations]]
+id = "admin.agent_disconnect"
+kind = "admin"
+canonical_impl = "rush.tools.agent_connection:AgentConnectionTool"
+cli_command = "agent disconnect"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush agent disconnect --help"
+
+[[operations]]
+id = "admin.agent_hook"
+kind = "admin"
+canonical_impl = "rush.integrations.agent_hooks:run_agent_hook"
+cli_command = "agent hook"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush agent hook --help"
 
 [[operations]]
 id = "admin.install"
@@ -375,16 +395,6 @@ effect_class = "read-only"
 safe_probe = "rush capabilities --help"
 
 [[operations]]
-id = "cli.check"
-kind = "admin"
-canonical_impl = "rush.cli:check"
-cli_command = "check"
-input_contract = "ClickArguments"
-output_contract = "ClickExitCode"
-effect_class = "read-only"
-safe_probe = "rush check --help"
-
-[[operations]]
 id = "cli.ci_init"
 kind = "admin"
 canonical_impl = "rush.cli:ci"
@@ -575,6 +585,16 @@ effect_class = "read-only"
 safe_probe = "rush hallu-guard --help"
 
 [[operations]]
+id = "cli.help"
+kind = "admin"
+canonical_impl = "rush.cli:help"
+cli_command = "help"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush help --help"
+
+[[operations]]
 id = "cli.hook_run"
 kind = "tool"
 canonical_impl = "rush.cli:hook"
@@ -643,6 +663,16 @@ input_contract = "ClickArguments"
 output_contract = "ClickExitCode"
 effect_class = "read-only"
 safe_probe = "rush mcp serve --help"
+
+[[operations]]
+id = "cli.memory"
+kind = "admin"
+canonical_impl = "rush.cli:memory"
+cli_command = "memory"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush memory --help"
 
 [[operations]]
 id = "cli.outline"
@@ -1280,6 +1310,17 @@ effect_class = "read-only"
 safe_probe = "rush benchmark check --help"
 
 [[operations]]
+id = "tool.check"
+kind = "tool"
+canonical_impl = "rush.tools.check:CheckTool"
+cli_command = "check"
+mcp_tool = "rush_check"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush check --help"
+
+[[operations]]
 id = "tool.codeql"
 kind = "tool"
 canonical_impl = "rush.tools.codeql:CodeqlTool"
@@ -1487,6 +1528,16 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush fuzz --help"
+
+[[operations]]
+id = "tool.gain"
+kind = "tool"
+canonical_impl = "rush.token_economy.tui_gain:render_gain_summary"
+cli_command = "gain"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush gain --help"
 
 [[operations]]
 id = "tool.iac"
@@ -1867,6 +1918,18 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush sql --help"
+
+# Bare `rush` (no subcommand) runs this operation.
+[[operations]]
+id = "tool.status"
+kind = "tool"
+canonical_impl = "rush.tools.status:StatusTool"
+cli_command = "status"
+mcp_tool = "rush_status"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush status --help"
 
 [[operations]]
 id = "tool.tdd"

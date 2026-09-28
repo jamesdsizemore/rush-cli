@@ -9,7 +9,7 @@ from typing import Any
 
 from ..tools.base import Finding, ToolResult
 from ..tools.common import error_result, resolve_binary, run_subprocess
-from .base import Engine, EngineResult
+from .base import Engine, EngineResult, ownership_kwargs
 
 DEFAULT_RULESET = Path(__file__).with_name("_spectral-ruleset.yaml")
 _REMOTE_REF = re.compile(r"\$ref\s*:\s*['\"]?(?:https?|file)://")
@@ -22,7 +22,15 @@ class SpectralEngine(Engine):
     binary = "spectral"
     file_extensions = ("yml", "yaml")
 
-    def run(self, path: Path, args: list[str], cwd: Path | None = None) -> EngineResult:
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
         sources = [Path(arg) for arg in args] or [path]
         for source in sources:
             if source.is_file() and _REMOTE_REF.search(
@@ -48,6 +56,7 @@ class SpectralEngine(Engine):
             ],
             cwd=cwd or (path.parent if path.is_file() else path),
             timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
         )
         return EngineResult(
             exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr

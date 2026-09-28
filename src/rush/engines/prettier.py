@@ -25,7 +25,7 @@ from pathlib import Path
 
 from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
-from .base import Engine, EngineResult, RawFinding
+from .base import Engine, EngineResult, RawFinding, ownership_kwargs
 
 
 class PrettierEngine(Engine):
@@ -51,6 +51,9 @@ class PrettierEngine(Engine):
         path: Path,
         args: list[str],
         cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
     ) -> EngineResult:
         binary_path = resolve_binary(self.binary) or self.binary
         argv = [
@@ -60,7 +63,12 @@ class PrettierEngine(Engine):
             str(path),
             *args,
         ]
-        proc = run_subprocess(argv, cwd=cwd, timeout=120)
+        proc = run_subprocess(
+            argv,
+            cwd=cwd,
+            timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
 
         # prettier --check writes filenames (one per line) to stdout for files
         # that would be reformatted.

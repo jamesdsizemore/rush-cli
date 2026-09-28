@@ -12,11 +12,14 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from xml.sax import saxutils
 
 from rush.logging import get_logger, log_subsystem
 from rush.safety.redactor import SecretRedactor
+
+if TYPE_CHECKING:
+    from rush.memory.store import MemoryArtifact
 
 # rush.memory.migration/store/trust are imported lazily inside record_turn()/format_for_mcp()
 # below, not here at module level: this module sits on the pre-existing
@@ -147,17 +150,18 @@ class SessionMemoryManager:
 
 def record_fix_attribution(
     project_root: Path, commit: dict[str, Any], failure_id: str
-) -> None:
+) -> MemoryArtifact | None:
     """Link a `GitTrailerParser`-classified `is_fix=True` commit's SHA to the failure record it fixed.
 
     Stores only the commit SHA (Phase 62 §6.5 Invariant 4) — never the commit body/diff. Keyed by
     `(commit sha, failure_id)` so a rerun over the same commit never duplicates the link.
+    Returns the committed link (T19), or `None` when that link already existed.
     """
     from rush.memory.migration import write_if_new
     from rush.memory.store import TypedArtifactStore
 
     store = TypedArtifactStore(project_root)
-    write_if_new(
+    return write_if_new(
         store,
         family="experience",
         subject="episodic",

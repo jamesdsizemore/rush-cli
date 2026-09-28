@@ -31,6 +31,8 @@ def test_detect_secrets_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
             "C:/bin/detect-secrets",
             "scan",
             "--all-files",
+            "--exclude-files",
+            r"(^|/)CACHEDIR\.TAG$",
         ]
     ]
 

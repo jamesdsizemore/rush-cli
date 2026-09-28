@@ -359,7 +359,23 @@ def test_legacy_memory_response_remains_compatible(tmp_path: Path) -> None:
     assert legacy["raw"][0]["id"]
     assert "schema_version" not in legacy
     assert not isinstance(legacy["raw"], dict)
-    assert legacy["metadata"] == {"operation": "ask"}
+    # T19 B1: the legacy response's metadata also carries the recall receipt.
+    assert len(legacy["raw"]) == 1
+    assert legacy["metadata"] == {
+        "operation": "ask",
+        "memory": {
+            "version": 1,
+            "used": [
+                {
+                    "id": legacy["raw"][0]["id"],
+                    "revision": 1,
+                    "source": "allowed",
+                    "operation": "ask",
+                }
+            ],
+            "written": [],
+        },
+    }
 
     compact = tool.run(
         tmp_path,
@@ -373,3 +389,134 @@ def test_legacy_memory_response_remains_compatible(tmp_path: Path) -> None:
     assert compact["raw"]["operation"] == "ask"
     assert compact["raw"]["code"] == "OK"
     assert "items" in compact["raw"]["data"]
+
+
+# --- M11: MemoryTool's public invocation boundary / attribution -----------
+
+
+def test_two_identical_distinct_calls_are_counted_twice_and_one_retry_is_counted_once(
+    tmp_path: Path,
+) -> None:
+    """M11: `MemoryTool.run`'s public `invocation_id` boundary. Two calls sharing
+    identical content and no explicit `invocation_id` each mint their own identity
+    and both persist a `memory_events` row; a caller passing the SAME `invocation_id`
+    twice (a genuine retry of the exact same call) dedupes against the first row
+    instead of double-counting."""
+    tool = MemoryTool()
+    tool.run(
+        tmp_path,
+        operation="write",
+        subject="domain_knowledge",
+        content={"text": "needle alpha"},
+        source="allowed",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    common = {
+        "operation": "ask",
+        "subject": "domain_knowledge",
+        "query": "needle",
+        "session_allowlist": ["allowed"],
+        "request": {"view": "compact"},
+        "permissions": ExecutionPermissions(cache_write=True),
+    }
+    db_path = tmp_path / ".rush" / "telemetry" / "tokens.db"
+
+    tool.run(tmp_path, **common)
+    tool.run(tmp_path, **common)
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT invocation_id FROM memory_events WHERE kind = 'retrieval'"
+        ).fetchall()
+    assert len(rows) == 2
+    assert len({r[0] for r in rows}) == 2
+
+    tool.run(tmp_path, invocation_id="retry-x", **common)
+    tool.run(tmp_path, invocation_id="retry-x", **common)
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT invocation_id FROM memory_events WHERE kind = 'retrieval'"
+        ).fetchall()
+    assert len(rows) == 3
+    assert {r[0] for r in rows} >= {"retry-x"}
+
+
+def test_persisted_attribution_columns_match_the_public_invocation_id_on_every_success_and_fallback_branch(
+    tmp_path: Path,
+) -> None:
+    """M11: `project_id`/`run_id`/`agent_id`/`session_id` passed at the public
+    `MemoryTool.run` boundary persist unchanged on every telemetry row a call
+    produces -- a plain lexical `ask` success, a hybrid-unavailable `recall`
+    fallback (still lexical underneath, via the same forwarded `invocation_id`),
+    and an `expand` success all carry the exact same caller-supplied attribution
+    and their own explicit `invocation_id`, never a guessed path or a dropped
+    dimension."""
+    tool = MemoryTool()
+    write_result = tool.run(
+        tmp_path,
+        operation="write",
+        subject="domain_knowledge",
+        content={"text": "needle alpha"},
+        source="allowed",
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    artifact_id = write_result["raw"]["id"]
+
+    granted = ExecutionPermissions(cache_write=True, network=True)
+    attribution = {
+        "project_id": "proj-uuid-123",
+        "run_id": "run-1",
+        "agent_id": "agent-1",
+        "session_id": "session-1",
+    }
+
+    tool.run(
+        tmp_path,
+        operation="ask",
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["allowed"],
+        request={"view": "compact"},
+        permissions=granted,
+        invocation_id="inv-lexical",
+        **attribution,
+    )
+    tool.run(
+        tmp_path,
+        operation="recall",
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["allowed"],
+        request={"view": "compact", "retrieval": "hybrid"},
+        permissions=granted,
+        invocation_id="inv-hybrid-fallback",
+        **attribution,
+    )
+    tool.run(
+        tmp_path,
+        operation="expand",
+        request={"id": artifact_id, "version": 1},
+        session_allowlist=["allowed"],
+        permissions=granted,
+        invocation_id="inv-expand",
+        **attribution,
+    )
+
+    db_path = tmp_path / ".rush" / "telemetry" / "tokens.db"
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT invocation_id, kind, project_id, run_id, agent_id, session_id "
+            "FROM memory_events"
+        ).fetchall()
+    by_invocation = {r[0]: r for r in rows}
+    assert set(by_invocation) == {"inv-lexical", "inv-hybrid-fallback", "inv-expand"}
+    for row in by_invocation.values():
+        _, _kind, project_id, run_id, agent_id, session_id = row
+        assert (project_id, run_id, agent_id, session_id) == (
+            "proj-uuid-123",
+            "run-1",
+            "agent-1",
+            "session-1",
+        )
+    assert by_invocation["inv-lexical"][1] == "retrieval"
+    assert by_invocation["inv-hybrid-fallback"][1] == "retrieval"
+    assert by_invocation["inv-expand"][1] == "expansion"

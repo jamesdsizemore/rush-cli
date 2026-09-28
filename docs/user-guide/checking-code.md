@@ -68,7 +68,32 @@ Type errors are some of the most common causes of runtime crashes in production 
 
 Rush coordinates:
 - **`mypy`** for Python projects.
+- **`pyrefly`** for Python projects, alongside `mypy` — required at minimum version 0.37.0 (an older or unrecognized version is skipped with an explanation); installed through this project's own `dev` extra (`pip install rush[dev]`), not bundled.
 - **`tsc` (TypeScript Compiler)** for TypeScript and JavaScript projects.
+
+### Choosing the Python interpreter environment
+
+`--environment project|isolated` (MCP `environment`) picks which interpreter `mypy`/`pyrefly` analyze against:
+- `project` uses the project's own `.venv` interpreter and requires `--allow-build` (starting that interpreter runs its own `.pth` code); without the grant, `project` is denied.
+- `isolated` never starts a project-referenced interpreter.
+- Omitting the flag prefers `project` and falls back to `isolated` automatically when the grant is missing or the `.venv` is absent/invalid.
+
+The result's `analysis_environment` metadata records which one actually ran and why: `mode` (`project`, `isolated`, or `denied`), and on a non-default outcome, a `cause` such as `requested` (explicit `--environment isolated`), `project_environment_requires_allow_build` (project mode without the grant), `venv_missing`, `pyvenv_cfg_invalid`, or `interpreter_missing`.
+
+### Scoping tsc to a specific config
+
+`tsc` needs `--allow-cache-write` before it runs at all (including its own config discovery) — without it, the tsc child is `skipped` with `requires permission: --allow-cache-write`. Pass `--typecheck-config PATH` (MCP `typecheck_config`) to select an exact `tsconfig.json` (or a mypy/pyrefly config file) instead of Rush's automatic owning-config discovery; it must live inside the project's logical root and match the target engine's config file family. An invalid value is refused before any engine runs:
+- `TYPECHECK_CONFIG_NOT_FOUND`: the path is not an existing regular file.
+- `TYPECHECK_CONFIG_OUTSIDE_ROOT`: the path lies outside the project root.
+- `TYPECHECK_CONFIG_INVALID`: the file is not a tsconfig (`.json`), mypy (`mypy.ini`, `.mypy.ini`, `setup.cfg`, `pyproject.toml`), or pyrefly (`pyrefly.toml`, `pyproject.toml`) config.
+- `TYPECHECK_CONFIG_CONFLICT`: a freeform engine argument (`-p`, `--project`, `--config-file`, `--config`) already selects a different config.
+- `TYPECHECK_CONFIG_REQUIRED`: automatic discovery could not find an owning tsconfig for the target (for example, a file under a solution config that no referenced project owns) — pass `--typecheck-config` explicitly.
+
+A project `mypy` config that declares `plugins` needs `--allow-build` (plugins execute code); without it, the `mypy` child is `skipped` with `requires permission: --allow-build (project mypy plugins execute code)`. A project `pyrefly` config whose interpreter keys make `pyrefly` execute a program needs the same grant, skipping otherwise with `requires permission: --allow-build (project pyrefly interpreter config executes a program)`.
+
+Each typecheck finding carries `extensions.scope`, in priority order: `configuration` (a config-diagnostic finding, path-less or from the config file itself), `requested` (the file you actually asked to check), `engine_library` (the engine's own bundled type stubs), or `dependency` (an imported module reached transitively — never an unrelated sibling file). Dependency findings are kept, not filtered out, so a bug in code you import still surfaces.
+
+`tsc`'s project-reference resolution reports three additional error codes: `TSC_REFERENCE_CYCLE` (the referenced projects form a cycle), `TSC_AMBIGUOUS_OWNER` (two equally deep configs both own the target — pass `--typecheck-config` to choose one), and `TSC_CONFIG_DIAGNOSTICS` (the resolved tsconfig itself has configuration errors, such as a missing referenced project).
 
 ---
 
@@ -88,7 +113,7 @@ def calculate_discount(age: int) -> float:
         return 0.2
 ```
 
-`rush slop` analyzes comment-to-code ratios, identifies redundant AI boilerplate, and highlights empty function stubs before they clutter your repository.
+`rush slop` analyzes comment-to-code ratios, identifies redundant AI boilerplate, and highlights empty function stubs before they clutter your repository. For Python files it prefers `aislop` when installed (falling back to `sloppylint` otherwise): aislop scans the target directory itself (a file target becomes its parent directory plus `--include`), and its findings report as `aislop/<engine>/<rule>` for every aislop engine that ran. The result is `error` only when aislop produces no JSON report at all; findings on their own are `warn` or `fail` depending on severity.
 
 ---
 

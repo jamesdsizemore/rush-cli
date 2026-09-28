@@ -411,7 +411,7 @@ def resume_provider(
         if handoff is None:
             return build_continuity_result(
                 started,
-                "skipped",
+                "error",
                 "Provider resume requires an existing session checkpoint.",
                 operation="provider_resume",
                 granted=granted,
@@ -457,7 +457,7 @@ def resume_provider(
     if handoff is None:
         return build_continuity_result(
             started,
-            "skipped",
+            "error",
             "Provider resume requires an existing session checkpoint.",
             operation="provider_resume",
             granted=granted,

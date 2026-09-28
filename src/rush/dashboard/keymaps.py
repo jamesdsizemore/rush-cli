@@ -29,8 +29,39 @@ DEFAULT_KEYBINDINGS = [
     KeybindingAction(
         key="enter", action_name="select_row", description="Inspect selected finding"
     ),
+    KeybindingAction(key="tab", action_name="cycle_pane", description="Cycle panes"),
+    # U01 fix: Tab/Shift+Tab now cycle panes (Phase 66 §3.8) instead of
+    # switching projects -- F2 owns project selection via its own
+    # `project_selector` overlay (`tui.py::_handle_project_selector_key`),
+    # decoded through `terminal_input.py`'s CSI numeric-tilde table.
     KeybindingAction(
-        key="tab", action_name="next_project", description="Switch to next project"
+        key="shift_tab",
+        action_name="cycle_pane_reverse",
+        description="Cycle panes (reverse)",
+    ),
+    KeybindingAction(
+        key="f2",
+        action_name="open_project_selector",
+        description="Open project selector",
+    ),
+    # T28-A: F3 opens the eight-section chooser (digits 1-8); F5 refreshes
+    # the current section's read-only data.
+    KeybindingAction(
+        key="f3",
+        action_name="open_section_chooser",
+        description="Section chooser (1-8)",
+    ),
+    KeybindingAction(
+        key="f5", action_name="refresh", description="Refresh current section"
+    ),
+    # Phase 66 §3.8: `+`/`-` expand/collapse the detail pane in every
+    # section; Map nodes keep Right/l and Left/h.
+    KeybindingAction(key="+", action_name="detail_expand", description="Expand detail"),
+    KeybindingAction(
+        key="-", action_name="detail_collapse", description="Collapse detail"
+    ),
+    KeybindingAction(
+        key="?", action_name="show_help", description="Show current key bindings"
     ),
     KeybindingAction(
         key="/", action_name="focus_filter", description="Search/filter findings"
@@ -53,8 +84,12 @@ DEFAULT_KEYBINDINGS = [
         action_name="rescan",
         description="Rescan last run (reviewed before running)",
     ),
+    # P69-06c: rebound from "h" (Phase 66 §3.8 reserves lowercase h for
+    # collapse, part of the hierarchical Map navigation this packet does not
+    # build -- see module docstring note above); no test exercises the old
+    # lowercase binding.
     KeybindingAction(
-        key="h",
+        key="H",
         action_name="prepare_handoff",
         description="Review and send an agent handoff",
     ),
@@ -65,8 +100,8 @@ DEFAULT_KEYBINDINGS = [
     ),
     KeybindingAction(
         key="m",
-        action_name="toggle_memory",
-        description="Toggle memory/token-gain HUD",
+        action_name="goto_tokens",
+        description="Tokens section (replaces the token-gain HUD)",
     ),
     KeybindingAction(
         key="y",

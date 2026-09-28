@@ -15,8 +15,10 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from rush.tools.base import Finding
+if TYPE_CHECKING:
+    from rush.tools.base import Finding
 
 TODO_PATTERN = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
 MAX_FILE_BYTES = 1_000_000  # 1 MB cap — heuristics don't run on huge files
@@ -96,6 +98,8 @@ def _collect_reviewable_files(
 
 def _file_size_heuristic(path: Path, max_lines: int = 400) -> list[Finding]:
     """Flag files exceeding the configured line threshold."""
+    from rush.tools.base import Finding
+
     src = _read_file_safely(path)
     if src is None:
         return []
@@ -115,6 +119,8 @@ def _file_size_heuristic(path: Path, max_lines: int = 400) -> list[Finding]:
 
 def _todo_density_heuristic(path: Path) -> list[Finding]:
     """Flag files with TODO/FIXME/XXX density exceeding 2%."""
+    from rush.tools.base import Finding
+
     src = _read_file_safely(path)
     if src is None:
         return []
@@ -169,6 +175,8 @@ def _has_comment_above(lines: list[str], lineno: int) -> bool:
 
 def _missing_docstrings_heuristic(path: Path) -> list[Finding]:
     """Flag Python def/class without a docstring immediately above."""
+    from rush.tools.base import Finding
+
     src = _read_file_safely(path)
     if src is None:
         return []
@@ -213,6 +221,8 @@ def _is_suspicious_screaming_name(name: str, value_node: ast.AST) -> bool:
 
 def _naming_heuristic(path: Path) -> list[Finding]:
     """Flag SCREAMING_CASE identifiers at module level that aren't assigned a literal."""
+    from rush.tools.base import Finding
+
     src = _read_file_safely(path)
     if src is None:
         return []
@@ -255,6 +265,8 @@ def _is_source_policy_excluded(path: Path, root: Path, patterns: list[str]) -> b
 
 def _scaffold_marker_heuristic(path: Path, markers: list[str]) -> list[Finding]:
     """Find configured unfinished-scaffold markers without inferring authorship."""
+    from rush.tools.base import Finding
+
     if not markers:
         return []
     source = _read_file_safely(path)
@@ -282,6 +294,8 @@ def _scaffold_marker_heuristic(path: Path, markers: list[str]) -> list[Finding]:
 
 def _check_complexity_heuristic(path: Path, max_complexity: int = 10) -> list[Finding]:
     """Analyze Python AST to check for functions exceeding McCabe complexity threshold."""
+    from rush.tools.base import Finding
+
     src = _read_file_safely(path)
     if src is None:
         return []

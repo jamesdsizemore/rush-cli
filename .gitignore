@@ -32,5 +32,32 @@ research/
 .rush/cache/
 .rush/sessions/
 .rush/*.db
+.rush/handoffs/
+.rush/runs/
+.rush/scan_plans/
+.rush/telemetry/
+.rush/project.json
+.rush/toolchains.json
 %SystemDrive%/
 graft/
+
+# macOS
+.DS_Store
+
+# Per-tool local agent config/state, not project source
+/.claude/
+/.codex/
+/.gemini/
+/.kiro/
+/.vscode/
+/.mcp.json
+/opencode.json
+
+# Repowise index cache/state (local, regenerable)
+/.repowise/
+
+# graphify knowledge-graph output (local, regenerable via `graphify update .`)
+/graphify-out/
+
+# scratch clone/checkout area
+/repos/
