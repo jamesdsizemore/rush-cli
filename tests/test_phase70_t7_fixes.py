@@ -8,6 +8,7 @@ import dataclasses
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,7 @@ def _provision_aislop(
         os_name=platform[0],
         arch=platform[1],
         data_root=data_root,
+        which=lambda name: f"/usr/bin/{name}",
         runner=runner,
     )
     return resolve_and_apply_provision_plan(
@@ -127,8 +129,13 @@ def test_slop_runs_setup_provisioned_aislop_not_on_path(
     )
     assert "aislop" in result.applied, result.failed
 
+    # PATH holds only Node.js's npx (a fake printing aislop's report): the
+    # engine runs the provisioned launcher's pinned npm package through it.
     empty_bin = tmp_path / "empty-bin"
     empty_bin.mkdir()
+    npx = empty_bin / "npx"
+    npx.write_text(f"#!/bin/sh\nprintf '%s' '{_AISLOP_REPORT}'\n")
+    npx.chmod(0o755)
     monkeypatch.setenv("PATH", str(empty_bin))
     monkeypatch.setattr(common, "_venv_scripts_dir", lambda: None)
     clear_binary_cache()
@@ -158,14 +165,15 @@ def test_reused_aislop_with_cold_npm_cache_fetches_its_runtime(tmp_path: Path) -
 
     assert "aislop" in second.reused, second.failed
     # The plan's offline probe, then apply's offline check, the granted
-    # online fetch, and the offline verification.
+    # online fetch, and the offline verification -- each through npx.
     assert [
-        ((env or {}).get("npm_config_offline"), argv[1:]) for argv, env in calls
+        ((env or {}).get("npm_config_offline"), argv[0], argv[-2:])
+        for argv, env in calls
     ] == [
-        ("true", ["--version"]),
-        ("true", ["--version"]),
-        ("false", ["--version"]),
-        ("true", ["--version"]),
+        ("true", "/usr/bin/npx", ["aislop", "--version"]),
+        ("true", "/usr/bin/npx", ["aislop", "--version"]),
+        ("false", "/usr/bin/npx", ["aislop", "--version"]),
+        ("true", "/usr/bin/npx", ["aislop", "--version"]),
     ]
 
 
@@ -302,7 +310,22 @@ def test_setup_review_lists_fetch_grants_for_reused_aislop_with_cold_cache(
     assert "aislop" in first.applied, first.failed
     warm.unlink()  # the npm cache goes cold
 
-    review = build_setup_review(project, data_root)
+    # The probe runs aislop's npm package through npx exactly as the engine
+    # does (never the launcher); this npx stands in for npm's cache, so the
+    # machine's real npm cache never decides the result.
+    npx = tmp_path / "bin" / "npx"
+    npx.parent.mkdir()
+    npx.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$npm_config_offline" = true ] && [ ! -f "{warm}" ]; '
+        "then exit 1; fi\n"
+    )
+    npx.chmod(0o755)
+
+    def which(name: str) -> str | None:
+        return str(npx) if name == "npx" else shutil.which(name)
+
+    review = build_setup_review(project, data_root, which=which)
     (entry,) = [e for e in review["provision"]["entries"] if e["engine_id"] == "aislop"]
     assert entry["identity_state"] == "reuse_verified"
     assert list(entry["required_grants"]) == ["network", "download", "cache_write"]

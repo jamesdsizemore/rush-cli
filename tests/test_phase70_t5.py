@@ -78,21 +78,64 @@ def _lint_clean_project(tmp_path: Path) -> Path:
     return root
 
 
-_TEST_RUNNERS = frozenset({"pytest", "py.test", "vitest", "npm", "npx"})
+_TEST_RUNNERS = frozenset({"pytest", "py.test", "vitest", "jest", "mocha"})
+_NPM_TEST_SCRIPTS = frozenset({"test", "t", "tst"})
 
 
-def _is_test_runner(argv: object) -> bool:
-    parts = (
+def _argv_parts(argv: object) -> list[str]:
+    return (
         [str(part) for part in argv]
         if isinstance(argv, (list, tuple))
         else (str(argv).split())
     )
+
+
+def _npx_command(args: list[str]) -> str | None:
+    """The command `npx`/`npm exec` runs: the first operand after its flags
+    (`--package`/`-p` take a value), without an `@version` suffix."""
+    rest = iter(args)
+    for arg in rest:
+        if arg in {"--package", "-p"}:
+            next(rest, None)
+        elif arg != "--" and not arg.startswith("-"):
+            return arg.rsplit("@", 1)[0] if arg.rfind("@") > 0 else arg
+    return None
+
+
+def _is_test_runner(argv: object) -> bool:
+    """A test-runner spawn: pytest/vitest/... by name or `-m`, or npx/npm
+    running a test runner (`npx vitest`, `npm test`, `npm run test`,
+    `npm exec -- jest`); npx running any other package (aislop) is not."""
+    parts = _argv_parts(argv)
     if not parts:
         return False
-    names = {Path(parts[0]).name}
+    program = Path(parts[0]).name
+    if program == "npx":
+        return _npx_command(parts[1:]) in _TEST_RUNNERS
+    if program == "npm":
+        operands = [p for p in parts[1:] if not p.startswith("-")]
+        if not operands:
+            return False
+        if operands[0] in _NPM_TEST_SCRIPTS:
+            return True
+        if operands[0] in {"run", "run-script"}:
+            return len(operands) > 1 and operands[1].startswith("test")
+        if operands[0] in {"exec", "x"}:
+            return _npx_command(parts[parts.index(operands[0]) + 1 :]) in _TEST_RUNNERS
+        return False
+    names = {program}
     if "-m" in parts[:-1]:
         names.add(parts[parts.index("-m") + 1])
     return bool(names & _TEST_RUNNERS)
+
+
+def _is_aislop_npm_spawn(argv: object) -> bool:
+    parts = _argv_parts(argv)
+    return (
+        bool(parts)
+        and Path(parts[0]).name in {"npx", "npm"}
+        and any(p == "aislop" or p.startswith("aislop@") for p in parts[1:])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +273,42 @@ def test_check_tool_description_states_allow_build_gate():
     assert "warn" in text.lower() or "incomplete" in text.lower()
 
 
+def test_is_test_runner_counts_npm_test_runners_not_aislop():
+    """The zero-spawn spy counts npx/npm only when they run a test runner."""
+    for argv in (
+        ["/usr/bin/python3", "-m", "pytest", "-q"],
+        ["pytest"],
+        ["/opt/homebrew/bin/npx", "vitest", "run"],
+        ["npx", "--yes", "jest@29"],
+        ["npx", "--yes", "--package", "vitest@1.6.0", "vitest", "run"],
+        ["npm", "test"],
+        ["npm", "--silent", "run", "test"],
+        ["npm", "exec", "--yes", "--package", "jest", "--", "jest"],
+        "npm run test:unit",
+    ):
+        assert _is_test_runner(argv), argv
+    for argv in (
+        [
+            "/opt/homebrew/bin/npx",
+            "--yes",
+            "--package",
+            "aislop@0.16.1",
+            "aislop",
+            "scan",
+        ],
+        ["npm", "exec", "--yes", "--package", "aislop@0.16.1", "--", "aislop", "scan"],
+        ["npm", "install"],
+        ["npm", "run", "build"],
+        ["npx"],
+        ["ruff", "check", "."],
+    ):
+        assert not _is_test_runner(argv), argv
+    assert _is_aislop_npm_spawn(
+        ["/opt/homebrew/bin/npx", "--yes", "--package", "aislop@0.16.1", "aislop"]
+    )
+    assert not _is_aislop_npm_spawn(["npx", "vitest"])
+
+
 def test_check_tool_skips_test_step_subprocess_without_allow_build(
     monkeypatch, tmp_path
 ):
@@ -241,6 +320,7 @@ def test_check_tool_skips_test_step_subprocess_without_allow_build(
 
     monkeypatch.chdir(_lint_clean_project(tmp_path))
     spawned: list[object] = []
+    aislop_offline: list[str | None] = []
     real_popen, real_run = subprocess.Popen, subprocess.run
 
     def _spy(real):
@@ -248,6 +328,11 @@ def test_check_tool_skips_test_step_subprocess_without_allow_build(
             argv = a[0] if a else k.get("args")
             if _is_test_runner(argv):
                 spawned.append((a, k))
+            if _is_aislop_npm_spawn(argv):
+                env = k.get("env")
+                aislop_offline.append(
+                    (os.environ if env is None else env).get("npm_config_offline")
+                )
             return real(*a, **k)
 
         return _call
@@ -258,6 +343,9 @@ def test_check_tool_skips_test_step_subprocess_without_allow_build(
     result = CheckTool()(path=Path("."), allow_build=False)
 
     assert spawned == []
+    # The slop step's aislop npm package runs without the download grant, so
+    # npm runs offline: no registry fetch.
+    assert all(mode == "true" for mode in aislop_offline), aislop_offline
     assert result["status"] in {"warn", "incomplete"}
 
 

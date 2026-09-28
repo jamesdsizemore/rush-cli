@@ -156,6 +156,15 @@ def _ruff_finding(args: list[str]) -> str:
 def _engine_stub(findings: bool) -> Any:
     def run(exec_argv: list[str], argv: list[str], **_kwargs: Any) -> Any:
         name, args = Path(argv[0]).name, list(argv[1:])
+        # aislop runs its pinned npm package: `npx --yes --package aislop@<v>
+        # aislop <args>`.
+        if (
+            name == "npx"
+            and args[1:2] == ["--package"]
+            and args[2].split("@")[0] == "aislop"
+            and args[3:4] == ["aislop"]
+        ):
+            name, args = "aislop", args[4:]
         if args == ["--version"] and name in _ENGINE_VERSIONS:
             stdout: str | None = f"{name} {_ENGINE_VERSIONS[name]}\n"
         elif findings and name == "ruff" and args[:1] == ["check"]:
