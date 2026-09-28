@@ -31,7 +31,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -45,6 +45,7 @@ from rush.dashboard.keymaps import DEFAULT_KEYBINDINGS, KeybindingAction, Keymap
 from rush.dashboard.state import AdmissionResult, MutationLedger
 from rush.dashboard.terminal_input import KeyReader, make_key_reader, raw_terminal
 from rush.dashboard.theme import THEME
+from rush.memory.maintenance import MaintenanceTask
 from rush.permissions import ExecutionPermissions
 from rush.runtime.subprocesses import (
     OWNED_TERMINATION_TIMEOUT_SECONDS,
@@ -764,6 +765,7 @@ class TuiState:
     memory_selected_index: int = 0
     memory_selected_ids: set[str] = field(default_factory=set)
     memory_pending_delete: dict[str, Any] | None = None
+    memory_pending_maintain: list[dict[str, Any]] | None = None
     memory_expanded: dict[str, Any] | None = None
     memory_edit_buffer: str | None = None
     memory_edit_field: str = "note"
@@ -2629,6 +2631,86 @@ def _memory_archive_selected(
             f"{verb} refused: "
             f"{(raw.get('data') or {}).get('message') or raw.get('code') or 'no result'}"
         )
+
+
+def _memory_maintain_preview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D: read-only preview of every maintenance task; 'y' applies exactly
+    the previewed candidate IDs with the reviewed grants, 'n'/'esc' cancels."""
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    owner_scope = _memory_owner_scope(state, project)
+    pending: list[dict[str, Any]] = []
+    for task in get_args(MaintenanceTask):
+        try:
+            result = actions.memory_run(
+                project.root,
+                operation="maintain",
+                task=task,
+                owner_scope=owner_scope,
+                request={"apply": False, "required_grants": ["cache_write"]},
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            state.memory_message = f"maintenance preview failed: {exc}"
+            return
+        if result.get("status") == "error":
+            state.memory_message = (
+                f"maintenance preview failed: {result.get('summary')}"
+            )
+            return
+        raw = result.get("raw") or {}
+        pending.append(
+            {
+                "task": task,
+                "owner_scope": owner_scope,
+                "candidate_ids": list(raw.get("candidate_ids") or []),
+                "required_grants": list(raw.get("required_grants") or ["cache_write"]),
+            }
+        )
+    state.memory_pending_maintain = pending
+    counts = ", ".join(f"{p['task']} {len(p['candidate_ids'])}" for p in pending)
+    state.memory_message = (
+        f"maintenance preview: {counts} -- [y] apply, [n]/[esc] cancel"
+    )
+
+
+def _memory_maintain_apply(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    pending = state.memory_pending_maintain
+    state.memory_pending_maintain = None
+    if pending is None:
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    summaries: list[str] = []
+    for entry in pending:
+        if not entry["candidate_ids"]:
+            continue  # nothing previewed for this task: nothing to apply
+        try:
+            result = actions.memory_run(
+                project.root,
+                operation="maintain",
+                task=entry["task"],
+                owner_scope=entry["owner_scope"],
+                permissions=_permissions_of(entry["required_grants"]),
+                request={
+                    "apply": True,
+                    "required_grants": entry["required_grants"],
+                    "candidate_ids": entry["candidate_ids"],
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            summaries.append(f"{entry['task']} failed: {exc}")
+            continue
+        summaries.append(
+            f"{entry['task']}: {result.get('summary') or result.get('status')}"
+        )
+    state.memory_message = "; ".join(summaries) or "maintenance: nothing to apply"
+    _memory_refresh(state, project, actions, announce=False)
 
 
 def _memory_edit_commit(
