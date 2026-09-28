@@ -96,3 +96,20 @@ def test_operations_toml_rendering_is_byte_stable(tmp_path: Path) -> None:
     assert toml1 == toml2, "Operations TOML must be byte-stable and sorted"
     parsed = tomllib.loads(toml1)
     assert len(parsed["operations"]) == len(inventory)
+
+
+def test_generated_manifest_matches_committed_manifest() -> None:
+    """Regenerating governance/public-operations.toml from the live inventory
+    must reproduce the committed file byte-for-byte -- any drift means the
+    generator's classification disagrees with the reconciled manifest."""
+    manifest_path = Path("governance/public-operations.toml")
+    committed = manifest_path.read_text(encoding="utf-8")
+
+    inventory = build_operations_inventory()
+    generated = render_operations_toml(inventory)
+
+    assert generated == committed, (
+        "Generated operations manifest drifts from the committed "
+        "governance/public-operations.toml -- fix the generator, "
+        "never hand-edit the manifest"
+    )

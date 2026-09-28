@@ -150,6 +150,18 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush context gain --help",
             "tool",
         ),
+        # `rush gain` is a bare-command alias of `context gain` -- same
+        # underlying implementation and MCP tool. Matches the "memory
+        # list"/"memory recall" precedent: doesn't claim the already-assigned
+        # "rush_context_gain_stats" MCP tool name (mcp_tool uniqueness is
+        # enforced by test_operation_ids_and_transport_names_are_unique).
+        "gain": (
+            None,
+            "rush.token_economy.tui_gain:render_gain_summary",
+            "read-only",
+            "rush gain --help",
+            "tool",
+        ),
         "context-mistakes": (
             "rush_context_mistakes_check",
             "rush.memory.mistake_miner:MistakeMiner",

@@ -237,17 +237,18 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
             declared_transports[op_id] = "mcp"
 
     assert len(declared_transports) == 193
-    # Phase 70 T17 (rush_check added): 63 dual-transport, 111 cli-only,
-    # 18 mcp-only (design-gate finding 13: both +1, cli-only -1).
-    assert sum(1 for t in declared_transports.values() if t == "both") == 64
-    assert sum(1 for t in declared_transports.values() if t == "cli") == 111
+    # Governance generator fix: `gain` no longer claims the already-assigned
+    # rush_context_gain_stats MCP tool (it's a cli-only alias of `context
+    # gain`, matching the "memory list"/"memory recall" precedent): 63
+    # dual-transport, 112 cli-only, 18 mcp-only.
+    assert sum(1 for t in declared_transports.values() if t == "both") == 63
+    assert sum(1 for t in declared_transports.values() if t == "cli") == 112
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
     assert report["total"] == 193
-    # Phase 70 T17: tool 79->80, admin 95->94 (finding 13).
     assert report["tool_count"] == 81
     assert report["admin_count"] == 94
     assert report["service_count"] == 18
@@ -377,8 +378,10 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     paired_ops = [
         op for op in operations if op.get("cli_command") and op.get("mcp_tool")
     ]
-    # Phase 70 T17: 62->63 (tool.check pairs `rush check` with rush_check).
-    assert len(paired_ops) == 64
+    # Governance generator fix: 64->63 (gain moved from cli.gain, which
+    # wasn't paired, to tool.gain, a cli-only alias -- doesn't claim the
+    # already-assigned rush_context_gain_stats MCP tool).
+    assert len(paired_ops) == 63
 
     # 1. All paired operations MUST be kind == "tool" and enforce ToolResultV1,
     #    except deliberately dual-transport admin mutations (e.g. memory
@@ -420,7 +423,6 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     #    routed through the shared "rush_memory" MCP tool per its RawResult contract)
     #    are allowed both transports, unlike every other admin operation.
     admin_ops = [op for op in operations if op["kind"] == "admin"]
-    # Phase 70 T17: 95->94 (cli.check became tool.check; finding 13).
     assert len(admin_ops) == 94
     _dual_transport_admin_ids = {"admin.memory_promote", "admin.memory_write"}
     for op in admin_ops:
