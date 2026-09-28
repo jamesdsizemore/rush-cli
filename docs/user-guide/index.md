@@ -14,6 +14,8 @@ Welcome to the **Rush User Guide**! Whether you are writing your first line of c
   *How to read findings, interpret severities (OK, WARN, FAIL, SKIPPED), and understand exit codes without confusion.*
 - [Checking Project & Config Files](checking-project-files.md)
   *Keeping non-code assets like Markdown documentation, YAML configs, SQL schemas, Dockerfiles, and GitHub Actions healthy.*
+- [The Interactive Terminal UI](interactive-tui.md)
+  *Launching `rush ui`, its eight sections, navigation keys, running and quitting work, and the Memory, Tokens, Git, and Artifacts workflows.*
 
 ---
 
