@@ -10,12 +10,14 @@ reason recorded in its docstring. No source code is changed by this file.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
 
 import pytest
 
+from rush.memory.maintenance import MaintenanceTask
 from rush.memory.store import MemoryArtifact, TypedArtifactStore, legacy_owner_scope
 from rush.permissions import ExecutionPermissions
 from rush.plugins.trust_store import PluginTrustStore
@@ -473,3 +475,111 @@ def test_maintenance_candidate_preview_is_zero_write(tmp_path: Path, task: str) 
     assert after == before, (
         f"{task}: preview on a populated store must leave its bytes unchanged"
     )
+
+
+def _edit_to_v2(root: Path, artifact_id: str, content: dict) -> None:
+    """The concurrent edit: a real CAS edit through the store, v1 -> v2."""
+    store = TypedArtifactStore(root)
+    current = store.get_current(artifact_id)
+    assert current is not None
+    store.edit(
+        artifact_id, content, expected_version=1, scope=current.subject, apply=True
+    )
+
+
+def _current_row(root: Path, artifact_id: str) -> sqlite3.Row:
+    conn = sqlite3.connect(str(_db_path(root)))
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT artifact_version, content, expired_at FROM memory_artifacts "
+            "WHERE id = ?",
+            (artifact_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return row
+
+
+def _run_after_passed_precheck(
+    root: Path,
+    task: MaintenanceTask,
+    artifact_id: str,
+    v2_content: dict,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Reviews `artifact_id` at v1, lands a v2 edit, then runs the cycle as if the
+    lease-time pre-check had already passed before the edit committed -- only a
+    version check inside the write transaction itself can refuse the row now."""
+    from rush.memory import maintenance
+
+    owner = legacy_owner_scope(root)
+    preview = maintenance.preview_maintenance_candidates(
+        task, project_root=root, owner_scope=owner, candidate_ids=[artifact_id]
+    )
+    reviewed = {str(c["id"]): int(str(c["artifact_version"])) for c in preview}
+    assert reviewed == {artifact_id: 1}
+    _edit_to_v2(root, artifact_id, v2_content)
+    monkeypatch.setattr(maintenance, "_revision_conflicts", lambda _root, _exp: ())
+    return maintenance.run_maintenance_cycle(
+        task,
+        project_root=root,
+        owner_scope=owner,
+        expected_revisions=reviewed,
+    )
+
+
+def test_maintain_refuses_a_row_edited_after_the_check_inside_the_write_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`sweep_expired` stamps whatever candidate rows exist inside its own BEGIN
+    IMMEDIATE, never re-checking the reviewed version -- an edit that commits between
+    the lease-time pre-check and the sweep is expired unreviewed."""
+    from rush.memory.maintenance import RevisionConflict
+
+    _seed_eligible_rows(tmp_path, "expiry_sweep", ["x1"])
+    v2 = {"body": "edited-v2"}
+
+    result = _run_after_passed_precheck(tmp_path, "expiry_sweep", "x1", v2, monkeypatch)
+
+    row = _current_row(tmp_path, "x1")
+    assert row["artifact_version"] == 2
+    assert json.loads(row["content"]) == v2
+    assert row["expired_at"] is None
+    assert _row_changed(tmp_path, "expiry_sweep", "x1") is False
+    assert result.changed == 0
+    assert result.refused == (RevisionConflict("x1", 1, 2),)
+
+
+@pytest.mark.parametrize(
+    "task", ["promotion_sweep", "staleness_sweep", "skill_admission_check"]
+)
+def test_per_row_maintain_refuses_a_row_edited_after_the_check(
+    tmp_path: Path, task: MaintenanceTask, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-row tasks mutate from `_select_rows`' snapshot without re-checking
+    the reviewed version inside the row's own write transaction -- an edit that
+    commits after the pre-check is promoted/staled unreviewed."""
+    from rush.memory.maintenance import RevisionConflict
+
+    _seed_eligible_rows(tmp_path, task, ["r1", "r2"])
+    if task == "skill_admission_check":
+        PluginTrustStore(repo_root=tmp_path).grant_trust("demo-plugin", "abc123")
+        v2: dict = {
+            "plugin_name": "demo-plugin",
+            "closure_digest": "abc123",
+            "note": "edited-v2",
+        }
+    else:
+        v2 = {"body": "edited-v2"}
+
+    result = _run_after_passed_precheck(tmp_path, task, "r1", v2, monkeypatch)
+
+    row = _current_row(tmp_path, "r1")
+    assert row["artifact_version"] == 2
+    assert json.loads(row["content"]) == v2
+    assert _row_changed(tmp_path, task, "r1") is False
+    assert _row_changed(tmp_path, task, "r2") is False
+    assert result.changed == 0
+    assert result.refused == (RevisionConflict("r1", 1, 2),)

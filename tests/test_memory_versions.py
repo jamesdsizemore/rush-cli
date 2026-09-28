@@ -832,6 +832,11 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
 
     _memory_edit_commit(state, state.active_project, actions)
     _handle_memory_key(state, "y", actions)
+    # T28-D: the applied edit refreshes the list and clears the selection
+    # (these fake actions list no rows), so the delete is previewed on a
+    # listed, reselected row -- never on one the refresh dropped.
+    state.memory_items = _memory_state(tmp_path).memory_items
+    state.memory_selected_ids = {"a1"}
     _memory_delete_preview(state, state.active_project, actions)
 
     assert [call["request"]["owner_scope"] for call in calls] == [

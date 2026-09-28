@@ -283,7 +283,12 @@ _ARCHIVE_REQUEST_KEYS = {
 # `request=None` keeps the legacy apply-immediately behavior), the grants pinned at
 # review time, and (maintain) the previewed candidate set.
 _WRITE_REQUEST_KEYS = {"apply", "required_grants"}
-_MAINTAIN_REQUEST_KEYS = {"apply", "required_grants", "candidate_ids"}
+_MAINTAIN_REQUEST_KEYS = {
+    "apply",
+    "required_grants",
+    "candidate_ids",
+    "expected_revisions",
+}
 _GRANT_NAMES = frozenset(f.name for f in dataclasses.fields(ExecutionPermissions))
 _TRUST_TIERS = frozenset(get_args(TrustTier))
 _FRESHNESS_FILTERS = {"fresh", "stale"}
@@ -428,6 +433,7 @@ class MemoryTool(ToolFn):
         source_filter: str | None = None,
         freshness_filter: str | None = None,
         archived_filter: bool | None = None,
+        owner_filter: str | None = None,
     ) -> ToolResult:
         started = time.monotonic()
         root = Path(path).resolve()
@@ -446,6 +452,7 @@ class MemoryTool(ToolFn):
             "source_filter": source_filter,
             "freshness_filter": freshness_filter,
             "archived_filter": archived_filter,
+            "owner_filter": owner_filter,
         }
         filter_error = self._list_filter_error(operation, request, list_filters)
         if filter_error:
@@ -522,8 +529,11 @@ class MemoryTool(ToolFn):
                     source_filter=source_filter,
                     freshness_filter=freshness_filter,
                     archived_filter=archived_filter,
+                    owner_filter=owner_filter,
                 )
-                if any(value is not None for value in list_filters.values())
+                # T28-D: an unqueried list browses every live row of `subject`.
+                if not query
+                or any(value is not None for value in list_filters.values())
                 else self._query(
                     started,
                     root,
@@ -637,6 +647,11 @@ class MemoryTool(ToolFn):
         archived = filters["archived_filter"]
         if archived is not None and not isinstance(archived, bool):
             return "archived_filter must be a boolean."
+        owner = filters["owner_filter"]
+        if owner is not None and not (
+            isinstance(owner, str) and all(owner.partition(":")[0::2])
+        ):
+            return "owner_filter must be 'kind:id'."
         return ""
 
     def _list_filtered(
@@ -652,6 +667,7 @@ class MemoryTool(ToolFn):
         source_filter: str | None,
         freshness_filter: str | None,
         archived_filter: bool | None,
+        owner_filter: str | None = None,
     ) -> ToolResult:
         """T28-D reviewable `list`: exactly the `subject` rows matching every set filter,
         read through `open_readonly_view()` (never creates `.rush/` or a DB).
@@ -662,6 +678,8 @@ class MemoryTool(ToolFn):
           against the stored `stale` marker the staleness sweep maintains.
         - `archived_filter`: `True` only archived rows, `False` only live rows; unset
           falls back to `include_archived`. Expired rows are never listed.
+        - `owner_filter`: `"kind:id"`, exactly the rows whose owner scope (a legacy
+          row resolves to this project's own owner) matches.
         - A non-empty `query` further keeps only the rows its FTS match returns.
         Every returned row passes `recall()`'s signature and Trojan-source checks."""
         if not subject:
@@ -727,6 +745,12 @@ class MemoryTool(ToolFn):
             artifact = _row_to_artifact(
                 row, default_owner_scope=legacy_owner_scope(root)
             )
+            if owner_filter is not None and (
+                artifact.owner_scope is None
+                or f"{artifact.owner_scope.kind}:{artifact.owner_scope.id}"
+                != owner_filter
+            ):
+                continue
             if artifact.trust_tier == "STATED" and (
                 artifact.signature is None
                 or compute_content_signature(artifact.content) != artifact.signature
@@ -1616,6 +1640,24 @@ class MemoryTool(ToolFn):
         apply, grants, candidate_ids, request_error = self._parse_mutation_request(
             request, _MAINTAIN_REQUEST_KEYS
         )
+        expected_revisions = (request or {}).get("expected_revisions")
+        if not request_error and expected_revisions is not None:
+            if not (
+                isinstance(expected_revisions, dict)
+                and all(
+                    isinstance(k, str)
+                    and k
+                    and isinstance(v, int)
+                    and not isinstance(v, bool)
+                    and v >= 1
+                    for k, v in expected_revisions.items()
+                )
+            ):
+                request_error = "expected_revisions must map non-empty IDs to versions."
+            elif candidate_ids is not None and set(candidate_ids) != set(
+                expected_revisions
+            ):
+                request_error = "expected_revisions must cover exactly candidate_ids."
         if request_error:
             return self._result(
                 started,
@@ -1689,7 +1731,11 @@ class MemoryTool(ToolFn):
             )
         # Restricted only when a reviewed candidate set was sent; otherwise the
         # legacy unrestricted call is unchanged.
-        restriction = {} if candidate_ids is None else {"candidate_ids": candidate_ids}
+        restriction: dict[str, Any] = (
+            {} if candidate_ids is None else {"candidate_ids": candidate_ids}
+        )
+        if expected_revisions is not None:
+            restriction["expected_revisions"] = expected_revisions
         result = run_maintenance_cycle(
             task,
             batch_size=batch_size,
@@ -1702,11 +1748,20 @@ class MemoryTool(ToolFn):
             maintain_raw["required_grants"] = grants
         if candidate_ids is not None:
             maintain_raw["candidate_ids"] = candidate_ids
+        summary = (
+            f"Maintenance cycle '{task}' processed {result.processed} row(s), "
+            f"changed {result.changed}."
+        )
+        if result.refused:
+            summary += " Refused (changed since review, left unchanged): " + ", ".join(
+                f"{c.id} reviewed v{c.expected}, now "
+                + ("deleted" if c.actual is None else f"v{c.actual}")
+                for c in result.refused
+            )
         return self._result(
             started,
-            "ok",
-            f"Maintenance cycle '{task}' processed {result.processed} row(s), "
-            f"changed {result.changed}.",
+            "warn" if result.refused else "ok",
+            summary,
             operation="maintain",
             raw=maintain_raw,
         )

@@ -11,24 +11,24 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from rush.mcp_mesh.lock_manager import MeshLockManager
+from rush.memory.expiry import reviewed_version_conflicts
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
     MemoryArtifact,
     MemoryMigrationRequiredError,
-    MemoryStoreUnreadableError,
     OwnerScope,
     TypedArtifactStore,
     _write_version,
     legacy_owner_scope,
     note_committed_write,
     promote_stored_artifact,
-    readonly_state_code,
+    readonly_preview_error,
 )
 from rush.memory.trust import count_corroboration
 from rush.plugins.trust_store import PluginTrustStore
@@ -132,10 +132,7 @@ def preview_maintenance_candidates(
     db = root / ".rush" / "memory.db"
     opened = TypedArtifactStore.open_readonly(root)
     if opened.state is not None:
-        raise MemoryStoreUnreadableError(
-            f"{db} cannot be read without writing ({opened.state}); retry",
-            code=readonly_state_code(opened.state, db),
-        )
+        raise readonly_preview_error(opened.state, db)
     if not opened.available:
         return []
     conn = opened.connection
@@ -181,6 +178,16 @@ def preview_maintenance_candidates(
 
 
 @dataclass(frozen=True)
+class RevisionConflict:
+    """T28-D: a reviewed candidate whose current `artifact_version` (None = row gone)
+    no longer equals the version the caller reviewed; the cycle left it unchanged."""
+
+    id: str
+    expected: int
+    actual: int | None
+
+
+@dataclass(frozen=True)
 class MaintenanceRunResult:
     task: MaintenanceTask
     processed: int
@@ -188,6 +195,46 @@ class MaintenanceRunResult:
     errors: tuple[
         str, ...
     ] = ()  # row `id` values whose per-row mutation raised; skipped, not aborted
+    refused: tuple[RevisionConflict, ...] = ()
+
+
+def _revision_conflicts(
+    root: Path, expected_revisions: Mapping[str, int]
+) -> tuple[RevisionConflict, ...]:
+    """Every reviewed id whose stored `artifact_version` differs from the reviewed one."""
+    store = TypedArtifactStore(root)
+    try:
+        conn = sqlite3.connect(str(store.db_path))
+        try:
+            return tuple(
+                RevisionConflict(*conflict)
+                for conflict in reviewed_version_conflicts(conn, expected_revisions)
+            )
+        finally:
+            conn.close()
+    finally:
+        store.close()
+
+
+class _RowRefused(Exception):
+    """A per-row write transaction found its row no longer at the reviewed version."""
+
+    def __init__(self, conflict: RevisionConflict) -> None:
+        super().__init__(conflict.id)
+        self.conflict = conflict
+
+
+def _refuse_unless_reviewed(
+    conn: sqlite3.Connection, artifact_id: str, expected_version: int | None
+) -> None:
+    """T28-D: called right after a row's BEGIN IMMEDIATE, before any write -- rolls
+    back and raises `_RowRefused` when the row is not at its reviewed version."""
+    if expected_version is None:
+        return
+    conflicts = reviewed_version_conflicts(conn, {artifact_id: expected_version})
+    if conflicts:
+        conn.rollback()
+        raise _RowRefused(RevisionConflict(*conflicts[0]))
 
 
 def run_maintenance_cycle(
@@ -197,6 +244,7 @@ def run_maintenance_cycle(
     project_root: Path | None = None,
     owner_scope: OwnerScope,
     candidate_ids: Collection[str] | None = None,
+    expected_revisions: Mapping[str, int] | None = None,
 ) -> MaintenanceRunResult:
     """Runs one bounded maintenance sweep under a capability-scoped lock lease (§6.2).
 
@@ -209,6 +257,14 @@ def run_maintenance_cycle(
     T28-D: `candidate_ids`, when given, restricts the sweep to exactly those
     previewed rows (`preview_maintenance_candidates()`); `None` sweeps every eligible
     row as before.
+
+    T28-D: `expected_revisions` ({id: reviewed artifact_version}), when given, is
+    checked under the maintenance lease before any row is touched; every id whose
+    current version differs is left unchanged and reported in `refused`, and the sweep
+    visits only the remaining reviewed ids (`candidate_ids`, else the mapping's keys).
+    Each version is checked again inside the write transaction that would change the
+    row (the expiry sweep's single transaction, or each per-row transaction), so an
+    edit committed after the first check is refused too, never changed unreviewed.
     """
     root = (project_root or Path.cwd()).resolve()
     scope = owner_scope
@@ -226,17 +282,34 @@ def run_maintenance_cycle(
 
     lock_lost = False
     try:
+        refused: tuple[RevisionConflict, ...] = ()
+        if expected_revisions is not None:
+            refused = _revision_conflicts(root, expected_revisions)
+            refused_ids = {conflict.id for conflict in refused}
+            reviewed = expected_revisions if candidate_ids is None else candidate_ids
+            candidate_ids = [i for i in reviewed if i not in refused_ids]
         if task == "expiry_sweep":
-            from rush.memory.expiry import sweep_expired
+            from rush.memory.expiry import sweep_reviewed_expired
 
-            changed = sweep_expired(
+            changed, late_conflicts = sweep_reviewed_expired(
                 root,
                 batch_size=batch_size,
                 owner_scope=scope,
                 candidate_ids=candidate_ids,
+                expected_revisions=expected_revisions,
+            )
+            refused_ids = {conflict.id for conflict in refused}
+            refused += tuple(
+                RevisionConflict(*conflict)
+                for conflict in late_conflicts
+                if conflict[0] not in refused_ids
             )
             return MaintenanceRunResult(
-                task=task, processed=changed, changed=changed, errors=()
+                task=task,
+                processed=changed,
+                changed=changed,
+                errors=(),
+                refused=refused,
             )
 
         store = TypedArtifactStore(root)
@@ -255,11 +328,19 @@ def run_maintenance_cycle(
             processed = 0
             changed = 0
             errors: list[str] = []
+            late_refused: list[RevisionConflict] = []
             for index, row in enumerate(rows, start=1):
+                expected_version = (
+                    None
+                    if expected_revisions is None
+                    else expected_revisions.get(row["id"])
+                )
                 try:
-                    if _mutate_row(task, conn, row, root):
+                    if _mutate_row(task, conn, row, root, expected_version):
                         changed += 1
                     processed += 1
+                except _RowRefused as refusal:
+                    late_refused.append(refusal.conflict)
                 except Exception:  # noqa: BLE001 - isolate row failure, cycle continues
                     conn.rollback()
                     processed += 1
@@ -272,7 +353,11 @@ def run_maintenance_cycle(
                     break
 
             return MaintenanceRunResult(
-                task=task, processed=processed, changed=changed, errors=tuple(errors)
+                task=task,
+                processed=processed,
+                changed=changed,
+                errors=tuple(errors),
+                refused=refused + tuple(late_refused),
             )
         finally:
             conn.close()
@@ -282,14 +367,18 @@ def run_maintenance_cycle(
 
 
 def _mutate_row(
-    task: MaintenanceTask, conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+    task: MaintenanceTask,
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    root: Path,
+    expected_version: int | None = None,
 ) -> bool:
     if task == "promotion_sweep":
-        return _mutate_promotion_sweep(conn, row, root)
+        return _mutate_promotion_sweep(conn, row, root, expected_version)
     if task == "staleness_sweep":
-        return _mutate_staleness_sweep(conn, row, root)
+        return _mutate_staleness_sweep(conn, row, root, expected_version)
     if task == "skill_admission_check":
-        return _mutate_skill_admission_check(conn, row, root)
+        return _mutate_skill_admission_check(conn, row, root, expected_version)
     raise NotImplementedError(f"no maintenance dispatch for task {task!r}")
 
 
@@ -323,11 +412,15 @@ def _candidate_sources(
 
 
 def _mutate_promotion_sweep(
-    conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    root: Path,
+    expected_version: int | None = None,
 ) -> bool:
     artifact = _artifact_from_row(row)
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
     conn.execute("BEGIN IMMEDIATE")
+    _refuse_unless_reviewed(conn, artifact.id, expected_version)
     promoted, decision = promote_stored_artifact(
         conn,
         artifact.id,
@@ -366,7 +459,10 @@ def _mutate_promotion_sweep(
 
 
 def _mutate_staleness_sweep(
-    conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    root: Path,
+    expected_version: int | None = None,
 ) -> bool:
     symbol_ref: str = row["symbol_ref"]
     path_part = symbol_ref.split("::", 1)[0]
@@ -379,6 +475,7 @@ def _mutate_staleness_sweep(
         current_hash = None
     if current_hash != row["content_hash"]:
         conn.execute("BEGIN IMMEDIATE")
+        _refuse_unless_reviewed(conn, row["id"], expected_version)
         artifact_row = conn.execute(
             "SELECT content, source, trust_tier FROM memory_artifacts WHERE id = ?",
             (row["id"],),
@@ -402,7 +499,10 @@ def _mutate_staleness_sweep(
 
 
 def _mutate_skill_admission_check(
-    conn: sqlite3.Connection, row: sqlite3.Row, root: Path
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    root: Path,
+    expected_version: int | None = None,
 ) -> bool:
     artifact = _artifact_from_row(row)
     plugin_name = artifact.content.get("plugin_name")
@@ -414,6 +514,7 @@ def _mutate_skill_admission_check(
 
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
     conn.execute("BEGIN IMMEDIATE")
+    _refuse_unless_reviewed(conn, artifact.id, expected_version)
     promoted, decision = promote_stored_artifact(
         conn,
         artifact.id,

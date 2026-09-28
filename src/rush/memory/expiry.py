@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,6 +104,27 @@ def expired_candidate_rows(
     ).fetchall()
 
 
+def reviewed_version_conflicts(
+    conn: sqlite3.Connection, expected_revisions: Mapping[str, int]
+) -> list[tuple[str, int, int | None]]:
+    """T28-D: `(id, reviewed version, current version or None if gone)` for every
+    reviewed id whose stored `artifact_version` differs, read on `conn` -- run it inside
+    the write transaction that mutates those rows so no edit can land in between."""
+    current = {
+        row[0]: row[1]
+        for row in conn.execute(
+            "SELECT id, artifact_version FROM memory_artifacts "
+            "WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(expected_revisions)),),
+        )
+    }
+    return [
+        (artifact_id, version, current.get(artifact_id))
+        for artifact_id, version in expected_revisions.items()
+        if current.get(artifact_id) != version
+    ]
+
+
 def sweep_expired(
     project_root: Path | None = None,
     *,
@@ -111,6 +132,24 @@ def sweep_expired(
     owner_scope: OwnerScope | None = None,
     candidate_ids: Collection[str] | None = None,
 ) -> int:
+    """`sweep_reviewed_expired()` without a reviewed-version check; returns only the
+    count of rows stamped."""
+    return sweep_reviewed_expired(
+        project_root,
+        batch_size=batch_size,
+        owner_scope=owner_scope,
+        candidate_ids=candidate_ids,
+    )[0]
+
+
+def sweep_reviewed_expired(
+    project_root: Path | None = None,
+    *,
+    batch_size: int = 500,
+    owner_scope: OwnerScope | None = None,
+    candidate_ids: Collection[str] | None = None,
+    expected_revisions: Mapping[str, int] | None = None,
+) -> tuple[int, list[tuple[str, int, int | None]]]:
     """Stamps `expires_at`/`expired_at`/`expired_by="expiry_sweep"` on rows whose TTL has
     elapsed. Returns the count of rows stamped this pass.
 
@@ -120,6 +159,11 @@ def sweep_expired(
     (this project's own path-form owner), never a wildcard sweep across owners.
     `candidate_ids` (T28-D), when given, restricts the sweep to exactly those
     previewed rows; `None` sweeps every eligible row as before.
+    `expected_revisions` (T28-D), when given, is re-checked inside the sweep's own
+    BEGIN IMMEDIATE: every reviewed id whose current version differs is left unstamped
+    and returned as a `reviewed_version_conflicts()` entry, and only the remaining
+    reviewed ids (`candidate_ids`, else the mapping's keys) are swept.
+    Returns `(rows stamped, conflicts)`.
     """
     store = TypedArtifactStore(project_root)
     scope = owner_scope or legacy_owner_scope(store.project_root)
@@ -129,6 +173,12 @@ def sweep_expired(
     with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
+        conflicts: list[tuple[str, int, int | None]] = []
+        if expected_revisions is not None:
+            conflicts = reviewed_version_conflicts(conn, expected_revisions)
+            conflict_ids = {conflict[0] for conflict in conflicts}
+            reviewed = expected_revisions if candidate_ids is None else candidate_ids
+            candidate_ids = [i for i in reviewed if i not in conflict_ids]
         rows = expired_candidate_rows(
             conn,
             store.project_root,
@@ -161,4 +211,4 @@ def sweep_expired(
         conn.commit()
     for artifact_id, new_version, source in expired:
         note_committed_write(artifact_id, new_version, source, "expire")
-    return changed
+    return changed, conflicts
