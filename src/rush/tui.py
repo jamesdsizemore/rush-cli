@@ -17,9 +17,15 @@ always executes.
 
 from __future__ import annotations
 
+import base64
+import codecs
+import copy
+import functools
 import io
 import json
+import os
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -28,7 +34,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -40,8 +46,16 @@ from rich.tree import Tree
 from rush import __version__
 from rush.dashboard.keymaps import DEFAULT_KEYBINDINGS, KeybindingAction, KeymapManager
 from rush.dashboard.state import AdmissionResult, MutationLedger
-from rush.dashboard.terminal_input import KeyReader, make_key_reader, raw_terminal
-from rush.dashboard.theme import THEME
+from rush.dashboard.terminal_input import (
+    EOF,
+    PASTE_PREFIX,
+    KeyReader,
+    make_key_reader,
+    raw_terminal,
+)
+from rush.dashboard.theme import MOTION, THEME
+from rush.memory.maintenance import MaintenanceTask
+from rush.memory.store import MemorySubject
 from rush.permissions import ExecutionPermissions
 from rush.runtime.subprocesses import (
     OWNED_TERMINATION_TIMEOUT_SECONDS,
@@ -55,7 +69,12 @@ PAGE_SIZE = 20
 handoff previews) that has no dedicated terminal visualization."""
 
 _DETAIL_CONTEXT_LINES = 4
-_DETAIL_MAX_BYTES = 8192
+_DETAIL_MAX_BYTES = 1024 * 1024
+# Lines of file text rendered below the scroll start; the panel crops the rest.
+_DETAIL_WINDOW_LINES = 200
+# T28-E: one `read_project_artifact_page` request while inspecting an
+# artifact; an inspect press follows next_cursor up to `_DETAIL_MAX_BYTES`.
+_ARTIFACT_PAGE_BYTES = 64 * 1024
 
 # T28-A: TUI-local bindings appended to the shared DEFAULT_KEYBINDINGS; the
 # live `_KEYMAP` is built from both once `ACTIONS` (below) is defined, so every
@@ -107,10 +126,31 @@ _TUI_KEYBINDINGS = [
         action_name="setup_retry",
         description="Setup: regenerate the review after a failed stage",
     ),
+    KeybindingAction(
+        key="i",
+        action_name="artifact_inspect",
+        description="Artifacts: inspect the selected artifact (press again for more)",
+    ),
+    KeybindingAction(
+        key="e",
+        action_name="artifact_export",
+        description="Artifacts: review, then export the selected artifact",
+    ),
     KeybindingAction(key="right", action_name="map_expand", description="Expand"),
     KeybindingAction(key="l", action_name="map_expand", description="Expand"),
     KeybindingAction(key="left", action_name="map_collapse", description="Collapse"),
     KeybindingAction(key="h", action_name="map_collapse", description="Collapse"),
+    KeybindingAction(
+        key="]", action_name="git_page_older", description="Git: older commits page"
+    ),
+    KeybindingAction(
+        key="[", action_name="git_page_newer", description="Git: newer commits page"
+    ),
+    KeybindingAction(
+        key="d",
+        action_name="git_dirty_diff",
+        description="Git: expand the next dirty file's bounded diff",
+    ),
 ]
 _BINDINGS = [*DEFAULT_KEYBINDINGS, *_TUI_KEYBINDINGS]
 
@@ -198,6 +238,29 @@ _CHOOSER_EXTRAS: tuple[tuple[str, str], ...] = (
 # THEME is the sole source of these values (see that module's docstring).
 _HEADER_STYLE = f"bold {THEME['blue']}"
 _FOOTER_STYLE = THEME["surface_raised"]
+# T28-F: the terminal's motion timings, from the shared MOTION tokens where
+# one exists; the row reveal steps one row per 40ms, capped at 240ms.
+_TERMINAL_MOTION: dict[str, int] = {
+    "selection_ms": MOTION["hover_focus_ms"],
+    "detail_ms": MOTION["detail_row_fade_ms"],
+    "row_reveal_ms": 40,
+    "row_reveal_cap_ms": 240,
+}
+
+
+def _reduced_motion() -> bool:
+    return bool(os.environ.get("RUSH_REDUCED_MOTION"))
+
+
+def _row_reveal_progress(
+    elapsed_ms: float, total_rows: int, *, reduced_motion: bool
+) -> int:
+    """How many of `total_rows` rows the reveal shows `elapsed_ms` after it
+    started: one more row every `row_reveal_ms`, all of them once the cap is
+    reached, and all of them in the first frame under reduced motion."""
+    if reduced_motion or elapsed_ms >= _TERMINAL_MOTION["row_reveal_cap_ms"]:
+        return total_rows
+    return min(total_rows, 1 + int(elapsed_ms // _TERMINAL_MOTION["row_reveal_ms"]))
 
 
 def _severity_style(severity: str) -> str:
@@ -230,6 +293,19 @@ def _finding_path(finding: Mapping[str, Any]) -> str:
     return str(finding.get("path") or "")
 
 
+def _root_relative(root: Path, path_value: str) -> str:
+    """T28-A/C: an absolute finding path inside the project root as its
+    root-relative form (for the Path:Line column and the contained read);
+    any other path unchanged. `open_contained_file` still enforces
+    containment (no `..`, no symlink) on whatever this returns."""
+    path = Path(path_value)
+    if path.is_absolute() and ".." not in path.parts:
+        for base in (root, root.resolve()):
+            if path.is_relative_to(base):
+                return path.relative_to(base).as_posix()
+    return path_value
+
+
 def _finding_line(finding: Mapping[str, Any]) -> str:
     line = finding.get("line")
     return str(line) if line is not None else ""
@@ -249,27 +325,52 @@ def paginate(
 
 
 def _bounded_local_detail(root: Path, finding: dict[str, Any]) -> str:
-    """Canonical `path`/`line` drives ONLY a bounded local file read for
-    context -- never a subprocess, shell, or arbitrary command. A path
-    outside the project root, or any read failure, degrades to the
-    finding's own message; no exception ever escapes this function."""
+    """Canonical `path` drives ONLY a bounded local file read -- never a
+    subprocess, shell, or arbitrary command. The read goes through
+    `open_contained_file` (no absolute path, no `..`, every component opened
+    from the root with `dir_fd` + `O_NOFOLLOW`, a regular file with no other
+    hard link), and shows the whole file up to `_DETAIL_MAX_BYTES` (scrollable,
+    never a first-lines-only snippet), labelled "live file: <path>". A
+    refused path or any read failure degrades to the finding's own message.
+    Control characters are stripped from everything returned; no exception
+    ever escapes this function."""
+    message = safe_terminal_text(finding.get("message") or "")
     path_value = _finding_path(finding)
     if not path_value:
-        return str(finding.get("message") or "(no path)")
+        return message or "(no path)"
     try:
-        target = (root / path_value).resolve()
-        target.relative_to(root.resolve())
-        raw = target.read_bytes()[:_DETAIL_MAX_BYTES]
-        text = raw.decode("utf-8", errors="replace")
-        lines = text.splitlines()
-        line_no = finding.get("line")
-        if isinstance(line_no, int) and lines:
-            start = max(0, line_no - 1 - _DETAIL_CONTEXT_LINES)
-            end = min(len(lines), line_no + _DETAIL_CONTEXT_LINES)
-            return "\n".join(lines[start:end]) or str(finding.get("message") or "")
-        return "\n".join(lines[: _DETAIL_CONTEXT_LINES * 2])
+        from rush.io.physical_paths import ContainmentError
+        from rush.workflows.projects import open_contained_file
+
+        try:
+            fd = open_contained_file(root, _root_relative(root, path_value))
+        except ContainmentError as exc:
+            if exc.code == "NOT_REGULAR_FILE":
+                return message or "(not a regular file)"
+            return message or "(path refused)"
+        try:
+            chunks: list[bytes] = []
+            remaining = _DETAIL_MAX_BYTES
+            while remaining:
+                chunk = os.read(fd, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            size = os.fstat(fd).st_size
+        finally:
+            os.close(fd)
     except (OSError, ValueError):
-        return str(finding.get("message") or "(unable to read local context)")
+        return message or "(unable to read local context)"
+    raw = b"".join(chunks)
+    text = safe_terminal_text(raw.decode("utf-8", errors="replace"))
+    if size > len(raw):
+        text += f"\n... truncated at {len(raw)} of {size} bytes"
+    header = safe_terminal_text(f"live file: {path_value}")
+    line_no = finding.get("line")
+    if isinstance(line_no, int):
+        header += f" (line {line_no})"
+    return "\n".join(part for part in (header, message, text) if part)
 
 
 # --------------------------------------------------------------------------
@@ -588,10 +689,30 @@ class ProjectState:
     selected_index: int = 0
     filter_text: str = ""
     detail_page: int = 0
+    # First file-text line shown in Detail; `None` = the finding line minus
+    # `_DETAIL_CONTEXT_LINES`. The cursor scrolls it; selecting a row resets.
+    detail_scroll: int | None = None
     run_id: str | None = None
     plan_total: int = 0
     progress: ScanProgress | None = None
     progress_history: list[ScanProgress] = field(default_factory=list)
+    # T28-C: the read-only `project_map_snapshot` (memories/agents branches,
+    # captured artifact snapshots for detail), loaded lazily and reloaded
+    # when `map_snapshot_key` (run_id, status, memory.db mtime, handoffs
+    # mtime) changes.
+    map_snapshot: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    map_snapshot_key: tuple[str | None, str, int | None, int | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    # T28-C Map presentation: file paths read from `map_snapshot`'s
+    # inventory (cached per snapshot object) and, per directory ("" = the
+    # root), how many 100-file pages are shown.
+    map_inventory: tuple[dict[str, Any], list[str]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    map_dir_pages: dict[str, int] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     status: str = "idle"  # idle | scanning | cancelling | cancelled | complete | error
     # P69-06d: which process owns the run currently reflected here --
     # "dashboard" (a live server is the executor) or "local" (this TUI
@@ -644,6 +765,17 @@ class ProjectState:
     generation: int = 0
     pending: dict[Any, tuple[int, tuple[Any, ...]]] = field(
         default_factory=dict, repr=False
+    )
+    # T28-F: the DashboardOwner a dashboard-owned run was started on (or first
+    # found by polling), reused every tick instead of rediscovered.
+    dashboard_owner_handle: Any = field(default=None, repr=False, compare=False)
+    # T28-F: monotonic start of the findings-row reveal; None = final state.
+    row_reveal_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-B: the last rescan's `compare_runs` verdicts plus the reviewed
+    # baseline attempt's findings (`baseline_findings`), shown while its
+    # `current_run_id` is still this project's run.
+    rescan_comparison: dict[str, Any] | None = field(
+        default=None, repr=False, compare=False
     )
 
     def identity(self) -> tuple[Any, ...]:
@@ -736,13 +868,38 @@ class TuiState:
     # refresh the same result set afterward.
     memory_subject: str = "domain_knowledge"
     memory_query_buffer: str = ""
+    # T28-E: the Artifacts `/` query being typed (committed on Enter into
+    # the artifacts view's `filters["query"]`).
+    artifact_query_buffer: str = ""
     memory_items: list[dict[str, Any]] = field(default_factory=list)
     memory_selected_index: int = 0
     memory_selected_ids: set[str] = field(default_factory=set)
     memory_pending_delete: dict[str, Any] | None = None
+    memory_pending_maintain: list[dict[str, Any]] | None = None
     memory_expanded: dict[str, Any] | None = None
     memory_edit_buffer: str | None = None
+    memory_edit_field: str = "note"
+    memory_edit_conflict: dict[str, Any] | None = None
     memory_message: str = ""
+    memory_filter_trust: str | None = None
+    memory_filter_source: str | None = None
+    memory_filter_freshness: str | None = None
+    memory_filter_archived: bool = False
+    memory_filter_owner: str | None = None
+    # T28-D: the "f" filter form (mode == "memory_filter"): one text buffer per
+    # `_MEMORY_FILTER_FIELDS` entry; Enter applies every field, Escape discards.
+    memory_filter_buffer: dict[str, str] | None = None
+    memory_filter_field: str = "trust"
+    # T28-D: grants the user reviewed for the next promote (list of ExecutionPermissions field names).
+    memory_pending_promote: dict[str, Any] | None = None
+    # T28-D confirm step: the previewed edit/archive/restore/promote/write held
+    # for "y"; "n"/Escape clears it with zero writes. Keys: operation, verb,
+    # call (memory_run kwargs of the apply), required_grants, ids, versions,
+    # owner_scope, item (the selected row, edit/archive only).
+    memory_pending_mutation: dict[str, Any] | None = None
+    # T28-D: propose/create form fields {"subject","source","content"} (mode == "memory_create").
+    memory_create_buffer: dict[str, str] | None = None
+    memory_create_field: str = "content"
     # P69-07 CONNECT: the owner every memory mutation this admin session makes is
     # attributed to (mode == "memory_owner" is the selector). `project`/`session`
     # kinds have a real derived default id (`_default_owner_scope_id`), so an empty
@@ -751,12 +908,27 @@ class TuiState:
     memory_owner_scope_kind: str = "project"
     memory_owner_scope_id: str = ""
     memory_owner_buffer: str | None = None
+    # T28 (plan line 431): the one memory request running on a worker thread
+    # ({"generation", "project_key", "operation"}), or None. `_drain_results`
+    # applies its result only while it is still this request for the active
+    # project; Escape/"n", a newer request or a project switch make it stale.
+    memory_request: dict[str, Any] | None = None
+    memory_generation: int = 0
     # P66-06: Git history and every generated artifact (mode == "git").
     # `git_data` is the real `project_snapshot()` result loaded by
     # `_load_git_view` below -- reset on every project switch so a stale
     # project's history/status can never leak into the newly active one.
     git_data: dict[str, Any] | None = None
     git_message: str = ""
+    # T28-E: the Git history page on screen (None = page one, from
+    # `git_data`), its selected commit row, the expanded commit/dirty-file
+    # diff and the dirty file `d` last expanded. `_load_git_view` resets them.
+    git_page: dict[str, Any] | None = None
+    git_selected: int = 0
+    git_expanded: dict[str, Any] | None = None
+    git_dirty_index: int = -1
+    # T28-E: the Tokens run-id filter entry (mode == "tokens_filter").
+    tokens_filter_buffer: str = ""
     # T28-A: Tab/Shift+Tab focus position (`FOCUS_CYCLE`; `active_pane` alias).
     focus: str = "list"
     section: str = "overview"
@@ -784,6 +956,15 @@ class TuiState:
     # re-entering Map via F3, so both survive either.
     map_expanded: set[str] = field(default_factory=set)
     map_selected_index: int = 0
+    # T28-C: the `/` query typed in `mode == "map_search"`.
+    map_query: str = ""
+    # T28-F: the overlay `resize_guidance` covers while the terminal is below
+    # the minimum size; restored unchanged once it is large enough again.
+    overlay_under_resize: str | None = None
+    # T28-F: non-blocking Detach -- the `detaching` overlay's deadline, and
+    # the event its worker sets once the reap and ledger outcome are done.
+    detach_deadline: float | None = None
+    detach_done: threading.Event | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.active_index is None and self.projects:
@@ -860,53 +1041,213 @@ def _progress_from_events(
 
 def _move_selection(project: ProjectState, delta: int) -> None:
     rows = project.visible_findings()
-    if not rows:
+    total = len(rows) + len(_outcome_results(project))
+    if not total:
         project.selected_index = 0
         return
-    project.selected_index = max(0, min(len(rows) - 1, project.selected_index + delta))
-    project.detail_page = project.selected_index // PAGE_SIZE
+    project.selected_index = max(0, min(total - 1, project.selected_index + delta))
+    # An outcome row (after every finding) keeps the last findings page.
+    project.detail_page = (
+        min(project.selected_index, max(len(rows) - 1, 0)) // PAGE_SIZE
+    )
 
 
-def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
+_MAP_DIR_PAGE_SIZE = 100
+
+
+def _map_inventory_paths(project: ProjectState) -> list[str]:
+    """T28-C: every file path in the loaded snapshot's recorded inventory,
+    read through `build_project_map(node_types=("file",))`; when that
+    groups a large inventory, each group is paged through `expand_group`
+    until its last page. Cached per snapshot object; `[]` when no snapshot
+    (or an unavailable one) is loaded."""
+    snapshot = project.map_snapshot
+    if (
+        not isinstance(snapshot, dict)
+        or not isinstance(snapshot.get("files"), list)
+        or "project_id" not in snapshot
+    ):
+        return []
+    if project.map_inventory is not None and project.map_inventory[0] is snapshot:
+        return project.map_inventory[1]
+    from rush.dashboard.project_map import build_project_map, expand_group
+
+    def file_paths(nodes: list[dict[str, Any]]) -> set[str]:
+        return {
+            node["path"]
+            for node in nodes
+            if node.get("kind") == "file" and isinstance(node.get("path"), str)
+        }
+
+    try:
+        graph = build_project_map(snapshot, node_types=("file",))
+        paths = file_paths(graph["nodes"])
+        for group in graph.get("groups") or []:
+            cursor: str | None = None
+            while True:
+                page = expand_group(
+                    snapshot, group["id"], node_types=("file",), cursor=cursor
+                )
+                paths |= file_paths(page["members"])
+                cursor = page.get("next_cursor")
+                if not cursor:
+                    break
+    except (KeyError, TypeError, ValueError):
+        paths = set()
+    result = sorted(paths)
+    project.map_inventory = (snapshot, result)
+    return result
+
+
+def _map_nodes(
+    project: ProjectState, *, all_pages: bool = False
+) -> list[dict[str, Any]]:
     """U01 fix: the real Map hierarchy -- Project root -> one node per
     distinct finding path -> one leaf node per finding under that path.
     `key` is stable and drives expand/collapse + selection; `parent` gates
     a finding leaf's visibility on its file node's expanded state.
 
-    ponytail: only the Files/Findings branches this module can source
-    data for are built here -- the full §3.8 Map spec also names
-    Directories/Memories/Agents branches, which would need data this
-    packet's allowed files have no access to (the web dashboard's
-    `project_map` machinery). Add those branches if/when that data
-    becomes reachable from here; nothing about this shape blocks it."""
+    T28-C: file nodes are the recorded inventory plus every finding path,
+    nested under `dir:<path>` directory nodes (presentation only; a
+    root-level file keeps depth 1 and no parent). A directory shows its
+    files 100 per page with a `more:<dir>` node for the rest, unless
+    `all_pages` (Map search) asks for every node.
+
+    T28-C: Memories and Agents branch nodes (parent "root", so hidden until
+    the root is expanded) come from the lazily loaded read-only
+    `project_map_snapshot`; not loaded or unavailable is said in the branch
+    label, never an empty-looking branch.
+
+    T28-C: with no in-session results (a relaunch), the finding nodes come
+    from the loaded snapshot's recorded current run, read-only."""
     rows = project.flattened_findings()
+    recorded = (project.map_snapshot or {}).get("findings")
+    if not project.results and isinstance(recorded, list):
+        rows = [finding for finding in recorded if isinstance(finding, dict)]
     by_path: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        by_path.setdefault(_finding_path(row), []).append(row)
+        by_path.setdefault(_root_relative(project.root, _finding_path(row)), []).append(
+            row
+        )
+
+    sub_dirs: dict[str, set[str]] = {}
+    dir_files: dict[str, list[str]] = {}
+    for path in sorted(set(_map_inventory_paths(project)) | set(by_path)):
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            sub_dirs.setdefault("/".join(parts[: depth - 1]), set()).add(
+                "/".join(parts[:depth])
+            )
+        dir_files.setdefault("/".join(parts[:-1]), []).append(path)
 
     nodes: list[dict[str, Any]] = [
-        {"key": "root", "label": project.name, "depth": 0, "kind": "project"}
+        {
+            "key": "root",
+            "label": project.name,
+            "depth": 0,
+            "kind": "project",
+            "children": True,
+        }
     ]
-    for path in sorted(by_path):
-        findings = by_path[path]
-        file_key = f"file:{path}"
-        nodes.append(
-            {
+
+    def emit(directory: str, depth: int) -> None:
+        parent = f"dir:{directory}" if directory else None
+        for sub in sorted(sub_dirs.get(directory, ())):
+            node: dict[str, Any] = {
+                "key": f"dir:{sub}",
+                "label": f"{sub.rsplit('/', 1)[-1]}/",
+                "depth": depth,
+                "kind": "directory",
+                "children": True,
+            }
+            if parent:
+                node["parent"] = parent
+            nodes.append(node)
+            emit(sub, depth + 1)
+        files = dir_files.get(directory, [])
+        shown = files
+        if not all_pages:
+            pages = project.map_dir_pages.get(directory, 1)
+            shown = files[: pages * _MAP_DIR_PAGE_SIZE]
+        for path in shown:
+            findings = by_path.get(path, [])
+            file_key = f"file:{path}"
+            file_node: dict[str, Any] = {
                 "key": file_key,
-                "label": f"{path} ({len(findings)})",
-                "depth": 1,
+                "label": f"{path} ({len(findings)})" if findings else path,
+                "depth": depth,
                 "kind": "file",
+                "path": path,
                 "children": findings,
             }
+            if parent:
+                file_node["parent"] = parent
+            nodes.append(file_node)
+            for idx, finding in enumerate(findings):
+                nodes.append(
+                    {
+                        "key": f"{file_key}:finding:{idx}",
+                        "label": str(finding.get("message", "")),
+                        "depth": depth + 1,
+                        "kind": "finding",
+                        "parent": file_key,
+                    }
+                )
+        if len(shown) < len(files):
+            more: dict[str, Any] = {
+                "key": f"more:{directory}",
+                "label": (
+                    f"... {len(files) - len(shown)} more files "
+                    f"(expand for the next {_MAP_DIR_PAGE_SIZE})"
+                ),
+                "depth": depth,
+                "kind": "more",
+                "children": True,
+            }
+            if parent:
+                more["parent"] = parent
+            nodes.append(more)
+
+    emit("", 1)
+    snapshot = project.map_snapshot or {}
+    for kind, field_name, title in (
+        ("memory", "memories", "Memories"),
+        ("agent", "agents", "Agents"),
+    ):
+        branch_key = f"branch:{field_name}"
+        items = snapshot.get(field_name)
+        if project.map_snapshot is None:
+            label = f"{title}: not loaded"
+        elif snapshot.get("available") is False:
+            label = f"{title}: unavailable ({snapshot.get('reason')})"
+        elif isinstance(items, list):
+            label = f"{title} ({len(items)})"
+        else:
+            label = f"{title}: {items}"
+        leaves = (
+            [item for item in items if isinstance(item, dict)]
+            if isinstance(items, list)
+            else []
         )
-        for idx, finding in enumerate(findings):
+        nodes.append(
+            {
+                "key": branch_key,
+                "label": label,
+                "depth": 1,
+                "kind": kind,
+                "parent": "root",
+                "children": leaves,
+            }
+        )
+        for idx, item in enumerate(leaves):
+            related = item.get("cites") if kind == "memory" else item.get("assigned_to")
             nodes.append(
                 {
-                    "key": f"{file_key}:finding:{idx}",
-                    "label": str(finding.get("message", "")),
+                    "key": f"{branch_key}:{idx}",
+                    "label": f"{item.get('id')} -> {', '.join(map(str, related or []))}",
                     "depth": 2,
-                    "kind": "finding",
-                    "parent": file_key,
+                    "kind": kind,
+                    "parent": branch_key,
                 }
             )
     return nodes
@@ -915,13 +1256,21 @@ def _map_nodes(project: ProjectState) -> list[dict[str, Any]]:
 def _map_visible_nodes(
     project: ProjectState, expanded: set[str]
 ) -> list[dict[str, Any]]:
-    """Only a finding leaf is ever hidden -- gated on its file node's key
-    being in `expanded`. The root and file nodes are always visible."""
-    return [
-        node
-        for node in _map_nodes(project)
-        if node.get("parent") is None or node["parent"] in expanded
-    ]
+    """A node is visible only when every ancestor's key is in `expanded`.
+    The root and file nodes are always visible; finding leaves follow their
+    file node, Memories/Agents branches follow the root."""
+    nodes = _map_nodes(project)
+    parent_of = {node["key"]: node.get("parent") for node in nodes}
+
+    def shown(node: dict[str, Any]) -> bool:
+        parent = node.get("parent")
+        while parent is not None:
+            if parent not in expanded:
+                return False
+            parent = parent_of.get(parent)
+        return True
+
+    return [node for node in nodes if shown(node)]
 
 
 def _move_map_selection(state: TuiState, project: ProjectState, delta: int) -> None:
@@ -1224,6 +1573,7 @@ def _start_dashboard_owned(
     own durable status record is what a later `rush ui`/`rush dashboard`
     invocation reads to find the result."""
     project.owner = "dashboard"
+    project.dashboard_owner_handle = owner
     project.work_kind = "dashboard"
     project.status = "scanning"
     project.progress = None
@@ -1363,10 +1713,51 @@ def _start_scan_thread(
     thread.start()
 
 
-def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
+def _reviewed_attempt_id(project: ProjectState) -> str | None:
+    """T28-B: the attempt id of `project.run_id`'s latest terminal manifest
+    (read-only). With no readable manifest the run id itself is returned: it
+    never equals a real attempt id, so the rescan adapter refuses (fail
+    closed) rather than running unchecked."""
+    if project.run_id is None:
+        return None
+    from rush.workflows.project_run import load_run_manifest
+
+    try:
+        manifest = load_run_manifest(project.root, project.run_id)
+    except (OSError, ValueError):
+        manifest = None
+    attempt = manifest.get("attempt_id") if isinstance(manifest, dict) else None
+    return str(attempt) if attempt else project.run_id
+
+
+def _baseline_findings(
+    root: Path, run_id: str | None, attempt_id: str | None
+) -> list[dict[str, Any]]:
+    """The reviewed baseline attempt's recorded findings (read-only), for
+    showing old findings beside the rescan's verdicts; `[]` if unreadable."""
+    if run_id is None:
+        return []
+    from rush.workflows.project_run import load_run_manifest
+
+    try:
+        manifest = load_run_manifest(root, run_id, attempt_id=attempt_id)
+    except (OSError, ValueError):
+        return []
+    aggregate = manifest.get("aggregate") if isinstance(manifest, dict) else None
+    findings = aggregate.get("findings") if isinstance(aggregate, dict) else None
+    return [f for f in findings or [] if isinstance(f, dict)]
+
+
+def _start_rescan_thread(
+    project: ProjectState,
+    actions: ScanActions,
+    expected_attempt_id: str | None = None,
+) -> None:
     baseline_run_id = project.run_id
-    # T28-B: the reviewed attempt; a newer attempt makes the rescan refuse.
-    expected_attempt_id = project.run_id
+    # T28-B: the reviewed attempt (resolved now when no review carried it);
+    # a newer attempt makes the rescan refuse.
+    if expected_attempt_id is None:
+        expected_attempt_id = _reviewed_attempt_id(project)
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
         # P69-06d: the identical check applies to every scan-triggering
@@ -1393,6 +1784,10 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
     project.status = "scanning"
     project.progress = None
     project.progress_history = []
+    # The rescan worker reports its own terminal status; `plan_total` left
+    # from an earlier scan would make `_poll_running_scans` poll the baseline
+    # run's finished events and overwrite a failed rescan with "complete".
+    project.plan_total = 0
     operation_id = str(uuid.uuid4())
     # P69-06h: tag this local run's owner identity even without a durable
     # admission row -- `reap_owner_processes` reads `.procs` by
@@ -1413,6 +1808,16 @@ def _start_rescan_thread(project: ProjectState, actions: ScanActions) -> None:
                 expected_attempt_id=expected_attempt_id,
             )
             run = outcome.get("run") if isinstance(outcome, dict) else None
+            comparison = (
+                outcome.get("comparison") if isinstance(outcome, dict) else None
+            )
+            if isinstance(comparison, dict):
+                project.rescan_comparison = {
+                    **comparison,
+                    "baseline_findings": _baseline_findings(
+                        project.root, baseline_run_id, expected_attempt_id
+                    ),
+                }
             if isinstance(run, dict):
                 project.run_id = run.get("run_id", project.run_id)
                 aggregate = run.get("aggregate")
@@ -1516,7 +1921,9 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
     `DashboardOwner.operation_status`, never inferred from `plan_total`."""
     if not project.operation_id:
         return
-    owner = _dashboard_owner_for(project, actions)
+    owner = project.dashboard_owner_handle
+    if owner is None:
+        owner = project.dashboard_owner_handle = _dashboard_owner_for(project, actions)
     if owner is None or not hasattr(owner, "operation_status"):
         return
     try:
@@ -1591,6 +1998,46 @@ def _cycle_agent(state: TuiState, actions: ScanActions) -> None:
         state.selected_agent_id = state.agent_ids[(idx + 1) % len(state.agent_ids)]
 
 
+def _git_apply(**changes: Any) -> Callable[[TuiState], None]:
+    """T28-E: a Git read's result as `TuiState` field updates, applied by
+    `_drain_results` on the loop thread."""
+
+    def apply(state: TuiState) -> None:
+        for name, value in changes.items():
+            setattr(state, name, value)
+
+    return apply
+
+
+def _git_request(
+    state: TuiState,
+    project: ProjectState,
+    key: str,
+    label: str,
+    read: Callable[[], Callable[[TuiState], None]],
+) -> None:
+    """T28-E: run one Git read on a worker thread; the key path only records
+    the request and shows "loading". `read` does the I/O and returns the
+    update `_drain_results` applies while this request is still current: a
+    newer request under the same `key`, a project switch or a changed
+    identity discards it, like every section load."""
+    generation = project.begin_request(key)
+    identity = project.identity()
+    results = state.result_queue
+    state.git_message = f"loading {label}"
+
+    def _worker() -> None:
+        try:
+            payload: Any = read()
+            ok = True
+        except Exception as exc:  # noqa: BLE001 -- same contract as `_submit`'s
+            # worker: a failed read is shown, never raised into the loop.
+            payload, ok = str(exc) or type(exc).__name__, False
+        results.put((project, key, generation, identity, ok, payload))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def _load_git_view(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
@@ -1598,19 +2045,195 @@ def _load_git_view(
     `project` (the same `project_snapshot()` the dashboard's `section=git`/
     `section=artifacts` HTTP endpoints render). A load failure surfaces via
     `state.git_message`, never a crash of the render loop -- same contract as
-    `_start_scan_thread`'s worker-error handling above."""
-    if actions.git_snapshot is None:
+    `_start_scan_thread`'s worker-error handling above. T28-E: the reads run
+    on the worker (`_git_request`); a pending page or diff becomes stale."""
+    state.git_page = None
+    state.git_selected = 0
+    state.git_expanded = None
+    state.git_dirty_index = -1
+    for key in ("git_page", "git_diff"):
+        project.pending.pop(key, None)
+    snapshot = actions.git_snapshot
+    if snapshot is None:
+        project.pending.pop("git", None)
         state.git_data = None
         state.git_message = "git view unavailable"
         return
-    try:
-        state.git_data = actions.git_snapshot(project.root)
+    root, project_id, data_root = project.root, project.project_id, state.data_root
+
+    def _read() -> Callable[[TuiState], None]:
+        try:
+            data = snapshot(root, data_root=data_root)
+        except Exception as exc:  # noqa: BLE001 -- injectable Phase65/workflows
+            # seam (`actions.git_snapshot`); a failed load must surface to the
+            # user, never crash key dispatch or the render loop.
+            return _git_apply(git_data=None, git_message=f"git view failed: {exc}")
+        git = (data or {}).get("git") or {}
+        if project_id is None or not git.get("has_git"):
+            return _git_apply(git_data=data, git_message="")
+        from rush.workflows import projects as wp
+
+        try:
+            branch = wp.project_git_branch(project_id, data_root=data_root)
+            worktree = wp.project_git_worktree(project_id, data_root=data_root)
+        except (wp.ProjectError, OSError) as exc:
+            return _git_apply(
+                git_data=data, git_message=f"git branch/worktree read failed: {exc}"
+            )
+        return _git_apply(
+            git_data={**(data or {}), "branch": branch, "worktree": worktree},
+            git_message="",
+        )
+
+    _git_request(state, project, "git", "Git history", _read)
+
+
+def _git_page_commits(state: TuiState) -> tuple[list[dict[str, Any]], int, Any]:
+    """T28-E: the history page on screen as (commits, skip, next_skip). Page
+    one comes from the loaded snapshot; older pages from
+    `project_git_history`."""
+    if state.git_page is not None:
+        page = state.git_page
+        return page["commits"], page["skip"], page["next_skip"]
+    history = ((state.git_data or {}).get("git") or {}).get("history") or []
+    return history[:PAGE_SIZE], 0, (PAGE_SIZE if len(history) > PAGE_SIZE else None)
+
+
+def _git_turn(step: int) -> Callable[[TuiState, ScanActions], None]:
+    """T28-E: `]` older / `[` newer history page (`project_git_history`
+    `next_skip`); a page turn drops the selection and any expanded diff."""
+
+    def run(state: TuiState, actions: ScanActions) -> None:
+        if state.mode != "git":
+            state.message = "history pages are in the Git section"
+            return
+        _, skip, next_skip = _git_page_commits(state)
+        if step > 0 and next_skip is None:
+            state.git_message = "no older commits"
+            return
+        if step < 0 and skip == 0:
+            if state.active_project.pending.pop("git_page", None) is not None:
+                state.git_message = ""  # the older page still loading is dropped
+            else:
+                state.git_message = "already on the newest commits"
+            return
+        target = next_skip if step > 0 else max(0, skip - PAGE_SIZE)
+        state.git_selected, state.git_expanded = 0, None
         state.git_message = ""
-    except Exception as exc:  # noqa: BLE001 -- injectable Phase65/workflows
-        # seam (`actions.git_snapshot`); a failed load must surface to the
-        # user, never crash key dispatch or the render loop.
-        state.git_data = None
-        state.git_message = f"git view failed: {exc}"
+        project = state.active_project
+        project.pending.pop("git_diff", None)  # a diff of this page is stale
+        if target == 0:
+            project.pending.pop("git_page", None)  # so is a late older page
+            state.git_page = None
+            return
+        project_id, data_root = project.project_id, state.data_root
+        if project_id is None:
+            state.git_message = "git history paging needs a registered project"
+            return
+
+        def _read() -> Callable[[TuiState], None]:
+            from rush.workflows import projects as wp
+
+            try:
+                page = wp.project_git_history(
+                    project_id, data_root=data_root, limit=PAGE_SIZE, skip=target
+                )
+            except (wp.ProjectError, OSError) as exc:
+                return _git_apply(git_message=f"git history read failed: {exc}")
+            loaded = {
+                "commits": list(page.get("commits") or []),
+                "skip": target,
+                "next_skip": page.get("next_skip"),
+            }
+
+            def apply(state: TuiState) -> None:
+                # A diff requested from the page this one replaces is stale.
+                state.active_project.pending.pop("git_diff", None)
+                state.git_page, state.git_selected = loaded, 0
+                state.git_expanded, state.git_message = None, ""
+
+            return apply
+
+        _git_request(state, project, "git_page", "commits", _read)
+
+    return run
+
+
+def _git_expand_commit(state: TuiState) -> None:
+    """T28-E: Enter -- the selected commit's changed files and bounded diff."""
+    commits = _git_page_commits(state)[0]
+    project = state.active_project
+    if not commits:
+        state.git_message = "no commit to expand"
+        return
+    project_id, data_root = project.project_id, state.data_root
+    if project_id is None:
+        state.git_message = "commit diffs need a registered project"
+        return
+    commit = commits[min(state.git_selected, len(commits) - 1)]
+    commit_hash = str(commit.get("hash", ""))
+    title = f"commit {commit_hash[:8]} {commit.get('subject', '')}"
+
+    def _read() -> Callable[[TuiState], None]:
+        from rush.workflows import projects as wp
+
+        try:
+            diff = wp.project_git_commit_diff(
+                project_id, commit_hash, data_root=data_root
+            )
+        except (wp.ProjectError, OSError) as exc:
+            return _git_apply(git_message=f"git commit diff failed: {exc}")
+        return _git_apply(
+            git_expanded={
+                "title": title,
+                "paths": list(diff.get("changed_paths") or []),
+                "lines": list(diff.get("lines") or []),
+                "truncated": bool(diff.get("truncated")),
+                "error": diff.get("error"),
+            },
+            git_message="",
+        )
+
+    _git_request(state, project, "git_diff", "commit diff", _read)
+
+
+def _git_dirty_diff(state: TuiState, actions: ScanActions) -> None:
+    """T28-E: `d` -- the next listed dirty file's bounded diff
+    (`project_git_dirty_diff`); repeated presses step through the list."""
+    if state.mode != "git":
+        state.message = "dirty-file diffs are in the Git section"
+        return
+    dirty = ((state.git_data or {}).get("git") or {}).get("dirty_files") or []
+    project = state.active_project
+    if not dirty:
+        state.git_message = "no dirty files"
+        return
+    project_id, data_root = project.project_id, state.data_root
+    if project_id is None:
+        state.git_message = "dirty-file diffs need a registered project"
+        return
+    state.git_dirty_index = (state.git_dirty_index + 1) % len(dirty)
+    path = str(dirty[state.git_dirty_index].get("path", ""))
+
+    def _read() -> Callable[[TuiState], None]:
+        from rush.workflows import projects as wp
+
+        try:
+            diff = wp.project_git_dirty_diff(project_id, path, data_root=data_root)
+        except (wp.ProjectError, OSError) as exc:
+            return _git_apply(git_message=f"git dirty diff failed: {exc}")
+        return _git_apply(
+            git_expanded={
+                "title": f"dirty {path}",
+                "paths": [path],
+                "lines": list(diff.get("lines") or []),
+                "truncated": bool(diff.get("truncated")),
+                "error": diff.get("error"),
+            },
+            git_message="",
+        )
+
+    _git_request(state, project, "git_diff", "dirty diff", _read)
 
 
 def _handle_search_key(state: TuiState, key: str) -> None:
@@ -1631,12 +2254,36 @@ def _handle_search_key(state: TuiState, key: str) -> None:
         project.detail_page = 0
 
 
+def _handle_artifact_search_key(state: TuiState, key: str) -> None:
+    """Artifacts `/`: printable keys type the query, Enter narrows the
+    captured index to it, Escape clears it; either returns to the list
+    with the first row selected."""
+    if key in ("enter", "escape"):
+        view = state.views.setdefault(
+            (project_key(state.active_project), "artifacts"), SectionView()
+        )
+        query = state.artifact_query_buffer.strip() if key == "enter" else ""
+        view.filters.pop("query", None)
+        if query:
+            view.filters["query"] = query
+        view.selection = 0
+        state.artifact_query_buffer = ""
+        state.mode = "list"
+    elif key == "backspace":
+        state.artifact_query_buffer = state.artifact_query_buffer[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.artifact_query_buffer += key
+
+
 def _execute_grant(
     state: TuiState, grant: dict[str, Any], actions: ScanActions
 ) -> None:
     kind = grant["kind"]
     if kind.startswith("project_"):
         _start_project_grant(state, grant)
+        return
+    if kind == "artifact_export":
+        _export_artifact(state, grant)
         return
     if kind == "setup_retry":
         _regenerate_setup_review(state, grant)
@@ -1648,7 +2295,7 @@ def _execute_grant(
                 project, actions, _permissions_of(grant.get("_permissions", ()))
             )
         elif kind == "rescan":
-            _start_rescan_thread(project, actions)
+            _start_rescan_thread(project, actions, grant.get("expected attempt"))
         elif kind == "setup_apply":
             _start_setup_apply_thread(
                 project,
@@ -1725,20 +2372,56 @@ def _default_stage_grants(
     }
 
 
+_HOST_TOGGLES = ("host_registration", "select")
+
+
+def _selected_setup_host(state: TuiState) -> str | None:
+    """T28-B: the T26 host (`claude`/`codex`) of the selected agent, or
+    `None` when the selected agent is not a setup host."""
+    from rush.tools.setup_wizard import SETUP_HOSTS
+
+    return next(
+        (
+            host
+            for host, agent in SETUP_HOSTS.items()
+            if agent == state.selected_agent_id
+        ),
+        None,
+    )
+
+
+def _setup_view_stale(state: TuiState, data: Mapping[str, Any]) -> bool:
+    """No preview yet, or one built for a different selected host."""
+    unbuilt = "review" not in data and "review_error" not in data
+    return unbuilt or data.get("host") != _selected_setup_host(state)
+
+
 def _build_setup_view(state: TuiState, project: ProjectState) -> None:
     """The resolution-only (`resolve=False`, no network) T26 preview for the
-    Setup section, built once and kept on its view; never applied here."""
+    Setup section, built once per selected host and kept on its view; never
+    applied here. T28-B: a selected host agent binds its host stages
+    (registration, readback, capability probe) and their stage toggles."""
     from rush.tools import setup_wizard
+    from rush.tools.setup_wizard import HOST_STAGE_GRANTS
 
     view = state.views.setdefault((project_key(project), "setup"), SectionView())
     data = view.data if isinstance(view.data, dict) else {}
-    data.setdefault(
+    toggles = data.setdefault(
         "stage_grants", _default_stage_grants(project, state.launch_permissions)
     )
+    host = _selected_setup_host(state)
+    data["host"] = host
+    given = project.launch_permissions or state.launch_permissions
+    granted = {n for n, on in (given or ExecutionPermissions()).to_dict().items() if on}
+    for stage in _HOST_TOGGLES:
+        if host is None:
+            toggles.pop(stage, None)
+        else:
+            toggles.setdefault(stage, set(HOST_STAGE_GRANTS[stage]) <= granted)
     view.data = data
     try:
         review = setup_wizard.build_setup_review(
-            project.root, state.data_root, resolve=False
+            project.root, state.data_root, resolve=False, host=host
         )
         data["review"] = review
         data["review_text"] = setup_wizard.render_setup_review(review)
@@ -1772,7 +2455,7 @@ def _setup_data(state: TuiState) -> dict[str, Any]:
     project = state.active_project
     view = state.views.get((project_key(project), "setup"))
     data = view.data if view is not None and isinstance(view.data, dict) else {}
-    if "review" not in data and "review_error" not in data:
+    if _setup_view_stale(state, data):
         _build_setup_view(state, project)
         data = state.views[(project_key(project), "setup")].data
     return data
@@ -1835,7 +2518,7 @@ def _setup_apply_review(state: TuiState, actions: ScanActions) -> None:
             "project": project.name,
             "root": str(project.root),
             "summary": "Apply the reviewed setup: config, register, configure, "
-            "engines.",
+            + ("engines, host." if review.get("host") else "engines."),
             "stages": ", ".join(stages) or "none",
             "grants": ", ".join(grants) or "none",
             "_permissions": tuple(grants),
@@ -1879,9 +2562,13 @@ def _start_setup_apply_thread(
     def _on_progress(stage: str, status: str) -> None:
         events.append((stage, status))
 
+    # T28-B: a host-bound review applies as T26's `{kind:"setup"}` envelope
+    # (project stages, then the host stages).
+    payload = setup_wizard.setup_envelope(review) if review.get("host") else review
+
     def _worker() -> None:
         try:
-            result = apply(review, permissions, None, on_progress=_on_progress)
+            result = apply(payload, permissions, None, on_progress=_on_progress)
             status = str(result.get("status", "unknown"))
             if status not in ("ok", "partial"):
                 events.append(("setup", status))
@@ -2103,32 +2790,33 @@ def _memory_refresh(
     scoped to every source this project's memory store has ever recorded.
     `announce=False` (used to refresh the list after a delete/edit already
     set its own outcome message) still updates `memory_items`/selection but
-    never overwrites that outcome message with a generic result count."""
+    never overwrites that outcome message with a generic result count.
+    Every held preview, selection and edit conflict is dropped first: each was
+    built for the row set this refresh replaces."""
+    _memory_clear_held(state)
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
-        return
-    query = state.memory_query_buffer.strip()
-    if not query:
-        state.memory_message = "type a query, then Enter"
         return
     sources, store_state = _memory_sources_and_state(project)
     if store_state is not None:
         from rush.memory.store import readonly_view_reason
 
         state.memory_items = []
-        state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
+        if announce:
+            state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
         return
     if not sources:
         state.memory_items = []
-        state.memory_message = "no memory recorded for this project yet"
+        if announce:
+            state.memory_message = "no memory recorded for this project yet"
         return
     try:
         result = actions.memory_run(
             project.root,
             operation="list",
             subject=state.memory_subject,
-            query=query,
             session_allowlist=sources,
+            **_memory_list_kwargs(state),
         )
     except Exception as exc:  # noqa: BLE001 -- injectable Phase61/63 memory
         # seam; a failure must render as a retryable message, never crash the
@@ -2143,10 +2831,207 @@ def _memory_refresh(
         return
     state.memory_items = list(result.get("raw") or [])
     state.memory_selected_index = 0
-    state.memory_selected_ids = set()
-    state.memory_pending_delete = None
     if announce:
         state.memory_message = f"{len(state.memory_items)} result(s)"
+
+
+def _memory_clear_held(state: TuiState) -> None:
+    """Drops every held preview, the selection and any edit conflict: each was
+    built for the project and row set on screen, which a refresh or a project
+    switch replaces."""
+    state.memory_pending_mutation = None
+    state.memory_pending_maintain = None
+    state.memory_pending_delete = None
+    state.memory_edit_conflict = None
+    state.memory_selected_ids = set()
+
+
+def _memory_held_for_other_project(state: TuiState, project: ProjectState) -> bool:
+    """True, after discarding them, when a held preview was built for a project
+    other than `project`: "y" never applies a preview to a different root."""
+    held = [
+        state.memory_pending_mutation,
+        state.memory_pending_delete,
+        *(state.memory_pending_maintain or []),
+    ]
+    active = project_key(project)
+    if all(entry is None or entry.get("project_key") == active for entry in held):
+        return False
+    _memory_clear_held(state)
+    state.memory_message = (
+        "held preview was built for another project -- discarded, 0 records written"
+    )
+    return True
+
+
+# T28 (plan line 431): no memory work on the render/input path. A key records
+# one request and shows "working: <operation>..."; the handler body runs on a
+# worker thread against a private copy of the memory state and posts it to
+# `state.result_queue`. `_drain_results` then applies only the fields that body
+# changed, so every preview/confirm/refusal rule is the body's own, unchanged.
+_MEMORY_READS = frozenset({"list", "expand"})
+_MEMORY_STATE_FIELDS = (
+    "mode",
+    *(
+        f.name
+        for f in fields(TuiState)
+        if f.name.startswith("memory_")
+        and f.name not in ("memory_request", "memory_generation")
+    ),
+)
+
+
+def _memory_submit(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    operation: str,
+    body: Callable[[TuiState, ProjectState, ScanActions], None],
+) -> None:
+    """Run `body` on a worker thread. A read supersedes an in-flight read; any
+    other request while one is in flight is refused, never queued."""
+    running = state.memory_request
+    if running is not None and not (
+        operation in _MEMORY_READS and running["operation"] in _MEMORY_READS
+    ):
+        state.memory_message = f"memory {running['operation']} still running -- " + (
+            "wait for its outcome" if running["operation"] == "apply" else "wait or Esc"
+        )
+        return
+    scratch = copy.copy(state)
+    for name in _MEMORY_STATE_FIELDS:
+        setattr(scratch, name, copy.deepcopy(getattr(state, name)))
+    baseline = {
+        name: copy.deepcopy(getattr(scratch, name)) for name in _MEMORY_STATE_FIELDS
+    }
+    state.memory_generation += 1
+    generation = state.memory_generation
+    key = project_key(project)
+    state.memory_request = {
+        "generation": generation,
+        "project_key": key,
+        "operation": operation,
+    }
+    state.memory_message = f"working: {operation}..."
+    results = state.result_queue
+
+    def _worker() -> None:
+        try:
+            body(scratch, project, actions)
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            scratch.memory_message = f"memory {operation} failed: {exc}"
+        results.put(("memory", generation, key, scratch, baseline))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_memory_result(
+    state: TuiState,
+    generation: int,
+    key: str,
+    scratch: TuiState,
+    baseline: dict[str, Any],
+) -> bool:
+    """Apply a drained memory result; False (discarded) when it was cancelled,
+    superseded, or built for a project other than the active one."""
+    request = state.memory_request
+    if (
+        request is None
+        or request["generation"] != generation
+        or not state.projects
+        or project_key(state.active_project) != key
+    ):
+        return False
+    state.memory_request = None
+    for name, before in baseline.items():
+        after = getattr(scratch, name)
+        if name == "mode":
+            # Help or another section opened meanwhile keeps the screen.
+            if after != before and state.mode == before:
+                state.mode = after
+        elif name == "memory_message" or after != before:
+            setattr(state, name, after)
+    return True
+
+
+def _memory_cancel_request(state: TuiState) -> None:
+    """Escape/"n" while a request runs: its result is discarded. An apply has
+    already been sent to the store, so it is never reported as cancelled."""
+    running = state.memory_request
+    if running is None:
+        return
+    if running["operation"] == "apply":
+        state.memory_message = (
+            "memory apply is running and cannot be cancelled -- "
+            "its outcome shows when it finishes"
+        )
+        return
+    state.memory_request = None
+    state.memory_message = f"{running['operation']} cancelled"
+
+
+_MEMORY_FILTER_FIELDS = ("trust", "source", "freshness", "archived", "owner")
+_MEMORY_PAGE_ROWS = 20
+
+
+def _memory_filter_values(state: TuiState) -> dict[str, str]:
+    """Each filter as the form edits and the render shows it ("" = unset)."""
+    return {
+        "trust": state.memory_filter_trust or "",
+        "source": state.memory_filter_source or "",
+        "freshness": state.memory_filter_freshness or "",
+        "archived": "true" if state.memory_filter_archived else "",
+        "owner": state.memory_filter_owner or "",
+    }
+
+
+def _memory_list_kwargs(state: TuiState) -> dict[str, Any]:
+    """The `list` call's query and filters. No query is sent when none is typed,
+    so entering Memory browses every row instead of requiring a search."""
+    kwargs: dict[str, Any] = {}
+    query = state.memory_query_buffer.strip()
+    if query:
+        kwargs["query"] = query
+    for key, value in (
+        ("trust_filter", state.memory_filter_trust),
+        ("source_filter", state.memory_filter_source),
+        ("freshness_filter", state.memory_filter_freshness),
+        ("owner_filter", state.memory_filter_owner),
+    ):
+        if value is not None:
+            kwargs[key] = value
+    if state.memory_filter_archived:
+        kwargs["archived_filter"] = True
+    return kwargs
+
+
+def _memory_targets(state: TuiState) -> list[dict[str, Any]]:
+    """The rows archive/promote/delete act on: every space-selected row (in list
+    order) when any is selected, otherwise the cursor row."""
+    if state.memory_selected_ids:
+        return [
+            item
+            for item in state.memory_items
+            if item.get("id") in state.memory_selected_ids
+        ]
+    item = _memory_selected_item(state)
+    return [] if item is None else [item]
+
+
+def _memory_row_owner(
+    state: TuiState, artifact_id: str, fallback: dict[str, Any] | None
+) -> str:
+    """`kind:id` of a listed row's own owner, else the owner the preview used."""
+    scope = next(
+        (
+            item["owner_scope"]
+            for item in state.memory_items
+            if item.get("id") == artifact_id
+            and isinstance(item.get("owner_scope"), dict)
+        ),
+        fallback or {},
+    )
+    return f"{scope.get('kind')}:{scope.get('id')}"
 
 
 _MEMORY_OWNER_SCOPE_KINDS = ("project", "user", "session", "agent")
@@ -2235,15 +3120,29 @@ def _memory_promote_selected(
     """Real `promote` dispatch on the selected row's own content/source
     (never a fabricated candidate) -- corroboration is evaluated by the
     canonical `evaluate_promotion` gate, so a lone source is correctly
-    denied (`insufficient_corroboration`), matching the CLI/MCP behavior."""
-    item = _memory_selected_item(state)
-    if item is None or actions.memory_run is None:
+    denied (`insufficient_corroboration`), matching the CLI/MCP behavior.
+    Acts on every targeted row (`_memory_targets`); one row's refused preview
+    holds nothing at all."""
+    items = _memory_targets(state)
+    if not items or actions.memory_run is None:
         state.memory_message = "no row selected"
         return
-    try:
-        result = actions.memory_run(
-            project.root,
-            operation="promote",
+    pending = state.memory_pending_promote or {}
+    state.memory_pending_promote = None
+    held: list[dict[str, Any]] = []
+    for item in items:
+        state.memory_pending_mutation = None
+        _memory_write_preview(
+            state,
+            project,
+            actions,
+            "promote",
+            "promote",
+            list(pending.get("required_grants") or []),
+            request_extra={
+                "source_id": item["id"],
+                "expected_version": item.get("artifact_version"),
+            },
             subject=state.memory_subject,
             content=item.get("content") or {},
             source=item.get("source", ""),
@@ -2251,35 +3150,173 @@ def _memory_promote_selected(
             source_kind="local_tool",
             user_stated=False,
             candidate_sources=[item.get("source", "")],
+        )
+        if state.memory_pending_mutation is None:
+            return  # the refusal message is already set; nothing is held
+        held.append(state.memory_pending_mutation)
+    state.memory_pending_mutation = {
+        **held[0],
+        "items": items,
+        "calls": [call for entry in held for call in entry["calls"]],
+        "drafts": [draft for entry in held for draft in entry["drafts"]],
+        "consequences": [c for entry in held for c in entry["consequences"]],
+        "required_grants": sorted(
+            {g for entry in held for g in entry["required_grants"]}
+        ),
+        "ids": [item["id"] for item in items],
+        "versions": {item["id"]: item.get("artifact_version") for item in items},
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_write_preview(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    operation: str,
+    verb: str,
+    grants: list[str],
+    request_extra: dict[str, Any] | None = None,
+    **fields: Any,
+) -> None:
+    """Preview a memory write with the requested grants, refuse on a non-ok
+    preview or missing grants, else hold it for "y" with the grants the preview
+    actually reported as required (never the caller's raw guess).
+    `request_extra` rides on both the preview and the held apply request (a
+    promote names its reviewed source row and version there)."""
+    extra = dict(request_extra or {})
+    if actions.memory_run is None:
+        state.memory_message = "memory backend unavailable"
+        return
+    requested = sorted({"cache_write", *grants})
+    try:
+        preview = actions.memory_run(
+            project.root,
+            operation=operation,
             owner_scope=_memory_owner_scope(state, project),
-            permissions=ExecutionPermissions(cache_write=True),
+            request={"apply": False, "required_grants": requested, **extra},
+            permissions=ExecutionPermissions(**{g: True for g in requested}),
+            **fields,
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
-        state.memory_message = f"promote failed: {exc}"
+        state.memory_message = f"{operation} preview failed: {exc}"
         return
-    raw = result.get("raw") or {}
-    if raw.get("promoted"):
-        state.memory_message = f"promoted to {raw.get('new_tier')}"
-    else:
-        state.memory_message = f"promotion denied: {raw.get('denial_reason')}"
+    praw = preview.get("raw") or {}
+    if preview.get("status", "ok") != "ok" or praw.get("missing_grants"):
+        state.memory_message = (
+            f"{operation} preview refused: "
+            f"{praw.get('message') or praw.get('missing_grants')}"
+        )
+        return
+    reviewed = list(praw.get("required_grants") or requested)
+    owner_scope = _memory_owner_scope(state, project)
+    draft = praw.get("draft")
+    state.memory_pending_mutation = {
+        "operation": operation,
+        "verb": verb,
+        "items": [],
+        "calls": [
+            {
+                "operation": operation,
+                "owner_scope": owner_scope,
+                "request": {"apply": True, "required_grants": reviewed, **extra},
+                **fields,
+            }
+        ],
+        "drafts": [draft] if isinstance(draft, dict) and draft else [],
+        "consequences": [str(preview.get("summary") or "")],
+        "required_grants": reviewed,
+        "ids": list(praw.get("target_ids") or []),
+        "versions": dict(praw.get("expected_revisions") or {}),
+        "owner_scope": praw.get("owner_scope") or owner_scope,
+        "project_key": project_key(project),
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_create_commit(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """Validate required fields, then preview a `write` via
+    `_memory_write_preview` and hold it for "y" so create shares the same reviewed-grants
+    path as every other mutating form."""
+    buf = state.memory_create_buffer or {}
+    missing = [
+        f for f in ("subject", "source", "content") if not (buf.get(f) or "").strip()
+    ]
+    if missing:
+        state.memory_message = f"required: {', '.join(missing)}"
+        return
+    subjects = get_args(MemorySubject)
+    if buf["subject"] not in subjects:
+        state.memory_message = (
+            f"unknown subject {buf['subject']!r}; valid subjects: {', '.join(subjects)}"
+        )
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    _memory_write_preview(
+        state,
+        project,
+        actions,
+        "write",
+        "propose",
+        [],
+        subject=buf["subject"],
+        content={"note": buf["content"]},
+        source=buf["source"],
+        symbol_ref=None,
+        source_kind="local_tool",
+    )
+    if state.memory_pending_mutation is not None:
+        state.mode = "memory"  # "y"/"n"/Esc are read by _handle_memory_key
+
+
+def _handle_memory_create_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_create_buffer = None
+        state.memory_message = "create cancelled -- 0 records written"
+        return
+    if key == "tab":
+        fields = ("subject", "source", "content")
+        idx = (
+            fields.index(state.memory_create_field)
+            if state.memory_create_field in fields
+            else 0
+        )
+        state.memory_create_field = fields[(idx + 1) % len(fields)]
+        return
+    if key == "enter":
+        _memory_submit(
+            state, state.active_project, actions, "write preview", _memory_create_commit
+        )
+        return
+    buf = state.memory_create_buffer or {}
+    current = buf.get(state.memory_create_field, "")
+    if key == "backspace":
+        buf[state.memory_create_field] = current[:-1]
+    elif len(key) == 1 and key.isprintable():
+        buf[state.memory_create_field] = current + key
+    state.memory_create_buffer = buf
 
 
 def _memory_delete_preview(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
-    if not state.memory_selected_ids:
-        state.memory_message = "select at least one row (space) before delete"
+    items = _memory_targets(state)
+    if not items:
+        state.memory_message = "select a row before delete"
         return
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
         return
-    ids = sorted(state.memory_selected_ids)
-    revisions = {
-        item["id"]: item["artifact_version"]
-        for item in state.memory_items
-        if item.get("id") in state.memory_selected_ids
-    }
+    ids = sorted(item["id"] for item in items)
+    revisions = {item["id"]: item["artifact_version"] for item in items}
     owner_scope = _memory_owner_scope(state, project)
+    # Reviewed grants: cache_write (required, memory.py:2568) and artifact_write (unlinks handoff blobs, memory.py:2616) -- the same pair the apply used to hardcode.
+    grants = ["cache_write", "artifact_write"]
     try:
         result = actions.memory_run(
             project.root,
@@ -2289,6 +3326,7 @@ def _memory_delete_preview(
                 "expected_revisions": revisions,
                 "scope": state.memory_subject,
                 "owner_scope": owner_scope,
+                "required_grants": grants,
                 "apply": False,
             },
         )
@@ -2297,12 +3335,21 @@ def _memory_delete_preview(
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else {}
+    code = raw.get("code") if isinstance(raw, dict) else None
+    if code != "OK":
+        state.memory_message = (
+            f"delete refused: {code or result.get('status')}: "
+            f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+        )
+        return
     state.memory_pending_delete = {
         "artifact_ids": ids,
         "expected_revisions": revisions,
         "scope": state.memory_subject,
         "owner_scope": owner_scope,
+        "required_grants": grants,
         "affected": (data or {}).get("affected", []),
+        "project_key": project_key(project),
     }
     state.memory_message = (
         f"preview: {len(ids)} record(s) selected -- [y] delete, [n]/[esc] cancel"
@@ -2331,9 +3378,12 @@ def _memory_delete_apply(
                 # a scope change between preview and apply must not silently widen
                 # what the confirmed 'y' actually deletes.
                 "owner_scope": pending["owner_scope"],
+                "required_grants": pending["required_grants"],
                 "apply": True,
             },
-            permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+            permissions=ExecutionPermissions(
+                **{grant: True for grant in pending["required_grants"]}
+            ),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"delete failed: {exc}"
@@ -2341,55 +3391,435 @@ def _memory_delete_apply(
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else {}
-    deleted = len((data or {}).get("affected") or [])
+    code = raw.get("code") if isinstance(raw, dict) else None
     state.memory_pending_delete = None
     state.memory_selected_ids = set()
-    state.memory_message = f"deleted {deleted} record(s)"
+    if code == "OK":
+        deleted = [
+            row.get("id") if isinstance(row, dict) else row
+            for row in (data or {}).get("affected") or []
+        ]
+        state.memory_message = f"deleted {len(deleted)} record(s): {deleted}"
+    elif code == "E_VERSION":
+        state.memory_message = (
+            "delete refused: a reviewed record changed since the preview "
+            f"({(data or {}).get('message')}); nothing was deleted, list "
+            "refreshed -- review it and press d again"
+        )
+    else:
+        state.memory_message = (
+            f"delete refused: {code or result.get('status')}: "
+            f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+        )
     _memory_refresh(state, project, actions, announce=False)
+
+
+def _memory_archive_selected(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D: archive/restore share one form, over every targeted row
+    (`_memory_targets`); a row with `archived_at` set is restored, any other
+    archived. Each row previews (apply=False) with its own id, expected_version,
+    owner_scope and required_grants; only when every preview is OK is the set
+    held for "y", which applies each with exactly those grants."""
+    items = _memory_targets(state)
+    if not items:
+        state.memory_message = "select a row before archive/restore"
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    grants = ["cache_write"]
+    owner_scope = _memory_owner_scope(state, project)
+    calls: list[dict[str, Any]] = []
+    for item in items:
+        archived = not item.get("archived_at")
+        verb = "archive" if archived else "restore"
+        request: dict[str, Any] = {
+            "scope": state.memory_subject,
+            "id": item["id"],
+            "expected_version": item["artifact_version"],
+            "owner_scope": owner_scope,
+            "archived": archived,
+            "required_grants": grants,
+            "apply": False,
+        }
+        try:
+            preview = actions.memory_run(
+                project.root, operation="archive", request=request
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            state.memory_message = f"{verb} preview failed: {exc}"
+            return
+        raw = preview.get("raw") or {}
+        if raw.get("code") != "OK":
+            state.memory_message = (
+                f"{verb} preview refused: {item['id']}: "
+                f"{(raw.get('data') or {}).get('message') or raw.get('code') or 'no result'}"
+            )
+            return
+        calls.append({"operation": "archive", "request": {**request, "apply": True}})
+    verbs = {"archive" if call["request"]["archived"] else "restore" for call in calls}
+    state.memory_pending_mutation = {
+        "operation": "archive",
+        "verb": "/".join(sorted(verbs)),
+        "items": items,
+        "calls": calls,
+        "drafts": [],
+        "consequences": [],
+        "required_grants": grants,
+        "ids": [item["id"] for item in items],
+        "versions": {item["id"]: item["artifact_version"] for item in items},
+        "owner_scope": owner_scope,
+        "project_key": project_key(project),
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_maintain_preview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D: read-only preview of every maintenance task; 'y' applies exactly
+    the previewed candidate IDs at their previewed versions with the reviewed
+    grants, 'n'/'esc' cancels. A corrupt or busy store shows its read-only
+    reason instead of any preview."""
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    _sources, store_state = _memory_sources_and_state(project)
+    if store_state in ("corrupt", "busy"):
+        from rush.memory.store import readonly_view_reason
+
+        state.memory_message = (
+            f"maintenance unavailable -- {store_state}: "
+            f"{readonly_view_reason(store_state)}"
+        )
+        return
+    owner_scope = _memory_owner_scope(state, project)
+    pending: list[dict[str, Any]] = []
+    for task in get_args(MaintenanceTask):
+        try:
+            result = actions.memory_run(
+                project.root,
+                operation="maintain",
+                task=task,
+                owner_scope=owner_scope,
+                request={"apply": False, "required_grants": ["cache_write"]},
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            state.memory_message = f"maintenance preview failed: {exc}"
+            return
+        if result.get("status") == "error":
+            state.memory_message = (
+                f"maintenance preview failed: {result.get('summary')}"
+            )
+            return
+        raw = result.get("raw") or {}
+        pending.append(
+            {
+                "task": task,
+                "owner_scope": owner_scope,
+                "candidate_ids": list(raw.get("candidate_ids") or []),
+                "expected_revisions": dict(raw.get("expected_revisions") or {}),
+                "required_grants": list(raw.get("required_grants") or ["cache_write"]),
+                "consequence": str(result.get("summary") or ""),
+                "project_key": project_key(project),
+            }
+        )
+    state.memory_pending_maintain = pending
+    counts = ", ".join(f"{p['task']} {len(p['candidate_ids'])}" for p in pending)
+    state.memory_message = (
+        f"maintenance preview: {counts} -- [y] apply, [n]/[esc] cancel"
+    )
+
+
+def _memory_maintain_apply(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    pending = state.memory_pending_maintain
+    state.memory_pending_maintain = None
+    if pending is None:
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    summaries: list[str] = []
+    for entry in pending:
+        if not entry["candidate_ids"]:
+            continue  # nothing previewed for this task: nothing to apply
+        try:
+            result = actions.memory_run(
+                project.root,
+                operation="maintain",
+                task=entry["task"],
+                owner_scope=entry["owner_scope"],
+                permissions=_permissions_of(entry["required_grants"]),
+                request={
+                    "apply": True,
+                    "required_grants": entry["required_grants"],
+                    "candidate_ids": entry["candidate_ids"],
+                    **(
+                        {"expected_revisions": entry["expected_revisions"]}
+                        if entry["expected_revisions"]
+                        else {}
+                    ),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            summaries.append(f"{entry['task']} failed: {exc}")
+            continue
+        raw = result.get("raw") or {}
+        refused = [
+            f"{c.get('id')} changed v{c.get('expected')} -> "
+            + ("deleted" if c.get("actual") is None else f"v{c.get('actual')}")
+            for c in raw.get("refused") or []
+            if isinstance(c, dict)
+        ]
+        outcome = (
+            f"changed {raw.get('changed', 0)}"
+            if refused
+            else result.get("summary") or result.get("status")
+        )
+        summaries.append("; ".join([f"{entry['task']}: {outcome}", *refused]))
+    state.memory_message = "; ".join(summaries) or "maintenance: nothing to apply"
+    _memory_refresh(state, project, actions, announce=False)
+
+
+def _memory_pending_mutation_text(pending: dict[str, Any]) -> str:
+    owner = pending.get("owner_scope") or {}
+    target = (
+        f"ids {pending['ids']} versions {pending['versions']}"
+        if pending["ids"]
+        else "new record"
+    )
+    return (
+        f"{pending['verb']} preview: {target} "
+        f"owner {owner.get('kind')}:{owner.get('id')} "
+        f"grants {pending['required_grants']} -- [y] apply, [n]/[esc] cancel"
+    )
+
+
+def _memory_edit_outcome(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    item: dict[str, Any],
+    code: Any,
+) -> None:
+    """Shared by the edit preview (non-OK) and the confirmed apply. OK clears
+    the buffer and refreshes; E_VERSION records `memory_edit_conflict` for
+    `_memory_edit_refresh_and_rereview` (never a blind retry); any other code
+    keeps the entered content."""
+    if code == "OK":
+        state.memory_message = "edit applied"
+        state.memory_edit_buffer = None
+        state.memory_edit_conflict = None
+        _memory_refresh(state, project, actions, announce=False)
+        return
+    if code == "E_VERSION":
+        state.memory_edit_conflict = {
+            "id": item["id"],
+            "expected_version": item["artifact_version"],
+        }
+        state.memory_message = (
+            f"edit conflict on {item['id']} v{item['artifact_version']} -- "
+            "[r] refresh and re-review"
+        )
+        return
+    state.memory_message = f"edit denied: {code}"
+
+
+def _memory_mutation_apply(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D confirm step ("y"): apply exactly the held preview's calls (one per
+    previewed row) with the grants that preview reviewed, then report each
+    row's own outcome, naming the version an archive/restore committed."""
+    pending = state.memory_pending_mutation
+    state.memory_pending_mutation = None
+    if pending is None:
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    verb = pending["verb"]
+    operation = pending["operation"]
+    permissions = _permissions_of(pending["required_grants"])
+    messages: list[str] = []
+    refresh = False
+    for index, call in enumerate(pending["calls"]):
+        try:
+            result = actions.memory_run(project.root, **call, permissions=permissions)
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            messages.append(f"{verb} failed: {exc}")
+            continue
+        raw = result.get("raw") or {}
+        if operation == "edit":
+            _memory_edit_outcome(
+                state, project, actions, pending["items"][0], raw.get("code")
+            )
+            return
+        if operation == "archive":
+            item_id = pending["items"][index]["id"]
+            row_verb = "archive" if call["request"]["archived"] else "restore"
+            data = raw.get("data") or {}
+            if raw.get("code") == "OK":
+                revision = data.get("revision")
+                committed = "" if revision is None else f" (v{revision})"
+                messages.append(f"{row_verb}d {item_id}{committed}")
+                refresh = True
+            else:
+                messages.append(
+                    f"{row_verb} refused: {item_id}: "
+                    f"{data.get('message') or raw.get('code') or 'no result'}"
+                )
+        elif operation == "promote":
+            item_id = pending["items"][index]["id"]
+            created = raw.get("artifact") or {}
+            candidate = (
+                f" (candidate {created.get('id')} v{created.get('artifact_version')})"
+                if created.get("id")
+                else ""
+            )
+            if raw.get("code") == "E_VERSION":
+                messages.append(
+                    f"{item_id} promotion refused: changed since review "
+                    f"({raw.get('reason')}); list refreshed, review it again"
+                )
+                refresh = True
+            elif raw.get("promoted"):
+                messages.append(
+                    f"{item_id} promoted to {raw.get('new_tier')}{candidate}"
+                )
+                refresh = True
+            else:
+                messages.append(
+                    f"{item_id} promotion denied: {raw.get('denial_reason')}{candidate}"
+                )
+                refresh = bool(candidate) or refresh
+        elif result.get("status", "ok") == "ok":
+            state.memory_create_buffer = None
+            state.mode = "memory"
+            messages.append(f"proposed {raw.get('id')}")
+            refresh = True
+        else:
+            messages.append(
+                f"write refused: {raw.get('message') or result.get('summary')}"
+            )
+    state.memory_message = "; ".join(messages)
+    if refresh:
+        _memory_refresh(state, project, actions, announce=False)
 
 
 def _memory_edit_commit(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
-    """ponytail: the keyboard editor commits one fixed `note` content field
-    rather than a full structured-content form -- a real, testable single-
-    field edit; upgrade to a multi-field form if admin content needs more
-    than one editable field."""
+    """T28-D: previews the edit (apply=False) carrying id, expected_version,
+    owner_scope and required_grants, and holds the OK preview in
+    `memory_pending_mutation`; "y" applies it with exactly those reviewed grants. Any non-OK result
+    keeps the entered content; E_VERSION also records `memory_edit_conflict`
+    for `_memory_edit_refresh_and_rereview` -- never a blind retry."""
     item = _memory_selected_item(state)
     if item is None or state.memory_edit_buffer is None or actions.memory_run is None:
+        return
+    grants = ["cache_write"]
+    request = {
+        "scope": state.memory_subject,
+        "id": item["id"],
+        "expected_version": item["artifact_version"],
+        "content": {
+            **(item.get("content") or {}),
+            state.memory_edit_field: state.memory_edit_buffer,
+        },
+        "owner_scope": _memory_owner_scope(state, project),
+        "required_grants": grants,
+    }
+    try:
+        preview = actions.memory_run(
+            project.root, operation="edit", request={**request, "apply": False}
+        )
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"edit failed: {exc}"
+        return
+    code = (preview.get("raw") or {}).get("code")
+    if code != "OK":
+        _memory_edit_outcome(state, project, actions, item, code)
+        return
+    state.memory_pending_mutation = {
+        "operation": "edit",
+        "verb": "edit",
+        "items": [item],
+        "calls": [{"operation": "edit", "request": {**request, "apply": True}}],
+        "drafts": [],
+        "consequences": [],
+        "required_grants": grants,
+        "ids": [item["id"]],
+        "versions": {item["id"]: item["artifact_version"]},
+        "owner_scope": request["owner_scope"],
+        "project_key": project_key(project),
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_edit_refresh_and_rereview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D conflict recovery: re-fetch the conflicted row, replace the
+    stale copy in `memory_items`, and reopen the editor with the kept
+    content for review. Never re-submits."""
+    conflict = state.memory_edit_conflict
+    if conflict is None or actions.memory_run is None:
         return
     try:
         result = actions.memory_run(
             project.root,
-            operation="edit",
-            request={
-                "scope": state.memory_subject,
-                "id": item["id"],
-                "expected_version": item["artifact_version"],
-                "content": {
-                    **(item.get("content") or {}),
-                    "note": state.memory_edit_buffer,
-                },
-                "owner_scope": _memory_owner_scope(state, project),
-                "apply": True,
-            },
-            permissions=ExecutionPermissions(cache_write=True),
+            operation="list",
+            subject=state.memory_subject,
+            session_allowlist=_memory_known_sources(project),
+            **_memory_list_kwargs(state),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
-        state.memory_message = f"edit failed: {exc}"
-        state.memory_edit_buffer = None
+        state.memory_message = f"refresh failed: {exc}"
         return
-    raw = result.get("raw") or {}
-    if raw.get("code") == "OK":
-        state.memory_message = "edit applied"
-        _memory_refresh(state, project, actions, announce=False)
+    rows = result.get("raw") if result.get("status") == "ok" else None
+    fresh = next(
+        (
+            row
+            for row in rows or []
+            if isinstance(row, dict) and row.get("id") == conflict["id"]
+        ),
+        None,
+    )
+    if fresh is None:
+        state.memory_message = f"{conflict['id']} not found on refresh"
+        return
+    ids = [row.get("id") for row in state.memory_items]
+    if conflict["id"] in ids:
+        index = ids.index(conflict["id"])
+        state.memory_items[index] = fresh
     else:
-        state.memory_message = f"edit denied: {raw.get('code')}"
-    state.memory_edit_buffer = None
+        state.memory_items.append(fresh)
+        index = len(state.memory_items) - 1
+    state.memory_selected_index = index
+    state.memory_edit_conflict = None
+    state.mode = "memory_edit"
+    state.memory_message = (
+        f"refreshed {conflict['id']} to v{fresh.get('artifact_version')} -- "
+        "review, then Enter to submit"
+    )
 
 
 def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     project = state.active_project
+    if key in ("n", "escape") and state.memory_pending_mutation is not None:
+        verb = state.memory_pending_mutation["verb"]
+        state.memory_pending_mutation = None
+        state.memory_message = f"{verb} cancelled -- 0 records written"
+        return
+    if key in ("n", "escape") and state.memory_pending_maintain is not None:
+        state.memory_pending_maintain = None
+        state.memory_message = "maintenance cancelled"
+        return
     if key == "escape":
         if state.memory_pending_delete is not None:
             state.memory_pending_delete = None
@@ -2402,6 +3832,18 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
         state.memory_pending_delete = None
         state.memory_message = "delete cancelled -- 0 records removed"
         return
+    if key == "n":
+        state.mode = "memory_create"
+        state.memory_create_field = "content"
+        state.memory_create_buffer = {
+            "subject": state.memory_subject,
+            "source": "tui",
+            "content": "",
+        }
+        state.memory_message = (
+            "new memory: [tab] field  [enter] preview+submit  [esc] cancel"
+        )
+        return
     if key in ("down", "j"):
         if state.memory_items:
             state.memory_selected_index = (state.memory_selected_index + 1) % len(
@@ -2413,6 +3855,26 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             state.memory_selected_index = (state.memory_selected_index - 1) % len(
                 state.memory_items
             )
+        return
+    if key in ("]", "["):
+        if state.memory_items:
+            page = state.memory_selected_index // _MEMORY_PAGE_ROWS
+            page += 1 if key == "]" else -1
+            if 0 <= page * _MEMORY_PAGE_ROWS < len(state.memory_items):
+                state.memory_selected_index = page * _MEMORY_PAGE_ROWS
+        return
+    if key == "f":
+        state.mode = "memory_filter"
+        state.memory_filter_field = _MEMORY_FILTER_FIELDS[0]
+        state.memory_filter_buffer = _memory_filter_values(state)
+        state.memory_message = "filters: [tab] field  [enter] apply  [esc] cancel"
+        return
+    if key == "S":
+        subjects = list(get_args(MemorySubject))
+        current = state.memory_subject
+        index = subjects.index(current) if current in subjects else -1
+        state.memory_subject = subjects[(index + 1) % len(subjects)]
+        _memory_submit(state, project, actions, "list", _memory_refresh)
         return
     if key == "/":
         state.mode = "memory_search"
@@ -2428,15 +3890,24 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
                 state.memory_selected_ids.add(item_id)
         return
     if key == "x":
-        _memory_expand_selected(state, project, actions)
+        _memory_submit(state, project, actions, "expand", _memory_expand_selected)
         return
     if key == "p":
-        _memory_promote_selected(state, project, actions)
+        _memory_submit(
+            state, project, actions, "promote preview", _memory_promote_selected
+        )
+        return
+    if key == "r" and state.memory_edit_conflict is not None:
+        _memory_submit(
+            state, project, actions, "list", _memory_edit_refresh_and_rereview
+        )
         return
     if key == "e":
         if _memory_selected_item(state) is not None:
             state.mode = "memory_edit"
             state.memory_edit_buffer = ""
+            state.memory_edit_field = "note"
+            state.memory_edit_conflict = None
         return
     if key == "o":
         state.mode = "memory_owner"
@@ -2444,18 +3915,46 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             _default_owner_scope_id(state.memory_owner_scope_kind, project)
         )
         return
+    if key == "a":
+        _memory_submit(
+            state, project, actions, "archive preview", _memory_archive_selected
+        )
+        return
     if key == "d":
-        _memory_delete_preview(state, project, actions)
+        _memory_submit(
+            state, project, actions, "delete preview", _memory_delete_preview
+        )
+        return
+    if key == "w":
+        _memory_submit(
+            state, project, actions, "maintenance preview", _memory_maintain_preview
+        )
         return
     if key == "y":
-        _memory_delete_apply(state, project, actions)
+        if _memory_held_for_other_project(state, project):
+            return
+        if state.memory_pending_mutation is not None:
+            apply = _memory_mutation_apply
+        elif state.memory_pending_maintain is not None:
+            apply = _memory_maintain_apply
+        elif state.memory_pending_delete is not None:
+            apply = _memory_delete_apply
+        else:
+            return
+        _memory_submit(state, project, actions, "apply", apply)
+        return
+    if key == "?":
+        state.mode = "help"
+        return
+    if key == "q":
+        _quit(state, actions)
         return
 
 
 def _handle_memory_search_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "enter":
         state.mode = "memory"
-        _memory_refresh(state, state.active_project, actions)
+        _memory_submit(state, state.active_project, actions, "list", _memory_refresh)
         return
     if key == "escape":
         state.mode = "memory"
@@ -2465,6 +3964,47 @@ def _handle_memory_search_key(state: TuiState, key: str, actions: ScanActions) -
         return
     if len(key) == 1 and key.isprintable():
         state.memory_query_buffer += key
+
+
+def _handle_memory_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """T28-D: the "f" filter form. Tab cycles `_MEMORY_FILTER_FIELDS`, typed text
+    edits the field under the cursor, Enter applies every field (empty = unset)
+    and refreshes, Escape discards the form and keeps the active filters."""
+    buf = state.memory_filter_buffer or _memory_filter_values(state)
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_filter_buffer = None
+        state.memory_message = "filter cancelled"
+        return
+    if key == "tab":
+        fields_ = _MEMORY_FILTER_FIELDS
+        index = (
+            fields_.index(state.memory_filter_field)
+            if state.memory_filter_field in fields_
+            else -1
+        )
+        state.memory_filter_field = fields_[(index + 1) % len(fields_)]
+        return
+    if key == "enter":
+        archived = buf["archived"].strip().lower()
+        if archived not in ("", "true", "false"):
+            state.memory_message = "archived filter takes true or false"
+            return
+        state.memory_filter_trust = buf["trust"].strip() or None
+        state.memory_filter_source = buf["source"].strip() or None
+        state.memory_filter_freshness = buf["freshness"].strip() or None
+        state.memory_filter_archived = archived == "true"
+        state.memory_filter_owner = buf["owner"].strip() or None
+        state.memory_filter_buffer = None
+        state.mode = "memory"
+        _memory_submit(state, state.active_project, actions, "list", _memory_refresh)
+        return
+    current = buf.get(state.memory_filter_field, "")
+    if key == "backspace":
+        buf[state.memory_filter_field] = current[:-1]
+    elif len(key) == 1 and key.isprintable():
+        buf[state.memory_filter_field] = current + key
+    state.memory_filter_buffer = buf
 
 
 def _handle_memory_owner_key(state: TuiState, key: str, actions: ScanActions) -> None:
@@ -2517,8 +4057,20 @@ def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> 
         state.memory_edit_buffer = None
         return
     if key == "enter":
-        _memory_edit_commit(state, state.active_project, actions)
         state.mode = "memory"
+        _memory_submit(
+            state, state.active_project, actions, "edit preview", _memory_edit_commit
+        )
+        return
+    if key == "tab":
+        item = _memory_selected_item(state)
+        fields = sorted({*((item or {}).get("content") or {}), "note"})
+        position = (
+            fields.index(state.memory_edit_field)
+            if state.memory_edit_field in fields
+            else -1
+        )
+        state.memory_edit_field = fields[(position + 1) % len(fields)]
         return
     if key == "backspace":
         state.memory_edit_buffer = (state.memory_edit_buffer or "")[:-1]
@@ -2567,7 +4119,9 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         return
     try:
         if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
-            owner = _dashboard_owner_for(project, actions)
+            owner = project.dashboard_owner_handle or _dashboard_owner_for(
+                project, actions
+            )
             if owner is None:
                 project.last_message = "cancel failed: dashboard owner not reachable"
                 return
@@ -2588,7 +4142,12 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
 
 
 def _wait_for_cancel_ack(
-    state: TuiState, project: ProjectState, actions: ScanActions, *, timeout: float
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    *,
+    timeout: float,
+    poll: bool = True,
 ) -> bool:
     """P69-06g: blocks up to `timeout` seconds for the cooperative-cancel
     marker to be acknowledged (a real terminal status transition), polling
@@ -2597,10 +4156,15 @@ def _wait_for_cancel_ack(
     polling call at all, since it writes `project.status` itself and that
     write is visible across threads without one. Returns True the instant
     `project.status` leaves `"cancelling"`, False once `timeout` is
-    exhausted with no acknowledgment observed."""
+    exhausted with no acknowledgment observed.
+
+    T28-F: `poll=False` (the non-blocking Detach worker) only watches
+    `project.status` -- the render loop's own tick keeps polling, so the
+    worker thread never runs `_poll_running_scans` concurrently with it."""
     deadline = time.monotonic() + timeout
     while True:
-        _poll_running_scans(state, actions)
+        if poll:
+            _poll_running_scans(state, actions)
         if project.status != "cancelling":
             return True
         if time.monotonic() >= deadline:
@@ -2613,14 +4177,23 @@ def _handle_detach(
     project: ProjectState,
     actions: ScanActions,
     *,
-    timeout: float = OWNED_TERMINATION_TIMEOUT_SECONDS,
+    timeout: float | None = None,
+    poll: bool = True,
 ) -> None:
     """P69-06g/h/i: Detach's two genuinely different behaviors per Phase 66
     S3.9's superseding clause (this plan's own S3) -- case (a) dashboard-owned
     is a trivial background continuation (the work was never TUI-owned);
     case (b) locally-owned is Cancel-with-saved-partial-result, since no
     mechanism this phase can build keeps a bare CLI process's work alive
-    past its own exit."""
+    past its own exit.
+
+    T28-F: `_begin_detach` runs this on a worker thread under the
+    `detaching` overlay's deadline, so the loop keeps rendering. Phase 69's
+    order is kept: request the cooperative cancel, wait up to `timeout` for
+    its acknowledgment, and only when none lands reap the run's subprocess
+    groups (bounded SIGTERM-then-SIGKILL) and record `recovery_required`."""
+    if timeout is None:
+        timeout = OWNED_TERMINATION_TIMEOUT_SECONDS
     if project.owner == "dashboard" or not project.owner_instance_id:
         state.mode = "list"
         state.should_quit = True
@@ -2628,7 +4201,9 @@ def _handle_detach(
 
     state.message = "detaching -- cancelling local run..."
     _request_cancel(project, actions)
-    acknowledged = _wait_for_cancel_ack(state, project, actions, timeout=timeout)
+    acknowledged = _wait_for_cancel_ack(
+        state, project, actions, timeout=timeout, poll=poll
+    )
     if not acknowledged:
         # The worker never acknowledged within the deadline: force-stop every
         # subprocess group *this run* owns (subsection h). U03: this
@@ -2657,6 +4232,71 @@ def _handle_detach(
     state.should_quit = True
 
 
+def _begin_detach(state: TuiState, project: ProjectState, actions: ScanActions) -> None:
+    """T28-F: Detach without blocking the render loop. A locally-owned run
+    gets the `detaching` overlay and a deadline the loop polls every tick
+    (`_poll_detach`) while `_handle_detach` runs on a worker thread."""
+    if project.owner == "dashboard" or not project.owner_instance_id:
+        _handle_detach(state, project, actions)  # nothing to wait for
+        return
+    timeout = OWNED_TERMINATION_TIMEOUT_SECONDS
+    _request_cancel(project, actions)
+    done = threading.Event()
+
+    def _worker() -> None:
+        try:
+            _handle_detach(state, project, actions, timeout=timeout, poll=False)
+        except Exception as exc:  # noqa: BLE001 -- a failed reap or ledger
+            # write must still end the detach at once, visibly, never leave
+            # the loop waiting on a dead worker until the deadline.
+            state.message = f"detach failed: {exc}"
+        finally:
+            done.set()
+
+    state.mode = "list"
+    state.overlay = "detaching"
+    state.message = "detaching -- cancelling local run..."
+    state.detach_done = done
+    # The acknowledgment wait, then the reap's SIGTERM and SIGKILL waits.
+    state.detach_deadline = time.monotonic() + 3 * timeout
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _poll_detach(state: TuiState) -> None:
+    """T28-F: end the loop once the Detach worker is done or its deadline
+    passed -- the process exits regardless, as Phase 69's Detach did."""
+    if state.detach_deadline is None:
+        return
+    done = state.detach_done is not None and state.detach_done.is_set()
+    if done or time.monotonic() >= state.detach_deadline:
+        state.detach_deadline = None
+        state.mode = "list"
+        state.should_quit = True
+
+
+def _handle_sigint(state: TuiState, actions: ScanActions) -> None:
+    """T28-F: Ctrl-C caught in the loop is the `q` quit flow: idle quits,
+    running work opens `quit_confirm`, a second Ctrl-C there Detaches, and
+    one while detaching stops waiting."""
+    if state.detach_deadline is not None:
+        state.should_quit = True
+    elif state.mode == "quit_confirm" and state.projects:
+        _begin_detach(state, state.active_project, actions)
+    else:
+        _quit(state, actions)
+    _sync_section(state)
+
+
+def _handle_eof(state: TuiState, actions: ScanActions) -> None:
+    """T28-F: input reached end-of-file -- Detach (the loop then restores
+    the terminal and prints the cause on stderr)."""
+    if state.projects and _has_running_work(state.active_project):
+        _begin_detach(state, state.active_project, actions)
+    else:
+        state.should_quit = True
+    _sync_section(state)
+
+
 def _handle_cancel_and_stay(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
@@ -2673,7 +4313,7 @@ def _handle_cancel_and_stay(
 def _handle_quit_confirm_key(state: TuiState, key: str, actions: ScanActions) -> None:
     project = state.active_project
     if key in ("d", "enter"):
-        _handle_detach(state, project, actions)
+        _begin_detach(state, project, actions)
     elif key == "c":
         _handle_cancel_and_stay(state, project, actions)
     elif key in ("r", "n", "escape"):
@@ -2701,28 +4341,329 @@ def _load_overview_section(
     return "populated", None, data
 
 
+def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Tokens reload only when root, filter, or telemetry mtime changes."""
+    db = Path(root) / ".rush" / "telemetry" / "tokens.db"
+    mtimes: list[Any] = []
+    for path in (db, db.with_name("tokens.db-wal")):
+        try:
+            mtimes.append(path.stat().st_mtime_ns)
+        except OSError:
+            mtimes.append(None)
+    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+
+
 def _load_tokens_section(
-    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
+    root: Path,
+    project_id: str | None,
+    data_root: Path | None,
+    actions: ScanActions,
+    *,
+    filters: Mapping[str, Any] | None = None,
 ) -> LoadOutcome:
+    """T28-E: one `project_token_usage` read for the Tokens view's filters,
+    on the section worker. The result carries the root/filter/telemetry-mtime
+    key and project id it was read for, so `_request_stale_tokens` re-reads
+    only when one of them changes, never once per painted frame."""
+    filters = dict(filters or {})
+    # The key is taken before the read: a write during it triggers one more.
+    marker = {"_cache_key": _tokens_cache_key(root, filters), "_project_id": project_id}
     if project_id is None:
-        return "unavailable", "project not registered", None
-    from rush.workflows.projects import project_token_usage
+        return "unavailable", "project not registered", marker
+    from rush.workflows import projects as wp
 
-    return "populated", None, project_token_usage(project_id, data_root=data_root)
+    query = {k: v for k, v in filters.items() if not str(k).startswith("_")}
+    try:
+        data = dict(wp.project_token_usage(project_id, data_root=data_root, **query))
+    except Exception as exc:  # noqa: BLE001 -- same contract as `_submit`'s
+        # worker, but the failure keeps its key so it is not re-read every tick.
+        return "failed", str(exc) or type(exc).__name__, marker
+    return "populated", None, {**data, **marker}
 
 
-def _load_artifacts_section(
-    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
-) -> LoadOutcome:
-    if project_id is None:
-        return "unavailable", "project not registered", None
-    from rush.workflows.projects import list_project_artifacts
+def _request_stale_tokens(state: TuiState) -> None:
+    """T28-E: once per loop tick (two `stat`s, no read), re-request the open
+    Tokens view when its root, filter, telemetry mtime or project id no
+    longer match the loaded result."""
+    if not state.projects or state.section != "tokens":
+        return
+    project = state.active_project
+    view = state.views.get((project_key(project), "tokens"))
+    if view is None or "tokens" in project.pending:
+        return
+    data = view.data if isinstance(view.data, Mapping) else {}
+    if (
+        data.get("_cache_key") != _tokens_cache_key(project.root, view.filters)
+        or data.get("_project_id") != project.project_id
+    ):
+        state.load_requests.add((project_key(project), "tokens"))
 
-    data = list_project_artifacts(project_id, data_root=data_root)
+
+def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """T28-E: `/` in Tokens -- type a run id; Enter filters by that stored
+    `run_id` identity, Escape clears the run filter."""
+    view = state.views.setdefault(
+        (project_key(state.active_project), "tokens"), SectionView()
+    )
+    if key == "enter":
+        run_id = state.tokens_filter_buffer.strip()
+        if run_id:
+            view.filters["run_id"] = run_id
+        else:
+            view.filters.pop("run_id", None)
+        state.mode = "list"
+    elif key == "escape":
+        view.filters.pop("run_id", None)
+        state.mode = "list"
+    elif key == "backspace":
+        state.tokens_filter_buffer = state.tokens_filter_buffer[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.tokens_filter_buffer += key
+
+
+def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Artifacts reload only when root, filter, an attempt manifest or the
+    handoff directory changes."""
+    root = Path(root)
+    paths = sorted(root.glob(".rush/runs/*/attempts/*/manifest.json"))
+    mtimes: list[Any] = []
+    for path in [*paths, root / ".rush" / "handoffs"]:
+        try:
+            mtimes.append((path.as_posix(), path.stat().st_mtime_ns))
+        except OSError:
+            mtimes.append((path.as_posix(), None))
+    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+
+
+def _refresh_artifacts_view(state: TuiState, project: ProjectState) -> SectionView:
+    """The cached Artifacts index (`list_project_artifacts`): one read per
+    root/filter/manifest change, never one per painted frame."""
+    view = state.views.setdefault((project_key(project), "artifacts"), SectionView())
+    key = _artifacts_cache_key(project.root, view.filters)
+    if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
+        return view
+    from rush.workflows import projects as wp
+
+    if project.project_id is None:
+        view.state, view.reason, view.data = (
+            "unavailable",
+            "project not registered",
+            {"_cache_key": key},
+        )
+        return view
+    try:
+        data = dict(
+            wp.list_project_artifacts(project.project_id, data_root=state.data_root)
+        )
+    except (wp.ProjectError, OSError, ValueError) as exc:
+        view.state, view.reason = "failed", str(exc) or type(exc).__name__
+        view.data = {"_cache_key": key}
+        return view
+    data["_cache_key"] = key
     lists = [v for v in data.values() if isinstance(v, list)]
     if lists and not any(lists):
-        return "empty", "no artifacts recorded yet", data
-    return "populated", None, data
+        view.state, view.reason = "empty", "no artifacts recorded yet"
+    else:
+        view.state, view.reason = "populated", None
+    view.data = data
+    view.selection = min(view.selection, max(0, len(_captured_rows(view)) - 1))
+    view.scroll = 0
+    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return view
+
+
+def _captured_rows(
+    view: SectionView, *, filtered: bool = True
+) -> list[Mapping[str, Any]]:
+    """The captured artifacts; with `filtered`, only those whose path or
+    type (category/media type) contains the committed `/` query,
+    case-insensitively."""
+    data = view.data if isinstance(view.data, Mapping) else {}
+    rows = [row for row in data.get("captured") or [] if isinstance(row, Mapping)]
+    query = str(view.filters.get("query") or "").lower() if filtered else ""
+    if not query:
+        return rows
+    return [
+        row
+        for row in rows
+        if any(
+            query in str(row.get(field) or "").lower()
+            for field in ("path", "category", "media_type")
+        )
+    ]
+
+
+def _selected_artifact(view: SectionView) -> Mapping[str, Any] | None:
+    rows = _captured_rows(view)
+    return rows[view.selection] if 0 <= view.selection < len(rows) else None
+
+
+def _artifact_cursor(project_id: str, item: Mapping[str, Any]) -> str:
+    """The first-page cursor binding project/run/attempt/tool/path/sha256."""
+    payload = {
+        "project_id": project_id,
+        "run_id": item.get("run_id"),
+        "attempt_id": item.get("attempt_id"),
+        "tool_id": item.get("tool_id"),
+        "path": item.get("path"),
+        "sha256": item.get("sha256"),
+        "offset": 0,
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+
+def _artifact_inspect(state: TuiState, actions: ScanActions) -> None:
+    """Read the selected captured artifact through `read_project_artifact_page`,
+    following next_cursor until `_DETAIL_MAX_BYTES`; pressing again continues
+    from where the last press stopped. Binary bytes are never rendered."""
+    project = state.active_project
+    view = _refresh_artifacts_view(state, project)
+    item = _selected_artifact(view)
+    if item is None or project.project_id is None or not isinstance(view.data, dict):
+        state.message = "no captured artifact selected"
+        return
+    detail = view.data.get("_detail")
+    if not isinstance(detail, dict) or detail.get("ref") != item.get("artifact_ref"):
+        detail = {
+            "ref": item.get("artifact_ref"),
+            "item": dict(item),
+            "next_cursor": _artifact_cursor(project.project_id, item),
+            "decoder": codecs.getincrementaldecoder("utf-8")(),
+            "text": "",
+            "offset": 0,
+            "end": 0,
+            "size": item.get("size"),
+            "binary": False,
+            "error": None,
+        }
+        view.data["_detail"] = detail
+    elif detail["next_cursor"] is None:
+        state.message = "end of artifact"
+        return
+    from rush.workflows import projects as wp
+
+    cursor = detail["next_cursor"]
+    chunks: list[bytes] = []
+    read = 0
+    while cursor is not None and read < _DETAIL_MAX_BYTES:
+        try:
+            page = wp.read_project_artifact_page(
+                project.project_id,
+                cursor,
+                data_root=state.data_root,
+                limit=min(_ARTIFACT_PAGE_BYTES, _DETAIL_MAX_BYTES - read),
+            )
+        except (wp.ProjectError, OSError, ValueError) as exc:
+            page = {"error": str(exc) or type(exc).__name__}
+        chunk = b"" if page.get("error") else base64.b64decode(page["content_base64"])
+        if not chunk:
+            detail["error"] = page.get("error") or "read_failed"
+            cursor = None
+            break
+        chunks.append(chunk)
+        read += len(chunk)
+        detail["size"] = page.get("size", detail["size"])
+        cursor = page.get("next_cursor")
+    data = b"".join(chunks)
+    detail["next_cursor"] = cursor
+    detail["offset"], detail["end"] = detail["end"], detail["end"] + len(data)
+    if b"\x00" in data:
+        detail["binary"] = True
+    if not detail["binary"]:
+        try:
+            detail["text"] = detail["decoder"].decode(data, final=cursor is None)
+        except UnicodeDecodeError:
+            detail["binary"] = True
+    if detail["binary"]:
+        detail["text"] = ""
+    view.scroll = 0
+    state.message = (
+        f"artifact read failed: {detail['error']}"
+        if detail["error"]
+        else f"read bytes {detail['offset']}-{detail['end']} of {detail['size']}"
+    )
+
+
+def _artifact_export_destination(root: Path, item: Mapping[str, Any]) -> Path:
+    """`<root>/.rush/exports/<sha256 prefix>-<file name>`, every part reduced
+    to `[A-Za-z0-9._-]` so a hostile recorded path cannot pick the target."""
+
+    def clean(value: object) -> str:
+        text = "".join(
+            c if c.isascii() and (c.isalnum() or c in "._-") else "_"
+            for c in str(value)
+        )
+        return text.lstrip(".")
+
+    name = clean(Path(str(item.get("path") or "")).name) or "artifact"
+    digest = clean(item.get("sha256") or "")[:12] or "unknown"
+    return Path(root) / ".rush" / "exports" / f"{digest}-{name}"
+
+
+def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
+    """Open the export review; nothing is written until it is confirmed."""
+    project = state.active_project
+    view = _refresh_artifacts_view(state, project)
+    item = _selected_artifact(view)
+    if item is None or project.project_id is None:
+        state.message = "no captured artifact selected"
+        return
+    _open_grant(
+        state,
+        {
+            "kind": "artifact_export",
+            "grants": "artifact_write",
+            "destination": str(_artifact_export_destination(project.root, item)),
+            "run_id": item.get("run_id"),
+            "attempt_id": item.get("attempt_id"),
+            "tool_id": item.get("tool_id"),
+            "path": item.get("path"),
+            "size": item.get("size"),
+            "sha256": item.get("sha256"),
+            "_identity": _review_identity(state),
+        },
+    )
+    state.overlay = "grant_review"
+
+
+def _export_artifact(state: TuiState, grant: Mapping[str, Any]) -> None:
+    """The confirmed export: exactly one `export_project_artifact` call."""
+    from rush.workflows import projects as wp
+
+    project = state.active_project
+    destination = Path(grant["destination"])
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        result = wp.export_project_artifact(
+            project.project_id or str(project.root),
+            run_id=str(grant["run_id"]),
+            attempt_id=str(grant["attempt_id"]),
+            tool_id=str(grant["tool_id"]),
+            path=str(grant["path"]),
+            destination=destination,
+            permissions=ExecutionPermissions(artifact_write=True),
+            data_root=state.data_root,
+            expected_sha256=grant.get("sha256"),
+        )
+    except (wp.ProjectError, OSError, ValueError) as exc:
+        state.message = f"export failed: {exc}"
+        return
+    state.message = f"exported {result['path']} ({result['size']} bytes)" + (
+        ", identical file already there" if result.get("noop") else ""
+    )
+
+
+def _artifacts_move(state: TuiState, step: int) -> None:
+    """j/k: scroll the open artifact text, else move the artifact selection."""
+    view = state.views.get((project_key(state.active_project), "artifacts"))
+    if view is None or not isinstance(view.data, Mapping):
+        return
+    if isinstance(view.data.get("_detail"), Mapping):
+        view.scroll = max(0, view.scroll + step)
+        return
+    count = len(_captured_rows(view))
+    if count:
+        view.selection = max(0, min(count - 1, view.selection + step))
 
 
 def _load_setup_section(
@@ -2739,9 +4680,8 @@ _SECTION_LOADERS: dict[
 ] = {
     "overview": _load_overview_section,
     "scans": _load_scans_section,
-    "tokens": _load_tokens_section,
-    "artifacts": _load_artifacts_section,
     "setup": _load_setup_section,
+    "tokens": _load_tokens_section,
 }
 
 
@@ -2762,6 +4702,12 @@ def _submit(
     key = (project_key(project), section)
     if key not in state.views:
         state.views[key] = SectionView(state="loading", generation=generation)
+    if section == "tokens":
+        # T28-E: numbers read for another root/filter/mtime are never shown
+        # under this one; the view says "loading" until the result drains.
+        view = state.views[key]
+        view.state, view.reason, view.data = "loading", None, None
+        loader = functools.partial(_load_tokens_section, filters=dict(view.filters))
     args = (project.root, project.project_id, state.data_root, actions)
     results = state.result_queue
 
@@ -2808,6 +4754,9 @@ def _drain_results(state: TuiState) -> bool:
             post = state.result_queue.get_nowait()
         except queue.Empty:
             return applied
+        if post[0] == "memory":  # ("memory", generation, key, scratch, baseline)
+            applied = _apply_memory_result(state, *post[1:]) or applied
+            continue
         if isinstance(post[0], str):  # ("grant", kind, target, ok, payload)
             _apply_project_grant(state, *post[1:])
             applied = True
@@ -2819,6 +4768,14 @@ def _drain_results(state: TuiState) -> bool:
             continue  # superseded, switched away, or identity changed
         del project.pending[section]
         applied = True
+        if section.startswith("git"):
+            # T28-E: a `_git_request` read; Git state is the active project's.
+            if project is state.active_project:
+                if ok:
+                    payload(state)
+                else:
+                    state.git_message = f"git read failed: {payload}"
+            continue
         if ok and section == "overview" and isinstance(payload[2], Mapping):
             registration = payload[2].get("registration")
             if isinstance(registration, Mapping):
@@ -2840,6 +4797,7 @@ def _drain_results(state: TuiState) -> bool:
                 data=data,
                 loaded_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 generation=generation,
+                filters=dict(prior.filters) if prior is not None else {},
             )
         elif prior is not None and prior.data is not None:
             prior.state = "stale"
@@ -2855,6 +4813,7 @@ def _pump(state: TuiState, actions: ScanActions) -> bool:
     section already loading is not started again (F5 cannot pile up
     threads). True when a result was applied, so the screen must redraw."""
     applied = _drain_results(state)
+    _request_stale_tokens(state)
     requests, state.load_requests = state.load_requests, set()
     for pkey, section in requests:
         for project in state.projects:
@@ -2902,8 +4861,8 @@ def _handle_project_selector_key(
             state.active_project.invalidate()
         state.active_index = state.project_selector_index
         state.memory_items = []
-        state.memory_selected_ids = set()
-        state.memory_pending_delete = None
+        _memory_clear_held(state)
+        state.memory_request = None  # the old project's result is stale
         state.memory_expanded = None
         state.memory_message = ""
         state.git_data = None
@@ -2922,7 +4881,7 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
     if section == "git":
         _load_git_view(state, project, actions)
     elif section == "memory":
-        state.memory_message = f"press / to search {state.memory_subject} memories"
+        _memory_submit(state, project, actions, "list", _memory_refresh)
     elif section in _SECTION_LOADERS:
         state.load_requests.add((project_key(project), section))
 
@@ -2934,8 +4893,28 @@ def _sync_section(state: TuiState) -> None:
         state.section = "overview"
     if state.projects:
         state.active_project.section = state.section
-    if state.overlay not in ("sections", "form"):
+    _uncover_resize_overlay(state)
+    if state.overlay not in ("sections", "form", "detaching"):
         state.overlay = _MODE_OVERLAYS.get(state.mode)
+    _sync_resize_overlay(state)
+
+
+def _sync_resize_overlay(state: TuiState) -> None:
+    """T28-F: below the minimum size `resize_guidance` covers whatever
+    overlay is open; it comes back unchanged once the terminal is large
+    enough, so no state is lost across a resize."""
+    if _too_small(state):
+        if state.overlay != "resize_guidance":
+            state.overlay_under_resize = state.overlay
+            state.overlay = "resize_guidance"
+    else:
+        _uncover_resize_overlay(state)
+
+
+def _uncover_resize_overlay(state: TuiState) -> None:
+    if state.overlay == "resize_guidance":
+        state.overlay = state.overlay_under_resize
+        state.overlay_under_resize = None
 
 
 def _chooser_rows() -> list[tuple[str, str]]:
@@ -3071,6 +5050,11 @@ class Action:
     run: Callable[[TuiState, ScanActions], None]
     enabled: Callable[[TuiState], tuple[bool, str]] = lambda state: (True, "")
 
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """T28-F: the keys `_KEYMAP` binds to this action."""
+        return tuple(b.key for b in _BINDINGS if b.action_name == self.id)
+
 
 def _run_action(state: TuiState, action: Action, actions: ScanActions) -> None:
     ok, reason = action.enabled(state)
@@ -3096,16 +5080,45 @@ def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
     def run(state: TuiState, actions: ScanActions) -> None:
         if state.mode == "map":
             _move_map_selection(state, state.active_project, step)
+        elif state.mode == "detail":
+            _scroll_detail(state.active_project, step)
         elif state.section == "setup":
             _setup_move(state, step)
+        elif state.section == "artifacts":
+            _artifacts_move(state, step)
+        elif state.mode == "git":
+            commits = _git_page_commits(state)[0]
+            if commits:
+                state.git_selected = (state.git_selected + step) % len(commits)
         else:
             _move_selection(state.active_project, step)
 
     return run
 
 
+def _detail_default_scroll(project: ProjectState) -> int:
+    rows = project.visible_findings()
+    if project.selected_index >= len(rows):
+        return 0
+    line = rows[project.selected_index].get("line")
+    return max(0, line - 1 - _DETAIL_CONTEXT_LINES) if isinstance(line, int) else 0
+
+
+def _scroll_detail(project: ProjectState, step: int) -> None:
+    """Scrolls the Detail file text; `_render_detail` clamps the end."""
+    start = project.detail_scroll
+    if start is None:
+        start = _detail_default_scroll(project)
+    project.detail_scroll = max(0, start + step)
+
+
 def _select_row(state: TuiState, actions: ScanActions) -> None:
-    if state.active_project.visible_findings():
+    if state.mode == "git":
+        _git_expand_commit(state)
+        return
+    project = state.active_project
+    if project.visible_findings() or _outcome_results(project):
+        state.active_project.detail_scroll = None
         state.mode = "detail"
 
 
@@ -3132,8 +5145,87 @@ def _map_expand(state: TuiState, actions: ScanActions) -> None:
         nodes = _map_visible_nodes(state.active_project, state.map_expanded)
         if 0 <= state.map_selected_index < len(nodes):
             node = nodes[state.map_selected_index]
-            if node.get("children"):
+            if node.get("kind") == "more":
+                directory = node["key"].removeprefix("more:")
+                pages = state.active_project.map_dir_pages
+                pages[directory] = pages.get(directory, 1) + 1
+            elif node.get("children"):
                 state.map_expanded.add(node["key"])
+
+
+def _focus_filter(state: TuiState, actions: ScanActions) -> None:
+    """`/`: in Map it searches the map's own nodes (`map_search`), in
+    Artifacts it searches the captured index (`artifact_search`), in Tokens
+    it sets the run-id filter, elsewhere it filters findings."""
+    if state.section == "tokens":
+        state.tokens_filter_buffer = ""
+        state.mode = "tokens_filter"
+        return
+    if state.mode == "map":
+        state.map_query = ""
+        state.mode = "map_search"
+    elif state.section == "artifacts":
+        state.artifact_query_buffer = ""
+        state.mode = "artifact_search"
+    else:
+        state.mode = "search"
+
+
+def _map_search_jump(state: TuiState) -> None:
+    """Selects the first Map node (in tree order, every page, collapsed
+    or not) whose label or key contains the query, expanding each ancestor
+    and paging its directory far enough to show it."""
+    query = state.map_query.strip().lower()
+    if not query:
+        return
+    project = state.active_project
+    nodes = _map_nodes(project, all_pages=True)
+    target = next(
+        (
+            node
+            for node in nodes
+            if query in str(node["label"]).lower() or query in node["key"].lower()
+        ),
+        None,
+    )
+    if target is None:
+        state.message = safe_terminal_text(f"no map node matches {query!r}")
+        return
+    by_key = {node["key"]: node for node in nodes}
+    file_node = (
+        by_key.get(target.get("parent", "")) if target["kind"] == "finding" else target
+    )
+    if file_node is not None and file_node["kind"] == "file":
+        parent = file_node.get("parent")
+        siblings = [
+            node["key"]
+            for node in nodes
+            if node["kind"] == "file" and node.get("parent") == parent
+        ]
+        directory = parent.removeprefix("dir:") if parent else ""
+        needed = siblings.index(file_node["key"]) // _MAP_DIR_PAGE_SIZE + 1
+        project.map_dir_pages[directory] = max(
+            project.map_dir_pages.get(directory, 1), needed
+        )
+    ancestor = target.get("parent")
+    while ancestor is not None:
+        state.map_expanded.add(ancestor)
+        ancestor = by_key.get(ancestor, {}).get("parent")
+    visible = [node["key"] for node in _map_visible_nodes(project, state.map_expanded)]
+    state.map_selected_index = visible.index(target["key"])
+
+
+def _handle_map_search_key(state: TuiState, key: str) -> None:
+    if key == "enter":
+        _map_search_jump(state)
+        state.mode = "map"
+    elif key == "escape":
+        state.map_query = ""
+        state.mode = "map"
+    elif key == "backspace":
+        state.map_query = state.map_query[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.map_query += key
 
 
 def _map_collapse(state: TuiState, actions: ScanActions) -> None:
@@ -3148,12 +5240,19 @@ def _cancel(state: TuiState, actions: ScanActions) -> None:
         state.mode = _SECTION_MODES.get(state.section, "list")
     elif state.mode in ("git", "map"):
         _enter_section(state, "overview", actions)
+    elif state.section == "artifacts":
+        view = state.views.get((project_key(state.active_project), "artifacts"))
+        if view is not None and isinstance(view.data, dict):
+            view.data.pop("_detail", None)
+            view.scroll = 0
     state.message = ""
 
 
 def _refresh(state: TuiState, actions: ScanActions) -> None:
     if state.section == "git":
         _load_git_view(state, state.active_project, actions)
+    elif state.section == "artifacts":
+        state.views.pop((project_key(state.active_project), "artifacts"), None)
     elif state.section in _SECTION_LOADERS:
         state.load_requests.add((project_key(state.active_project), state.section))
     state.message = f"refreshing {SECTION_LABELS[state.section]}"
@@ -3230,7 +5329,7 @@ def _rescan_review(state: TuiState, actions: ScanActions) -> None:
             "project": project.name,
             "root": str(project.root),
             "run_id": project.run_id,
-            "expected attempt": project.run_id,
+            "expected attempt": _reviewed_attempt_id(project),
             "summary": f"Rescan run {project.run_id} against current source.",
             "_identity": _review_identity(state),
         },
@@ -3360,7 +5459,7 @@ ACTIONS: tuple[Action, ...] = (
     Action("cancel", "Back", "Global", (), _cancel),
     Action("cursor_down", "Down", "Navigation", (), _cursor(1)),
     Action("cursor_up", "Up", "Navigation", (), _cursor(-1)),
-    Action("select_row", "Inspect", "Navigation", ("scans",), _select_row),
+    Action("select_row", "Inspect", "Navigation", ("scans", "git"), _select_row),
     Action("cycle_pane", "Next pane", "Navigation", (), _cycle_focus(1)),
     Action("cycle_pane_reverse", "Prev pane", "Navigation", (), _cycle_focus(-1)),
     Action("map_expand", "Expand", "Navigation", ("map",), _map_expand),
@@ -3368,6 +5467,13 @@ ACTIONS: tuple[Action, ...] = (
     Action("toggle_memory_admin", "Memory", "Navigation", (), _goto("memory")),
     Action("toggle_git_view", "Git", "Navigation", (), _goto("git")),
     Action("goto_tokens", "Tokens", "Navigation", (), _goto("tokens")),
+    Action("git_page_older", "Older commits", "Navigation", ("git",), _git_turn(1)),
+    Action("git_page_newer", "Newer commits", "Navigation", ("git",), _git_turn(-1)),
+    Action("git_dirty_diff", "Dirty diff", "Section", ("git",), _git_dirty_diff),
+    Action("artifact_inspect", "Inspect", "Section", ("artifacts",), _artifact_inspect),
+    Action(
+        "artifact_export", "Export", "Section", ("artifacts",), _artifact_export_review
+    ),
     Action(
         "start_check",
         "Check",
@@ -3431,7 +5537,13 @@ ACTIONS: tuple[Action, ...] = (
         _relink_enabled,
     ),
     Action("choose_later", "Later", "Section", (), _choose_later, _add_enabled),
-    Action("focus_filter", "Filter", "Text input", ("scans",), _set_mode("search")),
+    Action(
+        "focus_filter",
+        "Filter",
+        "Text input",
+        ("scans", "artifacts", "tokens"),
+        _focus_filter,
+    ),
     Action("confirm_grant", "Confirm", "Text input", (), lambda state, actions: None),
     Action(
         "cancel_scan",
@@ -3444,6 +5556,7 @@ ACTIONS: tuple[Action, ...] = (
 )
 _ACTIONS_BY_ID = {action.id: action for action in ACTIONS}
 _MIN_COLUMNS, _MIN_ROWS = 60, 20
+_FOOTER_ACTIONS = 6  # section actions the keymap footer line lists
 _RESIZE_KEYS = ("q", "c", "f2", "escape")
 # q and F2 open these below the minimum size too; their own keys answer them.
 _RESIZE_MODALS = ("quit_confirm", "project_selector")
@@ -3452,8 +5565,39 @@ _KEYMAP = KeymapManager(_BINDINGS)
 
 
 def _dispatch_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    _uncover_resize_overlay(state)
     _dispatch_key_inner(state, key, actions)
     _sync_section(state)
+
+
+def _insert_paste(state: TuiState, text: str) -> None:
+    """T28-F: pasted text lands literally in the active text field and is
+    ignored anywhere else -- never replayed as keys (so never a scan, a
+    quit, or a navigation). Renderers show text fields via `_safe`."""
+    if state.overlay == "form" and state.form is not None:
+        form = state.form
+        name = _FORM_FIELDS[form["kind"]][form["field"]]
+        form["values"][name] += text
+        return
+    if not state.projects or state.overlay == "sections":
+        return
+    if state.mode == "search":
+        project = state.active_project
+        project.filter_text += text
+        project.selected_index = 0
+        project.detail_page = 0
+    elif state.mode == "map_search":
+        state.map_query += text
+    elif state.mode == "tokens_filter":
+        state.tokens_filter_buffer += text
+    elif state.mode == "artifact_search":
+        state.artifact_query_buffer += text
+    elif state.mode == "memory_search":
+        state.memory_query_buffer += text
+    elif state.mode == "memory_edit":
+        state.memory_edit_buffer = (state.memory_edit_buffer or "") + text
+    elif state.mode == "memory_owner":
+        state.memory_owner_buffer = (state.memory_owner_buffer or "") + text
 
 
 def _too_small(state: TuiState) -> bool:
@@ -3468,6 +5612,11 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         and state.mode not in _RESIZE_MODALS
     ):
         return  # resize_guidance: every other key waits; all state is kept
+    if state.detach_deadline is not None:
+        return  # detaching: keys wait for the deadline; Ctrl-C exits now
+    if key.startswith(PASTE_PREFIX):
+        _insert_paste(state, key[len(PASTE_PREFIX) :])
+        return
     if not state.projects:
         if state.overlay == "form":
             _handle_form_key(state, key)
@@ -3480,10 +5629,15 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         return
     modal: dict[str, Callable[[TuiState, str, ScanActions], None]] = {
         "search": lambda st, k, a: _handle_search_key(st, k),
+        "map_search": lambda st, k, a: _handle_map_search_key(st, k),
+        "tokens_filter": _handle_tokens_filter_key,
+        "artifact_search": lambda st, k, a: _handle_artifact_search_key(st, k),
         "grant_review": _handle_grant_review_key,
         "memory_search": _handle_memory_search_key,
         "memory_edit": _handle_memory_edit_key,
+        "memory_create": _handle_memory_create_key,
         "memory_owner": _handle_memory_owner_key,
+        "memory_filter": _handle_memory_filter_key,
         "memory": _handle_memory_key,
         "quit_confirm": _handle_quit_confirm_key,
         "project_selector": _handle_project_selector_key,
@@ -3499,6 +5653,12 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         # section chooser (its text-entry sub-modes still do).
         _open_section_chooser(state, actions)
         return
+    if state.memory_request is not None and (
+        (key == "escape" and state.mode.startswith("memory"))
+        or (key == "n" and state.mode == "memory")
+    ):
+        _memory_cancel_request(state)
+        return
     handler = modal.get(state.mode)
     if handler is not None:
         handler(state, key, actions)
@@ -3512,7 +5672,9 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
 
 def _keymap_footer(state: TuiState) -> Text:
     parts = []
-    for action in _section_actions(state.section)[:6] if state.projects else []:
+    for action in (
+        _section_actions(state.section)[:_FOOTER_ACTIONS] if state.projects else []
+    ):
         keys = [b.key for b in _BINDINGS if b.action_name == action.id]
         ok, reason = action.enabled(state)
         parts.append(f"{keys[0]}:{action.label}" + ("" if ok else f" ({reason})"))
@@ -3533,25 +5695,156 @@ def _render_progress_bar(progress: ScanProgress) -> Text:
 def _render_project_table(project: ProjectState) -> Panel:
     rows = project.visible_findings()
     page_items, total_pages = paginate(rows, project.detail_page)
+    if project.row_reveal_started is not None:
+        elapsed_ms = (time.monotonic() - project.row_reveal_started) * 1000
+        page_items = page_items[
+            : _row_reveal_progress(
+                elapsed_ms, len(page_items), reduced_motion=_reduced_motion()
+            )
+        ]
+    # T28-A/C: no fixed widths inside the list pane -- columns size to
+    # their content and wrap (a long path folds, never collapses to "...");
+    # a path inside the project root shows root-relative.
     table = Table(expand=True)
-    table.add_column("", width=2)
-    table.add_column("Tool", style="cyan", width=12)
-    table.add_column("Path:Line", style="dim", width=30)
-    table.add_column("Severity", width=10)
-    table.add_column("Message", style="white")
+    table.add_column("", no_wrap=True)
+    table.add_column("Tool", style="cyan")
+    table.add_column("Path:Line", style="dim", overflow="fold")
+    table.add_column("Severity")
+    table.add_column("Message", style="white", ratio=1)
     base = project.detail_page * PAGE_SIZE
+    comparison = project.rescan_comparison
+    if not comparison or comparison.get("current_run_id") != project.run_id:
+        comparison = None
+    verdicts = (comparison or {}).get("verdicts") or {}
     for idx, row in enumerate(page_items):
         marker = ">" if base + idx == project.selected_index else ""
         sev = safe_terminal_text(row.get("severity", "info"))
+        path = _root_relative(project.root, _finding_path(row))
+        verdict = verdicts.get(str(row.get("finding_id")))
+        message = str(row.get("message", ""))
         table.add_row(
             Text(marker),
             _safe(row.get("tool", "")),
-            _safe(f"{_finding_path(row)}:{_finding_line(row)}"),
+            _safe(f"{path}:{_finding_line(row)}"),
             Text(sev, style=_severity_style(sev)),
-            _safe(row.get("message", "")),
+            _safe(f"[{verdict}] {message}" if verdict else message),
         )
+    # T28-C: a tool outcome with no findings (clean/skipped/denied/error)
+    # still gets its own selectable row with its status and reason; below
+    # the table each outcome's engine, version and time get a full-width
+    # line and its reason its own line, so a narrow list pane never
+    # collapses them.
+    outcome_lines: list[Text] = []
+    for idx, result in enumerate(_outcome_results(project), len(rows)):
+        marker = ">" if idx == project.selected_index else ""
+        status = safe_terminal_text(result.get("status", ""))
+        reason = result.get("summary") or "no findings"
+        table.add_row(
+            Text(marker),
+            _safe(result.get("tool", "")),
+            Text("-"),
+            Text(status, style=_severity_style(status)),
+            _safe(reason),
+        )
+        outcome_lines.append(
+            _safe(
+                f"{marker or ' '} {_outcome_heading(result)}", _severity_style(status)
+            )
+        )
+        outcome_lines.append(_safe(f"    {reason}"))
+    if project.status == "scanning":
+        table.add_row(
+            Text(""),
+            Text("suite"),
+            Text("-"),
+            Text("running", style="bold yellow"),
+            Text("more tool results pending"),
+        )
+    elif project.status == "cancelled":
+        # T28-B: the acknowledged cancel is the current work outcome; the
+        # rows above are earlier results, not the cancelled run's.
+        table.add_row(
+            Text(""),
+            Text("suite"),
+            Text("-"),
+            Text("cancelled", style="bold yellow"),
+            _safe(f"run {project.run_id or ''} cancelled; rows above are earlier"),
+        )
+    if comparison is not None:
+        outcome_lines.extend(_comparison_lines(project, comparison))
     return Panel(
-        table, title=_findings_title(project, rows, total_pages), style="green"
+        Group(table, *outcome_lines),
+        title=_findings_title(project, rows, total_pages),
+        style="green",
+    )
+
+
+def _comparison_lines(
+    project: ProjectState, comparison: Mapping[str, Any]
+) -> list[Text]:
+    """T28-B: the rescan against its reviewed baseline -- verdict counts,
+    then each baseline finding the current rows no longer carry (resolved,
+    or unverified with no current row) with its recorded location."""
+    counts = ", ".join(
+        f"{verdict} {len(comparison.get(verdict) or [])}"
+        for verdict in ("resolved", "persisting", "new", "unverified")
+    )
+    lines = [
+        _safe(
+            f"Rescan of {comparison.get('baseline_run_id')} -> "
+            f"{comparison.get('current_run_id')}: {counts}",
+            "bold",
+        )
+    ]
+    current = {str(row.get("finding_id")) for row in project.flattened_findings()}
+    verdicts = comparison.get("verdicts") or {}
+    for finding in comparison.get("baseline_findings") or []:
+        finding_id = str(finding.get("finding_id"))
+        if finding_id in current:
+            continue
+        path = _root_relative(project.root, _finding_path(finding))
+        lines.append(
+            _safe(
+                f"  {verdicts.get(finding_id, 'baseline')} (old finding): "
+                f"{path}:{_finding_line(finding)} {finding.get('message', '')}"
+            )
+        )
+    return lines
+
+
+def _outcome_results(project: ProjectState) -> list[ToolResult]:
+    """The results with no findings: each is one selectable outcome row
+    after the finding rows."""
+    return [result for result in project.results if not result.get("findings")]
+
+
+def _outcome_heading(result: Mapping[str, Any]) -> str:
+    """tool: status (engine version, N ms) -- a missing version is said."""
+    engine = result.get("engine") or result.get("tool", "")
+    version = result.get("engine_version") or "version unknown"
+    return (
+        f"{result.get('tool', '')}: {result.get('status', '')} "
+        f"({engine} {version}, {result.get('duration_ms', '?')} ms)"
+    )
+
+
+def _render_outcome_detail(project: ProjectState, result: ToolResult) -> Panel:
+    """Enter on an outcome row: its reason, engine version, execution time
+    and targets."""
+    lines = [
+        _safe(_outcome_heading(result), "bold"),
+        _safe(f"reason: {result.get('summary') or 'no findings'}"),
+        _safe(f"engine: {result.get('engine') or result.get('tool', '')}"),
+        _safe(f"version: {result.get('engine_version') or 'version unknown'}"),
+        _safe(f"execution time: {result.get('duration_ms', '?')} ms"),
+        _safe(f"target: {project.root}"),
+    ]
+    for artifact in result.get("artifacts") or []:
+        lines.append(_safe(f"artifact: {artifact}"))
+    return Panel(
+        Group(*lines),
+        title=_safe(f"{result.get('tool', '')}: outcome"),
+        style="magenta",
     )
 
 
@@ -3641,15 +5934,23 @@ def _view_state_lines(label: str, view: SectionView | None) -> list[Text]:
 def _data_lines(data: Any) -> list[Text]:
     """A loaded section payload as bounded literal `key: value` lines."""
     if isinstance(data, Mapping):
-        items = [(k, v) for k, v in data.items() if k != "registration"]
+        items = [
+            (k, v)
+            for k, v in data.items()
+            if k != "registration" and not str(k).startswith("_")
+        ]
     elif isinstance(data, list):
         items = list(enumerate(data))
     else:
         items = [] if data is None else [("value", data)]
-    return [
-        _safe(f"{key}: {json.dumps(value, default=str)[:160]}")
-        for key, value in items[:PAGE_SIZE]
-    ]
+    lines = []
+    for key, value in items[:PAGE_SIZE]:
+        text = json.dumps(value, default=str)
+        # T28-E: a line carrying an unavailable/failed reason is never cut --
+        # the reason is its actionable part.
+        whole = key == "reason" or (isinstance(value, Mapping) and value.get("reason"))
+        lines.append(_safe(f"{key}: {text if whole else text[:160]}"))
+    return lines
 
 
 def _overview_lines(data: Mapping[str, Any]) -> list[Text]:
@@ -3726,6 +6027,8 @@ def _render_overview(state: TuiState, project: ProjectState) -> Panel:
     lines.extend(_outcome_line(result) for result in project.results)
     if project.status in ("scanning", "cancelling"):
         lines.append(_safe(f"{project.work_kind or 'work'} running"))
+    elif project.status == "cancelled":
+        lines.append(_safe(f"{project.work_kind or 'work'} cancelled", "bold yellow"))
     if project.last_message:
         lines.append(_safe(project.last_message))
     if project.results:
@@ -3748,11 +6051,17 @@ def _setup_apply_line(project: ProjectState) -> Text | None:
 def _render_setup(state: TuiState, project: ProjectState) -> Panel:
     view = state.views.get((project_key(project), "setup"))
     data = view.data if view is not None and isinstance(view.data, dict) else {}
-    if "review" not in data and "review_error" not in data:
+    # The state recorded before this frame (loading, or a loader/seeded
+    # outcome and its reason) is shown even when this frame builds the
+    # review and replaces it.
+    lines: list[Any] = _view_state_lines("Setup", view)
+    if _setup_view_stale(state, data):
         _build_setup_view(state, project)
         view = state.views[(project_key(project), "setup")]
         data = view.data
-    lines: list[Any] = _view_state_lines("Setup", view)
+        built = _view_state_lines("Setup", view)
+        if [line.plain for line in built] != [line.plain for line in lines]:
+            lines.extend(built)
     if data.get("review_text"):
         lines.extend(_safe(line) for line in str(data["review_text"]).splitlines())
     toggles = data.get("stage_grants") or {}
@@ -3780,8 +6089,23 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     label = SECTION_LABELS[section]
     if section == "setup":
         return _render_setup(state, project)
+    if section == "artifacts":
+        return _render_artifacts(state, project)
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
+    if section == "tokens" and view is not None:
+        run_id = view.filters.get("run_id")
+        lines.append(
+            _safe(f"run filter: {run_id}" if run_id else "run filter: none (/ run id)")
+        )
+        if state.mode == "tokens_filter":
+            lines.append(
+                _safe(
+                    f"run id> {state.tokens_filter_buffer}_  "
+                    "(Enter apply, Escape clear)",
+                    "bold",
+                )
+            )
     if view is None:
         lines.append(Text(f"{label} not loaded yet (F5 load)"))
     else:
@@ -3789,16 +6113,264 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     return Panel(Group(*lines), title=label, style=THEME["border"])
 
 
-def _render_detail(project: ProjectState) -> Panel:
+_ARTIFACT_ERROR_GUIDANCE = {
+    "immutable_content_unavailable": (
+        "captured content unavailable -- rerun the scan to capture it again "
+        "(the live file is never substituted)"
+    ),
+    "not_found": "no captured snapshot is recorded for this artifact",
+}
+
+
+def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
+    """Every captured artifact (identity/type/run/size, paginated around the
+    selection), the other shared evidence buckets, and the inspected text.
+    Every recorded string goes through `_safe`."""
+    view = _refresh_artifacts_view(state, project)
+    lines: list[Any] = list(_view_state_lines("Artifacts", view))
+    rows = _captured_rows(view)
+    total = len(_captured_rows(view, filtered=False))
+    if state.mode == "artifact_search":
+        lines.append(
+            _safe(
+                f"search /{state.artifact_query_buffer}  Enter apply  Esc clear",
+                "bold yellow",
+            )
+        )
+    elif view.filters.get("query"):
+        lines.append(
+            _safe(
+                f"search {view.filters['query']!r}: {len(rows)} of {total} shown "
+                "(/ then Esc clears)",
+                "bold yellow",
+            )
+        )
+    page = view.selection // PAGE_SIZE
+    page_rows, total_pages = paginate(rows, page)
+    table = Table(
+        expand=True,
+        title=f"Captured ({len(rows)}) of {total} page {page + 1}/{total_pages}",
+    )
+    table.add_column("", width=2)
+    table.add_column("identity (tool:path)")
+    table.add_column("type")
+    table.add_column("run / attempt")
+    table.add_column("size", width=10)
+    for idx, row in enumerate(page_rows):
+        table.add_row(
+            Text(">" if page * PAGE_SIZE + idx == view.selection else ""),
+            _safe(f"{row.get('tool_id')}:{row.get('path')}"),
+            _safe(f"{row.get('category')} {row.get('media_type') or 'unknown'}"),
+            _safe(f"{row.get('run_id')} / {row.get('attempt_id')}"),
+            _safe(row.get("size")),
+        )
+    lines.append(table)
+    data = view.data if isinstance(view.data, Mapping) else {}
+    for bucket, items in data.items():
+        if bucket == "captured" or str(bucket).startswith("_"):
+            continue
+        if not isinstance(items, list) or not items:
+            continue
+        lines.append(_safe(f"{bucket} ({len(items)})", "bold"))
+        for item in items[:PAGE_SIZE]:
+            if isinstance(item, Mapping):
+                ref = item.get("artifact_ref") or item.get("path") or ""
+                item_type = f"{item.get('category', '')} {item.get('kind', '')}"
+                lines.append(_safe(f"  {ref}  {item_type}"))
+            else:
+                lines.append(_safe(f"  {item}"))
+    detail = data.get("_detail")
+    if isinstance(detail, Mapping):
+        lines.extend(_artifact_detail_lines(detail, view.scroll))
+    lines.append(
+        Text("i:Inspect  e:Export  j/k:Select  /:Search  F5:Refresh", style="dim")
+    )
+    return Panel(Group(*lines), title="Artifacts", style=THEME["border"])
+
+
+def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]:
+    item = detail.get("item") or {}
+    size = detail.get("size")
+    media = item.get("media_type") or "unknown"
+    lines = [
+        _safe(
+            f"{detail.get('ref')}  {size} bytes  {media}  "
+            f"sha256 {str(item.get('sha256') or '-')[:12]}",
+            "bold",
+        )
+    ]
+    error = detail.get("error")
+    if error:
+        guidance = _ARTIFACT_ERROR_GUIDANCE.get(str(error), "")
+        lines.append(
+            _safe(
+                f"read failed: {error} for {item.get('path')}"
+                + (f" -- {guidance}" if guidance else "")
+            )
+        )
+    if detail.get("binary"):
+        lines.append(
+            _safe(
+                f"binary content ({size} bytes, {media}) is not rendered; "
+                "press e to export it",
+                "yellow",
+            )
+        )
+    elif detail.get("end", 0) > detail.get("offset", 0):
+        text_lines = str(detail.get("text") or "").split("\n")
+        start = min(scroll, max(0, len(text_lines) - 1))
+        lines.append(
+            _safe(f"bytes {detail.get('offset')}-{detail.get('end')} of {size}", "dim")
+        )
+        lines.append(_safe("\n".join(text_lines[start : start + _DETAIL_WINDOW_LINES])))
+    if detail.get("next_cursor"):
+        remaining = (size or 0) - detail.get("end", 0)
+        lines.append(
+            _safe(f"more: {remaining} bytes remain; press i to continue", "bold yellow")
+        )
+    return lines
+
+
+def _load_map_snapshot(
+    project: ProjectState, data_root: Path | None = None
+) -> dict[str, Any] | None:
+    """T28-C: the read-only `project_map_snapshot` for the current attempt,
+    resolved in `data_root` (the registry `rush ui` was given), loaded
+    lazily and cached until (run_id, status) or the st_mtime_ns of
+    `.rush/memory.db` / `.rush/handoffs` changes (a missing one is `None`),
+    so a deleted memory store or a new handoff reloads. Never writes; an
+    unregistered project has none, a failure is an explicit unavailable
+    snapshot."""
+
+    def _mtime(rel: str) -> int | None:
+        try:
+            return (project.root / rel).stat().st_mtime_ns
+        except OSError:
+            return None
+
+    key = (
+        project.run_id,
+        project.status,
+        _mtime(".rush/memory.db"),
+        _mtime(".rush/handoffs"),
+    )
+    if project.map_snapshot_key == key:
+        return project.map_snapshot
+    project.map_snapshot_key = key
+    project.map_snapshot = None
+    if project.project_id is None:
+        return None
+    from rush.workflows.projects import (
+        ProjectError,
+        project_map_snapshot,
+        resolve_project,
+    )
+
+    try:
+        record = (
+            resolve_project(project.project_id)
+            if data_root is None
+            else resolve_project(project.project_id, data_root=data_root)
+        )
+        project.map_snapshot = project_map_snapshot(record, None, None)
+    except (ProjectError, OSError, ValueError) as exc:
+        project.map_snapshot = {
+            "available": False,
+            "reason": safe_terminal_text(exc),
+        }
+    return project.map_snapshot
+
+
+def _captured_detail(
+    project: ProjectState, finding: dict[str, Any], data_root: Path | None = None
+) -> str | None:
+    """T28-C: the attempt's captured immutable snapshot of the finding's
+    path (`read_project_artifact_page`), preferred over the live file and
+    labelled with its run/attempt. `None` when nothing was captured."""
+    snapshot = _load_map_snapshot(project, data_root)
+    path_value = _finding_path(finding)
+    if not snapshot or not path_value or project.project_id is None:
+        return None
+    captured = (snapshot.get("artifact_snapshots") or {}).get(path_value)
+    if not isinstance(captured, dict):
+        return None
+    from rush.workflows.projects import ProjectError, read_project_artifact_page
+
+    cursor = base64.urlsafe_b64encode(
+        json.dumps(
+            {
+                "project_id": project.project_id,
+                "run_id": snapshot.get("run_id"),
+                "attempt_id": snapshot.get("attempt_id"),
+                "tool_id": captured.get("tool_id"),
+                "path": path_value,
+                "sha256": captured.get("sha256"),
+                "offset": 0,
+            }
+        ).encode("utf-8")
+    ).decode("ascii")
+    try:
+        page = read_project_artifact_page(
+            project.project_id, cursor, data_root=data_root, limit=_DETAIL_MAX_BYTES
+        )
+    except (ProjectError, OSError, ValueError):
+        return None
+    if page.get("error") or page.get("content_base64") is None:
+        return None
+    chunk = base64.b64decode(page["content_base64"])
+    text = safe_terminal_text(chunk.decode("utf-8", errors="replace"))
+    size = page.get("size")
+    if isinstance(size, int) and size > len(chunk):
+        text += f"\n... truncated at {len(chunk)} of {size} bytes"
+    message = safe_terminal_text(finding.get("message") or "")
+    return "\n".join(
+        part
+        for part in (
+            safe_terminal_text(page.get("label")),
+            message,
+            text,
+        )
+        if part
+    )
+
+
+def _render_detail(project: ProjectState, data_root: Path | None = None) -> Panel:
     rows = project.visible_findings()
+    outcomes = _outcome_results(project)
+    if 0 <= project.selected_index - len(rows) < len(outcomes):
+        return _render_outcome_detail(
+            project, outcomes[project.selected_index - len(rows)]
+        )
     if not rows or project.selected_index >= len(rows):
         return Panel(Text("No finding selected."), title="Detail")
     finding = rows[project.selected_index]
-    body = _safe(_bounded_local_detail(project.root, finding))
+    body = _captured_detail(project, finding, data_root) or _bounded_local_detail(
+        project.root, finding
+    )
+    # The label line and the finding message stay pinned; the file text
+    # below them scrolls from `detail_scroll` (default: the finding line).
+    message = safe_terminal_text(finding.get("message") or "")
+    lines = body.split("\n")
+    pinned = 1 + (len(message.split("\n")) if message else 0)
+    head, text_lines = lines[:pinned], lines[pinned:]
+    start = project.detail_scroll
+    if start is None:
+        start = _detail_default_scroll(project)
+    start = min(start, max(0, len(text_lines) - 1))
+    if project.detail_scroll is not None:
+        project.detail_scroll = start
+    parts: list[Text] = [_safe("\n".join(head))]
+    if start > 0:
+        parts.append(
+            _safe(f"... {start} earlier lines above (scroll up to see them)", "dim")
+        )
+    window = text_lines[start : start + _DETAIL_WINDOW_LINES]
+    if window:
+        parts.append(_safe("\n".join(window)))
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
-    return Panel(body, title=title, style="magenta")
+    return Panel(Group(*parts), title=title, style="magenta")
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
@@ -3814,6 +6386,39 @@ def _render_grant_review(grant: dict[str, Any]) -> Panel:
         title=_safe(f"Review before mutation: {grant['kind']}"),
         style="red",
     )
+
+
+def _memory_expanded_panel(expanded: dict[str, Any]) -> Panel:
+    """T28-D: the exact expanded record as labelled sections -- record fields,
+    Relationships and Receipts, one row per item with its own id and version --
+    never a Python dict repr. Every cell goes through _safe (X3)."""
+    fields = Table(title="Record", expand=True, show_header=False)
+    fields.add_column("field", style="cyan")
+    fields.add_column("value")
+    for key, value in expanded.items():
+        if key in ("relationships", "receipts"):
+            continue
+        shown = (
+            json.dumps(value, sort_keys=True, default=str)
+            if isinstance(value, (dict, list))
+            else value
+        )
+        fields.add_row(_safe(key), _safe(shown))
+    parts: list[Any] = [fields]
+    for key, title in (("relationships", "Relationships"), ("receipts", "Receipts")):
+        section = Table(title=title, expand=True)
+        section.add_column("id", style="cyan")
+        section.add_column("version")
+        section.add_column("kind")
+        for row in expanded.get(key) or []:
+            if isinstance(row, dict):
+                section.add_row(
+                    _safe(row.get("id", "")),
+                    _safe(row.get("artifact_version", "")),
+                    _safe(row.get("kind", "")),
+                )
+        parts.append(section)
+    return Panel(Group(*parts), title="expanded")
 
 
 def _render_memory_admin(state: TuiState) -> Panel:
@@ -3838,12 +6443,33 @@ def _render_memory_admin(state: TuiState) -> Panel:
                 "bold yellow",
             )
         )
+    active_filters = [
+        f"{name}={value}"
+        for name, value in _memory_filter_values(state).items()
+        if value
+    ]
+    if active_filters:
+        lines.append(_safe("filters: " + "  ".join(active_filters), "cyan"))
+    if state.mode == "memory_filter":
+        buf = state.memory_filter_buffer or {}
+        for name in _MEMORY_FILTER_FIELDS:
+            marker = ">" if name == state.memory_filter_field else " "
+            lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
+        lines.append(_safe("[tab] field  [enter] apply  [esc] cancel", "bold yellow"))
     if state.mode == "memory_search":
         lines.append(_safe(f"/{state.memory_query_buffer}", "bold yellow"))
     if state.mode == "memory_edit":
         lines.append(
-            _safe(f"edit note> {state.memory_edit_buffer or ''}", "bold yellow")
+            _safe(
+                f"edit {state.memory_edit_field}> {state.memory_edit_buffer or ''}",
+                "bold yellow",
+            )
         )
+    if state.mode == "memory_create":
+        buf = state.memory_create_buffer or {}
+        for name in ("subject", "source", "content"):
+            marker = ">" if name == state.memory_create_field else " "
+            lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
 
     table = Table(expand=True)
     table.add_column("", width=4)
@@ -3851,7 +6477,12 @@ def _render_memory_admin(state: TuiState) -> Panel:
     table.add_column("trust", width=14)
     table.add_column("source")
     table.add_column("stale", width=6)
-    for idx, item in enumerate(state.memory_items):
+    page = state.memory_selected_index // _MEMORY_PAGE_ROWS
+    pages = max(1, -(-len(state.memory_items) // _MEMORY_PAGE_ROWS))
+    start = page * _MEMORY_PAGE_ROWS
+    for idx, item in enumerate(
+        state.memory_items[start : start + _MEMORY_PAGE_ROWS], start
+    ):
         cursor = ">" if idx == state.memory_selected_index else " "
         checked = "x" if item.get("id") in state.memory_selected_ids else " "
         table.add_row(
@@ -3862,7 +6493,67 @@ def _render_memory_admin(state: TuiState) -> Panel:
             "yes" if item.get("stale") else "no",
         )
     lines.append(table)
+    lines.append(
+        _safe(f"page {page + 1}/{pages}  ] next page  [ previous page", "cyan")
+    )
 
+    if state.memory_pending_mutation is not None:
+        pending_mutation = state.memory_pending_mutation
+        lines.append(
+            _safe(_memory_pending_mutation_text(pending_mutation), "bold yellow")
+        )
+        for artifact_id in pending_mutation["ids"]:
+            owner_text = _memory_row_owner(
+                state, artifact_id, pending_mutation.get("owner_scope")
+            )
+            lines.append(
+                _safe(
+                    f"  {artifact_id}  "
+                    f"version={pending_mutation['versions'].get(artifact_id, '?')}  "
+                    f"owner={owner_text}",
+                    "yellow",
+                )
+            )
+        for draft in pending_mutation.get("drafts") or []:
+            fields_text = "  ".join(
+                f"{name}="
+                + (
+                    json.dumps(value, sort_keys=True, default=str)
+                    if isinstance(value, (dict, list))
+                    else str(value)
+                )
+                for name, value in draft.items()
+            )
+            lines.append(_safe(f"  draft {fields_text}", "yellow"))
+        for consequence in pending_mutation.get("consequences") or []:
+            if consequence:
+                lines.append(_safe(f"  consequence: {consequence}", "yellow"))
+    if state.memory_pending_maintain is not None:
+        lines.append(
+            Text(
+                "pending maintenance -- [y] apply  [n]/[esc] cancel",
+                style="bold yellow",
+            )
+        )
+        for entry in state.memory_pending_maintain:
+            lines.append(
+                _safe(
+                    f"  {entry['task']}: {len(entry['candidate_ids'])} candidate(s)  "
+                    f"grants {entry['required_grants']}  "
+                    f"consequence: {entry.get('consequence', '')}",
+                    "yellow",
+                )
+            )
+            revisions = entry.get("expected_revisions") or {}
+            for artifact_id in entry["candidate_ids"]:
+                owner_text = _memory_row_owner(state, artifact_id, entry["owner_scope"])
+                lines.append(
+                    _safe(
+                        f"    {entry['task']} {artifact_id}  "
+                        f"version={revisions.get(artifact_id, '?')}  owner={owner_text}",
+                        "yellow",
+                    )
+                )
     if state.memory_pending_delete is not None:
         count = len(state.memory_pending_delete["artifact_ids"])
         lines.append(
@@ -3871,11 +6562,54 @@ def _render_memory_admin(state: TuiState) -> Panel:
                 style="bold red",
             )
         )
+        pending = state.memory_pending_delete
+        affected = {
+            row.get("id"): row
+            for row in pending.get("affected") or []
+            if isinstance(row, dict)
+        }
+        lines.append(
+            _safe(
+                f"  grants {pending['required_grants']}  "
+                f"consequence: permanently deletes {count} record(s)",
+                "red",
+            )
+        )
+        for artifact_id in pending["artifact_ids"]:
+            row = affected.get(artifact_id, {})
+            owner_text = _memory_row_owner(state, artifact_id, pending["owner_scope"])
+            lines.append(
+                _safe(
+                    f"  {artifact_id}  version={pending['expected_revisions'].get(artifact_id, '?')}"
+                    f"  owner={owner_text}"
+                    f"  family={row.get('family', '?')}"
+                    f"  references={row.get('references', '?')}",
+                    "red",
+                )
+            )
     if state.memory_expanded is not None:
-        lines.append(Panel(_safe(state.memory_expanded), title="expanded"))
+        lines.append(_memory_expanded_panel(state.memory_expanded))
     if state.memory_message:
         lines.append(_safe(state.memory_message, "bold magenta"))
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
+
+
+def _git_expanded_lines(expanded: Mapping[str, Any] | None) -> list[Text]:
+    """The expanded commit/dirty diff: title, changed files, the bounded
+    lines and a `more` marker when the backend cut the diff."""
+    if expanded is None:
+        return []
+    lines = [_safe(str(expanded["title"]), "bold")]
+    if expanded["paths"]:
+        lines.append(_safe("changed: " + ", ".join(map(str, expanded["paths"]))))
+    if expanded["error"]:
+        lines.append(_safe(f"diff unavailable: {expanded['error']}", "bold red"))
+    lines.extend(_safe(str(line)) for line in expanded["lines"])
+    if expanded["truncated"]:
+        lines.append(
+            _safe(f"... more: diff cut at {len(expanded['lines'])} lines", "yellow")
+        )
+    return lines
 
 
 def _render_git_panel(state: TuiState) -> Panel:
@@ -3890,23 +6624,48 @@ def _render_git_panel(state: TuiState) -> Panel:
     executable markup")."""
     data = state.git_data or {}
     git = data.get("git") or {}
+    worktree = data.get("worktree") or {}
     lines: list[Any] = [
         _safe(
-            f"has_git={git.get('has_git')}  head={git.get('head') or '-'}  "
-            f"dirty={git.get('dirty')}",
+            f"has_git={git.get('has_git')}  "
+            f"branch={(data.get('branch') or {}).get('branch') or '-'}  "
+            f"head={git.get('head') or '-'}  dirty={git.get('dirty')}",
             "cyan",
         )
     ]
+    if worktree.get("toplevel"):
+        lines.append(
+            _safe(
+                f"worktree={worktree.get('toplevel')}  "
+                f"git_dir={worktree.get('git_common_dir')}",
+                "cyan",
+            )
+        )
+    if state.git_data is not None:
+        if git.get("state") == "empty" or git.get("has_git") is False:
+            lines.append(_safe("No Git repository at this project root", "bold yellow"))
+        elif git.get("state") == "failed":
+            lines.append(
+                _safe("Git read failed: HEAD/status could not be read", "bold red")
+            )
+        elif git.get("dirty") is False:
+            lines.append(_safe("No changes: the working tree is clean", "green"))
 
-    history = git.get("history") or []
-    history_table = Table(expand=True, title=f"History ({len(history)})")
+    commits, skip, next_skip = _git_page_commits(state)
+    older = "  ] older" if next_skip is not None else ""
+    newer = "  [ newer" if skip else ""
+    history_table = Table(
+        expand=True,
+        title=f"History page {skip // PAGE_SIZE + 1}{older}{newer}  Enter: diff",
+    )
     history_table.add_column("hash", width=10)
     history_table.add_column("author", width=16)
     history_table.add_column("date", width=22)
     history_table.add_column("subject")
-    for commit in history[:PAGE_SIZE]:
+    for index, commit in enumerate(commits):
+        marker = ">" if index == state.git_selected else " "
         history_table.add_row(
-            _safe(str(commit.get("hash", ""))[:8]),
+            _safe(marker + str(commit.get("hash", ""))[:8]),
             _safe(commit.get("author", "")),
             _safe(commit.get("date", "")),
             _safe(commit.get("subject", "")),
@@ -3924,6 +6683,7 @@ def _render_git_panel(state: TuiState) -> Panel:
                 _safe(entry.get("path", "")),
             )
         lines.append(dirty_table)
+    lines.extend(_git_expanded_lines(state.git_expanded))
 
     artifacts = data.get("artifacts") or {}
     counts: dict[str, int] = {}
@@ -4065,10 +6825,18 @@ def _render_project_selector(state: TuiState) -> Panel:
 def _render_map(state: TuiState, project: ProjectState) -> Panel:
     """U01 fix: the real Project -> Files -> Findings hierarchy
     (`_map_nodes`/`_map_visible_nodes`), with a `[+]`/`[-]` glyph on every
-    expandable file node -- previously no Map view existed at all."""
+    expandable file node -- previously no Map view existed at all. T28-C:
+    the read-only `project_map_snapshot` feeding the Memories/Agents
+    branches is loaded lazily here."""
+    _load_map_snapshot(project, state.data_root)
     nodes = _map_visible_nodes(project, state.map_expanded)
     lines: list[Text] = []
-    for idx, node in enumerate(nodes):
+    # T28-C: at most the rows the terminal holds, starting half a window
+    # above the selected node, so a "/" search hit deep in a large tree is
+    # on screen even when the footer wraps to several rows.
+    window = max(1, state.terminal_size[1] - 8)
+    start = max(0, state.map_selected_index - window // 2)
+    for idx, node in enumerate(nodes[start : start + window], start):
         marker = ">" if idx == state.map_selected_index else " "
         indent = "  " * int(node["depth"])
         glyph = ""
@@ -4086,7 +6854,9 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
     `_keymap_footer()` (previously grew to 3+ whenever any of these was
     present, since each used to insert its own extra line)."""
     if state.mode == "search":
-        return Text(f"/{project.filter_text}", style="bold yellow")
+        return _safe(f"/{project.filter_text}", "bold yellow")
+    if state.mode == "map_search":
+        return _safe(f"map search /{state.map_query}", "bold yellow")
     if state.mode == "quit_confirm":
         # P69-06g: the copy names exactly what Detach does for this run's
         # *current* ownership state -- never implying invisible continuation
@@ -4097,15 +6867,29 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
             else "Detach: cancels with saved partial result (no dashboard running)"
         )
         return Text(
-            f"{detach_desc}  [d]  |  Cancel run, stay open  [c]  |  "
-            "Return, keep observing  [r]",
+            f"{detach_desc}  [d]\n"
+            "Cancel run, stay open  [c]  |  Return, keep observing  [r]",
             style="bold yellow",
         )
     if project.status in ("scanning", "cancelling") and project.progress:
         return _render_progress_bar(project.progress)
     if state.message:
         return _safe(state.message, "bold magenta")
-    return Text("")
+    return _unavailable_line(state)
+
+
+def _unavailable_line(state: TuiState) -> Text:
+    """T28-F: every disabled action the keymap footer line does not list,
+    with its reason -- so each disabled action discloses why."""
+    listed = {a.id for a in _section_actions(state.section)[:_FOOTER_ACTIONS]}
+    parts = []
+    for action in ACTIONS:
+        ok, reason = action.enabled(state)
+        if not ok and action.id not in listed:
+            parts.append(f"{action.label}: {reason}")
+    if not parts:
+        return Text("")
+    return _safe("Unavailable -- " + " | ".join(parts), THEME["text_muted"])
 
 
 def _set_footer(layout: Layout, state: TuiState, status: Text) -> None:
@@ -4136,9 +6920,23 @@ def _render_resize_guidance(state: TuiState) -> Panel:
     return Panel(Group(*lines), title="Resize", style=THEME["border"])
 
 
+class _Frame(Layout):
+    """T28-F: a rendered TUI frame; `str()` is the plain text the terminal
+    shows at `terminal_size`."""
+
+    terminal_size: tuple[int, int] = (80, 24)
+
+    def __str__(self) -> str:
+        columns, rows = self.terminal_size
+        out = io.StringIO()
+        Console(width=columns, height=rows, file=out, color_system=None).print(self)
+        return out.getvalue()
+
+
 def _render_no_projects(state: TuiState) -> Layout:
     """No project open at all: only the workspace chooser (or its form)."""
-    layout = Layout()
+    layout = _Frame()
+    layout.terminal_size = state.terminal_size
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="main", ratio=1),
@@ -4167,23 +6965,59 @@ def _render_no_projects(state: TuiState) -> Layout:
     return layout
 
 
+def _render_detaching(state: TuiState) -> Panel:
+    remaining = max(0.0, (state.detach_deadline or 0.0) - time.monotonic())
+    return Panel(
+        Group(
+            Text(
+                "Detaching -- cancelling the local run and stopping its processes.",
+                style="bold yellow",
+            ),
+            Text(f"Exits within {remaining:.0f}s. Ctrl-C exits now."),
+        ),
+        title="Detaching",
+        style=THEME["border"],
+    )
+
+
+def _with_view_state(
+    state: TuiState, project: ProjectState, section: str, body: Any
+) -> Any:
+    """Map, Memory and Git render their own data; a non-populated
+    SectionView recorded for them shows its state label and reason above
+    it, as every other section's renderer does."""
+    lines = _view_state_lines(
+        SECTION_LABELS[section], state.views.get((project_key(project), section))
+    )
+    return Group(*lines, body) if lines else body
+
+
 def _render_body(state: TuiState, project: ProjectState) -> Any:
+    if state.overlay == "detaching":
+        return _render_detaching(state)
     if state.overlay == "sections":
         return _render_section_chooser(state)
     if state.overlay == "form":
         return _render_form(state)
-    if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
-        return _render_memory_admin(state)
+    if state.mode in (
+        "memory",
+        "memory_search",
+        "memory_edit",
+        "memory_owner",
+        "memory_create",
+        "memory_filter",
+    ):
+        return _with_view_state(state, project, "memory", _render_memory_admin(state))
     if state.mode == "git":
-        return _render_git_panel(state)
-    if state.mode == "map":
-        return _render_map(state, project)
+        return _with_view_state(state, project, "git", _render_git_panel(state))
+    if state.mode in ("map", "map_search"):
+        return _with_view_state(state, project, "map", _render_map(state, project))
     if state.mode == "project_selector":
         return _render_project_selector(state)
     if state.mode == "grant_review" and state.pending_grant:
         return _render_grant_review(state.pending_grant)
     if state.mode == "detail":
-        return _render_detail(project)
+        return _render_detail(project, state.data_root)
     if state.mode == "help":
         return _render_help(state)
     if state.section == "overview":
@@ -4201,14 +7035,17 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
 
 
 def render_app(state: TuiState) -> Layout:
+    _sync_resize_overlay(state)
     if _too_small(state):
-        guidance = Layout()
+        guidance = _Frame()
+        guidance.terminal_size = state.terminal_size
         guidance.update(_render_resize_guidance(state))
         return guidance
     if not state.projects:
         return _render_no_projects(state)
     project = state.active_project
-    layout = Layout()
+    layout = _Frame()
+    layout.terminal_size = state.terminal_size
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="main", ratio=1),
@@ -4232,7 +7069,7 @@ def render_app(state: TuiState) -> Layout:
     # nav pane at all. Previously there was only one `>= 100` check with
     # no distinct 80-99/narrow behavior.
     branch = _width_branch(state.terminal_size[0])
-    in_pane_mode = state.mode in ("list", "map") and state.overlay is None
+    in_pane_mode = state.mode in ("list", "map", "map_search") and state.overlay is None
     if branch == "wide" and in_pane_mode:
         overview = state.mode == "list" and state.section == "overview"
         layout["main"].split_row(
@@ -4242,7 +7079,7 @@ def render_app(state: TuiState) -> Layout:
         )
         layout["main"]["nav"].update(_render_nav_pane(state))
         layout["main"]["list"].update(body)
-        layout["main"]["detail"].update(_render_detail(project))
+        layout["main"]["detail"].update(_render_detail(project, state.data_root))
     elif branch == "compact" and in_pane_mode:
         layout["main"].split_row(
             Layout(name="nav", size=20),
@@ -4323,6 +7160,13 @@ def run_interactive_tui(
     seen_statuses = {id(p): p.status for p in state.projects}
 
     ticks = 0
+    # T28-F: EOF sets the cause printed on stderr once the terminal is
+    # restored; a closed input is never read again (it would spin).
+    exit_cause = ""
+    input_closed = False
+    # Carries a Ctrl-C handled mid-tick into the next tick's refresh.
+    interrupted = False
+    reveal_key = _row_reveal_key(state)
     with raw_terminal():
         live = (
             Live(
@@ -4341,56 +7185,114 @@ def run_interactive_tui(
                 if max_ticks is not None and ticks >= max_ticks:
                     break
                 ticks += 1
+                try:
+                    size = reader.get_size()
+                    resized = size != state.terminal_size
+                    if resized:
+                        state.terminal_size = size
 
-                size = reader.get_size()
-                resized = size != state.terminal_size
-                if resized:
-                    state.terminal_size = size
+                    applied = _pump(state, actions)
+                    _poll_running_scans(state, actions)
+                    _poll_detach(state)
 
-                applied = _pump(state, actions)
-                _poll_running_scans(state, actions)
-
-                key = reader.read_key(tick_seconds)
-                if key is not None:
-                    _dispatch_key(state, key, actions)
-                status_changed = _reload_after_finished_work(state, seen_statuses)
-
-                if live is not None:
-                    setup_events = sum(
-                        len(p.setup_apply_events) for p in state.projects
-                    )
-                    has_activity = (
-                        key is not None
-                        or applied
-                        or resized
-                        or setup_events != seen_setup_events
-                        or status_changed
-                        or any(
-                            p.status in ("scanning", "cancelling")
-                            for p in state.projects
-                        )
-                    )
-                    seen_setup_events = setup_events
-                    # U04 fix: reduced motion renders the final state
-                    # (already shown once by `Live(render_app(state), ...)`
-                    # above) and never refreshes again on an idle timer --
-                    # only a real key/scan event re-renders. Normal motion
-                    # keeps its active/idle heartbeat regardless.
-                    if reduced_motion:
-                        if has_activity:
-                            live.update(render_app(state), refresh=True)
+                    key: str | None = None
+                    if input_closed:
+                        time.sleep(tick_seconds)
                     else:
-                        interval = (
-                            _ACTIVE_REFRESH_INTERVAL
-                            if has_activity
-                            else _IDLE_REFRESH_INTERVAL
+                        key = reader.read_key(tick_seconds)
+                    if key == EOF:
+                        input_closed = True
+                        exit_cause = (
+                            "rush ui: input reached end-of-file; detached and "
+                            "restored the terminal"
                         )
-                        now = time.monotonic()
-                        if now - last_refresh >= interval:
-                            live.update(render_app(state), refresh=True)
-                            last_refresh = now
+                        _handle_eof(state, actions)
+                    elif key is not None:
+                        _dispatch_key(state, key, actions)
+                    status_changed = _reload_after_finished_work(state, seen_statuses)
+
+                    # T28-F: a changed findings view reveals its rows one per
+                    # 40ms (capped at 240ms); reduced motion shows them all.
+                    new_reveal_key = _row_reveal_key(state)
+                    if new_reveal_key != reveal_key:
+                        reveal_key = new_reveal_key
+                        if state.projects and not reduced_motion:
+                            state.active_project.row_reveal_started = time.monotonic()
+                    revealing = _row_reveal_active(state)
+
+                    if live is not None:
+                        setup_events = sum(
+                            len(p.setup_apply_events) for p in state.projects
+                        )
+                        has_activity = (
+                            key is not None
+                            or interrupted
+                            or applied
+                            or resized
+                            or revealing
+                            or setup_events != seen_setup_events
+                            or status_changed
+                            or state.detach_deadline is not None
+                            or any(
+                                p.status in ("scanning", "cancelling")
+                                for p in state.projects
+                            )
+                        )
+                        seen_setup_events = setup_events
+                        # U04 fix: reduced motion renders the final state
+                        # (already shown once by `Live(render_app(state), ...)`
+                        # above) and never refreshes again on an idle timer --
+                        # only a real key/scan event re-renders. Normal motion
+                        # keeps its active/idle heartbeat regardless.
+                        if reduced_motion:
+                            if has_activity:
+                                live.update(render_app(state), refresh=True)
+                                interrupted = False
+                        else:
+                            interval = (
+                                _ACTIVE_REFRESH_INTERVAL
+                                if has_activity
+                                else _IDLE_REFRESH_INTERVAL
+                            )
+                            now = time.monotonic()
+                            if now - last_refresh >= interval:
+                                live.update(render_app(state), refresh=True)
+                                last_refresh = now
+                                interrupted = False
+                except KeyboardInterrupt:
+                    # T28-F: Ctrl-C is the quit flow, never an uncaught
+                    # interrupt tearing down the loop mid-frame.
+                    interrupted = True
+                    _handle_sigint(state, actions)
         finally:
             if live is not None:
                 live.stop()
 
+    if exit_cause:
+        print(exit_cause, file=sys.stderr)
     return state
+
+
+def _row_reveal_key(state: TuiState) -> tuple[Any, ...]:
+    """T28-F: what the findings table shows; a change restarts the reveal."""
+    if not state.projects:
+        return ()
+    project = state.active_project
+    return (
+        state.active_index,
+        state.section,
+        state.mode,
+        project.detail_page,
+        project.filter_text,
+        len(project.results),
+    )
+
+
+def _row_reveal_active(state: TuiState) -> bool:
+    if not state.projects:
+        return False
+    started = state.active_project.row_reveal_started
+    if started is None:
+        return False
+    elapsed_ms = (time.monotonic() - started) * 1000
+    return elapsed_ms < _TERMINAL_MOTION["row_reveal_cap_ms"]

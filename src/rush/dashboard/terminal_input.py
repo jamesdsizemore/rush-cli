@@ -28,6 +28,20 @@ DOWN = "down"
 LEFT = "left"
 RIGHT = "right"
 BACKSPACE = "backspace"
+# The input stream reached end-of-file (the terminal/pty closed): a distinct
+# logical key so the event loop can react instead of polling a dead fd.
+EOF = "eof"
+# A bracketed paste (POSIX `ESC[200~ ... ESC[201~`) or a multi-character
+# Windows console drain arrives as ONE event: this prefix plus the pasted
+# text, literal and uninterpreted -- never a sequence of individual keys.
+PASTE_PREFIX = "paste:"
+# ponytail: fixed cap on retained paste payload (bytes on POSIX, characters
+# on Windows); anything past it is still consumed and discarded so it can
+# never leak out as keystrokes. Raise it if real pastes need more.
+_PASTE_MAX = 64 * 1024
+_BRACKETED_PASTE_ON = b"\x1b[?2004h"
+_BRACKETED_PASTE_OFF = b"\x1b[?2004l"
+_PASTE_END = b"\x1b[201~"
 
 _POSIX = os.name == "posix"
 
@@ -122,10 +136,17 @@ def raw_terminal(stream: int | _HasFileno | None = None) -> Iterator[None]:
         # ignored/default-handled).
         signal.signal(signal.SIGWINCH, lambda *_: None)
         tty.setcbreak(fd)
+        # Bracketed paste: the terminal wraps pasted text in
+        # `ESC[200~ ... ESC[201~` so `PosixKeyReader` can deliver it as one
+        # literal paste event instead of executing it as keystrokes.
+        with suppress(OSError):
+            os.write(fd, _BRACKETED_PASTE_ON)
         _ACTIVE_WAKEUP_FD[0] = wakeup_read
         yield
     finally:
         _ACTIVE_WAKEUP_FD[0] = None
+        with suppress(OSError):
+            os.write(fd, _BRACKETED_PASTE_OFF)
         with suppress(OSError, ValueError):
             signal.set_wakeup_fd(prior_wakeup_fd)
         with suppress(OSError, ValueError):
@@ -134,7 +155,11 @@ def raw_terminal(stream: int | _HasFileno | None = None) -> Iterator[None]:
             os.close(wakeup_read)
         with suppress(OSError):
             os.close(wakeup_write)
-        termios.tcsetattr(fd, termios.TCSADRAIN, original)
+        # TCSANOW, not TCSADRAIN: the bracketed-paste disable just written
+        # must not block the restore until the terminal side reads it (a
+        # stalled reader would otherwise leave the shell in cbreak mode).
+        # cbreak never changes output flags, so queued output is unaffected.
+        termios.tcsetattr(fd, termios.TCSANOW, original)
 
 
 class PosixKeyReader:
@@ -165,6 +190,25 @@ class PosixKeyReader:
         "[21~": "f10",
         "[23~": "f11",
         "[24~": "f12",
+        # Linux console F1-F5 (`ESC [ [ A..E`).
+        "[[A": "f1",
+        "[[B": "f2",
+        "[[C": "f3",
+        "[[D": "f4",
+        "[[E": "f5",
+    }
+
+    # SS3 body (the byte after ESC "O"): F1-F4 and application-mode arrows,
+    # as sent by Terminal.app, iTerm2, and xterm.
+    _SS3: ClassVar[dict[str, str]] = {
+        "P": "f1",
+        "Q": "f2",
+        "R": "f3",
+        "S": "f4",
+        "A": UP,
+        "B": DOWN,
+        "C": RIGHT,
+        "D": LEFT,
     }
 
     def __init__(self, stream: int | _HasFileno | None = None) -> None:
@@ -203,7 +247,7 @@ class PosixKeyReader:
             return None
         raw = os.read(fd, 1)
         if not raw:
-            return None
+            return EOF
         first = raw[0]
         if first == 0x1B:  # ESC
             return self._read_escape_sequence(fd)
@@ -263,8 +307,11 @@ class PosixKeyReader:
         if not nxt:
             return ESCAPE
         body = nxt.decode(errors="replace")
+        if body == "O":
+            final = self._read_bounded(fd, 1).decode(errors="replace")
+            return self._SS3.get(final, ESCAPE)
         if body == "[":
-            for _ in range(6):
+            for _ in range(8):
                 more = self._read_bounded(fd, 1)
                 if not more:
                     break
@@ -272,7 +319,58 @@ class PosixKeyReader:
                 body += c
                 if c.isalpha() or c == "~":
                     break
-        return self._SEQUENCES.get(body, ESCAPE)
+        if body == "[200~":
+            return PASTE_PREFIX + self._read_paste(fd)
+        key = self._SEQUENCES.get(body)
+        if key is not None:
+            return key
+        # xterm modifier form `CSI <n> ; <mod> <final>` (Ctrl+F1 is
+        # `ESC [ 1;5 P`, Ctrl+Up `ESC [ 1;5 A`, Ctrl+F5 `ESC [ 15;5 ~`):
+        # drop the modifier and decode as the unmodified key.
+        number, sep, modifier = body[1:-1].partition(";")
+        final = body[-1:]
+        if sep and number.isdigit() and modifier.isdigit():
+            if final == "~":
+                return self._SEQUENCES.get(f"[{number}~", ESCAPE)
+            if number == "1":
+                return self._SEQUENCES.get(f"[{final}") or self._SS3.get(final, ESCAPE)
+        return ESCAPE
+
+    def _read_paste(self, fd: int) -> str:
+        """Reads a bracketed-paste payload up to its `ESC[201~` terminator
+        and returns it decoded as UTF-8 (`errors="replace"`), literally --
+        embedded escape/control bytes are text, never interpreted. At most
+        `_PASTE_MAX` bytes are kept; the rest is still consumed. Each read
+        asks for only as many bytes as can complete the terminator, so it
+        never swallows keystrokes typed after the paste; a stalled stream
+        ends the paste at `_read_bounded`'s short timeout, never hangs."""
+        kept = bytearray()
+        tail = b""  # unflushed bytes that may still start the terminator
+        while True:
+            # Longest suffix of `tail` that is a proper prefix of the
+            # terminator: that many terminator bytes may already be in.
+            partial = next(
+                (
+                    k
+                    for k in range(len(_PASTE_END) - 1, 0, -1)
+                    if tail.endswith(_PASTE_END[:k])
+                ),
+                0,
+            )
+            chunk = self._read_bounded(fd, len(_PASTE_END) - partial)
+            if not chunk:
+                kept += tail
+                break
+            tail += chunk
+            if tail.endswith(_PASTE_END):
+                kept += tail[: -len(_PASTE_END)]
+                break
+            keep = len(_PASTE_END) - 1
+            if len(tail) > keep:
+                kept += tail[:-keep]
+                tail = tail[-keep:]
+            del kept[_PASTE_MAX:]
+        return bytes(kept[:_PASTE_MAX]).decode(errors="replace")
 
 
 class WindowsKeyReader:
@@ -295,6 +393,11 @@ class WindowsKeyReader:
         "\x0f": SHIFT_TAB,
     }
 
+    def __init__(self) -> None:
+        # Characters drained from the console that belong to later keys
+        # (a multi-character drain that was not a paste).
+        self._pending: list[str] = []
+
     def get_size(self) -> tuple[int, int]:
         return get_terminal_size()
 
@@ -312,11 +415,24 @@ class WindowsKeyReader:
 
         deadline = time.monotonic() + timeout
         while True:
-            if msvcrt.kbhit():
-                ch = msvcrt.getwch()
+            if self._pending or msvcrt.kbhit():
+                ch = self._pending.pop(0) if self._pending else msvcrt.getwch()
                 if ch in ("\x00", "\xe0"):
-                    ch2 = msvcrt.getwch()
+                    ch2 = self._pending.pop(0) if self._pending else msvcrt.getwch()
                     return self._ARROW.get(ch2, ESCAPE)
+                # Drain everything already available: more than one
+                # printable character in a single drain is a paste,
+                # delivered literally as one event (at most `_PASTE_MAX`
+                # characters kept, the rest still consumed).
+                drained = [ch, *self._pending]
+                self._pending = []
+                while msvcrt.kbhit():
+                    extra = msvcrt.getwch()
+                    if len(drained) < _PASTE_MAX:
+                        drained.append(extra)
+                if sum(c.isprintable() for c in drained) > 1:
+                    return PASTE_PREFIX + "".join(drained)
+                self._pending = drained[1:]
                 if ch == "\r":
                     return ENTER
                 if ch == "\t":
