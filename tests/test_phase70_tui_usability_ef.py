@@ -263,6 +263,24 @@ def _section(state: tui.TuiState, actions: tui.ScanActions, digit: str) -> None:
     assert state.overlay is None
 
 
+def _settle(state: tui.TuiState, actions: tui.ScanActions, section: str) -> None:
+    """Drive the loop the way `run_interactive_tui` does (one `_pump` per
+    tick) until `section` has no request in flight and its view has left
+    "loading", bounded to 2 s."""
+    project = state.active_project
+    deadline = time.monotonic() + 2.0
+    while True:
+        tui._pump(state, actions)
+        view = state.views.get((tui.project_key(project), section))
+        idle = not any(str(key).startswith(section) for key in project.pending) and all(
+            request[1] != section for request in state.load_requests
+        )
+        if idle and (view is None or view.state != "loading"):
+            return
+        assert time.monotonic() < deadline, f"{section} still loading after 2 s"
+        time.sleep(0.01)
+
+
 def _search_artifacts(state: tui.TuiState, actions: tui.ScanActions, query: str) -> str:
     _keys(state, actions, "/")
     _type(state, actions, query)
@@ -329,6 +347,7 @@ def _tokens_journey(tmp_path: Path, data_root: Path) -> None:
     state = _state(root, project_id, data_root)
     _section(state, actions, "5")
     assert state.section == "tokens"
+    _settle(state, actions, "tokens")
     text = _render(state)
     assert "1500" in text, f"actual 1200+300 must show as 1500: {text}"
     assert "800" in text, f"tokenizer 800 must show separately: {text}"
@@ -344,6 +363,7 @@ def _tokens_journey(tmp_path: Path, data_root: Path) -> None:
     _keys(state, actions, "enter")
     view = state.views[(tui.project_key(state.active_project), "tokens")]
     assert view.filters.get("run_id") == "run-a", view.filters
+    _settle(state, actions, "tokens")
     text = _render(state)
     assert "1200" in text, f"run-a scoped actual must be 1200: {text}"
     assert "1500" not in text, f"run-b must be excluded from run-a: {text}"
@@ -353,11 +373,14 @@ def _tokens_journey(tmp_path: Path, data_root: Path) -> None:
     )
     _keys(state, actions, "/", "escape")
     assert not state.views[(tui.project_key(state.active_project), "tokens")].filters
+    _settle(state, actions, "tokens")
+    assert "1500" in _render(state), "clearing the filter reloads unscoped usage"
 
     # Actual unavailable is not zero.
     empty_id, empty_root = _register(tmp_path, "tokens-empty", data_root)
     empty = _state(empty_root, empty_id, data_root)
     _section(empty, actions, "5")
+    _settle(empty, actions, "tokens")
     text = _render(empty)
     assert "no run manifest" in text, f"unavailable actual needs its reason: {text}"
     assert '"total_tokens": 0' not in text.split("tokenizer_counted")[0], (
@@ -386,6 +409,7 @@ def _tokens_journey(tmp_path: Path, data_root: Path) -> None:
     legacy_hash = _sha(legacy_db)
     legacy = _state(legacy_root, legacy_id, data_root)
     _section(legacy, actions, "5")
+    _settle(legacy, actions, "tokens")
     _render(legacy)
     assert _sha(legacy_db) == legacy_hash, "a legacy DB must never be migrated"
     with sqlite3.connect(legacy_db) as conn:
@@ -400,6 +424,7 @@ def _tokens_journey(tmp_path: Path, data_root: Path) -> None:
     corrupt_db.write_bytes(b"not a sqlite database at all")
     corrupt = _state(corrupt_root, corrupt_id, data_root)
     _section(corrupt, actions, "5")
+    _settle(corrupt, actions, "tokens")
     text = _render(corrupt)
     assert "unreadable" in text, f"corrupt telemetry must say unreadable: {text}"
     assert corrupt_db.read_bytes() == b"not a sqlite database at all"
@@ -420,6 +445,7 @@ def _git_journey(tmp_path: Path, data_root: Path) -> None:
     state = _state(root, project_id, data_root)
     _section(state, actions, "6")
     assert state.section == "git"
+    _settle(state, actions, "git")
     text = _render(state)
     assert "second" in text and "first" not in text, (
         f"page 1 holds the 20 newest commits only: {text}"
@@ -433,6 +459,7 @@ def _git_journey(tmp_path: Path, data_root: Path) -> None:
 
     # Enter on the newest commit: changed files plus the bounded diff.
     _keys(state, actions, "enter")
+    _settle(state, actions, "git")
     text = _render(state)
     assert "big.txt" in text, f"changed files of the selected commit: {text}"
     assert "+line-00000" in text, f"diff of the selected commit: {text}"
@@ -441,18 +468,22 @@ def _git_journey(tmp_path: Path, data_root: Path) -> None:
 
     # Next page, then expand the oldest commit's exact diff.
     _keys(state, actions, "]")
+    _settle(state, actions, "git")
     text = _render(state)
     assert "first" in text and "second" not in text, f"page 2: {text}"
     _keys(state, actions, "enter")
+    _settle(state, actions, "git")
     text = _render(state)
     assert "alpha.txt" in text and "+one" in text, f"first commit diff: {text}"
     assert "line-00000" not in text, "the previous commit's diff must be replaced"
     _keys(state, actions, "[")
+    _settle(state, actions, "git")
     text = _render(state)
     assert "second" in text and "first" not in text, f"back on page 1: {text}"
 
     # Dirty file diff.
     _keys(state, actions, "d")
+    _settle(state, actions, "git")
     text = _render(state)
     assert "+dirty change" in text and "-filler 5" in text, f"dirty diff: {text}"
 

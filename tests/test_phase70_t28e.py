@@ -28,10 +28,13 @@ because the binding design describes behavior, not exact signatures):
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import os
 import sqlite3
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -282,6 +285,24 @@ def _render_text(state: Any) -> str:
     console = Console(record=True, width=140)
     console.print(tui_mod.render_app(state))
     return console.export_text()
+
+
+def _settle(state: Any, actions: Any, section: str) -> None:
+    """Drive the loop the way `run_interactive_tui` does (one `_pump` per
+    tick) until `section` has no request in flight and its view has left
+    "loading", bounded to 2 s."""
+    project = state.active_project
+    deadline = time.monotonic() + 2.0
+    while True:
+        tui_mod._pump(state, actions)
+        view = state.views.get((tui_mod.project_key(project), section))
+        idle = not any(str(key).startswith(section) for key in project.pending) and all(
+            request[1] != section for request in state.load_requests
+        )
+        if idle and (view is None or view.state != "loading"):
+            return
+        assert time.monotonic() < deadline, f"{section} still loading after 2 s"
+        time.sleep(0.01)
 
 
 def _find_action(section: str, keyword: str) -> Any:
@@ -595,9 +616,14 @@ def test_token_usage_refreshes_only_on_root_filter_or_telemetry_mtime_change(
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "5", actions)
     assert state.section == "tokens"
+    assert calls == [], "entering Tokens only records the request"
+    _settle(state, actions, "tokens")
+    assert len(calls) == 1, f"entering Tokens reads once; got {len(calls)} calls"
 
     for _ in range(3):
         tui_mod.render_app(state)
+        tui_mod._pump(state, actions)
+    _settle(state, actions, "tokens")
     assert len(calls) == 1, (
         "Tokens must load project_token_usage exactly once across repeated "
         f"idle render ticks with no root/filter/mtime change; got {len(calls)} calls"
@@ -612,6 +638,8 @@ def test_token_usage_refreshes_only_on_root_filter_or_telemetry_mtime_change(
         )
     view.filters["run_id"] = "run-a"
     tui_mod.render_app(state)
+    assert len(calls) == 1, "a render never reads; the loop tick requests it"
+    _settle(state, actions, "tokens")
     assert len(calls) == 2, (
         "changing the Tokens section's filter must trigger exactly one more "
         f"read; got {len(calls)} calls"
@@ -619,6 +647,8 @@ def test_token_usage_refreshes_only_on_root_filter_or_telemetry_mtime_change(
 
     TelemetryStore(root).record_savings("tool-a", raw_tokens=100, compressed_tokens=50)
     tui_mod.render_app(state)
+    assert len(calls) == 2, "a render never reads; the loop tick requests it"
+    _settle(state, actions, "tokens")
     assert len(calls) == 3, (
         "a changed telemetry mtime must trigger exactly one more read; "
         f"got {len(calls)} calls"
@@ -1443,6 +1473,7 @@ def test_tui_f3_digit_or_alias_reaches_tokens_git_artifacts_sections(
     tui_mod._dispatch_key(state, "5", actions)
     assert state.overlay is None, "selecting a section must close the chooser"
     assert state.section == "tokens"
+    _settle(state, actions, "tokens")
     rendered = _render_text(state)
     assert "1200" in rendered or "1,200" in rendered, (
         f"Tokens section must render real actual-usage data; got: {rendered!r}"
@@ -1450,6 +1481,7 @@ def test_tui_f3_digit_or_alias_reaches_tokens_git_artifacts_sections(
 
     tui_mod._dispatch_key(state, "G", actions)
     assert state.section == "git", "the 'G' alias must jump directly to Git"
+    _settle(state, actions, "git")
     rendered = _render_text(state)
     assert "first" in rendered, (
         f"Git section must render this repo's real commit history; got: {rendered!r}"
@@ -1712,6 +1744,7 @@ def test_tui_hostile_text_rendered_safely_in_tokens_git_artifacts_sections(
         tui_mod._dispatch_key(state, "f3", actions)
         tui_mod._dispatch_key(state, digit, actions)
         assert state.section == section
+        _settle(state, actions, section)
         rendered = _render_text(state)
         assert "\x1b" not in rendered, (
             f"{section} section rendered a raw ESC byte: {rendered!r}"
@@ -1720,3 +1753,174 @@ def test_tui_hostile_text_rendered_safely_in_tokens_git_artifacts_sections(
             f"{section} section must show markup-looking hostile text "
             f"literally, not swallow/crash on it: {rendered!r}"
         )
+
+
+def test_render_never_calls_token_or_git_readers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan line 431: no synchronous token/Git work on the render or input
+    path. Every token and Git reader raises when called on the thread that
+    dispatches keys and renders; a key only records the request, a render
+    only reads the loaded state and shows "loading" until the loop drains
+    the result, and the loop's worker does the reads."""
+    project_id, root, data_root = _full_project(tmp_path)
+    (root / "a.txt").write_text("two\n", encoding="utf-8")
+    state = tui_mod.TuiState(
+        projects=[tui_mod.ProjectState(name="proj", root=root, project_id=project_id)],
+        data_root=data_root,
+    )
+    render_thread = threading.get_ident()
+
+    def _guard(name: str, reader: Any) -> Any:
+        def _off_render_thread(*args: Any, **kwargs: Any) -> Any:
+            if threading.get_ident() == render_thread:
+                raise AssertionError(f"{name} called on the render thread")
+            return reader(*args, **kwargs)
+
+        return _off_render_thread
+
+    hold = threading.Event()  # set once the Git steps are done
+    started = threading.Event()
+    release = threading.Event()
+    usage = wp.project_token_usage
+
+    def _held_usage(*args: Any, **kwargs: Any) -> Any:
+        if hold.is_set():  # the Git snapshot also reads token usage
+            started.set()
+            release.wait(2.0)
+        return usage(*args, **kwargs)
+
+    monkeypatch.setattr(
+        wp, "project_token_usage", _guard("project_token_usage", _held_usage)
+    )
+    for name in (
+        "project_git_history",
+        "project_git_commit_diff",
+        "project_git_dirty_diff",
+        "project_git_branch",
+        "project_git_worktree",
+    ):
+        monkeypatch.setattr(wp, name, _guard(name, getattr(wp, name)))
+    base = tui_mod.default_scan_actions(ExecutionPermissions())
+    actions = dataclasses.replace(
+        base, git_snapshot=_guard("git_snapshot", base.git_snapshot)
+    )
+
+    # Git: entering, Enter (commit diff) and `d` (dirty diff) only record
+    # the request; the render in between shows "loading".
+    tui_mod._enter_section(state, "git", actions)
+    rendered = _render_text(state)
+    assert "loading" in rendered, rendered
+    _settle(state, actions, "git")
+    rendered = _render_text(state)
+    assert "first" in rendered and "failed:" not in rendered, rendered
+    assert "worktree=" in rendered, "branch/worktree load on the worker too"
+
+    tui_mod._dispatch_key(state, "enter", actions)
+    assert "loading" in _render_text(state)
+    _settle(state, actions, "git")
+    assert state.git_message == "", state.git_message
+    assert state.git_expanded is not None and "+one" in state.git_expanded["lines"]
+
+    tui_mod._dispatch_key(state, "d", actions)
+    assert "loading" in _render_text(state)
+    _settle(state, actions, "git")
+    assert state.git_message == "", state.git_message
+    assert state.git_expanded is not None and "+two" in state.git_expanded["lines"]
+
+    tui_mod._dispatch_key(state, "f5", actions)
+    _settle(state, actions, "git")
+    assert "first" in _render_text(state)
+
+    # Tokens.
+    hold.set()
+    tui_mod._enter_section(state, "tokens", actions)
+    rendered = _render_text(state)
+    assert not started.wait(0.1), "rendering Tokens started a token read"
+    tui_mod._pump(state, actions)  # the loop tick starts the read
+    assert started.wait(2.0), "the loop tick must start the Tokens read"
+    rendered = _render_text(state)
+    assert "loading" in rendered, rendered
+    release.set()
+    _settle(state, actions, "tokens")
+    rendered = _render_text(state)
+    assert "1200" in rendered or "1,200" in rendered, rendered
+
+
+def test_git_result_for_a_switched_away_project_is_discarded(
+    tmp_path: Path,
+) -> None:
+    """A Git load still running for project A when the user switches to B
+    is discarded; only B's history is ever shown."""
+    data_root = _data_root(tmp_path)
+    root_a, root_b = tmp_path / "a", tmp_path / "b"
+    _init_repo(root_a)
+    _commit(root_a, "a.txt", "a\n", "commit in A")
+    _init_repo(root_b)
+    _commit(root_b, "b.txt", "b\n", "commit in B")
+    id_a = wp.register_project(root_a, data_root=data_root).project_id
+    id_b = wp.register_project(root_b, data_root=data_root).project_id
+    base = tui_mod.default_scan_actions(ExecutionPermissions())
+    assert base.git_snapshot is not None
+    snapshot = base.git_snapshot
+    release = threading.Event()
+
+    def _held(root: Path, **kwargs: Any) -> Any:
+        if Path(root) == root_a:
+            release.wait(2.0)
+        return snapshot(root, **kwargs)
+
+    actions = dataclasses.replace(base, git_snapshot=_held)
+    state = tui_mod.TuiState(
+        projects=[
+            tui_mod.ProjectState(name="a", root=root_a, project_id=id_a),
+            tui_mod.ProjectState(name="b", root=root_b, project_id=id_b),
+        ],
+        data_root=data_root,
+    )
+    tui_mod._enter_section(state, "git", actions)
+    for key in ("f2", "down", "enter"):
+        tui_mod._dispatch_key(state, key, actions)
+    assert state.active_project.name == "b"
+    tui_mod._enter_section(state, "git", actions)
+    _settle(state, actions, "git")
+    release.set()
+    time.sleep(0.2)
+    for _ in range(5):
+        tui_mod._pump(state, actions)
+    subjects = {c["subject"] for c in state.git_data["git"]["history"]}
+    assert subjects == {"commit in B"}, subjects
+
+
+def test_git_page_result_is_discarded_after_returning_to_page_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`]` then `[` before the older page arrives: the late page-two result
+    is stale and never replaces page one."""
+    project_id, root, data_root = _project(tmp_path, "paged", init_git=True)
+    for index in range(tui_mod.PAGE_SIZE + 1):
+        _commit(root, f"f{index}.txt", f"{index}\n", f"commit {index:02d}")
+    history = wp.project_git_history
+    release = threading.Event()
+
+    def _held(*args: Any, **kwargs: Any) -> Any:
+        release.wait(2.0)
+        return history(*args, **kwargs)
+
+    monkeypatch.setattr(wp, "project_git_history", _held)
+    state = tui_mod.TuiState(
+        projects=[tui_mod.ProjectState(name="p", root=root, project_id=project_id)],
+        data_root=data_root,
+    )
+    actions = tui_mod.default_scan_actions(ExecutionPermissions())
+    tui_mod._enter_section(state, "git", actions)
+    _settle(state, actions, "git")
+    tui_mod._dispatch_key(state, "]", actions)
+    tui_mod._dispatch_key(state, "[", actions)
+    release.set()
+    time.sleep(0.2)
+    for _ in range(5):
+        tui_mod._pump(state, actions)
+    assert state.git_page is None, state.git_page
+    rendered = _render_text(state)
+    assert "commit 20" in rendered and "commit 00" not in rendered, rendered
