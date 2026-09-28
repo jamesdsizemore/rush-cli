@@ -25,6 +25,7 @@ import io
 import json
 import os
 import queue
+import signal
 import sys
 import threading
 import time
@@ -250,6 +251,26 @@ _TERMINAL_MOTION: dict[str, int] = {
 
 def _reduced_motion() -> bool:
     return bool(os.environ.get("RUSH_REDUCED_MOTION"))
+
+
+def _motion_running(project: ProjectState | None, duration_ms: int) -> bool:
+    """T28-F: True while a transition of `duration_ms` that started when the
+    selection last moved is still running; never under reduced motion."""
+    if project is None or project.selection_started is None or _reduced_motion():
+        return False
+    return (time.monotonic() - project.selection_started) * 1000 < duration_ms
+
+
+def _selection_style(project: ProjectState | None) -> str:
+    """T28-F: the selected row's highlight -- dim reverse while it moves in
+    over `selection_ms`, then reverse."""
+    if _motion_running(project, _TERMINAL_MOTION["selection_ms"]):
+        return "dim reverse"
+    return "reverse"
+
+
+def _state_selection_style(state: TuiState) -> str:
+    return _selection_style(state.active_project if state.projects else None)
 
 
 def _row_reveal_progress(
@@ -771,6 +792,15 @@ class ProjectState:
     dashboard_owner_handle: Any = field(default=None, repr=False, compare=False)
     # T28-F: monotonic start of the findings-row reveal; None = final state.
     row_reveal_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-F: monotonic time the selection last moved -- the highlight moves
+    # in over `selection_ms` and the detail pane fades in over `detail_ms`;
+    # None = final state.
+    selection_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-F: the worker thread observing a dashboard-owned run's durable status
+    # (`_observe_dashboard_operation`), started by the render loop.
+    dashboard_poll_thread: threading.Thread | None = field(
+        default=None, repr=False, compare=False
+    )
     # T28-B: the last rescan's `compare_runs` verdicts plus the reviewed
     # baseline attempt's findings (`baseline_findings`), shown while its
     # `current_run_id` is still this project's run.
@@ -1535,6 +1565,12 @@ class DashboardOwner:
     _session_cache: dict[str, tuple[str, str]] = field(
         default_factory=dict, compare=False, repr=False
     )
+    # T28-F: a failed session exchange, kept for this owner's lifetime so an
+    # unanswering dashboard is not re-contacted (and waited on) every poll; a
+    # newly found owner starts clean.
+    _session_failure: list[Exception] = field(
+        default_factory=list, compare=False, repr=False
+    )
 
     def dispatch(self, operation: str, **arguments: Any) -> dict[str, Any]:
         from rush.dashboard.server import (
@@ -1568,15 +1604,9 @@ class DashboardOwner:
         a second failure is a visible disconnection, surfaced to the caller."""
         from urllib.error import HTTPError
 
-        from rush.dashboard.server import (
-            _control_session,
-            dispatch_dashboard_operation_status,
-        )
+        from rush.dashboard.server import dispatch_dashboard_operation_status
 
-        session = self._session_cache.get("session")
-        if session is None:
-            session = _control_session(self.base_url, self.control_capability)
-            self._session_cache["session"] = session
+        session = self._session_cache.get("session") or self._new_session()
         try:
             return dispatch_dashboard_operation_status(
                 self.base_url, self.project_id, operation_id, session=session
@@ -1584,11 +1614,29 @@ class DashboardOwner:
         except HTTPError as exc:
             if exc.code != 401:
                 raise
-            session = _control_session(self.base_url, self.control_capability)
-            self._session_cache["session"] = session
             return dispatch_dashboard_operation_status(
-                self.base_url, self.project_id, operation_id, session=session
+                self.base_url,
+                self.project_id,
+                operation_id,
+                session=self._new_session(),
             )
+
+    def _new_session(self) -> tuple[str, str]:
+        """Exchange the control capability for a session; a failure is
+        cached (T28-F) and re-raised without another exchange."""
+        from rush.dashboard.server import _control_session
+
+        if self._session_failure:
+            raise ConnectionError(
+                f"dashboard session failed: {self._session_failure[0]}"
+            )
+        try:
+            session = _control_session(self.base_url, self.control_capability)
+        except Exception as exc:
+            self._session_failure.append(exc)
+            raise
+        self._session_cache["session"] = session
+        return session
 
 
 def _find_live_dashboard_owner(root: Path) -> DashboardOwner | None:
@@ -1678,10 +1726,10 @@ def _start_dashboard_owned(
         if isinstance(operation_id, str) and operation_id:
             project.operation_id = operation_id
         # U02: completion is never inferred from `plan_total` (CHECK_SUITE
-        # never has one) -- `_poll_running_scans`'s dashboard-owned branch
-        # below is the only thing that ever moves this project out of
-        # "scanning", by polling the retained `operation_id`'s real durable
-        # status.
+        # never has one) -- only a poll of the retained `operation_id`'s real
+        # durable status (`_poll_running_scans`, or the render loop's
+        # `_start_dashboard_observers` worker) ever moves this project out of
+        # "scanning".
         project.last_message = (
             f"{operation} running in dashboard (operation {operation_id or '?'})"
         )
@@ -1689,6 +1737,53 @@ def _start_dashboard_owned(
     thread = threading.Thread(target=_worker, daemon=True)
     project.scan_thread = thread
     thread.start()
+
+
+# T28-F: how often the dispatch worker re-reads a dashboard-owned run's
+# durable status (the 4 Hz idle refresh rate).
+_DASHBOARD_POLL_SECONDS = 0.25
+
+
+def _start_dashboard_observers(state: TuiState) -> None:
+    """T28-F: the render loop starts one observer worker per running
+    dashboard-owned run whose `operation_id` is known; the loop itself never
+    touches the network."""
+    for project in state.projects:
+        if (
+            project.owner != "dashboard"
+            or project.status not in ("scanning", "cancelling")
+            or not project.operation_id
+            or project.dashboard_owner_handle is None
+        ):
+            continue
+        thread = project.dashboard_poll_thread
+        if thread is not None and thread.is_alive():
+            continue
+        thread = threading.Thread(
+            target=_observe_dashboard_operation,
+            args=(project, project.dashboard_owner_handle),
+            daemon=True,
+        )
+        project.dashboard_poll_thread = thread
+        thread.start()
+
+
+def _observe_dashboard_operation(project: ProjectState, owner: Any) -> None:
+    """T28-F: the dashboard-owned status poll runs here, on a worker, never
+    on the render/input loop: it posts each result to the project until the
+    operation is terminal or the project is no longer observing this
+    owner's run."""
+    operation_id = project.operation_id
+    while (
+        operation_id
+        and project.operation_id == operation_id
+        and project.status in ("scanning", "cancelling")
+        and project.dashboard_owner_handle is owner
+    ):
+        _poll_dashboard_status(project, owner)
+        if project.status not in ("scanning", "cancelling"):
+            return
+        time.sleep(_DASHBOARD_POLL_SECONDS)
 
 
 def _start_scan_thread(
@@ -2027,11 +2122,17 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
         owner = project.dashboard_owner_handle = _dashboard_owner_for(project, actions)
     if owner is None or not hasattr(owner, "operation_status"):
         return
+    _poll_dashboard_status(project, owner)
+
+
+def _poll_dashboard_status(project: ProjectState, owner: Any) -> None:
+    """One durable status read for a dashboard-owned run, posted to the
+    project (T28-F: `_observe_dashboard_operation` runs it on the worker)."""
     try:
         status_payload = owner.operation_status(project.operation_id)
     except Exception as exc:  # noqa: BLE001 -- a poll failure crosses a real
-        # network boundary; surface it and retry next tick, never crash the
-        # render loop.
+        # network boundary; surface it and retry on the next poll, never crash
+        # the worker.
         project.last_message = f"dashboard status poll failed: {exc}"
         return
     ledger_status = (
@@ -2039,8 +2140,6 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
     )
     if ledger_status != "terminal":
         return
-    if project.scan_thread is not None:
-        project.scan_thread.join(timeout=2.0)
     outcome_payload = (
         (status_payload.get("payload") or {})
         if isinstance(status_payload, dict)
@@ -2054,11 +2153,27 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
 
 
 def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
+    """One status read for every running project, dashboard-owned ones
+    included -- except a dashboard-owned run the render loop already handed
+    to its observer worker (`_start_dashboard_observers`, called first each
+    tick): the loop itself never touches the network."""
+    for project in state.projects:
+        if (
+            project.owner == "dashboard"
+            and project.status in ("scanning", "cancelling")
+            and project.dashboard_poll_thread is None
+        ):
+            _poll_dashboard_owned_scan(project, actions)
+    _poll_local_scans(state, actions)
+
+
+def _poll_local_scans(state: TuiState, actions: ScanActions) -> None:
+    """The loop's per-tick read of locally-owned runs' event files; it never
+    touches the network or waits on a thread."""
     for project in state.projects:
         if project.status not in ("scanning", "cancelling"):
             continue
         if project.owner == "dashboard":
-            _poll_dashboard_owned_scan(project, actions)
             continue
         if project.run_id is None or project.plan_total <= 0:
             continue  # rescan-style thread reports its own terminal status directly
@@ -2076,8 +2191,8 @@ def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
         if len(project.progress_history) > 500:
             del project.progress_history[:-500]
         if progress.status != "running":
-            if project.scan_thread is not None:
-                project.scan_thread.join(timeout=2.0)
+            if project.scan_thread is not None and project.scan_thread.is_alive():
+                continue  # T28-F: settle on a later tick, never join on the loop
             project.status = progress.status
 
 
@@ -4218,19 +4333,10 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         project.cancel_event.set()
         project.status = "cancelling"
         return
+    if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
+        _send_dashboard_cancel(project, actions)
+        return
     try:
-        if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
-            owner = project.dashboard_owner_handle or _dashboard_owner_for(
-                project, actions
-            )
-            if owner is None:
-                project.last_message = "cancel failed: dashboard owner not reachable"
-                return
-            owner.dispatch(
-                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
-            )
-            project.status = "cancelling"
-            return
         if not project.run_id:
             return
         actions.cancel_scan_run(project.root, project.run_id)
@@ -4240,6 +4346,41 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         # request must surface to the user, never crash the key-dispatch
         # path.
         project.last_message = f"cancel failed: {exc}"
+
+
+# T28-F: how long a dashboard cancel key waits for a prompt answer before
+# the request continues on its worker -- well inside the 50 ms input bound.
+_CANCEL_ANSWER_WAIT_SECONDS = 0.03
+
+
+def _send_dashboard_cancel(project: ProjectState, actions: ScanActions) -> None:
+    """T28-F: the owning dashboard's `cancel` crosses the network, so it runs
+    on a worker; the run shows `cancelling` at once and returns to
+    `scanning` with the reason if the request fails. A prompt answer lands
+    before this returns; an unanswering dashboard never holds the loop."""
+    project.status = "cancelling"
+    answered = threading.Event()
+
+    def _worker() -> None:
+        try:
+            owner = project.dashboard_owner_handle or _dashboard_owner_for(
+                project, actions
+            )
+            if owner is None:
+                raise ConnectionError("dashboard owner not reachable")
+            owner.dispatch(
+                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- the dispatch crosses a real
+            # network boundary into another process; surface the failure.
+            project.last_message = f"cancel failed: {exc}"
+            if project.status == "cancelling":
+                project.status = "scanning"
+        finally:
+            answered.set()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    answered.wait(_CANCEL_ANSWER_WAIT_SECONDS)
 
 
 def _wait_for_cancel_ack(
@@ -4364,12 +4505,12 @@ def _begin_detach(state: TuiState, project: ProjectState, actions: ScanActions) 
 
 
 def _poll_detach(state: TuiState) -> None:
-    """T28-F: end the loop once the Detach worker is done or its deadline
-    passed -- the process exits regardless, as Phase 69's Detach did."""
+    """T28-F: end the loop once the Detach worker has reaped the run and
+    recorded it. Past the deadline the loop keeps waiting; only a Ctrl-C
+    then exits (`_handle_sigint`)."""
     if state.detach_deadline is None:
         return
-    done = state.detach_done is not None and state.detach_done.is_set()
-    if done or time.monotonic() >= state.detach_deadline:
+    if state.detach_done is not None and state.detach_done.is_set():
         state.detach_deadline = None
         state.mode = "list"
         state.should_quit = True
@@ -4377,10 +4518,16 @@ def _poll_detach(state: TuiState) -> None:
 
 def _handle_sigint(state: TuiState, actions: ScanActions) -> None:
     """T28-F: Ctrl-C caught in the loop is the `q` quit flow: idle quits,
-    running work opens `quit_confirm`, a second Ctrl-C there Detaches, and
-    one while detaching stops waiting."""
+    running work opens `quit_confirm`, a second Ctrl-C there Detaches. One
+    while detaching is ignored until the run is reaped and recorded; only
+    past the deadline does it stop waiting."""
     if state.detach_deadline is not None:
-        state.should_quit = True
+        if time.monotonic() >= state.detach_deadline:
+            state.should_quit = True
+        else:
+            state.message = (
+                "detaching... Ctrl-C is ignored until the run is reaped and recorded"
+            )
     elif state.mode == "quit_confirm" and state.projects:
         _begin_detach(state, state.active_project, actions)
     else:
@@ -6048,6 +6195,7 @@ def _render_project_table(project: ProjectState) -> Panel:
             _safe(f"{path}:{_finding_line(row)}"),
             Text(sev, style=_severity_style(sev)),
             _safe(f"[{verdict}] {message}" if verdict else message),
+            style=_selection_style(project) if marker else None,
         )
     # T28-C: a tool outcome with no findings (clean/skipped/denied/error)
     # still gets its own selectable row with its status and reason; below
@@ -6071,6 +6219,7 @@ def _render_project_table(project: ProjectState) -> Panel:
             Text("-"),
             Text(status, style=_severity_style(status)),
             _safe(reason),
+            style=_selection_style(project) if marker else None,
         )
         outcome_lines.append(
             _safe(
@@ -6568,12 +6717,14 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     table.add_column("run / attempt")
     table.add_column("size", width=10)
     for idx, row in enumerate(page_rows):
+        selected = page * PAGE_SIZE + idx == view.selection
         table.add_row(
-            Text(">" if page * PAGE_SIZE + idx == view.selection else ""),
+            Text(">" if selected else ""),
             _safe(f"{row.get('tool_id')}:{row.get('path')}"),
             _safe(f"{row.get('category')} {row.get('media_type') or 'unknown'}"),
             _safe(f"{row.get('run_id')} / {row.get('attempt_id')}"),
             _safe(row.get("size")),
+            style=_selection_style(project) if selected else None,
         )
     lines.append(table)
     evidence = _evidence_rows(view)
@@ -6826,7 +6977,10 @@ def _finding_panel(
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
-    return Panel(Group(*parts), title=title, style="magenta"), start
+    # T28-F: the pane fades in over `detail_ms` after the selection moved.
+    fading = _motion_running(project, _TERMINAL_MOTION["detail_ms"])
+    style = "magenta dim" if fading else "magenta"
+    return Panel(Group(*parts), title=title, style=style), start
 
 
 def _render_map_detail(state: TuiState, project: ProjectState) -> Panel:
@@ -6987,6 +7141,7 @@ def _render_memory_admin(state: TuiState) -> Panel:
             _safe(item.get("trust_tier", "")),
             _safe(item.get("source", "")),
             "yes" if item.get("stale") else "no",
+            style=_state_selection_style(state) if cursor == ">" else None,
         )
     lines.append(table)
     lines.append(
@@ -7167,6 +7322,7 @@ def _render_git_panel(state: TuiState) -> Panel:
             _safe(commit.get("author", "")),
             _safe(commit.get("date", "")),
             _safe(commit.get("subject", "")),
+            style=_state_selection_style(state) if marker == ">" else None,
         )
     lines.append(history_table)
 
@@ -7230,12 +7386,10 @@ def _render_nav_pane(state: TuiState) -> Panel:
     for idx, section in enumerate(SECTIONS):
         current = section == state.section
         cursor = ">" if (focus_nav and idx == state.nav_index) or current else " "
-        lines.append(
-            Text(
-                f"{cursor}{idx + 1} {SECTION_LABELS[section]}",
-                style=THEME["blue"] if current else THEME["text_muted"],
-            )
-        )
+        style = THEME["blue"] if current else THEME["text_muted"]
+        if focus_nav and idx == state.nav_index:
+            style = f"{style} {_state_selection_style(state)}"
+        lines.append(Text(f"{cursor}{idx + 1} {SECTION_LABELS[section]}", style=style))
     lines.append(Text("Projects", style="bold"))
     lines.extend(
         _safe(
@@ -7252,28 +7406,45 @@ def _render_nav_pane(state: TuiState) -> Panel:
             cursor = (
                 ">" if state.focus == "actions" and idx == state.action_index else " "
             )
+            style = THEME["text"] if ok else THEME["text_muted"]
+            if cursor == ">":
+                style = f"{style} {_state_selection_style(state)}"
             lines.append(
                 Text(
                     f"{cursor}{action.label}" + ("" if ok else f" ({reason})"),
-                    style=THEME["text"] if ok else THEME["text_muted"],
+                    style=style,
                 )
             )
     return Panel(Group(*lines), title="Navigate", style=THEME["border"])
 
 
 def _render_section_chooser(state: TuiState) -> Panel:
+    rows = _chooser_rows()
+    # T28-F: at most the rows the main area holds (the 3-row header, the
+    # footer, the panel's 2 border rows and the blank + hint rows), scrolled
+    # so the cursor stays on screen and j/k reach every row.
+    footer = _footer_height(state, _footer_status_line(state, state.active_project))
+    window = max(1, state.terminal_size[1] - 3 - footer - 4)
+    start = min(max(0, state.chooser_index - window // 2), max(0, len(rows) - window))
     lines: list[Any] = []
-    for idx, (target, label) in enumerate(_chooser_rows()):
+    for idx, (target, label) in enumerate(rows[start : start + window], start):
         number = f"{idx + 1} " if target.startswith("section:") else "  "
+        selected = idx == state.chooser_index
         lines.append(
             Text(
-                f"{'>' if idx == state.chooser_index else ' '}{number}{label}",
-                style=THEME["blue"] if idx == state.chooser_index else THEME["text"],
+                f"{'>' if selected else ' '}{number}{label}",
+                style=f"{THEME['blue']} {_state_selection_style(state)}"
+                if selected
+                else THEME["text"],
             )
         )
     lines.append(Text(""))
     lines.append(Text("[1-8] go  [enter] choose  [escape] close", style="bold yellow"))
-    return Panel(Group(*lines), title="Sections", style=THEME["border"])
+    title = "Sections"
+    if window < len(rows):
+        end = min(len(rows), start + window)
+        title = f"Sections {start + 1}-{end} of {len(rows)} (j/k scroll)"
+    return Panel(Group(*lines), title=title, style=THEME["border"])
 
 
 def _render_form(state: TuiState) -> Panel:
@@ -7300,7 +7471,7 @@ def _render_project_selector(state: TuiState) -> Panel:
             safe_terminal_text(
                 f"{'>' if idx == state.project_selector_index else ' '}{p.name}"
             ),
-            style=THEME["blue"]
+            style=f"{THEME['blue']} {_state_selection_style(state)}"
             if idx == state.project_selector_index
             else THEME["text"],
         )
@@ -7312,7 +7483,9 @@ def _render_project_selector(state: TuiState) -> Panel:
         lines.append(
             Text(
                 f"{'>' if selected else ' '}{label}",
-                style=THEME["blue"] if selected else THEME["text"],
+                style=f"{THEME['blue']} {_state_selection_style(state)}"
+                if selected
+                else THEME["text"],
             )
         )
     lines.append(Text(""))
@@ -7340,7 +7513,12 @@ def _render_map(state: TuiState, project: ProjectState) -> Panel:
         glyph = ""
         if node.get("children"):
             glyph = "[-] " if node["key"] in state.map_expanded else "[+] "
-        lines.append(_safe(f"{marker}{indent}{glyph}{node['label']}"))
+        lines.append(
+            _safe(
+                f"{marker}{indent}{glyph}{node['label']}",
+                _selection_style(project) if marker == ">" else "",
+            )
+        )
     if not lines:
         lines.append(Text("No findings."))
     return Panel(Group(*lines), title="Map", style=THEME["blue"])
@@ -7393,12 +7571,19 @@ def _unavailable_line(state: TuiState) -> Text:
 def _set_footer(layout: Layout, state: TuiState, status: Text) -> None:
     """The status line above the keymap footer; the footer grows to the
     keymap's wrapped height so `?:Help` is never cut off."""
-    keymap = _keymap_footer(state)
+    layout["footer"].size = _footer_height(state, status)
+    layout["footer"].update(
+        Panel(Group(status, _keymap_footer(state)), style=_FOOTER_STYLE)
+    )
+
+
+def _footer_height(state: TuiState, status: Text) -> int:
+    """The footer's rows: its 2 border rows plus the status line and the
+    keymap line, each wrapped to the terminal width."""
     inner = max(1, state.terminal_size[0] - 4)
     measure = Console(width=inner, file=io.StringIO())
-    rows = sum(max(1, len(text.wrap(measure, inner))) for text in (status, keymap))
-    layout["footer"].size = 2 + rows
-    layout["footer"].update(Panel(Group(status, keymap), style=_FOOTER_STYLE))
+    texts = (status, _keymap_footer(state))
+    return 2 + sum(max(1, len(text.wrap(measure, inner))) for text in texts)
 
 
 def _render_resize_guidance(state: TuiState) -> Panel:
@@ -7464,14 +7649,19 @@ def _render_no_projects(state: TuiState) -> Layout:
 
 
 def _render_detaching(state: TuiState) -> Panel:
-    remaining = max(0.0, (state.detach_deadline or 0.0) - time.monotonic())
+    remaining = (state.detach_deadline or 0.0) - time.monotonic()
+    when = (
+        f"Exits once the run is reaped and recorded, within {remaining:.0f}s."
+        if remaining > 0
+        else "The run is overdue; Ctrl-C exits now."
+    )
     return Panel(
         Group(
             Text(
                 "Detaching -- cancelling the local run and stopping its processes.",
                 style="bold yellow",
             ),
-            Text(f"Exits within {remaining:.0f}s. Ctrl-C exits now."),
+            Text(when),
         ),
         title="Detaching",
         style=THEME["border"],
@@ -7663,9 +7853,9 @@ def run_interactive_tui(
     if state.projects:
         state.load_requests.add((project_key(state.active_project), "overview"))
 
-    # P69-06 CONNECT: explicit active/idle refresh-rate limiter -- 20Hz while
-    # a key was just dispatched or a scan is running, 4Hz otherwise -- rather
-    # than refreshing on every tick unconditionally.
+    # P69-06 CONNECT / T28-F: refreshes are capped at 20Hz (reduced motion
+    # included); a change, running work or motion refreshes in the next 50ms
+    # slot, and normal motion keeps a 4Hz idle heartbeat.
     _pump(state, actions)  # immediate outcomes are in the first frame
     _ACTIVE_REFRESH_INTERVAL = 1.0 / 20
     _IDLE_REFRESH_INTERVAL = 1.0 / 4
@@ -7678,9 +7868,17 @@ def run_interactive_tui(
     # restored; a closed input is never read again (it would spin).
     exit_cause = ""
     input_closed = False
-    # Carries a Ctrl-C handled mid-tick into the next tick's refresh.
-    interrupted = False
+    # T28-F: a change not yet shown; carried across ticks until a refresh.
+    dirty = False
+    was_continuous = False
     reveal_key = _row_reveal_key(state)
+    selection_key = _selection_key(state)
+    # T28-F: Ctrl-C only sets a flag (the loop runs the quit flow after the
+    # tick's key), so it never tears down the loop mid-frame.
+    sigint = threading.Event()
+    previous_sigint: Any = None
+    if threading.current_thread() is threading.main_thread():
+        previous_sigint = signal.signal(signal.SIGINT, lambda *_: sigint.set())
     with raw_terminal():
         live = (
             Live(
@@ -7699,86 +7897,101 @@ def run_interactive_tui(
                 if max_ticks is not None and ticks >= max_ticks:
                     break
                 ticks += 1
-                try:
-                    size = reader.get_size()
-                    resized = size != state.terminal_size
-                    if resized:
-                        state.terminal_size = size
+                size = reader.get_size()
+                if size != state.terminal_size:
+                    state.terminal_size = size
+                    dirty = True
 
-                    applied = _pump(state, actions)
-                    _poll_running_scans(state, actions)
-                    _poll_detach(state)
+                if _pump(state, actions):
+                    dirty = True
+                _start_dashboard_observers(state)
+                _poll_running_scans(state, actions)
+                _poll_detach(state)
 
-                    key: str | None = None
-                    if input_closed:
-                        time.sleep(tick_seconds)
-                    else:
-                        key = reader.read_key(tick_seconds)
-                    if key == EOF:
-                        input_closed = True
-                        exit_cause = (
-                            "rush ui: input reached end-of-file; detached and "
-                            "restored the terminal"
-                        )
-                        _handle_eof(state, actions)
-                    elif key is not None:
-                        _dispatch_key(state, key, actions)
-                    status_changed = _reload_after_finished_work(state, seen_statuses)
-
-                    # T28-F: a changed findings view reveals its rows one per
-                    # 40ms (capped at 240ms); reduced motion shows them all.
-                    new_reveal_key = _row_reveal_key(state)
-                    if new_reveal_key != reveal_key:
-                        reveal_key = new_reveal_key
-                        if state.projects and not reduced_motion:
-                            state.active_project.row_reveal_started = time.monotonic()
-                    revealing = _row_reveal_active(state)
-
-                    if live is not None:
-                        setup_events = sum(
-                            len(p.setup_apply_events) for p in state.projects
-                        )
-                        has_activity = (
-                            key is not None
-                            or interrupted
-                            or applied
-                            or resized
-                            or revealing
-                            or setup_events != seen_setup_events
-                            or status_changed
-                            or state.detach_deadline is not None
-                            or any(
-                                p.status in ("scanning", "cancelling")
-                                for p in state.projects
-                            )
-                        )
-                        seen_setup_events = setup_events
-                        # U04 fix: reduced motion renders the final state
-                        # (already shown once by `Live(render_app(state), ...)`
-                        # above) and never refreshes again on an idle timer --
-                        # only a real key/scan event re-renders. Normal motion
-                        # keeps its active/idle heartbeat regardless.
-                        if reduced_motion:
-                            if has_activity:
-                                live.update(render_app(state), refresh=True)
-                                interrupted = False
-                        else:
-                            interval = (
-                                _ACTIVE_REFRESH_INTERVAL
-                                if has_activity
-                                else _IDLE_REFRESH_INTERVAL
-                            )
-                            now = time.monotonic()
-                            if now - last_refresh >= interval:
-                                live.update(render_app(state), refresh=True)
-                                last_refresh = now
-                                interrupted = False
-                except KeyboardInterrupt:
-                    # T28-F: Ctrl-C is the quit flow, never an uncaught
-                    # interrupt tearing down the loop mid-frame.
-                    interrupted = True
+                key: str | None = None
+                if input_closed:
+                    time.sleep(tick_seconds)
+                else:
+                    timeout = tick_seconds
+                    if dirty and live is not None:
+                        # A pending change is shown in the next 50ms slot.
+                        slot = last_refresh + _ACTIVE_REFRESH_INTERVAL
+                        timeout = max(0.0, min(tick_seconds, slot - time.monotonic()))
+                    try:
+                        key = reader.read_key(timeout)
+                    except KeyboardInterrupt:
+                        sigint.set()
+                if key == EOF:
+                    input_closed = True
+                    exit_cause = (
+                        "rush ui: input reached end-of-file; detached and "
+                        "restored the terminal"
+                    )
+                    _handle_eof(state, actions)
+                elif key is not None:
+                    _dispatch_key(state, key, actions)
+                if key is not None:
+                    dirty = True
+                if sigint.is_set():
+                    sigint.clear()
+                    dirty = True
                     _handle_sigint(state, actions)
+                if _reload_after_finished_work(state, seen_statuses):
+                    dirty = True
+
+                # T28-F: a changed findings view reveals its rows one per
+                # 40ms (capped at 240ms); a moved selection's highlight and
+                # detail pane move in over `selection_ms`/`detail_ms`.
+                # Reduced motion shows the final state at once.
+                new_reveal_key = _row_reveal_key(state)
+                if new_reveal_key != reveal_key:
+                    reveal_key = new_reveal_key
+                    if state.projects and not reduced_motion:
+                        state.active_project.row_reveal_started = time.monotonic()
+                new_selection_key = _selection_key(state)
+                if new_selection_key != selection_key:
+                    selection_key = new_selection_key
+                    if state.projects and not reduced_motion:
+                        state.active_project.selection_started = time.monotonic()
+
+                setup_events = sum(len(p.setup_apply_events) for p in state.projects)
+                if setup_events != seen_setup_events:
+                    seen_setup_events = setup_events
+                    dirty = True
+                motion_project = state.active_project if state.projects else None
+                continuous = (
+                    _row_reveal_active(state)
+                    or _motion_running(
+                        motion_project,
+                        max(
+                            _TERMINAL_MOTION["selection_ms"],
+                            _TERMINAL_MOTION["detail_ms"],
+                        ),
+                    )
+                    or state.detach_deadline is not None
+                    or any(
+                        p.status in ("scanning", "cancelling") for p in state.projects
+                    )
+                )
+                if was_continuous and not continuous:
+                    dirty = True  # the motion's final frame
+                was_continuous = continuous
+
+                if live is not None:
+                    now = time.monotonic()
+                    elapsed = now - last_refresh + 1e-9
+                    if (
+                        (dirty or continuous) and elapsed >= _ACTIVE_REFRESH_INTERVAL
+                    ) or (not reduced_motion and elapsed >= _IDLE_REFRESH_INTERVAL):
+                        live.update(render_app(state), refresh=True)
+                        last_refresh = now
+                        dirty = False
+            if live is not None and dirty:
+                # A change still waiting for its slot is shown before exit.
+                live.update(render_app(state), refresh=True)
         finally:
+            if previous_sigint is not None:
+                signal.signal(signal.SIGINT, previous_sigint)
             if live is not None:
                 live.stop()
 
@@ -7799,6 +8012,30 @@ def _row_reveal_key(state: TuiState) -> tuple[Any, ...]:
         project.detail_page,
         project.filter_text,
         len(project.results),
+    )
+
+
+def _selection_key(state: TuiState) -> tuple[Any, ...]:
+    """T28-F: where the selection is; a change restarts its motion."""
+    if not state.projects:
+        return ()
+    project = state.active_project
+    artifacts = state.views.get((project_key(project), "artifacts"))
+    return (
+        state.active_index,
+        state.section,
+        state.mode,
+        state.overlay,
+        state.focus,
+        project.selected_index,
+        state.nav_index,
+        state.action_index,
+        state.chooser_index,
+        state.git_selected,
+        state.memory_selected_index,
+        state.map_selected_index,
+        state.project_selector_index,
+        artifacts.selection if artifacts is not None else None,
     )
 
 
