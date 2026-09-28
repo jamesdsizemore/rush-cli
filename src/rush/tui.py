@@ -929,6 +929,10 @@ class TuiState:
     git_dirty_index: int = -1
     # T28-E: the Tokens run-id filter entry (mode == "tokens_filter").
     tokens_filter_buffer: str = ""
+    # T28-E: (project key, section) whose last worker staleness check found
+    # nothing changed; the next loop tick starts none, so checks alternate
+    # with idle ticks instead of running back to back.
+    stale_cooldown: set[tuple[str, str]] = field(default_factory=set)
     # T28-A: Tab/Shift+Tab focus position (`FOCUS_CYCLE`; `active_pane` alias).
     focus: str = "list"
     section: str = "overview"
@@ -4342,15 +4346,16 @@ def _load_overview_section(
 
 
 def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
-    """Tokens reload only when root, filter, or telemetry mtime changes."""
-    db = Path(root) / ".rush" / "telemetry" / "tokens.db"
-    mtimes: list[Any] = []
-    for path in (db, db.with_name("tokens.db-wal")):
-        try:
-            mtimes.append(path.stat().st_mtime_ns)
-        except OSError:
-            mtimes.append(None)
-    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+    """Tokens reload only when root, filter, or one of the token inputs (the
+    telemetry DB, a run manifest, a handoff) changes. Stats and a glob of
+    every attempt: computed on a worker thread, never on the loop thread."""
+    from rush.workflows import projects as wp
+
+    return (
+        str(root),
+        tuple(sorted(filters.items())),
+        wp.token_usage_signature(Path(root)),
+    )
 
 
 def _load_tokens_section(
@@ -4381,40 +4386,91 @@ def _load_tokens_section(
     return "populated", None, {**data, **marker}
 
 
-def _request_stale_tokens(state: TuiState) -> None:
-    """T28-E: once per loop tick (two `stat`s, no read), re-request the open
-    Tokens view when its root, filter, telemetry mtime or project id no
-    longer match the loaded result."""
-    if not state.projects or state.section != "tokens":
+_STALE_CHECKED = ("tokens", "artifacts")
+
+
+def _request_stale_checks(state: TuiState) -> None:
+    """T28-E: check the open Tokens or Artifacts view for staleness on a
+    worker thread -- one check in flight at a time, none on the tick right
+    after one found nothing changed. Its cache key (a glob and `stat`s of
+    every input) is computed there, and `_drain_results` re-requests the
+    view when the key or project id no longer match the loaded result. The
+    loop thread only starts the check."""
+    if not state.projects or state.section not in _STALE_CHECKED:
         return
+    section = state.section
     project = state.active_project
-    view = state.views.get((project_key(project), "tokens"))
-    if view is None or "tokens" in project.pending:
+    pkey = project_key(project)
+    view = state.views.get((pkey, section))
+    check = f"{section}:stale"
+    if view is None or section in project.pending or check in project.pending:
         return
+    if (pkey, section) in state.stale_cooldown:
+        state.stale_cooldown.discard((pkey, section))
+        return
+    generation = project.begin_request(check)
+    identity = project.identity()
+    root, filters, results = project.root, dict(view.filters), state.result_queue
+
+    def _worker() -> None:
+        payload: Any = "staleness check failed"
+        ok = False
+        try:
+            key_of = _tokens_cache_key if section == "tokens" else _artifacts_cache_key
+            payload, ok = (key_of(root, filters), filters), True
+        finally:  # always posted, so the check never stays pending
+            results.put((project, check, generation, identity, ok, payload))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_stale_check(
+    state: TuiState, project: ProjectState, section: str, ok: bool, payload: Any
+) -> None:
+    """A finished staleness check: re-request `section` when its loaded key
+    or project id no longer match (a filter changed since is re-requested by
+    its own key handler)."""
+    view = state.views.get((project_key(project), section))
+    if not ok or view is None or section in project.pending:
+        return
+    key, filters = payload
     data = view.data if isinstance(view.data, Mapping) else {}
-    if (
-        data.get("_cache_key") != _tokens_cache_key(project.root, view.filters)
-        or data.get("_project_id") != project.project_id
+    if filters == view.filters and (
+        data.get("_cache_key") != key or data.get("_project_id") != project.project_id
     ):
-        state.load_requests.add((project_key(project), "tokens"))
+        state.load_requests.add((project_key(project), section))
+    else:
+        state.stale_cooldown.add((project_key(project), section))
+
+
+_TOKEN_FILTERS = {"run": "run_id", "agent": "agent_id", "session": "session_id"}
 
 
 def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
-    """T28-E: `/` in Tokens -- type a run id; Enter filters by that stored
-    `run_id` identity, Escape clears the run filter."""
-    view = state.views.setdefault(
-        (project_key(state.active_project), "tokens"), SectionView()
-    )
+    """T28-E: `/` in Tokens -- type `run:<id>`, `agent:<id>` or
+    `session:<id>` (a bare id is a run id); Enter filters by that stored
+    identity (an empty id clears it), Escape clears every identity filter.
+    Either re-requests the view on the section worker."""
+    project = state.active_project
+    view = state.views.setdefault((project_key(project), "tokens"), SectionView())
     if key == "enter":
-        run_id = state.tokens_filter_buffer.strip()
-        if run_id:
-            view.filters["run_id"] = run_id
+        text = state.tokens_filter_buffer.strip()
+        name, sep, value = text.partition(":")
+        field_name = _TOKEN_FILTERS.get(name.strip().lower()) if sep else None
+        if field_name is None:
+            field_name, value = "run_id", text
+        value = value.strip()
+        if value:
+            view.filters[field_name] = value
         else:
-            view.filters.pop("run_id", None)
+            view.filters.pop(field_name, None)
         state.mode = "list"
+        state.load_requests.add((project_key(project), "tokens"))
     elif key == "escape":
-        view.filters.pop("run_id", None)
+        for field_name in _TOKEN_FILTERS.values():
+            view.filters.pop(field_name, None)
         state.mode = "list"
+        state.load_requests.add((project_key(project), "tokens"))
     elif key == "backspace":
         state.tokens_filter_buffer = state.tokens_filter_buffer[:-1]
     elif len(key) == 1 and key.isprintable():
@@ -4422,8 +4478,9 @@ def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -
 
 
 def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
-    """Artifacts reload only when root, filter, an attempt manifest or the
-    handoff directory changes."""
+    """Artifacts reload only when root, a read filter, an attempt manifest or
+    the handoff directory changes (the `/` query filters the loaded index,
+    so it is not part of the key). Computed on a worker thread."""
     root = Path(root)
     paths = sorted(root.glob(".rush/runs/*/attempts/*/manifest.json"))
     mtimes: list[Any] = []
@@ -4432,43 +4489,75 @@ def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, .
             mtimes.append((path.as_posix(), path.stat().st_mtime_ns))
         except OSError:
             mtimes.append((path.as_posix(), None))
-    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+    read_filters = {k: v for k, v in filters.items() if k != "query"}
+    return (str(root), tuple(sorted(read_filters.items())), tuple(mtimes))
+
+
+def _load_artifacts_section(
+    root: Path,
+    project_id: str | None,
+    data_root: Path | None,
+    actions: ScanActions,
+    *,
+    filters: Mapping[str, Any] | None = None,
+) -> LoadOutcome:
+    """The Artifacts section loader (`_SECTION_LOADERS`), on the worker."""
+    return _read_artifacts_index(root, project_id, data_root, filters)
+
+
+def _read_artifacts_index(
+    root: Path,
+    project_id: str | None,
+    data_root: Path | None,
+    filters: Mapping[str, Any] | None,
+) -> LoadOutcome:
+    """T28-E: one `list_project_artifacts` read carrying the cache key (taken
+    before the read) and project id it was read for."""
+    marker = {
+        "_cache_key": _artifacts_cache_key(root, dict(filters or {})),
+        "_project_id": project_id,
+    }
+    if project_id is None:
+        return "unavailable", "project not registered", marker
+    from rush.workflows import projects as wp
+
+    try:
+        data = dict(wp.list_project_artifacts(project_id, data_root=data_root))
+    except (wp.ProjectError, OSError, ValueError) as exc:
+        return "failed", str(exc) or type(exc).__name__, marker
+    lists = [v for v in data.values() if isinstance(v, list)]
+    if lists and not any(lists):
+        return "empty", "no artifacts recorded yet", {**data, **marker}
+    return "populated", None, {**data, **marker}
+
+
+def _apply_artifacts_outcome(
+    view: SectionView, outcome: LoadOutcome, generation: int | None = None
+) -> None:
+    """Land a loaded index in place: the selection (clamped), the `/` query
+    and an open inspected detail survive a refresh."""
+    view_state, reason, data = outcome
+    detail = view.data.get("_detail") if isinstance(view.data, Mapping) else None
+    view.state, view.reason = view_state, reason
+    view.data = {**data, "_detail": detail} if detail is not None else dict(data)
+    view.selection = min(view.selection, max(0, _artifact_row_count(view) - 1))
+    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if generation is not None:
+        view.generation = generation
 
 
 def _refresh_artifacts_view(state: TuiState, project: ProjectState) -> SectionView:
-    """The cached Artifacts index (`list_project_artifacts`): one read per
-    root/filter/manifest change, never one per painted frame."""
-    view = state.views.setdefault((project_key(project), "artifacts"), SectionView())
-    key = _artifacts_cache_key(project.root, view.filters)
-    if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
-        return view
-    from rush.workflows import projects as wp
-
-    if project.project_id is None:
-        view.state, view.reason, view.data = (
-            "unavailable",
-            "project not registered",
-            {"_cache_key": key},
-        )
-        return view
-    try:
-        data = dict(
-            wp.list_project_artifacts(project.project_id, data_root=state.data_root)
-        )
-    except (wp.ProjectError, OSError, ValueError) as exc:
-        view.state, view.reason = "failed", str(exc) or type(exc).__name__
-        view.data = {"_cache_key": key}
-        return view
-    data["_cache_key"] = key
-    lists = [v for v in data.values() if isinstance(v, list)]
-    if lists and not any(lists):
-        view.state, view.reason = "empty", "no artifacts recorded yet"
-    else:
-        view.state, view.reason = "populated", None
-    view.data = data
-    view.selection = min(view.selection, max(0, len(_captured_rows(view)) - 1))
-    view.scroll = 0
-    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """The Artifacts view for a key handler (entering the section, inspect,
+    export). No artifact I/O on the input thread: when nothing is loaded yet
+    the section loader is queued for the worker (the view renders "loading"
+    until its result drains); a loaded index is kept fresh by the worker
+    staleness check (`_request_stale_checks`), never re-read here and never
+    by the renderer."""
+    key = (project_key(project), "artifacts")
+    view = state.views.setdefault(key, SectionView())
+    if not isinstance(view.data, Mapping) or "_cache_key" not in view.data:
+        state.load_requests.add(key)
+        view.scroll = 0
     return view
 
 
@@ -4498,6 +4587,56 @@ def _selected_artifact(view: SectionView) -> Mapping[str, Any] | None:
     return rows[view.selection] if 0 <= view.selection < len(rows) else None
 
 
+def _evidence_rows(
+    view: SectionView, *, filtered: bool = True
+) -> list[tuple[str, Mapping[str, Any]]]:
+    """Every other shared evidence item (scan outputs, handoffs, memory and
+    any bucket added later) as (bucket, reference record), in bucket order;
+    with `filtered`, only those whose bucket, reference or type contains the
+    committed `/` query."""
+    data = view.data if isinstance(view.data, Mapping) else {}
+    rows: list[tuple[str, Mapping[str, Any]]] = []
+    for bucket, items in data.items():
+        if bucket == "captured" or str(bucket).startswith("_"):
+            continue
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            record = item if isinstance(item, Mapping) else {"artifact_ref": item}
+            rows.append((str(bucket), record))
+    query = str(view.filters.get("query") or "").lower() if filtered else ""
+    if not query:
+        return rows
+    return [
+        (bucket, record)
+        for bucket, record in rows
+        if any(
+            query in str(value or "").lower()
+            for value in (
+                bucket,
+                record.get("artifact_ref"),
+                record.get("category"),
+                record.get("kind"),
+            )
+        )
+    ]
+
+
+def _artifact_row_count(view: SectionView) -> int:
+    """The one Artifacts index: captured rows, then evidence rows."""
+    return len(_captured_rows(view)) + len(_evidence_rows(view))
+
+
+def _selected_evidence(view: SectionView) -> tuple[str, Mapping[str, Any]] | None:
+    index = view.selection - len(_captured_rows(view))
+    rows = _evidence_rows(view)
+    return rows[index] if 0 <= index < len(rows) else None
+
+
+def _evidence_record_text(record: Mapping[str, Any]) -> str:
+    return json.dumps(record, indent=2, sort_keys=True, default=str)
+
+
 def _artifact_cursor(project_id: str, item: Mapping[str, Any]) -> str:
     """The first-page cursor binding project/run/attempt/tool/path/sha256."""
     payload = {
@@ -4519,6 +4658,21 @@ def _artifact_inspect(state: TuiState, actions: ScanActions) -> None:
     project = state.active_project
     view = _refresh_artifacts_view(state, project)
     item = _selected_artifact(view)
+    evidence = _selected_evidence(view)
+    if item is None and evidence is not None and isinstance(view.data, dict):
+        # A reference record (handoff, scan output, memory, unknown bucket):
+        # its safe generic detail is the record itself, never executed.
+        bucket, record = evidence
+        text = _evidence_record_text(record)
+        view.data["_detail"] = {
+            "ref": record.get("artifact_ref"),
+            "evidence": bucket,
+            "text": text,
+            "size": len(text.encode("utf-8")),
+        }
+        view.scroll = 0
+        state.message = f"{bucket} reference {record.get('artifact_ref')}"
+        return
     if item is None or project.project_id is None or not isinstance(view.data, dict):
         state.message = "no captured artifact selected"
         return
@@ -4605,6 +4759,13 @@ def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
     project = state.active_project
     view = _refresh_artifacts_view(state, project)
     item = _selected_artifact(view)
+    evidence = _selected_evidence(view)
+    if item is None and evidence is not None:
+        state.message = (
+            f"export applies to captured artifacts; {evidence[1].get('artifact_ref')} "
+            f"is a {evidence[0]} reference (i inspects it)"
+        )
+        return
     if item is None or project.project_id is None:
         state.message = "no captured artifact selected"
         return
@@ -4673,7 +4834,7 @@ def _artifacts_move(state: TuiState, step: int) -> None:
     if isinstance(view.data.get("_detail"), Mapping):
         view.scroll = max(0, view.scroll + step)
         return
-    count = len(_captured_rows(view))
+    count = _artifact_row_count(view)
     if count:
         view.selection = max(0, min(count - 1, view.selection + step))
 
@@ -4694,6 +4855,7 @@ _SECTION_LOADERS: dict[
     "scans": _load_scans_section,
     "setup": _load_setup_section,
     "tokens": _load_tokens_section,
+    "artifacts": _load_artifacts_section,
 }
 
 
@@ -4720,6 +4882,11 @@ def _submit(
         view = state.views[key]
         view.state, view.reason, view.data = "loading", None, None
         loader = functools.partial(_load_tokens_section, filters=dict(view.filters))
+    elif section == "artifacts":
+        # The loaded index stays visible while it refreshes.
+        loader = functools.partial(
+            _load_artifacts_section, filters=dict(state.views[key].filters)
+        )
     args = (project.root, project.project_id, state.data_root, actions)
     results = state.result_queue
 
@@ -4780,6 +4947,9 @@ def _drain_results(state: TuiState) -> bool:
             continue  # superseded, switched away, or identity changed
         del project.pending[section]
         applied = True
+        if section.endswith(":stale"):
+            _apply_stale_check(state, project, section.split(":")[0], ok, payload)
+            continue
         if section.startswith("git"):
             # T28-E: a `_git_request` read; Git state is the active project's.
             if project is state.active_project:
@@ -4794,6 +4964,9 @@ def _drain_results(state: TuiState) -> bool:
                 _apply_registration(state, project, registration)
         key = (project_key(project), section)
         prior = state.views.get(key)
+        if ok and section == "artifacts" and prior is not None:
+            _apply_artifacts_outcome(prior, payload, generation)
+            continue
         if ok:
             view_state, reason, data = payload
             if (
@@ -4825,7 +4998,7 @@ def _pump(state: TuiState, actions: ScanActions) -> bool:
     section already loading is not started again (F5 cannot pile up
     threads). True when a result was applied, so the screen must redraw."""
     applied = _drain_results(state)
-    _request_stale_tokens(state)
+    _request_stale_checks(state)
     requests, state.load_requests = state.load_requests, set()
     for pkey, section in requests:
         for project in state.projects:
@@ -4894,6 +5067,11 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
         _load_git_view(state, project, actions)
     elif section == "memory":
         _memory_submit(state, project, actions, "list", _memory_refresh)
+    elif section == "artifacts":
+        # Nothing loaded: the worker load is queued; a loaded index gets an
+        # immediate worker staleness check on the next tick instead.
+        _refresh_artifacts_view(state, project)
+        state.stale_cooldown.discard((project_key(project), section))
     elif section in _SECTION_LOADERS:
         state.load_requests.add((project_key(project), section))
 
@@ -5263,8 +5441,6 @@ def _cancel(state: TuiState, actions: ScanActions) -> None:
 def _refresh(state: TuiState, actions: ScanActions) -> None:
     if state.section == "git":
         _load_git_view(state, state.active_project, actions)
-    elif state.section == "artifacts":
-        state.views.pop((project_key(state.active_project), "artifacts"), None)
     elif state.section in _SECTION_LOADERS:
         state.load_requests.add((project_key(state.active_project), state.section))
     state.message = f"refreshing {SECTION_LABELS[state.section]}"
@@ -6108,15 +6284,12 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
     if section == "tokens" and view is not None:
-        run_id = view.filters.get("run_id")
-        lines.append(
-            _safe(f"run filter: {run_id}" if run_id else "run filter: none (/ run id)")
-        )
+        lines.extend(_tokens_scope_lines(view))
         if state.mode == "tokens_filter":
             lines.append(
                 _safe(
-                    f"run id> {state.tokens_filter_buffer}_  "
-                    "(Enter apply, Escape clear)",
+                    f"filter> {state.tokens_filter_buffer}_  "
+                    "(run:<id> agent:<id> session:<id>; Enter apply, Escape clear)",
                     "bold",
                 )
             )
@@ -6125,6 +6298,51 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     else:
         lines.extend(_data_lines(view.data))
     return Panel(Group(*lines), title=label, style=THEME["border"])
+
+
+def _tokens_scope_lines(view: SectionView) -> list[Text]:
+    """What the Tokens numbers are attributed to (the stored run/agent/session
+    identities filtered on), the measurement interval, and the unscoped
+    events: excluded from a scoped selection, shown here as their own
+    labelled count and never assigned to it."""
+    filters = view.filters
+    scoped = any(filters.get(key) for key in _TOKEN_FILTERS.values())
+    lines = [
+        _safe(
+            "attribution: "
+            + " | ".join(
+                f"{label} {filters.get(key) or 'all'}"
+                for label, key in _TOKEN_FILTERS.items()
+            )
+            + "  (/ run:<id> agent:<id> session:<id>)"
+        )
+    ]
+    data = view.data if isinstance(view.data, Mapping) else {}
+    interval = data.get("interval")
+    if isinstance(interval, Mapping):
+        if interval.get("earliest"):
+            lines.append(
+                _safe(f"interval: {interval['earliest']} .. {interval.get('latest')}")
+            )
+        else:
+            lines.append(_safe("interval: no stored event time in this selection"))
+    unscoped = data.get("unscoped")
+    if isinstance(unscoped, Mapping):
+        count = int(unscoped.get("event_count") or 0)
+        keys = ", ".join(str(k) for k in unscoped.get("identity_keys") or [])
+        lines.append(
+            _safe(
+                f"unscoped: {count} {'event' if count == 1 else 'events'} "
+                f"without stored {keys} identity "
+                + (
+                    "(excluded from this selection)"
+                    if scoped
+                    else "(included in project totals)"
+                ),
+                "yellow" if count else "",
+            )
+        )
+    return lines
 
 
 _ARTIFACT_ERROR_GUIDANCE = {
@@ -6140,7 +6358,12 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     """Every captured artifact (identity/type/run/size, paginated around the
     selection), the other shared evidence buckets, and the inspected text.
     Every recorded string goes through `_safe`."""
-    view = _refresh_artifacts_view(state, project)
+    key = (project_key(project), "artifacts")
+    view = state.views.get(key)
+    if view is None:
+        # No I/O here: the section worker loads it.
+        view = state.views[key] = SectionView()
+        state.load_requests.add(key)
     lines: list[Any] = list(_view_state_lines("Artifacts", view))
     rows = _captured_rows(view)
     total = len(_captured_rows(view, filtered=False))
@@ -6159,7 +6382,7 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
                 "bold yellow",
             )
         )
-    page = view.selection // PAGE_SIZE
+    page = min(view.selection, max(0, len(rows) - 1)) // PAGE_SIZE
     page_rows, total_pages = paginate(rows, page)
     table = Table(
         expand=True,
@@ -6179,20 +6402,38 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
             _safe(row.get("size")),
         )
     lines.append(table)
+    evidence = _evidence_rows(view)
+    evidence_total = len(_evidence_rows(view, filtered=False))
+    if evidence_total:
+        # The same selection continues from the captured rows into these.
+        offset = view.selection - len(rows)
+        evidence_page = max(0, offset) // PAGE_SIZE
+        evidence_rows, evidence_pages = paginate(evidence, evidence_page)
+        evidence_table = Table(
+            expand=True,
+            title=(
+                f"Evidence ({len(evidence)}) of {evidence_total} "
+                f"page {evidence_page + 1}/{evidence_pages}"
+            ),
+        )
+        evidence_table.add_column("", width=2)
+        evidence_table.add_column("source")
+        evidence_table.add_column("identity")
+        evidence_table.add_column("type")
+        evidence_table.add_column("run")
+        evidence_table.add_column("size", width=10)
+        for idx, (bucket, record) in enumerate(evidence_rows):
+            ref = record.get("artifact_ref") or record.get("path") or ""
+            evidence_table.add_row(
+                Text(">" if evidence_page * PAGE_SIZE + idx == offset else ""),
+                _safe(bucket),
+                _safe(ref),
+                _safe(f"{record.get('category', '')} {record.get('kind', '')}"),
+                _safe(record.get("run_id") or "-"),
+                _safe(f"{len(_evidence_record_text(record).encode('utf-8'))} B"),
+            )
+        lines.append(evidence_table)
     data = view.data if isinstance(view.data, Mapping) else {}
-    for bucket, items in data.items():
-        if bucket == "captured" or str(bucket).startswith("_"):
-            continue
-        if not isinstance(items, list) or not items:
-            continue
-        lines.append(_safe(f"{bucket} ({len(items)})", "bold"))
-        for item in items[:PAGE_SIZE]:
-            if isinstance(item, Mapping):
-                ref = item.get("artifact_ref") or item.get("path") or ""
-                item_type = f"{item.get('category', '')} {item.get('kind', '')}"
-                lines.append(_safe(f"  {ref}  {item_type}"))
-            else:
-                lines.append(_safe(f"  {item}"))
     detail = data.get("_detail")
     if isinstance(detail, Mapping):
         lines.extend(_artifact_detail_lines(detail, view.scroll))
@@ -6203,6 +6444,17 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
 
 
 def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]:
+    if detail.get("evidence"):
+        text_lines = str(detail.get("text") or "").split("\n")
+        start = min(scroll, max(0, len(text_lines) - 1))
+        return [
+            _safe(
+                f"{detail.get('ref')}  {detail.get('evidence')} reference record  "
+                f"{detail.get('size')} B",
+                "bold",
+            ),
+            _safe("\n".join(text_lines[start : start + _DETAIL_WINDOW_LINES])),
+        ]
     item = detail.get("item") or {}
     size = detail.get("size")
     media = item.get("media_type") or "unknown"
