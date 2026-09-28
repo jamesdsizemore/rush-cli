@@ -808,17 +808,33 @@ class ProjectState:
         return rows
 
     def visible_findings(self) -> list[dict[str, Any]]:
-        rows = self.flattened_findings()
+        """T28-C: the filter matches severity, step status, tool, engine,
+        path and message; a `field:value` prefix narrows to that field."""
         needle = self.filter_text.strip().lower()
-        if not needle:
-            return rows
-        return [
-            row
-            for row in rows
-            if needle in _finding_path(row).lower()
-            or needle in str(row.get("message", "")).lower()
-            or needle in str(row.get("tool", "")).lower()
-        ]
+        rows: list[dict[str, Any]] = []
+        for result in self.results:
+            for finding in result.get("findings") or []:
+                row = {"tool": result.get("tool"), **finding}
+                if not needle or _filter_matches(needle, row, result):
+                    rows.append(row)
+        return rows
+
+
+def _filter_matches(
+    needle: str, row: Mapping[str, Any], result: Mapping[str, Any]
+) -> bool:
+    fields = {
+        "severity": row.get("severity"),
+        "status": result.get("status"),
+        "tool": row.get("tool"),
+        "engine": result.get("engine"),
+        "path": _finding_path(row),
+        "message": row.get("message"),
+    }
+    field, sep, value = needle.partition(":")
+    if sep and field in fields:
+        return value.strip() in str(fields[field] or "").lower()
+    return any(needle in str(v or "").lower() for v in fields.values())
 
 
 def project_key(project: ProjectState) -> str:
@@ -5756,7 +5772,13 @@ def _render_project_table(project: ProjectState) -> Panel:
     # the table each outcome's engine, version and time get a full-width
     # line and its reason its own line, so a narrow list pane never
     # collapses them.
-    outcome_lines: list[Text] = []
+    # T28-C: a tool with findings still shows its engine, version, time
+    # and step status, independently of its finding count.
+    outcome_lines: list[Text] = [
+        _safe(f"  {_outcome_heading(r)}", _severity_style(str(r.get("status", ""))))
+        for r in project.results
+        if r.get("findings")
+    ]
     for idx, result in enumerate(_outcome_results(project), len(rows)):
         marker = ">" if idx == project.selected_index else ""
         status = safe_terminal_text(result.get("status", ""))
@@ -5791,6 +5813,16 @@ def _render_project_table(project: ProjectState) -> Panel:
             Text("-"),
             Text("cancelled", style="bold yellow"),
             _safe(f"run {project.run_id or ''} cancelled; rows above are earlier"),
+        )
+    elif project.status == "error":
+        # T28-C: the failed current operation surfaces here too, even with
+        # no findings; the rows above are earlier results.
+        table.add_row(
+            Text(""),
+            Text("suite"),
+            Text("-"),
+            Text("error", style=_severity_style("error")),
+            _safe(project.last_message or "current operation failed"),
         )
     if comparison is not None:
         outcome_lines.extend(_comparison_lines(project, comparison))
@@ -5859,7 +5891,7 @@ def _render_outcome_detail(project: ProjectState, result: ToolResult) -> Panel:
         _safe(f"engine: {result.get('engine') or result.get('tool', '')}"),
         _safe(f"version: {result.get('engine_version') or 'version unknown'}"),
         _safe(f"execution time: {result.get('duration_ms', '?')} ms"),
-        _safe(f"target: {project.root}"),
+        *_outcome_scope_lines(project, result),
     ]
     for artifact in result.get("artifacts") or []:
         lines.append(_safe(f"artifact: {artifact}"))
@@ -5868,6 +5900,28 @@ def _render_outcome_detail(project: ProjectState, result: ToolResult) -> Panel:
         title=_safe(f"{result.get('tool', '')}: outcome"),
         style="magenta",
     )
+
+
+def _outcome_scope_lines(project: ProjectState, result: ToolResult) -> list[Text]:
+    """T28-C: the targets/coverage the result recorded (`metadata.scope`);
+    the project root only when it recorded none, labelled as such."""
+    scope = (result.get("metadata") or {}).get("scope") or {}
+    targets = scope.get("requested_targets") or scope.get("consumed_files")
+    if targets:
+        lines = [_safe(f"targets: {', '.join(str(t) for t in targets)}")]
+    else:
+        lines = [_safe(f"target: {project.root} (project root; no targets recorded)")]
+    if scope.get("coverage"):
+        counts = ", ".join(
+            f"{key.removesuffix('_file_count')} {scope[key]}"
+            for key in ("requested_file_count", "consumed_file_count")
+            if scope.get(key) is not None
+        )
+        detail = "; ".join(x for x in (counts, scope.get("reason") or "") if x)
+        lines.append(
+            _safe(f"coverage: {scope['coverage']}" + (f" ({detail})" if detail else ""))
+        )
+    return lines
 
 
 def _safe(value: object, style: str = "") -> Text:
@@ -5887,7 +5941,11 @@ def _findings_title(
         return Text("Findings (no result yet)")
     if all(r.get("status") in _UNAVAILABLE_STATUSES for r in project.results):
         return Text("Findings (unavailable: no tool completed)")
-    title = f"Findings ({len(rows)}) page {project.detail_page + 1}/{total_pages}"
+    count = f"{len(rows)}"
+    if project.filter_text:
+        # T28-C: a filtered list shows shown of total.
+        count += f" of {len(project.flattened_findings())}"
+    title = f"Findings ({count}) page {project.detail_page + 1}/{total_pages}"
     if project.filter_text:
         title += f" filter={project.filter_text!r}"
     return _safe(title)
