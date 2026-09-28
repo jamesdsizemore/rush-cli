@@ -136,6 +136,17 @@ _TUI_KEYBINDINGS = [
     KeybindingAction(key="l", action_name="map_expand", description="Expand"),
     KeybindingAction(key="left", action_name="map_collapse", description="Collapse"),
     KeybindingAction(key="h", action_name="map_collapse", description="Collapse"),
+    KeybindingAction(
+        key="]", action_name="git_page_older", description="Git: older commits page"
+    ),
+    KeybindingAction(
+        key="[", action_name="git_page_newer", description="Git: newer commits page"
+    ),
+    KeybindingAction(
+        key="d",
+        action_name="git_dirty_diff",
+        description="Git: expand the next dirty file's bounded diff",
+    ),
 ]
 _BINDINGS = [*DEFAULT_KEYBINDINGS, *_TUI_KEYBINDINGS]
 
@@ -807,6 +818,8 @@ class SectionView:
     filters: dict[str, Any] = field(default_factory=dict)
     expanded: set[str] = field(default_factory=set)
     page_cursor: str | None = None
+    # T28-E: the cache key of the background read in flight for this view.
+    loading_key: Any = None
 
 
 def _coerce_view(value: SectionView | Mapping[str, Any]) -> SectionView:
@@ -855,6 +868,15 @@ class TuiState:
     # project's history/status can never leak into the newly active one.
     git_data: dict[str, Any] | None = None
     git_message: str = ""
+    # T28-E: the Git history page on screen (None = page one, from
+    # `git_data`), its selected commit row, the expanded commit/dirty-file
+    # diff and the dirty file `d` last expanded. `_load_git_view` resets them.
+    git_page: dict[str, Any] | None = None
+    git_selected: int = 0
+    git_expanded: dict[str, Any] | None = None
+    git_dirty_index: int = -1
+    # T28-E: the Tokens run-id filter entry (mode == "tokens_filter").
+    tokens_filter_buffer: str = ""
     # T28-A: Tab/Shift+Tab focus position (`FOCUS_CYCLE`; `active_pane` alias).
     focus: str = "list"
     section: str = "overview"
@@ -1865,6 +1887,10 @@ def _load_git_view(
     `section=artifacts` HTTP endpoints render). A load failure surfaces via
     `state.git_message`, never a crash of the render loop -- same contract as
     `_start_scan_thread`'s worker-error handling above."""
+    state.git_page = None
+    state.git_selected = 0
+    state.git_expanded = None
+    state.git_dirty_index = -1
     if actions.git_snapshot is None:
         state.git_data = None
         state.git_message = "git view unavailable"
@@ -1892,6 +1918,129 @@ def _load_git_view(
         state.git_message = f"git branch/worktree read failed: {exc}"
         return
     state.git_data = {**(state.git_data or {}), "branch": branch, "worktree": worktree}
+
+
+def _git_page_commits(state: TuiState) -> tuple[list[dict[str, Any]], int, Any]:
+    """T28-E: the history page on screen as (commits, skip, next_skip). Page
+    one comes from the loaded snapshot; older pages from
+    `project_git_history`."""
+    if state.git_page is not None:
+        page = state.git_page
+        return page["commits"], page["skip"], page["next_skip"]
+    history = ((state.git_data or {}).get("git") or {}).get("history") or []
+    return history[:PAGE_SIZE], 0, (PAGE_SIZE if len(history) > PAGE_SIZE else None)
+
+
+def _git_turn(step: int) -> Callable[[TuiState, ScanActions], None]:
+    """T28-E: `]` older / `[` newer history page (`project_git_history`
+    `next_skip`); a page turn drops the selection and any expanded diff."""
+
+    def run(state: TuiState, actions: ScanActions) -> None:
+        if state.mode != "git":
+            state.message = "history pages are in the Git section"
+            return
+        _, skip, next_skip = _git_page_commits(state)
+        if step > 0 and next_skip is None:
+            state.git_message = "no older commits"
+            return
+        if step < 0 and skip == 0:
+            state.git_message = "already on the newest commits"
+            return
+        target = next_skip if step > 0 else max(0, skip - PAGE_SIZE)
+        state.git_selected, state.git_expanded = 0, None
+        state.git_message = ""
+        if target == 0:
+            state.git_page = None
+            return
+        project = state.active_project
+        if project.project_id is None:
+            state.git_message = "git history paging needs a registered project"
+            return
+        from rush.workflows import projects as wp
+
+        try:
+            page = wp.project_git_history(
+                project.project_id,
+                data_root=state.data_root,
+                limit=PAGE_SIZE,
+                skip=target,
+            )
+        except (wp.ProjectError, OSError) as exc:
+            state.git_message = f"git history read failed: {exc}"
+            return
+        state.git_page = {
+            "commits": list(page.get("commits") or []),
+            "skip": target,
+            "next_skip": page.get("next_skip"),
+        }
+
+    return run
+
+
+def _git_expand_commit(state: TuiState) -> None:
+    """T28-E: Enter -- the selected commit's changed files and bounded diff."""
+    commits = _git_page_commits(state)[0]
+    project = state.active_project
+    if not commits:
+        state.git_message = "no commit to expand"
+        return
+    if project.project_id is None:
+        state.git_message = "commit diffs need a registered project"
+        return
+    commit = commits[min(state.git_selected, len(commits) - 1)]
+    commit_hash = str(commit.get("hash", ""))
+    from rush.workflows import projects as wp
+
+    try:
+        diff = wp.project_git_commit_diff(
+            project.project_id, commit_hash, data_root=state.data_root
+        )
+    except (wp.ProjectError, OSError) as exc:
+        state.git_message = f"git commit diff failed: {exc}"
+        return
+    state.git_expanded = {
+        "title": f"commit {commit_hash[:8]} {commit.get('subject', '')}",
+        "paths": list(diff.get("changed_paths") or []),
+        "lines": list(diff.get("lines") or []),
+        "truncated": bool(diff.get("truncated")),
+        "error": diff.get("error"),
+    }
+    state.git_message = ""
+
+
+def _git_dirty_diff(state: TuiState, actions: ScanActions) -> None:
+    """T28-E: `d` -- the next listed dirty file's bounded diff
+    (`project_git_dirty_diff`); repeated presses step through the list."""
+    if state.mode != "git":
+        state.message = "dirty-file diffs are in the Git section"
+        return
+    dirty = ((state.git_data or {}).get("git") or {}).get("dirty_files") or []
+    project = state.active_project
+    if not dirty:
+        state.git_message = "no dirty files"
+        return
+    if project.project_id is None:
+        state.git_message = "dirty-file diffs need a registered project"
+        return
+    state.git_dirty_index = (state.git_dirty_index + 1) % len(dirty)
+    path = str(dirty[state.git_dirty_index].get("path", ""))
+    from rush.workflows import projects as wp
+
+    try:
+        diff = wp.project_git_dirty_diff(
+            project.project_id, path, data_root=state.data_root
+        )
+    except (wp.ProjectError, OSError) as exc:
+        state.git_message = f"git dirty diff failed: {exc}"
+        return
+    state.git_expanded = {
+        "title": f"dirty {path}",
+        "paths": [path],
+        "lines": list(diff.get("lines") or []),
+        "truncated": bool(diff.get("truncated")),
+        "error": diff.get("error"),
+    }
+    state.git_message = ""
 
 
 def _handle_search_key(state: TuiState, key: str) -> None:
@@ -3073,16 +3222,11 @@ def _load_overview_section(
     return "populated", None, data
 
 
-def _load_tokens_section(
-    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
-) -> LoadOutcome:
-    if project_id is None:
-        return "unavailable", "project not registered", None
-    from rush.workflows.projects import project_token_usage
-
-    data = dict(project_token_usage(project_id, data_root=data_root))
-    data["_cache_key"] = _tokens_cache_key(root, {})
-    return "populated", None, data
+# T28-E: how long the render thread waits for a background Tokens read
+# before painting "loading"; a slower read is applied by `_drain_results`.
+# ponytail: one fixed wait inside Phase 66's 300ms transition bound; make it
+# per-frame budgeted if large telemetry DBs routinely exceed it.
+_LOAD_WAIT_S = 0.25
 
 
 def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -3098,36 +3242,88 @@ def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]
 
 
 def _refresh_tokens_view(state: TuiState, project: ProjectState) -> SectionView:
-    """The cached Tokens view: one read per root/filter/telemetry-mtime change,
-    never one per painted frame."""
+    """The cached Tokens view: one `project_token_usage` read per root/filter/
+    telemetry-mtime change, never one per painted frame, and always on a
+    worker thread, never this one. The worker posts through the same
+    generation/identity-checked `result_queue` post the section loaders use;
+    a read finished within `_LOAD_WAIT_S` is applied to this frame."""
     view = state.views.setdefault((project_key(project), "tokens"), SectionView())
     key = _tokens_cache_key(project.root, view.filters)
     if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
         return view
-    from rush.workflows import projects as wp
-
     if project.project_id is None:
         view.state, view.reason, view.data = (
             "unavailable",
             "project not registered",
-            {"_cache_key": key},
+            None,
         )
         return view
+    if "tokens" in project.pending and view.loading_key == key:
+        return view  # this exact read is already in flight
+    from rush.workflows import projects as wp
+
     filters = {k: v for k, v in view.filters.items() if not str(k).startswith("_")}
-    try:
-        data = dict(
-            wp.project_token_usage(
-                project.project_id, data_root=state.data_root, **filters
+    project_id, data_root = project.project_id, state.data_root
+    generation = project.begin_request("tokens")
+    identity = project.identity()
+    view.state, view.reason, view.data, view.loading_key = "loading", None, None, key
+    box: dict[str, Any] = {}
+    lock = threading.Lock()
+    done = threading.Event()
+    results = state.result_queue
+
+    def _worker() -> None:
+        outcome: LoadOutcome
+        try:
+            data = dict(
+                wp.project_token_usage(project_id, data_root=data_root, **filters)
             )
-        )
-    except (wp.ProjectError, OSError) as exc:
-        view.state, view.reason = "failed", str(exc) or type(exc).__name__
-        view.data = {"_cache_key": key}
-        return view
-    data["_cache_key"] = key
-    view.state, view.reason, view.data = "populated", None, data
-    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            data["_cache_key"] = key
+            outcome = ("populated", None, data)
+        except Exception as exc:  # noqa: BLE001 -- same contract as `_submit`'s
+            # worker: a failed read is shown as a failed section, never raised.
+            outcome = ("failed", str(exc) or type(exc).__name__, {"_cache_key": key})
+        with lock:
+            if box.get("abandoned"):
+                results.put((project, "tokens", generation, identity, True, outcome))
+            else:
+                box["outcome"] = outcome
+        done.set()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    done.wait(_LOAD_WAIT_S)
+    with lock:
+        finished = box.pop("outcome", None)
+        if finished is None:
+            box["abandoned"] = True
+    if finished is not None and project.accepts("tokens", generation, identity):
+        del project.pending["tokens"]
+        view.state, view.reason, view.data = finished
+        view.loading_key = None
+        view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return view
+
+
+def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """T28-E: `/` in Tokens -- type a run id; Enter filters by that stored
+    `run_id` identity, Escape clears the run filter."""
+    view = state.views.setdefault(
+        (project_key(state.active_project), "tokens"), SectionView()
+    )
+    if key == "enter":
+        run_id = state.tokens_filter_buffer.strip()
+        if run_id:
+            view.filters["run_id"] = run_id
+        else:
+            view.filters.pop("run_id", None)
+        state.mode = "list"
+    elif key == "escape":
+        view.filters.pop("run_id", None)
+        state.mode = "list"
+    elif key == "backspace":
+        state.tokens_filter_buffer = state.tokens_filter_buffer[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.tokens_filter_buffer += key
 
 
 def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -3373,7 +3569,6 @@ _SECTION_LOADERS: dict[
 ] = {
     "overview": _load_overview_section,
     "scans": _load_scans_section,
-    "tokens": _load_tokens_section,
     "setup": _load_setup_section,
 }
 
@@ -3761,6 +3956,10 @@ def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
             _setup_move(state, step)
         elif state.section == "artifacts":
             _artifacts_move(state, step)
+        elif state.mode == "git":
+            commits = _git_page_commits(state)[0]
+            if commits:
+                state.git_selected = (state.git_selected + step) % len(commits)
         else:
             _move_selection(state.active_project, step)
 
@@ -3784,6 +3983,9 @@ def _scroll_detail(project: ProjectState, step: int) -> None:
 
 
 def _select_row(state: TuiState, actions: ScanActions) -> None:
+    if state.mode == "git":
+        _git_expand_commit(state)
+        return
     if state.active_project.visible_findings():
         state.active_project.detail_scroll = None
         state.mode = "detail"
@@ -3822,7 +4024,11 @@ def _map_expand(state: TuiState, actions: ScanActions) -> None:
 
 def _focus_filter(state: TuiState, actions: ScanActions) -> None:
     """`/`: in Map it searches the map's own nodes (`map_search`),
-    elsewhere it filters findings."""
+    elsewhere it filters findings (Tokens: its run-id filter)."""
+    if state.section == "tokens":
+        state.tokens_filter_buffer = ""
+        state.mode = "tokens_filter"
+        return
     if state.mode == "map":
         state.map_query = ""
         state.mode = "map_search"
@@ -3912,6 +4118,10 @@ def _refresh(state: TuiState, actions: ScanActions) -> None:
         _load_git_view(state, state.active_project, actions)
     elif state.section == "artifacts":
         state.views.pop((project_key(state.active_project), "artifacts"), None)
+    elif state.section == "tokens":
+        tokens = state.views.get((project_key(state.active_project), "tokens"))
+        if tokens is not None and isinstance(tokens.data, dict):
+            tokens.data.pop("_cache_key", None)  # the next frame re-reads
     elif state.section in _SECTION_LOADERS:
         state.load_requests.add((project_key(state.active_project), state.section))
     state.message = f"refreshing {SECTION_LABELS[state.section]}"
@@ -4118,7 +4328,7 @@ ACTIONS: tuple[Action, ...] = (
     Action("cancel", "Back", "Global", (), _cancel),
     Action("cursor_down", "Down", "Navigation", (), _cursor(1)),
     Action("cursor_up", "Up", "Navigation", (), _cursor(-1)),
-    Action("select_row", "Inspect", "Navigation", ("scans",), _select_row),
+    Action("select_row", "Inspect", "Navigation", ("scans", "git"), _select_row),
     Action("cycle_pane", "Next pane", "Navigation", (), _cycle_focus(1)),
     Action("cycle_pane_reverse", "Prev pane", "Navigation", (), _cycle_focus(-1)),
     Action("map_expand", "Expand", "Navigation", ("map",), _map_expand),
@@ -4126,6 +4336,9 @@ ACTIONS: tuple[Action, ...] = (
     Action("toggle_memory_admin", "Memory", "Navigation", (), _goto("memory")),
     Action("toggle_git_view", "Git", "Navigation", (), _goto("git")),
     Action("goto_tokens", "Tokens", "Navigation", (), _goto("tokens")),
+    Action("git_page_older", "Older commits", "Navigation", ("git",), _git_turn(1)),
+    Action("git_page_newer", "Newer commits", "Navigation", ("git",), _git_turn(-1)),
+    Action("git_dirty_diff", "Dirty diff", "Section", ("git",), _git_dirty_diff),
     Action("artifact_inspect", "Inspect", "Section", ("artifacts",), _artifact_inspect),
     Action(
         "artifact_export", "Export", "Section", ("artifacts",), _artifact_export_review
@@ -4193,7 +4406,7 @@ ACTIONS: tuple[Action, ...] = (
         _relink_enabled,
     ),
     Action("choose_later", "Later", "Section", (), _choose_later, _add_enabled),
-    Action("focus_filter", "Filter", "Text input", ("scans",), _focus_filter),
+    Action("focus_filter", "Filter", "Text input", ("scans", "tokens"), _focus_filter),
     Action("confirm_grant", "Confirm", "Text input", (), lambda state, actions: None),
     Action(
         "cancel_scan",
@@ -4238,6 +4451,8 @@ def _insert_paste(state: TuiState, text: str) -> None:
         project.detail_page = 0
     elif state.mode == "map_search":
         state.map_query += text
+    elif state.mode == "tokens_filter":
+        state.tokens_filter_buffer += text
     elif state.mode == "memory_search":
         state.memory_query_buffer += text
     elif state.mode == "memory_edit":
@@ -4276,6 +4491,7 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
     modal: dict[str, Callable[[TuiState, str, ScanActions], None]] = {
         "search": lambda st, k, a: _handle_search_key(st, k),
         "map_search": lambda st, k, a: _handle_map_search_key(st, k),
+        "tokens_filter": _handle_tokens_filter_key,
         "grant_review": _handle_grant_review_key,
         "memory_search": _handle_memory_search_key,
         "memory_edit": _handle_memory_edit_key,
@@ -4476,10 +4692,14 @@ def _data_lines(data: Any) -> list[Text]:
         items = list(enumerate(data))
     else:
         items = [] if data is None else [("value", data)]
-    return [
-        _safe(f"{key}: {json.dumps(value, default=str)[:160]}")
-        for key, value in items[:PAGE_SIZE]
-    ]
+    lines = []
+    for key, value in items[:PAGE_SIZE]:
+        text = json.dumps(value, default=str)
+        # T28-E: a line carrying an unavailable/failed reason is never cut --
+        # the reason is its actionable part.
+        whole = key == "reason" or (isinstance(value, Mapping) and value.get("reason"))
+        lines.append(_safe(f"{key}: {text if whole else text[:160]}"))
+    return lines
 
 
 def _overview_lines(data: Mapping[str, Any]) -> list[Text]:
@@ -4616,6 +4836,19 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
         _refresh_tokens_view(state, project)
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
+    if section == "tokens" and view is not None:
+        run_id = view.filters.get("run_id")
+        lines.append(
+            _safe(f"run filter: {run_id}" if run_id else "run filter: none (/ run id)")
+        )
+        if state.mode == "tokens_filter":
+            lines.append(
+                _safe(
+                    f"run id> {state.tokens_filter_buffer}_  "
+                    "(Enter apply, Escape clear)",
+                    "bold",
+                )
+            )
     if view is None:
         lines.append(Text(f"{label} not loaded yet (F5 load)"))
     else:
@@ -4924,6 +5157,24 @@ def _render_memory_admin(state: TuiState) -> Panel:
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
 
 
+def _git_expanded_lines(expanded: Mapping[str, Any] | None) -> list[Text]:
+    """The expanded commit/dirty diff: title, changed files, the bounded
+    lines and a `more` marker when the backend cut the diff."""
+    if expanded is None:
+        return []
+    lines = [_safe(str(expanded["title"]), "bold")]
+    if expanded["paths"]:
+        lines.append(_safe("changed: " + ", ".join(map(str, expanded["paths"]))))
+    if expanded["error"]:
+        lines.append(_safe(f"diff unavailable: {expanded['error']}", "bold red"))
+    lines.extend(_safe(str(line)) for line in expanded["lines"])
+    if expanded["truncated"]:
+        lines.append(
+            _safe(f"... more: diff cut at {len(expanded['lines'])} lines", "yellow")
+        )
+    return lines
+
+
 def _render_git_panel(state: TuiState) -> Panel:
     """P66-06: real bounded commit history, working-tree/index status, and
     generic artifact category counts -- never a static/example row. Every
@@ -4963,15 +5214,21 @@ def _render_git_panel(state: TuiState) -> Panel:
         elif git.get("dirty") is False:
             lines.append(_safe("No changes: the working tree is clean", "green"))
 
-    history = git.get("history") or []
-    history_table = Table(expand=True, title=f"History ({len(history)})")
+    commits, skip, next_skip = _git_page_commits(state)
+    older = "  ] older" if next_skip is not None else ""
+    newer = "  [ newer" if skip else ""
+    history_table = Table(
+        expand=True,
+        title=f"History page {skip // PAGE_SIZE + 1}{older}{newer}  Enter: diff",
+    )
     history_table.add_column("hash", width=10)
     history_table.add_column("author", width=16)
     history_table.add_column("date", width=22)
     history_table.add_column("subject")
-    for commit in history[:PAGE_SIZE]:
+    for index, commit in enumerate(commits):
+        marker = ">" if index == state.git_selected else " "
         history_table.add_row(
-            _safe(str(commit.get("hash", ""))[:8]),
+            _safe(marker + str(commit.get("hash", ""))[:8]),
             _safe(commit.get("author", "")),
             _safe(commit.get("date", "")),
             _safe(commit.get("subject", "")),
@@ -4989,6 +5246,7 @@ def _render_git_panel(state: TuiState) -> Panel:
                 _safe(entry.get("path", "")),
             )
         lines.append(dirty_table)
+    lines.extend(_git_expanded_lines(state.git_expanded))
 
     artifacts = data.get("artifacts") or {}
     counts: dict[str, int] = {}
