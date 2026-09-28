@@ -665,15 +665,21 @@ def test_detach_is_non_blocking_with_deadline_overlay(
             "TuiState has no `overlay` field yet; cannot express the "
             "non-blocking `detaching` overlay with a deadline"
         )
+    project.ledger_admitted = True  # an admitted, still-unresolved run
+    project.run_resolved = False
     monkeypatch.setattr(tui, "OWNED_TERMINATION_TIMEOUT_SECONDS", 0.3)
-    reap_calls: list[object] = []
+    order: list[tuple[str, float]] = []
     monkeypatch.setattr(
-        tui, "reap_owner_processes", lambda *a, **k: reap_calls.append((a, k))
+        tui,
+        "reap_owner_processes",
+        lambda *a, **k: order.append(("reap", time.monotonic())),
     )
+    ledger_calls = _fake_ledger(monkeypatch)
     actions = ScanActions(
         plan_scan=lambda *a, **k: None,
         execute_scan=lambda *a, **k: None,
-        cancel_scan_run=lambda *a, **k: None,  # never acknowledges cancel
+        # never acknowledges cancel
+        cancel_scan_run=lambda *a, **k: order.append(("cancel", time.monotonic())),
         rescan_project_run=lambda *a, **k: None,
         build_handoff=lambda *a, **k: None,
         dispatch_handoff=lambda *a, **k: None,
@@ -687,7 +693,100 @@ def test_detach_is_non_blocking_with_deadline_overlay(
         "Detach must be non-blocking (return immediately with a detaching "
         f"overlay + deadline, polled every tick), took {elapsed:.3f}s"
     )
-    assert reap_calls, "reap_owner_processes must still run for the deadline"
+    assert state.overlay == "detaching"
+    assert state.detach_deadline is not None
+
+    _drive_detach_ticks(state, actions)
+
+    assert state.detach_done is not None and state.detach_done.is_set(), (
+        "the Detach worker must finish before the overlay deadline"
+    )
+    names = [name for name, _ in order]
+    assert names == ["cancel", "reap"], (
+        f"Phase 69 order is cancel, then reap only after no acknowledgment: {names}"
+    )
+    reap_at = order[1][1]
+    assert reap_at - start >= tui.OWNED_TERMINATION_TIMEOUT_SECONDS, (
+        "reap_owner_processes must wait out the acknowledgment window "
+        f"({tui.OWNED_TERMINATION_TIMEOUT_SECONDS}s), ran after "
+        f"{reap_at - start:.3f}s"
+    )
+    assert [c[1] for c in ledger_calls] == ["recovery_required"], ledger_calls
+
+
+def _fake_ledger(monkeypatch: pytest.MonkeyPatch) -> list[tuple[object, ...]]:
+    """Record MutationLedger status transitions instead of writing them."""
+    calls: list[tuple[object, ...]] = []
+
+    class _Ledger:
+        def record_status_transition(self, *a: object, **_k: object) -> None:
+            calls.append(a)
+
+    monkeypatch.setattr(tui, "MutationLedger", _Ledger)
+    return calls
+
+
+def _drive_detach_ticks(state: tui.TuiState, actions: ScanActions) -> None:
+    """The render loop's per-tick polling, every 10 ms, until the detach
+    worker finishes or the overlay deadline passes."""
+    bound = time.monotonic() + 10.0
+    while not state.should_quit:
+        assert time.monotonic() < bound, "detach never ended"
+        tui._poll_running_scans(state, actions)
+        tui._poll_detach(state)
+        time.sleep(0.01)
+
+
+def test_detach_acknowledged_cancel_never_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 69 semantics: an acknowledged cancel ends the Detach with no
+    reap and no `recovery_required` ledger outcome."""
+    project = tui.ProjectState(
+        name="p",
+        root=Path("/tmp/rush-t28f-detach-ack"),
+        status="scanning",
+        owner="local",
+        owner_instance_id="owner-1",
+        run_id="run-1",
+    )
+    project.plan_total = 1
+    project.ledger_admitted = True  # an admitted, still-unresolved run
+    project.run_resolved = False
+    state = tui.TuiState(projects=[project])
+    state.mode = "quit_confirm"
+    monkeypatch.setattr(tui, "OWNED_TERMINATION_TIMEOUT_SECONDS", 0.3)
+    reap_calls: list[object] = []
+    monkeypatch.setattr(
+        tui, "reap_owner_processes", lambda *a, **k: reap_calls.append((a, k))
+    )
+    ledger_calls = _fake_ledger(monkeypatch)
+    cancelled: list[bool] = []
+    actions = ScanActions(
+        plan_scan=lambda *a, **k: None,
+        execute_scan=lambda *a, **k: None,
+        cancel_scan_run=lambda *a, **k: cancelled.append(True),
+        rescan_project_run=lambda *a, **k: None,
+        build_handoff=lambda *a, **k: None,
+        dispatch_handoff=lambda *a, **k: None,
+        load_scan_events=lambda *a, **k: {
+            "events": [],
+            "run_state": "cancelled" if cancelled else "running",
+        },
+        list_agents=list,
+    )
+    tui._dispatch_key(state, "d", actions)
+    assert state.overlay == "detaching"
+
+    _drive_detach_ticks(state, actions)
+
+    assert cancelled, "Detach must request the cooperative cancel"
+    assert state.detach_done is not None and state.detach_done.is_set()
+    assert project.status == "cancelled"
+    assert reap_calls == [], "an acknowledged cancel must never be reaped"
+    assert ledger_calls == [], (
+        f"an acknowledged cancel records no recovery_required: {ledger_calls}"
+    )
 
 
 def test_dashboard_owned_polling_reuses_captured_owner_not_per_tick() -> None:

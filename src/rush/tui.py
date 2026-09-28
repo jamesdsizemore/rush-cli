@@ -2920,10 +2920,10 @@ def _handle_detach(
     past its own exit.
 
     T28-F: `_begin_detach` runs this on a worker thread under the
-    `detaching` overlay's deadline, so the loop keeps rendering. The run's
-    subprocess groups are reaped right away (bounded SIGTERM-then-SIGKILL)
-    while the cooperative cancel is acknowledged; the ledger outcome is
-    unchanged: `recovery_required` when no acknowledgment lands in time."""
+    `detaching` overlay's deadline, so the loop keeps rendering. Phase 69's
+    order is kept: request the cooperative cancel, wait up to `timeout` for
+    its acknowledgment, and only when none lands reap the run's subprocess
+    groups (bounded SIGTERM-then-SIGKILL) and record `recovery_required`."""
     if timeout is None:
         timeout = OWNED_TERMINATION_TIMEOUT_SECONDS
     if project.owner == "dashboard" or not project.owner_instance_id:
@@ -2933,31 +2933,33 @@ def _handle_detach(
 
     state.message = "detaching -- cancelling local run..."
     _request_cancel(project, actions)
-    # Force-stop every subprocess group *this run* owns (subsection h).
-    # U03: this coordinator process can own more than one project's run at
-    # once, so the `run_id` filter is required here -- owner-only filtering
-    # would reap a sibling project's still-running subprocesses too.
-    # Reaping acts on `.procs` records, real for every local run regardless
-    # of ledger admission -- never assume termination succeeded just
-    # because a signal was sent.
-    reap_owner_processes(
-        project.owner_instance_id, timeout=timeout, run_id=project.run_id
-    )
     acknowledged = _wait_for_cancel_ack(
         state, project, actions, timeout=timeout, poll=poll
     )
-    if not acknowledged and project.ledger_admitted and _resolve_local_run(project):
-        with suppress(Exception):
-            # `_admit_local_run`/`_finalize_local_run`'s contract: this
-            # process exits regardless of whether the ledger write lands.
-            MutationLedger().record_status_transition(
-                project.operation_id,
-                "recovery_required",
-                {
-                    "status": "recovery_required",
-                    "code": "detach_force_exit_timeout",
-                },
-            )
+    if not acknowledged:
+        # The worker never acknowledged within the deadline: force-stop every
+        # subprocess group *this run* owns (subsection h). U03: this
+        # coordinator process can own more than one project's run at once,
+        # so the `run_id` filter is required here -- owner-only filtering
+        # would reap a sibling project's still-running subprocesses too.
+        # Reaping acts on `.procs` records, real for every local run
+        # regardless of ledger admission -- never assume termination
+        # succeeded just because a signal was sent.
+        reap_owner_processes(
+            project.owner_instance_id, timeout=timeout, run_id=project.run_id
+        )
+        if project.ledger_admitted and _resolve_local_run(project):
+            with suppress(Exception):
+                # `_admit_local_run`/`_finalize_local_run`'s contract: this
+                # process exits regardless of whether the ledger write lands.
+                MutationLedger().record_status_transition(
+                    project.operation_id,
+                    "recovery_required",
+                    {
+                        "status": "recovery_required",
+                        "code": "detach_force_exit_timeout",
+                    },
+                )
     state.mode = "list"
     state.should_quit = True
 
@@ -2987,7 +2989,7 @@ def _begin_detach(state: TuiState, project: ProjectState, actions: ScanActions) 
     state.overlay = "detaching"
     state.message = "detaching -- cancelling local run..."
     state.detach_done = done
-    # The reap's SIGTERM and SIGKILL waits, then the acknowledgment wait.
+    # The acknowledgment wait, then the reap's SIGTERM and SIGKILL waits.
     state.detach_deadline = time.monotonic() + 3 * timeout
     threading.Thread(target=_worker, daemon=True).start()
 
