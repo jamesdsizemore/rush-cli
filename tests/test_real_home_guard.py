@@ -637,6 +637,163 @@ def test_isolated_homes_share_one_engine_cache(
         assert not cache.is_relative_to(home), (cache, home)
 
 
+def test_process_tree_listing_uses_the_platform_native_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ctypes
+
+    import conftest
+
+    # Natively, on this host: the listing names this process's real parent.
+    assert conftest._process_parents()[os.getpid()] == os.getppid()
+
+    def _no_msys_ps(*args: object, **kwargs: object) -> object:
+        raise AssertionError(f"ran or looked up an MSYS/Git tool: {args}")
+
+    # Windows: the kernel32 Toolhelp snapshot, never a `ps` on PATH (Git for
+    # Windows' MSYS ps lists MSYS pids and rejects `-o`).
+    me = os.getpid()
+    monkeypatch.setattr(conftest.os, "name", "nt")
+    monkeypatch.setattr(conftest.sys, "platform", "win32")
+    monkeypatch.setattr(conftest.shutil, "which", _no_msys_ps)
+    monkeypatch.setattr(conftest.subprocess, "run", _no_msys_ps)
+    monkeypatch.setattr(
+        conftest,
+        "_windows_process_snapshot",
+        lambda: [(4, 0), (100, 4), (me, 100), (501, me), (502, 501), (777, 4)],
+    )
+    assert conftest._process_parents() == {
+        4: 0,
+        100: 4,
+        me: 100,
+        501: me,
+        502: 501,
+        777: 4,
+    }
+    assert conftest._descendant_pids() == {501, 502}
+    # The snapshot's PROCESSENTRY32W layout matches the Win32 ABI.
+    assert ctypes.sizeof(conftest._PROCESSENTRY32W) == (
+        568 if ctypes.sizeof(ctypes.c_void_p) == 8 else 556
+    )
+    monkeypatch.undo()
+
+    # POSIX: `ps -A -o pid=,ppid=`, parsed into (pid, ppid) pairs.
+    calls: list[list[str]] = []
+
+    def _ps(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "    1     0\n  42     1\n", "")
+
+    monkeypatch.setattr(conftest.os, "name", "posix")
+    monkeypatch.setattr(conftest.sys, "platform", "linux")
+    monkeypatch.setattr(conftest.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(conftest.subprocess, "run", _ps)
+    monkeypatch.setattr(conftest, "_windows_process_snapshot", _no_msys_ps)
+    assert conftest._process_parents() == {1: 0, 42: 1}
+    assert calls == [["/bin/ps", "-A", "-o", "pid=,ppid="]]
+
+
+def test_held_entries_use_the_platform_native_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows attributes held owners/project_locks entries exactly as lsof
+    does on POSIX: the Restart Manager names every process holding a file."""
+    import ctypes
+
+    import conftest
+
+    mine, foreign, free = (str(tmp_path / name) for name in ("a", "b", "c"))
+    holders = {mine: {os.getpid()}, foreign: {999_999}, free: set[int]()}
+
+    def _no_lsof(*args: object, **kwargs: object) -> object:
+        raise AssertionError(f"ran or looked up a POSIX tool: {args}")
+
+    monkeypatch.setattr(conftest.os, "name", "nt")
+    monkeypatch.setattr(conftest.sys, "platform", "win32")
+    monkeypatch.setattr(conftest.shutil, "which", _no_lsof)
+    monkeypatch.setattr(conftest.subprocess, "run", _no_lsof)
+    monkeypatch.setattr(conftest, "_windows_file_holders", holders.__getitem__)
+    assert conftest._held_by([mine, foreign, free], {os.getpid()}) == {mine}
+    assert conftest._held_by([mine, foreign, free], None) == {mine, foreign}
+    assert conftest._held_by([mine, foreign, free], set()) == set()
+    # RM_PROCESS_INFO matches the Win32 ABI.
+    assert ctypes.sizeof(conftest._RM_PROCESS_INFO) == 668
+
+
+def test_process_tree_listing_failure_never_errors_teardown_silently(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import conftest
+
+    # A failed listing is a guard error naming its source and cause.
+    def _failing_ps(argv: list[str], **kwargs: object) -> object:
+        raise subprocess.CalledProcessError(
+            1, argv, output="", stderr="ps: unknown option -- o\n"
+        )
+
+    def _failing_snapshot() -> object:
+        raise OSError(5, "Access is denied")
+
+    # A context, not monkeypatch.undo(): that would also undo pytester's chdir.
+    with monkeypatch.context() as patch:
+        patch.setattr(conftest.os, "name", "posix")
+        patch.setattr(conftest.shutil, "which", lambda name: f"/usr/bin/{name}")
+        patch.setattr(conftest.subprocess, "run", _failing_ps)
+        with pytest.raises(conftest._GuardProbeError) as posix_error:
+            conftest._process_parents()
+        patch.setattr(conftest.os, "name", "nt")
+        patch.setattr(conftest, "_windows_process_snapshot", _failing_snapshot)
+        with pytest.raises(conftest._GuardProbeError) as nt_error:
+            conftest._process_parents()
+    assert "/usr/bin/ps -A -o pid=,ppid=" in str(posix_error.value)
+    assert "exit status 1" in str(posix_error.value)
+    assert "ps: unknown option -- o" in str(posix_error.value)
+    assert "Toolhelp" in str(nt_error.value)
+    assert "Access is denied" in str(nt_error.value)
+
+    # At teardown it fails the test with that message, not a traceback.
+    pytester.makeconftest(_CONFTEST.read_text(encoding="utf-8"))
+    pytester.makepyfile(
+        test_listing="""
+        import subprocess
+        import types
+
+        import conftest
+
+
+        def test_listing_breaks():
+            def failing(argv, **kwargs):
+                raise subprocess.CalledProcessError(
+                    1, argv, output="", stderr="ps: unknown option -- o"
+                )
+
+            def failing_snapshot():
+                raise OSError(5, "Access is denied")
+
+            conftest.subprocess = types.SimpleNamespace(
+                run=failing, CalledProcessError=subprocess.CalledProcessError
+            )
+            conftest._windows_process_snapshot = failing_snapshot
+        """
+    )
+    with tempfile.TemporaryDirectory() as real_home:
+        monkeypatch.setenv("HOME", real_home)
+        monkeypatch.setenv("USERPROFILE", real_home)
+        monkeypatch.setenv("XDG_DATA_HOME", str(Path(real_home) / ".local" / "share"))
+        result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
+    result.assert_outcomes(passed=1, errors=1)
+    cause = "Access is denied" if os.name == "nt" else "unknown option -- o"
+    result.stdout.fnmatch_lines(
+        [
+            "*ERROR at teardown of test_listing_breaks*",
+            f"*test_listing_breaks: the real HOME guard could not list processes*{cause}*",
+        ]
+    )
+    output = result.stdout.str()
+    assert "CalledProcessError" not in output
+    assert "Traceback" not in output
+
+
 def _data_root_for(home: Path) -> Path:
     if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "Rush"

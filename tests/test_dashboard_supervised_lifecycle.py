@@ -106,11 +106,16 @@ def test_supervised_terminal_write_failure_is_recorded_not_raised(
             raise OSError("unable to open database file")
 
         monkeypatch.setattr(ctx.mutations, "record_status_transition", _store_gone)
-        with caplog.at_level(logging.ERROR, logger="rush.dashboard.server"):
-            thread = ctx.start_terminal_supervised(
-                unreachable, lambda: {"status": "success"}
-            )
-            thread.join(5)
+        server_logger = logging.getLogger("rush.dashboard.server")
+        server_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.ERROR, logger="rush.dashboard.server"):
+                thread = ctx.start_terminal_supervised(
+                    unreachable, lambda: {"status": "success"}
+                )
+                thread.join(5)
+        finally:
+            server_logger.removeHandler(caplog.handler)
         assert not thread.is_alive()
         assert unreachable in caplog.text
         assert "unable to open database file" in caplog.text

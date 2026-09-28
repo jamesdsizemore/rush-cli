@@ -5,6 +5,7 @@ Architecture §11.2.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -355,18 +356,147 @@ def _record_tree(value: object) -> None:
             start = text.find(root, end)
 
 
-def _ps_parents() -> dict[int, int]:
-    """pid -> parent pid of every live process (empty without `ps`)."""
+class _GuardProbeError(Exception):
+    """A process or open-file probe of the real HOME guard failed."""
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    """Win32 PROCESSENTRY32W, in fixed-width fields (wintypes.DWORD is 8
+    bytes off Windows)."""
+
+    _fields_ = [
+        ("dwSize", ctypes.c_uint32),
+        ("cntUsage", ctypes.c_uint32),
+        ("th32ProcessID", ctypes.c_uint32),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", ctypes.c_uint32),
+        ("cntThreads", ctypes.c_uint32),
+        ("th32ParentProcessID", ctypes.c_uint32),
+        ("pcPriClassBase", ctypes.c_int32),
+        ("dwFlags", ctypes.c_uint32),
+        ("szExeFile", ctypes.c_uint16 * 260),
+    ]
+
+
+class _RM_UNIQUE_PROCESS(ctypes.Structure):
+    _fields_ = [
+        ("dwProcessId", ctypes.c_uint32),
+        ("ProcessStartTime", ctypes.c_uint32 * 2),
+    ]
+
+
+class _RM_PROCESS_INFO(ctypes.Structure):
+    _fields_ = [
+        ("Process", _RM_UNIQUE_PROCESS),
+        ("strAppName", ctypes.c_uint16 * 256),
+        ("strServiceShortName", ctypes.c_uint16 * 64),
+        ("ApplicationType", ctypes.c_int32),
+        ("AppStatus", ctypes.c_uint32),
+        ("TSSessionId", ctypes.c_uint32),
+        ("bRestartable", ctypes.c_int32),
+    ]
+
+
+def _windows_process_snapshot() -> list[tuple[int, int]]:
+    """(pid, parent pid) of every live process, from the kernel32 Toolhelp
+    process snapshot."""
+    if sys.platform != "win32":
+        raise OSError("the Toolhelp process snapshot exists only on Windows")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    for step in (kernel32.Process32FirstW, kernel32.Process32NextW):
+        step.argtypes = (ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W))
+        step.restype = ctypes.c_int32
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot is None or snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        entry = _PROCESSENTRY32W(dwSize=ctypes.sizeof(_PROCESSENTRY32W))
+        pairs: list[tuple[int, int]] = []
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            pairs.append((entry.th32ProcessID, entry.th32ParentProcessID))
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES ends the walk
+            raise ctypes.WinError(ctypes.get_last_error())
+        return pairs
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+def _windows_file_holders(path: str) -> set[int]:
+    """Pids of every process holding `path` open, from the Restart Manager
+    (lsof's Windows counterpart)."""
+    if sys.platform != "win32":
+        raise OSError("the Restart Manager exists only on Windows")
+    rstrtmgr = ctypes.WinDLL("rstrtmgr")
+    session = ctypes.c_uint32()
+    key = ctypes.create_unicode_buffer(33)  # CCH_RM_SESSION_KEY + 1
+    error = rstrtmgr.RmStartSession(ctypes.byref(session), 0, key)
+    if error:
+        raise ctypes.WinError(error)
+    try:
+        files = (ctypes.c_wchar_p * 1)(path)
+        error = rstrtmgr.RmRegisterResources(session, 1, files, 0, None, 0, None)
+        if error:
+            raise ctypes.WinError(error)
+        room = 0
+        while True:
+            infos = (_RM_PROCESS_INFO * room)()
+            needed, count, reasons = (
+                ctypes.c_uint32(),
+                ctypes.c_uint32(room),
+                ctypes.c_uint32(),
+            )
+            error = rstrtmgr.RmGetList(
+                session,
+                ctypes.byref(needed),
+                ctypes.byref(count),
+                infos,
+                ctypes.byref(reasons),
+            )
+            if error == 234:  # ERROR_MORE_DATA: make room for `needed`
+                room = needed.value
+                continue
+            if error:
+                raise ctypes.WinError(error)
+            return {infos[i].Process.dwProcessId for i in range(count.value)}
+    finally:
+        rstrtmgr.RmEndSession(session)
+
+
+def _process_parents() -> dict[int, int]:
+    """pid -> parent pid of every live process, from the platform's native
+    listing: the kernel32 Toolhelp snapshot on Windows, whose PATH can carry
+    Git for Windows' MSYS `ps` (MSYS pids, no `-o`); `ps` elsewhere (empty
+    without `ps`). A failed listing raises `_GuardProbeError` naming it."""
+    if os.name == "nt":
+        try:
+            return dict(_windows_process_snapshot())
+        except OSError as exc:
+            raise _GuardProbeError(
+                "the real HOME guard could not list processes with the Windows"
+                f" Toolhelp snapshot: {exc}"
+            ) from exc
     ps = shutil.which("ps")
     if ps is None:
         return {}
+    argv = [ps, "-A", "-o", "pid=,ppid="]
     # The guard's own probe, run with the real HOME after a test: not a
     # child of the test.
     _PROBING.active = True
     try:
         listing = subprocess.run(
-            [ps, "-A", "-o", "pid=,ppid="], capture_output=True, text=True, check=True
+            argv, capture_output=True, text=True, check=True
         ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        stderr = (getattr(exc, "stderr", None) or "").strip()
+        raise _GuardProbeError(
+            f"the real HOME guard could not list processes with `{' '.join(argv)}`:"
+            f" {exc} {stderr}".rstrip()
+        ) from exc
     finally:
         _PROBING.active = False
     parents: dict[int, int] = {}
@@ -378,7 +508,7 @@ def _ps_parents() -> dict[int, int]:
 
 def _descendant_pids(parents: dict[int, int] | None = None) -> set[int]:
     children: dict[int, list[int]] = {}
-    for pid, ppid in (_ps_parents() if parents is None else parents).items():
+    for pid, ppid in (_process_parents() if parents is None else parents).items():
         children.setdefault(ppid, []).append(pid)
     found: set[int] = set()
     stack = [os.getpid()]
@@ -392,9 +522,25 @@ def _descendant_pids(parents: dict[int, int] | None = None) -> set[int]:
 
 def _held_by(paths: Collection[str], pids: Collection[int] | None) -> set[str]:
     """The paths one of `pids` (None: any process) holds open: an
-    owner-liveness lock is held for its owner's whole lifetime."""
+    owner-liveness lock is held for its owner's whole lifetime. On Windows
+    the Restart Manager names the holders; elsewhere lsof."""
+    if not paths or pids is not None and not pids:
+        return set()
+    if os.name == "nt":
+        held_on_windows: set[str] = set()
+        for path in paths:
+            try:
+                holders = _windows_file_holders(path)
+            except OSError as exc:
+                raise _GuardProbeError(
+                    "the real HOME guard could not list the processes holding"
+                    f" {path} with the Windows Restart Manager: {exc}"
+                ) from exc
+            if holders and (pids is None or not holders.isdisjoint(pids)):
+                held_on_windows.add(path)
+        return held_on_windows
     lsof = shutil.which("lsof")
-    if not paths or pids is not None and not pids or lsof is None:
+    if lsof is None:
         return set()
     # lsof exits 1 when no process has any of the files open.
     _PROBING.active = True
@@ -580,9 +726,12 @@ def pytest_runtest_teardown(item: pytest.Item) -> Generator[None]:
 
     def created_message() -> str:
         _join_new_threads(item.stash[_THREADS_BEFORE])
-        created = _created_entries(
-            _REAL_HOME_GUARD["data_root"], item.stash[_ENTRIES_BEFORE]
-        ) + sorted(_written_under(_REAL_HOME_GUARD["home"] / ".rush"))
+        try:
+            created = _created_entries(
+                _REAL_HOME_GUARD["data_root"], item.stash[_ENTRIES_BEFORE]
+            ) + sorted(_written_under(_REAL_HOME_GUARD["home"] / ".rush"))
+        except _GuardProbeError as exc:
+            return f"{item.nodeid}: {exc}"
         if not created:
             return ""
         return "\n".join(
