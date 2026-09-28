@@ -1251,6 +1251,13 @@ def test_agent_connect_reports_a_failed_host_registration_as_error(
     shim.parent.mkdir()
     shim.write_text("#!/bin/sh\nexit 0\n")
     shim.chmod(0o755)
+    # Native registration is chosen only when `claude` resolves on PATH; a
+    # host without it would take the config-edit path instead.
+    host_cli = tmp_path / "host-bin" / "claude"
+    host_cli.parent.mkdir()
+    host_cli.write_text("#!/bin/sh\nexit 127\n")
+    host_cli.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{host_cli.parent}{os.pathsep}{os.environ['PATH']}")
     result = CliRunner().invoke(
         cli,
         [

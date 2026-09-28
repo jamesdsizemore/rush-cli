@@ -650,6 +650,9 @@ def test_aislop_offline_env_set_only_without_download_grant(
     monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/bin/aislop")
     monkeypatch.setattr(aislop, "run_subprocess", fake_run)
     _node_tooling(monkeypatch, npx="/usr/bin/npx")
+    # The channel is detected from the host env (GitHub runners set PIPX_HOME).
+    monkeypatch.delenv("PIPX_HOME", raising=False)
+    monkeypatch.delenv("AISLOP_INSTALL_CHANNEL", raising=False)
 
     AislopEngine().run(tmp_path, [], cwd=tmp_path)
     with aislop_grants(ExecutionPermissions(download=True)):
