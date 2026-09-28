@@ -21,6 +21,7 @@ from typing import Any, ClassVar, Protocol, cast
 # Logical key names the TUI event loop understands. Anything else read from
 # the terminal is passed through as the literal single character typed.
 ESCAPE = "escape"
+CTRL_C = "ctrl_c"
 ENTER = "enter"
 TAB = "tab"
 SHIFT_TAB = "shift_tab"
@@ -160,6 +161,13 @@ def raw_terminal(stream: int | _HasFileno | None = None) -> Iterator[None]:
         # ignored/default-handled).
         signal.signal(signal.SIGWINCH, lambda *_: None)
         tty.setcbreak(fd)
+        # ISIG stays on (Ctrl-Z suspend, Ctrl-\\ quit keep working);
+        # only the interrupt character is disabled so a delivered
+        # Ctrl-C reaches read_key as a byte instead of raising SIGINT
+        # to a process group the TUI is not the foreground of.
+        attrs = termios.tcgetattr(fd)
+        attrs[6][termios.VINTR] = os.fpathconf(fd, "PC_VDISABLE")
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
         # Bracketed paste: the terminal wraps pasted text in
         # `ESC[200~ ... ESC[201~` so `PosixKeyReader` can deliver it as one
         # literal paste event instead of executing it as keystrokes.
@@ -329,10 +337,8 @@ class PosixKeyReader:
             return TAB
         if first in (0x7F, 0x08):
             return BACKSPACE
-        if (
-            first == 0x03
-        ):  # Ctrl+C: treat like Escape, never raise KeyboardInterrupt mid-render
-            return ESCAPE
+        if first == 0x03:  # Ctrl+C: delivered as a byte (VINTR disabled), never raises
+            return CTRL_C
         if first < 0x80:
             return raw.decode()
         # UTF-8 multibyte lead byte: read exactly the continuation-byte
@@ -654,6 +660,8 @@ class WindowsKeyReader(PosixKeyReader):
                     return TAB
                 if ch == "\x1b":
                     return ESCAPE
+                if ch == "\x03":
+                    return CTRL_C
                 if ch == "\x08":
                     return BACKSPACE
                 return ch

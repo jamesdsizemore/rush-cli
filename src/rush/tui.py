@@ -48,6 +48,7 @@ from rush import __version__
 from rush.dashboard.keymaps import DEFAULT_KEYBINDINGS, KeybindingAction, KeymapManager
 from rush.dashboard.state import AdmissionResult, MutationLedger
 from rush.dashboard.terminal_input import (
+    CTRL_C,
     EOF,
     PASTE_PREFIX,
     KeyReader,
@@ -8113,6 +8114,11 @@ def run_interactive_tui(
                         "restored the terminal"
                     )
                     _handle_eof(state, actions)
+                elif key == CTRL_C:
+                    # Ctrl-C is delivered as a byte, not KeyboardInterrupt
+                    # (VINTR disabled in raw_terminal): route it through
+                    # the same-tick sigint handling as a real SIGINT.
+                    sigint.set()
                 elif key is not None:
                     _dispatch_key(state, key, actions)
                 if key is not None:
