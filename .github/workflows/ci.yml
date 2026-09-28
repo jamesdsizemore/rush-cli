@@ -88,7 +88,7 @@ jobs:
       # skips, a needs_* test whose binary is not on PATH) is installed and run
       # by the static-tool-acceptance job below.
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_aislop and not needs_prettier and not needs_promptfoo and not needs_tsc"
+        run: uv run pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
